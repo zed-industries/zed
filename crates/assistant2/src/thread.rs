@@ -308,6 +308,13 @@ impl Thread {
                                             last_message.id,
                                             chunk,
                                         ));
+                                    } else {
+                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                        // of a new Assistant response.
+                                        //
+                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                        // will result in duplicating the text of the chunk in the rendered Markdown.
+                                        thread.insert_message(Role::Assistant, chunk, cx);
                                     }
                                 }
                             }

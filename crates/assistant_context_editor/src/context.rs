@@ -2304,7 +2304,10 @@ impl Context {
 
         let mut request = self.to_completion_request(request_type, cx);
 
-        if cx.has_flag::<ToolUseFeatureFlag>() {
+        // Don't attach tools for now; we'll be removing tool use from
+        // Assistant1 shortly.
+        #[allow(clippy::overly_complex_bool_expr)]
+        if false && cx.has_flag::<ToolUseFeatureFlag>() {
             request.tools = self
                 .tools
                 .tools(cx)

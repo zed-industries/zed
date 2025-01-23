@@ -16,13 +16,13 @@ use crate::{
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk, GoToPrevHunk,
-    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlineCompletion,
-    JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt,
-    RowRangeExt, SelectPhase, Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
+    GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -48,8 +48,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
-    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
+    RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
@@ -371,7 +371,7 @@ impl EditorElement {
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
         register_action(view, cx, Editor::set_mark);
-        register_action(view, cx, Editor::exchange_mark);
+        register_action(view, cx, Editor::swap_selection_ends);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
@@ -1575,7 +1575,6 @@ impl EditorElement {
         &self,
         display_row: DisplayRow,
         row_info: &RowInfo,
-        buffer_snapshot: &MultiBufferSnapshot,
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
@@ -1608,11 +1607,10 @@ impl EditorElement {
 
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
-                    InlineCompletion::Edit(edits)
-                        if single_line_edit(&edits, buffer_snapshot).is_some() =>
-                    {
-                        padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
-                    }
+                    InlineCompletion::Edit {
+                        display_mode: EditDisplayMode::TabAccept,
+                        ..
+                    } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
                 }
             }
@@ -3114,10 +3112,10 @@ impl EditorElement {
         let available_above = bottom_y_when_flipped - text_hitbox.top();
         let available_below = text_hitbox.bottom() - target_position.y;
         let y_overflows_below = unconstrained_max_height > available_below;
-        let mut y_is_flipped = y_overflows_below && available_above > available_below;
+        let mut y_flipped = y_overflows_below && available_above > available_below;
         let mut height = cmp::min(
             unconstrained_max_height,
-            if y_is_flipped {
+            if y_flipped {
                 available_above
             } else {
                 available_below
@@ -3129,16 +3127,16 @@ impl EditorElement {
             let available_above = bottom_y_when_flipped;
             let available_below = viewport_bounds.bottom() - target_position.y;
             if available_below > 3. * line_height {
-                y_is_flipped = false;
+                y_flipped = false;
                 height = min_height;
             } else if available_above > 3. * line_height {
-                y_is_flipped = true;
+                y_flipped = true;
                 height = min_height;
             } else if available_above > available_below {
-                y_is_flipped = true;
+                y_flipped = true;
                 height = available_above;
             } else {
-                y_is_flipped = false;
+                y_flipped = false;
                 height = available_below;
             }
         }
@@ -3147,7 +3145,7 @@ impl EditorElement {
 
         // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
         let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, cx)
+            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, cx)
         }) else {
             return;
         };
@@ -3159,7 +3157,7 @@ impl EditorElement {
             x: target_position
                 .x
                 .min((viewport_bounds.right() - menu_size.width).max(Pixels::ZERO)),
-            y: if y_is_flipped {
+            y: if y_flipped {
                 bottom_y_when_flipped - menu_size.height
             } else {
                 target_position.y
@@ -3170,7 +3168,7 @@ impl EditorElement {
         // Layout documentation aside
         let menu_bounds = Bounds::new(menu_position, menu_size);
         let max_menu_size = size(menu_size.width, unconstrained_max_height);
-        let max_menu_bounds = if y_is_flipped {
+        let max_menu_bounds = if y_flipped {
             Bounds::new(
                 point(
                     menu_position.x,
@@ -3183,7 +3181,7 @@ impl EditorElement {
         };
         self.layout_context_menu_aside(
             text_hitbox,
-            y_is_flipped,
+            y_flipped,
             menu_position,
             menu_bounds,
             max_menu_bounds,
@@ -3198,7 +3196,7 @@ impl EditorElement {
     fn layout_context_menu_aside(
         &self,
         text_hitbox: &Hitbox,
-        y_is_flipped: bool,
+        y_flipped: bool,
         menu_position: gpui::Point<Pixels>,
         menu_bounds: Bounds<Pixels>,
         max_menu_bounds: Bounds<Pixels>,
@@ -3209,7 +3207,7 @@ impl EditorElement {
     ) {
         let mut extend_amount = Edges::all(MENU_GAP);
         // Extend to include the cursored line to avoid overlapping it.
-        if y_is_flipped {
+        if y_flipped {
             extend_amount.bottom = line_height;
         } else {
             extend_amount.top = line_height;
@@ -3258,13 +3256,13 @@ impl EditorElement {
             let fit_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
                 // Prefer to fit on the same side of the line as the menu, then on the other side of
                 // the line.
-                if !y_is_flipped && wanted.height < available.bottom {
+                if !y_flipped && wanted.height < available.bottom {
                     Some(bottom_position)
-                } else if !y_is_flipped && wanted.height < available.top {
+                } else if !y_flipped && wanted.height < available.top {
                     Some(top_position)
-                } else if y_is_flipped && wanted.height < available.top {
+                } else if y_flipped && wanted.height < available.top {
                     Some(top_position)
-                } else if y_is_flipped && wanted.height < available.bottom {
+                } else if y_flipped && wanted.height < available.bottom {
                     Some(bottom_position)
                 } else {
                     None
@@ -3367,7 +3365,10 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit {
+                edits,
+                display_mode,
+            } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
                 }
@@ -3391,29 +3392,31 @@ impl EditorElement {
                     return None;
                 }
 
-                if let Some(range) = single_line_edit(&edits, &editor_snapshot.buffer_snapshot) {
-                    let mut element = inline_completion_tab_indicator("Accept", None, cx);
+                match display_mode {
+                    EditDisplayMode::TabAccept => {
+                        let range = &edits.first()?.0;
+                        let target_display_point = range.end.to_display_point(editor_snapshot);
 
-                    let target_display_point = range.end.to_display_point(editor_snapshot);
-                    let target_line_end = DisplayPoint::new(
-                        target_display_point.row(),
-                        editor_snapshot.line_len(target_display_point.row()),
-                    );
-                    let origin = self.editor.update(cx, |editor, cx| {
-                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
-                    })?;
+                        let target_line_end = DisplayPoint::new(
+                            target_display_point.row(),
+                            editor_snapshot.line_len(target_display_point.row()),
+                        );
+                        let origin = self.editor.update(cx, |editor, cx| {
+                            editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                        })?;
 
-                    element.prepaint_as_root(
-                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
-                        AvailableSpace::min_size(),
-                        cx,
-                    );
+                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
 
-                    return Some(element);
-                }
+                        element.prepaint_as_root(
+                            text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                            AvailableSpace::min_size(),
+                            cx,
+                        );
 
-                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
-                    return None;
+                        return Some(element);
+                    }
+                    EditDisplayMode::Inline => return None,
+                    EditDisplayMode::DiffPopover => {}
                 }
 
                 let crate::InlineCompletionText::Edit { text, highlights } =
@@ -5320,50 +5323,6 @@ fn inline_completion_tab_indicator(
         .into_any()
 }
 
-fn single_line_edit<'a>(
-    edits: &'a [(Range<Anchor>, String)],
-    snapshot: &MultiBufferSnapshot,
-) -> Option<&'a Range<Anchor>> {
-    let [(range, _)] = edits else {
-        return None;
-    };
-
-    let point_range = range.to_point(&snapshot);
-    if point_range.start.row == point_range.end.row {
-        Some(range)
-    } else {
-        None
-    }
-}
-
-fn all_edits_insertions_or_deletions(
-    edits: &Vec<(Range<Anchor>, String)>,
-    snapshot: &MultiBufferSnapshot,
-) -> bool {
-    let mut all_insertions = true;
-    let mut all_deletions = true;
-
-    for (range, new_text) in edits.iter() {
-        let range_is_empty = range.to_offset(&snapshot).is_empty();
-        let text_is_empty = new_text.is_empty();
-
-        if range_is_empty != text_is_empty {
-            if range_is_empty {
-                all_deletions = false;
-            } else {
-                all_insertions = false;
-            }
-        } else {
-            return false;
-        }
-
-        if !all_insertions && !all_deletions {
-            return false;
-        }
-    }
-    all_insertions || all_deletions
-}
-
 #[allow(clippy::too_many_arguments)]
 fn prepaint_gutter_button(
     button: IconButton,
@@ -6635,7 +6594,6 @@ impl Element for EditorElement {
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 row_info,
-                                &snapshot.buffer_snapshot,
                                 line_layout,
                                 crease_trailer_layout,
                                 em_width,

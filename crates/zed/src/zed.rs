@@ -12,6 +12,7 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
+use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
@@ -22,10 +23,10 @@ use feature_flags::FeatureFlagAppExt;
 use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, Action, AnyWindowHandle, AppContext, AsyncAppContext, Context,
-    DismissEvent, Element, FocusableView, KeyBinding, MenuItem, ParentElement, PathPromptOptions,
-    PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions, View, ViewContext,
-    VisualContext, WindowKind, WindowOptions,
+    actions, point, px, Action, AppContext, AsyncAppContext, Context, DismissEvent, Element,
+    FocusableView, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
+    SharedString, Styled, Task, TitlebarOptions, View, ViewContext, VisualContext, WindowKind,
+    WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -362,8 +363,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace_handle.clone(),
             cx.clone(),
         );
-        let assistant_panel =
-            assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
         let (
             project_panel,
@@ -372,7 +371,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             channels_panel,
             chat_panel,
             notification_panel,
-            assistant_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -380,7 +378,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             channels_panel,
             chat_panel,
             notification_panel,
-            assistant_panel,
         )?;
 
         workspace_handle.update(&mut cx, |workspace, cx| {
@@ -390,7 +387,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
-            workspace.add_panel(assistant_panel, cx)
         })?;
 
         let git_ui_enabled = {
@@ -403,6 +399,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
                 _ = timeout => false,
             }
         };
+
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {
@@ -426,20 +423,60 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
                 _ = timeout => false,
             }
         };
-        let assistant2_panel = if is_assistant2_enabled {
-            Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
+
+        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+            let assistant2_panel = assistant2::AssistantPanel::load(
+                workspace_handle.clone(),
+                prompt_builder,
+                cx.clone(),
+            )
+            .await?;
+
+            (None, Some(assistant2_panel))
         } else {
-            None
+            let assistant_panel = assistant::AssistantPanel::load(
+                workspace_handle.clone(),
+                prompt_builder.clone(),
+                cx.clone(),
+            )
+            .await?;
+
+            (Some(assistant_panel), None)
         };
+
         workspace_handle.update(&mut cx, |workspace, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
                 workspace.add_panel(assistant2_panel, cx);
             }
 
+            if let Some(assistant_panel) = assistant_panel {
+                workspace.add_panel(assistant_panel, cx);
+            }
+
+            // Register the actions that are shared between `assistant` and `assistant2`.
+            //
+            // We need to do this here instead of within the individual `init`
+            // functions so that we only register the actions once.
+            //
+            // Once we ship `assistant2` we can push this back down into `assistant2::assistant_panel::init`.
             if is_assistant2_enabled {
-                workspace.register_action(assistant2::InlineAssistant::inline_assist);
+                <dyn AssistantPanelDelegate>::set_global(
+                    Arc::new(assistant2::ConcreteAssistantPanelDelegate),
+                    cx,
+                );
+
+                workspace
+                    .register_action(assistant2::AssistantPanel::toggle_focus)
+                    .register_action(assistant2::InlineAssistant::inline_assist);
             } else {
-                workspace.register_action(assistant::AssistantPanel::inline_assist);
+                <dyn AssistantPanelDelegate>::set_global(
+                    Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
+                    cx,
+                );
+
+                workspace
+                    .register_action(assistant::AssistantPanel::toggle_focus)
+                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 
@@ -1017,16 +1054,6 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
-    // Need to notify about keymap load errors when new workspaces are created, so that initial
-    // keymap load errors are shown to the user.
-    let (new_workspace_window_tx, mut new_workspace_window_rx) = mpsc::unbounded();
-    cx.observe_new_views(move |_: &mut Workspace, cx| {
-        new_workspace_window_tx
-            .unbounded_send(cx.window_handle())
-            .unwrap();
-    })
-    .detach();
-
     let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
     cx.on_keyboard_layout_change(move |cx| {
         let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
@@ -1044,65 +1071,34 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(move |cx| async move {
         let mut user_keymap_content = String::new();
-        enum LastError {
-            None,
-            JsonError(anyhow::Error),
-            LoadError(MarkdownString),
-        }
-        let mut last_load_error = LastError::None;
         loop {
-            let new_workspace_window = select_biased! {
-                _ = base_keymap_rx.next() => None,
-                _ = keyboard_layout_rx.next() => None,
-                workspace = new_workspace_window_rx.next() => workspace,
+            select_biased! {
+                _ = base_keymap_rx.next() => {},
+                _ = keyboard_layout_rx.next() => {},
                 content = user_keymap_file_rx.next() => {
                     if let Some(content) = content {
                         user_keymap_content = content;
                     }
-                    None
                 }
             };
             cx.update(|cx| {
-                // No need to reload keymaps when a new workspace is added, just need to send the notification to it.
-                if new_workspace_window.is_none() {
-                    let load_result = KeymapFile::load(&user_keymap_content, cx);
-                    match load_result {
-                        KeymapFileLoadResult::Success { key_bindings } => {
+                let load_result = KeymapFile::load(&user_keymap_content, cx);
+                match load_result {
+                    KeymapFileLoadResult::Success { key_bindings } => {
+                        reload_keymaps(cx, key_bindings);
+                        dismiss_app_notification(&notification_id, cx);
+                    }
+                    KeymapFileLoadResult::SomeFailedToLoad {
+                        key_bindings,
+                        error_message,
+                    } => {
+                        if !key_bindings.is_empty() {
                             reload_keymaps(cx, key_bindings);
-                            dismiss_app_notification(&notification_id, cx);
-                            last_load_error = LastError::None;
                         }
-                        KeymapFileLoadResult::SomeFailedToLoad {
-                            key_bindings,
-                            error_message,
-                        } => {
-                            if !key_bindings.is_empty() {
-                                reload_keymaps(cx, key_bindings);
-                            }
-                            last_load_error = LastError::LoadError(error_message);
-                        }
-                        KeymapFileLoadResult::JsonParseFailure { error } => {
-                            last_load_error = LastError::JsonError(error);
-                        }
+                        show_keymap_file_load_error(notification_id.clone(), error_message, cx)
                     }
-                }
-                match &last_load_error {
-                    LastError::None => {}
-                    LastError::JsonError(err) => {
-                        show_keymap_file_json_error(
-                            new_workspace_window,
-                            notification_id.clone(),
-                            err,
-                            cx,
-                        );
-                    }
-                    LastError::LoadError(message) => {
-                        show_keymap_file_load_error(
-                            new_workspace_window,
-                            notification_id.clone(),
-                            message.clone(),
-                            cx,
-                        );
+                    KeymapFileLoadResult::JsonParseFailure { error } => {
+                        show_keymap_file_json_error(notification_id.clone(), &error, cx)
                     }
                 }
             })
@@ -1113,32 +1109,26 @@ pub fn handle_keymap_file_changes(
 }
 
 fn show_keymap_file_json_error(
-    new_workspace_window: Option<AnyWindowHandle>,
     notification_id: NotificationId,
     error: &anyhow::Error,
     cx: &mut AppContext,
 ) {
     let message: SharedString =
         format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
-    show_notification_to_specific_workspace_or_all_workspaces(
-        new_workspace_window,
-        notification_id,
-        cx,
-        move |cx| {
-            cx.new_view(|_cx| {
-                MessageNotification::new(message.clone())
-                    .with_click_message("Open keymap file")
-                    .on_click(|cx| {
-                        cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
-                        cx.emit(DismissEvent);
-                    })
-            })
-        },
-    );
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new_view(|_cx| {
+            MessageNotification::new(message.clone())
+                .with_click_message("Open keymap file")
+                .on_click(|cx| {
+                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                    cx.emit(DismissEvent);
+                })
+        })
+    })
+    .log_err();
 }
 
 fn show_keymap_file_load_error(
-    new_workspace_window: Option<AnyWindowHandle>,
     notification_id: NotificationId,
     markdown_error_message: MarkdownString,
     cx: &mut AppContext,
@@ -1157,55 +1147,32 @@ fn show_keymap_file_load_error(
     cx.spawn(move |cx| async move {
         let parsed_markdown = Rc::new(parsed_markdown.await);
         cx.update(|cx| {
-            show_notification_to_specific_workspace_or_all_workspaces(
-                new_workspace_window,
-                notification_id,
-                cx,
-                move |cx| {
-                    let workspace_handle = cx.view().downgrade();
-                    let parsed_markdown = parsed_markdown.clone();
-                    cx.new_view(move |_cx| {
-                        MessageNotification::new_from_builder(move |cx| {
-                            gpui::div()
-                                .text_xs()
-                                .child(markdown_preview::markdown_renderer::render_parsed_markdown(
-                                    &parsed_markdown.clone(),
-                                    Some(workspace_handle.clone()),
-                                    cx,
-                                ))
-                                .into_any()
-                        })
-                        .with_click_message("Open keymap file")
-                        .on_click(|cx| {
-                            cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
-                            cx.emit(DismissEvent);
-                        })
+            show_app_notification(notification_id, cx, move |cx| {
+                let workspace_handle = cx.view().downgrade();
+                let parsed_markdown = parsed_markdown.clone();
+                cx.new_view(move |_cx| {
+                    MessageNotification::new_from_builder(move |cx| {
+                        gpui::div()
+                            .text_xs()
+                            .child(markdown_preview::markdown_renderer::render_parsed_markdown(
+                                &parsed_markdown.clone(),
+                                Some(workspace_handle.clone()),
+                                cx,
+                            ))
+                            .into_any()
                     })
-                },
-            )
+                    .with_click_message("Open keymap file")
+                    .on_click(|cx| {
+                        cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                        cx.emit(DismissEvent);
+                    })
+                })
+            })
+            .log_err();
         })
         .ok();
     })
     .detach();
-}
-
-fn show_notification_to_specific_workspace_or_all_workspaces<V>(
-    new_workspace_window: Option<AnyWindowHandle>,
-    notification_id: NotificationId,
-    cx: &mut AppContext,
-    build_notification: impl Fn(&mut ViewContext<Workspace>) -> View<V>,
-) where
-    V: workspace::notifications::Notification,
-{
-    if let Some(workspace_window) = new_workspace_window.and_then(|w| w.downcast::<Workspace>()) {
-        workspace_window
-            .update(cx, |workspace, cx| {
-                workspace.show_notification(notification_id, cx, build_notification);
-            })
-            .ok();
-    } else {
-        show_app_notification(notification_id, cx, build_notification).ok();
-    }
 }
 
 fn reload_keymaps(cx: &mut AppContext, user_key_bindings: Vec<KeyBinding>) {
@@ -3868,8 +3835,13 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            let prompt_builder =
-                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
+            let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
+            assistant::init(
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                prompt_builder.clone(),
+                cx,
+            );
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);

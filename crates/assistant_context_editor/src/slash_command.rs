@@ -20,7 +20,7 @@ use std::{
 };
 use workspace::Workspace;
 
-pub(crate) struct SlashCommandCompletionProvider {
+pub struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     editor: Option<WeakView<ContextEditor>>,

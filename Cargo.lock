@@ -389,7 +389,6 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
- "fuzzy",
  "gpui",
  "indexed_docs",
  "indoc",
@@ -404,7 +403,6 @@ dependencies = [
  "multi_buffer",
  "parking_lot",
  "paths",
- "picker",
  "pretty_assertions",
  "project",
  "prompt_library",
@@ -439,7 +437,9 @@ name = "assistant2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_context_editor",
  "assistant_settings",
+ "assistant_slash_command",
  "assistant_tool",
  "async-watch",
  "chrono",
@@ -502,6 +502,7 @@ name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
@@ -516,18 +517,24 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "indexed_docs",
  "language",
  "language_model",
+ "language_model_selector",
  "language_models",
+ "languages",
  "log",
+ "multi_buffer",
  "open_ai",
  "parking_lot",
  "paths",
+ "picker",
  "pretty_assertions",
  "project",
  "prompt_library",
  "rand 0.8.5",
  "regex",
+ "rope",
  "rpc",
  "serde",
  "serde_json",
@@ -537,6 +544,8 @@ dependencies = [
  "strum",
  "telemetry_events",
  "text",
+ "theme",
+ "tree-sitter-md",
  "ui",
  "unindent",
  "util",
@@ -4214,9 +4223,9 @@ dependencies = [
 
 [[package]]
 name = "etagere"
-version = "0.2.13"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e2f1e3be19fb10f549be8c1bf013e8675b4066c445e36eb76d2ebb2f54ee495"
+checksum = "fc89bf99e5dc15954a60f707c1e09d7540e5cd9af85fa75caa0b510bc08c5342"
 dependencies = [
  "euclid",
  "svg_fmt",
@@ -5237,6 +5246,7 @@ dependencies = [
  "git",
  "gpui",
  "menu",
+ "picker",
  "project",
  "schemars",
  "serde",
@@ -5248,7 +5258,6 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
- "worktree",
 ]
 
 [[package]]
@@ -6300,9 +6309,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.7.0"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62f822373a4fe84d4bb149bf54e584a7f4abec90e072ed49cda0edea5b95471f"
+checksum = "8c9c992b02b5b4c94ea26e32fe5bccb7aa7d9f390ab5c1221ff895bc7ea8b652"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
@@ -7038,7 +7047,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7388,6 +7397,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "text",
  "util",
 ]
 
@@ -9510,9 +9520,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "915a1e146535de9163f3987b8944ed8cf49a18bb0056bcebcdcece385cece4ff"
+checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "pin-utils"
@@ -9830,6 +9840,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "once_cell",
  "parking_lot",
  "pathdiff",
  "paths",
@@ -11576,9 +11587,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.24"
+version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cb6eb87a131f756572d7fb904f6e7b68633f09cca868c5df1c4b8d1a694bbba"
+checksum = "f79dfe2d285b0488816f30e700a7438c5a73d816b5b7d3ac72fbc48b0d185e03"
 dependencies = [
  "serde",
 ]
@@ -11625,9 +11636,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.135"
+version = "1.0.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b0d7ba2887406110130a978386c4e1befb98c674b4fba677954e4db976630d9"
+checksum = "930cfb6e6abf99298aaad7d29abbef7a9999a9a8806a40088f55f0dcec03146b"
 dependencies = [
  "indexmap",
  "itoa",
@@ -13371,6 +13382,7 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -15263,7 +15275,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16264,7 +16276,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.171.0"
+version = "0.172.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16272,6 +16284,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",
  "async-watch",

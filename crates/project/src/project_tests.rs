@@ -1749,6 +1749,12 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             });
         })
     });
+    let _rs_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
+        .await
+        .unwrap();
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
     assert_eq!(
         fake_rust_server_2
@@ -2573,25 +2579,28 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(
         "/dir",
         json!({
-            "a.rs": "const fn a() { A }",
             "b.rs": "const y: i32 = crate::a()",
         }),
     )
     .await;
+    fs.insert_tree(
+        "/another_dir",
+        json!({
+        "a.rs": "const fn a() { A }"}),
+    )
+    .await;
 
-    let project = Project::test(fs, ["/dir/b.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
-
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp("/dir/b.rs", cx)
         })
         .await
         .unwrap();
-
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
@@ -2603,12 +2612,11 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
+                lsp::Url::from_file_path("/another_dir/a.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             ),
         )))
     });
-
     let mut definitions = project
         .update(cx, |project, cx| project.definition(&buffer, 22, cx))
         .await
@@ -2629,18 +2637,21 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
                 .as_local()
                 .unwrap()
                 .abs_path(cx),
-            Path::new("/dir/a.rs"),
+            Path::new("/another_dir/a.rs"),
         );
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
             list_worktrees(&project, cx),
-            [("/dir/a.rs".as_ref(), false), ("/dir/b.rs".as_ref(), true)],
+            [
+                ("/another_dir/a.rs".as_ref(), false),
+                ("/dir".as_ref(), true)
+            ],
         );
 
         drop(definition);
     });
     cx.update(|cx| {
-        assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
+        assert_eq!(list_worktrees(&project, cx), [("/dir".as_ref(), true)]);
     });
 
     fn list_worktrees<'a>(

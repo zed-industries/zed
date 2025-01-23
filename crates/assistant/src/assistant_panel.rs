@@ -1,33 +1,28 @@
-use crate::context_editor::{
-    ContextEditor, ContextEditorToolbarItem, ContextEditorToolbarItemEvent, DEFAULT_TAB_TITLE,
-};
-use crate::context_history::ContextHistory;
+use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
-    slash_command::SlashCommandCompletionProvider,
-    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
-    InlineAssistant, InsertDraggedFiles, NewContext, ToggleFocus, ToggleModelSelector,
+    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewContext,
 };
-use anyhow::Result;
-use assistant_context_editor::{Context, ContextId, ContextStore, ContextStoreEvent};
+use anyhow::{anyhow, Result};
+use assistant_context_editor::{
+    make_lsp_adapter_delegate, AssistantPanelDelegate, Context, ContextEditor,
+    ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextHistory, ContextId,
+    ContextStore, ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider,
+    ToggleModelSelector, DEFAULT_TAB_TITLE,
+};
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::{proto, Client, Status};
-use collections::HashMap;
 use editor::{Editor, EditorEvent};
 use fs::Fs;
 use gpui::{
-    canvas, div, prelude::*, Action, AnyView, AppContext, AsyncWindowContext, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, InteractiveElement, IntoElement, Model,
-    ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
-    Task, UpdateGlobal, View, WeakView,
+    prelude::*, Action, AppContext, AsyncWindowContext, EventEmitter, ExternalPaths, FocusHandle,
+    FocusableView, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, Styled,
+    Subscription, Task, UpdateGlobal, View, WeakView,
 };
-use language::{LanguageRegistry, LspAdapterDelegate};
-use language_model::{
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
-};
+use language::LanguageRegistry;
+use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use language_model_selector::LanguageModelSelector;
-use project::lsp_store::LocalLspAdapterDelegate;
 use project::Project;
 use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -35,29 +30,20 @@ use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use ui::{prelude::*, ContextMenu, ElevationIndex, PopoverMenu, PopoverMenuHandle, Tooltip};
+use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 use util::{maybe, ResultExt};
 use workspace::DraggedTab;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    item::Item,
     pane, DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
 };
-use zed_actions::InlineAssist;
+use zed_actions::assistant::{DeployPromptLibrary, InlineAssist, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
-                    let settings = AssistantSettings::get_global(cx);
-                    if !settings.enabled {
-                        return;
-                    }
-
-                    workspace.toggle_panel_focus::<AssistantPanel>(cx);
-                })
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
                 .register_action(ContextEditor::copy_code)
@@ -340,6 +326,19 @@ impl AssistantPanel {
         this
     }
 
+    pub fn toggle_focus(
+        workspace: &mut Workspace,
+        _: &ToggleFocus,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled {
+            return;
+        }
+
+        workspace.toggle_panel_focus::<Self>(cx);
+    }
+
     fn watch_client_status(client: Arc<Client>, cx: &mut ViewContext<Self>) -> Task<()> {
         let mut status_rx = client.status();
 
@@ -438,7 +437,7 @@ impl AssistantPanel {
             if let Some(context_editor) = self.active_context_editor(cx) {
                 let new_summary = model_summary_editor.read(cx).text(cx);
                 context_editor.update(cx, |context_editor, cx| {
-                    context_editor.context.update(cx, |context, cx| {
+                    context_editor.context().update(cx, |context, cx| {
                         if context.summary().is_none()
                             && (new_summary == DEFAULT_TAB_TITLE || new_summary.trim().is_empty())
                         {
@@ -475,7 +474,7 @@ impl AssistantPanel {
     ) {
         if let Some(context_editor) = self.active_context_editor(cx) {
             context_editor.update(cx, |context_editor, cx| {
-                context_editor.context.update(cx, |context, cx| {
+                context_editor.context().update(cx, |context, cx| {
                     context.summarize(true, cx);
                 })
             })
@@ -501,7 +500,6 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        let assistant_panel = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
@@ -509,7 +507,6 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
-                assistant_panel,
                 cx,
             );
             editor.insert_default_prompt(cx);
@@ -523,7 +520,7 @@ impl AssistantPanel {
         if let Some(editor) = self.active_context_editor(cx) {
             editor.update(cx, |active_context, cx| {
                 active_context
-                    .context
+                    .context()
                     .update(cx, |context, cx| context.completion_provider_changed(cx))
             })
         }
@@ -716,7 +713,7 @@ impl AssistantPanel {
                 .read(cx)
                 .active_context_editor(cx)
                 .and_then(|editor| {
-                    let editor = &editor.read(cx).editor;
+                    let editor = &editor.read(cx).editor().clone();
                     if editor.read(cx).is_focused(cx) {
                         Some(editor.clone())
                     } else {
@@ -778,7 +775,6 @@ impl AssistantPanel {
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
-                    let weak_assistant_panel = cx.view().downgrade();
 
                     let editor = cx.new_view(|cx| {
                         ContextEditor::for_context(
@@ -787,7 +783,6 @@ impl AssistantPanel {
                             workspace,
                             project,
                             lsp_adapter_delegate,
-                            weak_assistant_panel,
                             cx,
                         )
                     });
@@ -808,7 +803,6 @@ impl AssistantPanel {
                 .log_err()
                 .flatten();
 
-            let assistant_panel = cx.view().downgrade();
             let editor = cx.new_view(|cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
@@ -816,7 +810,6 @@ impl AssistantPanel {
                     self.workspace.clone(),
                     self.project.clone(),
                     lsp_adapter_delegate,
-                    assistant_panel,
                     cx,
                 );
                 editor.insert_default_prompt(cx);
@@ -970,12 +963,11 @@ impl AssistantPanel {
                 pane.activate_item(history_item_ix, true, true, cx);
             });
         } else {
-            let assistant_panel = cx.view().downgrade();
             let history = cx.new_view(|cx| {
                 ContextHistory::new(
                     self.project.clone(),
                     self.context_store.clone(),
-                    assistant_panel,
+                    self.workspace.clone(),
                     cx,
                 )
             });
@@ -1013,7 +1005,7 @@ impl AssistantPanel {
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
-        Some(self.active_context_editor(cx)?.read(cx).context.clone())
+        Some(self.active_context_editor(cx)?.read(cx).context().clone())
     }
 
     pub fn open_saved_context(
@@ -1023,7 +1015,7 @@ impl AssistantPanel {
     ) -> Task<Result<()>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
-                .filter(|editor| editor.read(cx).context.read(cx).path() == Some(&path))
+                .filter(|editor| editor.read(cx).context().read(cx).path() == Some(&path))
         });
         if let Some(existing_context) = existing_context {
             return cx.spawn(|this, mut cx| async move {
@@ -1042,7 +1034,6 @@ impl AssistantPanel {
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
-            let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
@@ -1051,7 +1042,6 @@ impl AssistantPanel {
                         workspace,
                         project,
                         lsp_adapter_delegate,
-                        assistant_panel,
                         cx,
                     )
                 });
@@ -1069,7 +1059,7 @@ impl AssistantPanel {
     ) -> Task<Result<View<ContextEditor>>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
-                .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
+                .filter(|editor| *editor.read(cx).context().read(cx).id() == id)
         });
         if let Some(existing_context) = existing_context {
             return cx.spawn(|this, mut cx| async move {
@@ -1091,7 +1081,6 @@ impl AssistantPanel {
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
-            let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
@@ -1100,7 +1089,6 @@ impl AssistantPanel {
                         workspace,
                         this.project.clone(),
                         lsp_adapter_delegate,
-                        assistant_panel,
                         cx,
                     )
                 });
@@ -1304,224 +1292,77 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     }
 }
 
+pub struct ConcreteAssistantPanelDelegate;
+
+impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
+    fn active_context_editor(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<View<ContextEditor>> {
+        let panel = workspace.panel::<AssistantPanel>(cx)?;
+        panel.read(cx).active_context_editor(cx)
+    }
+
+    fn open_saved_context(
+        &self,
+        workspace: &mut Workspace,
+        path: PathBuf,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return Task::ready(Err(anyhow!("no Assistant panel found")));
+        };
+
+        panel.update(cx, |panel, cx| panel.open_saved_context(path, cx))
+    }
+
+    fn open_remote_context(
+        &self,
+        workspace: &mut Workspace,
+        context_id: ContextId,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<View<ContextEditor>>> {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return Task::ready(Err(anyhow!("no Assistant panel found")));
+        };
+
+        panel.update(cx, |panel, cx| panel.open_remote_context(context_id, cx))
+    }
+
+    fn quote_selection(
+        &self,
+        workspace: &mut Workspace,
+        creases: Vec<(String, String)>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        panel.update(cx, |_, cx| {
+            // Wait to create a new context until the workspace is no longer
+            // being updated.
+            cx.defer(move |panel, cx| {
+                if let Some(context) = panel
+                    .active_context_editor(cx)
+                    .or_else(|| panel.new_context(cx))
+                {
+                    context.update(cx, |context, cx| context.quote_creases(creases, cx));
+                };
+            });
+        });
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum WorkflowAssistStatus {
     Pending,
     Confirmed,
     Done,
     Idle,
-}
-
-pub struct ConfigurationView {
-    focus_handle: FocusHandle,
-    configuration_views: HashMap<LanguageModelProviderId, AnyView>,
-    _registry_subscription: Subscription,
-}
-
-impl ConfigurationView {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
-
-        let registry_subscription = cx.subscribe(
-            &LanguageModelRegistry::global(cx),
-            |this, _, event: &language_model::Event, cx| match event {
-                language_model::Event::AddedProvider(provider_id) => {
-                    let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
-                    if let Some(provider) = provider {
-                        this.add_configuration_view(&provider, cx);
-                    }
-                }
-                language_model::Event::RemovedProvider(provider_id) => {
-                    this.remove_configuration_view(provider_id);
-                }
-                _ => {}
-            },
-        );
-
-        let mut this = Self {
-            focus_handle,
-            configuration_views: HashMap::default(),
-            _registry_subscription: registry_subscription,
-        };
-        this.build_configuration_views(cx);
-        this
-    }
-
-    fn build_configuration_views(&mut self, cx: &mut ViewContext<Self>) {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
-        for provider in providers {
-            self.add_configuration_view(&provider, cx);
-        }
-    }
-
-    fn remove_configuration_view(&mut self, provider_id: &LanguageModelProviderId) {
-        self.configuration_views.remove(provider_id);
-    }
-
-    fn add_configuration_view(
-        &mut self,
-        provider: &Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let configuration_view = provider.configuration_view(cx);
-        self.configuration_views
-            .insert(provider.id(), configuration_view);
-    }
-
-    fn render_provider_view(
-        &mut self,
-        provider: &Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
-    ) -> Div {
-        let provider_id = provider.id().0.clone();
-        let provider_name = provider.name().0.clone();
-        let configuration_view = self.configuration_views.get(&provider.id()).cloned();
-
-        let open_new_context = cx.listener({
-            let provider = provider.clone();
-            move |_, _, cx| {
-                cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
-                    provider.clone(),
-                ))
-            }
-        });
-
-        v_flex()
-            .gap_2()
-            .child(
-                h_flex()
-                    .justify_between()
-                    .child(Headline::new(provider_name.clone()).size(HeadlineSize::Small))
-                    .when(provider.is_authenticated(cx), move |this| {
-                        this.child(
-                            h_flex().justify_end().child(
-                                Button::new(
-                                    SharedString::from(format!("new-context-{provider_id}")),
-                                    "Open New Chat",
-                                )
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::Plus)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .on_click(open_new_context),
-                            ),
-                        )
-                    }),
-            )
-            .child(
-                div()
-                    .p(DynamicSpacing::Base08.rems(cx))
-                    .bg(cx.theme().colors().surface_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .rounded_md()
-                    .when(configuration_view.is_none(), |this| {
-                        this.child(div().child(Label::new(format!(
-                            "No configuration view for {}",
-                            provider_name
-                        ))))
-                    })
-                    .when_some(configuration_view, |this, configuration_view| {
-                        this.child(configuration_view)
-                    }),
-            )
-    }
-}
-
-impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let providers = LanguageModelRegistry::read_global(cx).providers();
-        let provider_views = providers
-            .into_iter()
-            .map(|provider| self.render_provider_view(&provider, cx))
-            .collect::<Vec<_>>();
-
-        let mut element = v_flex()
-            .id("assistant-configuration-view")
-            .track_focus(&self.focus_handle(cx))
-            .bg(cx.theme().colors().editor_background)
-            .size_full()
-            .overflow_y_scroll()
-            .child(
-                v_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .gap_1()
-                    .child(Headline::new("Configure your Assistant").size(HeadlineSize::Medium))
-                    .child(
-                        Label::new(
-                            "At least one LLM provider must be configured to use the Assistant.",
-                        )
-                        .color(Color::Muted),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .p(DynamicSpacing::Base16.rems(cx))
-                    .mt_1()
-                    .gap_6()
-                    .flex_1()
-                    .children(provider_views),
-            )
-            .into_any();
-
-        // We use a canvas here to get scrolling to work in the ConfigurationView. It's a workaround
-        // because we couldn't the element to take up the size of the parent.
-        canvas(
-            move |bounds, cx| {
-                element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
-                element
-            },
-            |_, mut element, cx| {
-                element.paint(cx);
-            },
-        )
-        .flex_1()
-        .w_full()
-    }
-}
-
-pub enum ConfigurationViewEvent {
-    NewProviderContextEditor(Arc<dyn LanguageModelProvider>),
-}
-
-impl EventEmitter<ConfigurationViewEvent> for ConfigurationView {}
-
-impl FocusableView for ConfigurationView {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
-    }
-}
-
-impl Item for ConfigurationView {
-    type Event = ConfigurationViewEvent;
-
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("Configuration".into())
-    }
-}
-
-fn make_lsp_adapter_delegate(
-    project: &Model<Project>,
-    cx: &mut AppContext,
-) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
-    project.update(cx, |project, cx| {
-        // TODO: Find the right worktree.
-        let Some(worktree) = project.worktrees(cx).next() else {
-            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
-        };
-        let http_client = project.client().http_client().clone();
-        project.lsp_store().update(cx, |_, cx| {
-            Ok(Some(LocalLspAdapterDelegate::new(
-                project.languages().clone(),
-                project.environment(),
-                cx.weak_model(),
-                &worktree,
-                http_client,
-                project.fs().clone(),
-                cx,
-            ) as Arc<dyn LspAdapterDelegate>))
-        })
-    })
 }

@@ -1,9 +1,4 @@
 use anyhow::Result;
-use assistant_context_editor::{
-    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
-    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
-    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
-};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
@@ -27,12 +22,12 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    div, img, percentage, point, prelude::*, pulsating_between, size, Animation, AnimationExt,
-    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    CursorStyle, Empty, Entity, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    View, WeakModel, WeakView,
+    actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
+    size, Animation, AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext,
+    ClipboardEntry, ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, Global, InteractiveElement, IntoElement, Model, ParentElement,
+    Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
@@ -40,6 +35,7 @@ use language_model::{LanguageModelImage, LanguageModelRegistry, LanguageModelToo
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
+use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
@@ -61,10 +57,34 @@ use workspace::{
     Workspace,
 };
 
+actions!(
+    assistant,
+    [
+        Assist,
+        ConfirmCommand,
+        CopyCode,
+        CycleMessageRole,
+        Edit,
+        InsertIntoEditor,
+        QuoteSelection,
+        Split,
+        ToggleModelSelector,
+    ]
+);
+
+#[derive(PartialEq, Clone)]
+pub enum InsertDraggedFiles {
+    ProjectPaths(Vec<PathBuf>),
+    ExternalFiles(Vec<PathBuf>),
+}
+
+impl_internal_actions!(assistant, [InsertDraggedFiles]);
+
+use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use crate::{
-    humanize_token_count, slash_command::SlashCommandCompletionProvider, slash_command_picker,
-    Assist, AssistantPanel, ConfirmCommand, CopyCode, CycleMessageRole, Edit, InsertDraggedFiles,
-    InsertIntoEditor, QuoteSelection, Split, ToggleModelSelector,
+    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -94,15 +114,61 @@ enum AssistError {
     Message(SharedString),
 }
 
+pub trait AssistantPanelDelegate {
+    fn active_context_editor(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<View<ContextEditor>>;
+
+    fn open_saved_context(
+        &self,
+        workspace: &mut Workspace,
+        path: PathBuf,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>>;
+
+    fn open_remote_context(
+        &self,
+        workspace: &mut Workspace,
+        context_id: ContextId,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<View<ContextEditor>>>;
+
+    fn quote_selection(
+        &self,
+        workspace: &mut Workspace,
+        creases: Vec<(String, String)>,
+        cx: &mut ViewContext<Workspace>,
+    );
+}
+
+impl dyn AssistantPanelDelegate {
+    /// Returns the global [`AssistantPanelDelegate`], if it exists.
+    pub fn try_global(cx: &AppContext) -> Option<Arc<Self>> {
+        cx.try_global::<GlobalAssistantPanelDelegate>()
+            .map(|global| global.0.clone())
+    }
+
+    /// Sets the global [`AssistantPanelDelegate`].
+    pub fn set_global(delegate: Arc<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalAssistantPanelDelegate(delegate));
+    }
+}
+
+struct GlobalAssistantPanelDelegate(Arc<dyn AssistantPanelDelegate>);
+
+impl Global for GlobalAssistantPanelDelegate {}
+
 pub struct ContextEditor {
-    pub(crate) context: Model<Context>,
+    context: Model<Context>,
     fs: Arc<dyn Fs>,
     slash_commands: Arc<SlashCommandWorkingSet>,
     tools: Arc<ToolWorkingSet>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
-    pub(crate) editor: View<Editor>,
+    editor: View<Editor>,
     blocks: HashMap<MessageId, (MessageHeader, CustomBlockId)>,
     image_blocks: HashSet<CustomBlockId>,
     scroll_position: Option<ScrollPosition>,
@@ -113,7 +179,6 @@ pub struct ContextEditor {
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
     active_patch: Option<Range<language::Anchor>>,
-    assistant_panel: WeakView<AssistantPanel>,
     last_error: Option<AssistError>,
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
@@ -130,13 +195,12 @@ pub const DEFAULT_TAB_TITLE: &str = "New Chat";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
-    pub(crate) fn for_context(
+    pub fn for_context(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
         workspace: WeakView<Workspace>,
         project: Model<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        assistant_panel: WeakView<AssistantPanel>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
@@ -190,7 +254,6 @@ impl ContextEditor {
             _subscriptions,
             patches: HashMap::default(),
             active_patch: None,
-            assistant_panel,
             last_error: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
@@ -201,6 +264,14 @@ impl ContextEditor {
         this.insert_slash_command_output_sections(sections, false, cx);
         this.patches_updated(&Vec::new(), &patch_ranges, cx);
         this
+    }
+
+    pub fn context(&self) -> &Model<Context> {
+        &self.context
+    }
+
+    pub fn editor(&self) -> &View<Editor> {
+        &self.editor
     }
 
     pub fn insert_default_prompt(&mut self, cx: &mut ViewContext<Self>) {
@@ -1523,10 +1594,12 @@ impl ContextEditor {
         _: &InsertIntoEditor,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
             return;
         };
-        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
+        let Some(context_editor_view) =
+            assistant_panel_delegate.active_context_editor(workspace, cx)
+        else {
             return;
         };
         let Some(active_editor_view) = workspace
@@ -1546,8 +1619,9 @@ impl ContextEditor {
 
     pub fn copy_code(workspace: &mut Workspace, _: &CopyCode, cx: &mut ViewContext<Workspace>) {
         let result = maybe!({
-            let panel = workspace.panel::<AssistantPanel>(cx)?;
-            let context_editor_view = panel.read(cx).active_context_editor(cx)?;
+            let assistant_panel_delegate = <dyn AssistantPanelDelegate>::try_global(cx)?;
+            let context_editor_view =
+                assistant_panel_delegate.active_context_editor(workspace, cx)?;
             Self::get_selection_or_code_block(&context_editor_view, cx)
         });
         let Some((text, is_code_block)) = result else {
@@ -1579,10 +1653,12 @@ impl ContextEditor {
         action: &InsertDraggedFiles,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
             return;
         };
-        let Some(context_editor_view) = panel.read(cx).active_context_editor(cx) else {
+        let Some(context_editor_view) =
+            assistant_panel_delegate.active_context_editor(workspace, cx)
+        else {
             return;
         };
 
@@ -1653,7 +1729,7 @@ impl ContextEditor {
         _: &QuoteSelection,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
             return;
         };
 
@@ -1664,61 +1740,46 @@ impl ContextEditor {
         if creases.is_empty() {
             return;
         }
-        // Activate the panel
-        if !panel.focus_handle(cx).contains_focused(cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
-        }
 
-        panel.update(cx, |_, cx| {
-            // Wait to create a new context until the workspace is no longer
-            // being updated.
-            cx.defer(move |panel, cx| {
-                if let Some(context) = panel
-                    .active_context_editor(cx)
-                    .or_else(|| panel.new_context(cx))
-                {
-                    context.update(cx, |context, cx| {
-                        context.editor.update(cx, |editor, cx| {
-                            editor.insert("\n", cx);
-                            for (text, crease_title) in creases {
-                                let point = editor.selections.newest::<Point>(cx).head();
-                                let start_row = MultiBufferRow(point.row);
+        assistant_panel_delegate.quote_selection(workspace, creases, cx);
+    }
 
-                                editor.insert(&text, cx);
+    pub fn quote_creases(&mut self, creases: Vec<(String, String)>, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| {
+            editor.insert("\n", cx);
+            for (text, crease_title) in creases {
+                let point = editor.selections.newest::<Point>(cx).head();
+                let start_row = MultiBufferRow(point.row);
 
-                                let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                let anchor_before = snapshot.anchor_after(point);
-                                let anchor_after = editor
-                                    .selections
-                                    .newest_anchor()
-                                    .head()
-                                    .bias_left(&snapshot);
+                editor.insert(&text, cx);
 
-                                editor.insert("\n", cx);
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let anchor_before = snapshot.anchor_after(point);
+                let anchor_after = editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .bias_left(&snapshot);
 
-                                let fold_placeholder = quote_selection_fold_placeholder(
-                                    crease_title,
-                                    cx.view().downgrade(),
-                                );
-                                let crease = Crease::inline(
-                                    anchor_before..anchor_after,
-                                    fold_placeholder,
-                                    render_quote_selection_output_toggle,
-                                    |_, _, _| Empty.into_any(),
-                                );
-                                editor.insert_creases(vec![crease], cx);
-                                editor.fold_at(
-                                    &FoldAt {
-                                        buffer_row: start_row,
-                                    },
-                                    cx,
-                                );
-                            }
-                        })
-                    });
-                };
-            });
-        });
+                editor.insert("\n", cx);
+
+                let fold_placeholder =
+                    quote_selection_fold_placeholder(crease_title, cx.view().downgrade());
+                let crease = Crease::inline(
+                    anchor_before..anchor_after,
+                    fold_placeholder,
+                    render_quote_selection_output_toggle,
+                    |_, _, _| Empty.into_any(),
+                );
+                editor.insert_creases(vec![crease], cx);
+                editor.fold_at(
+                    &FoldAt {
+                        buffer_row: start_row,
+                    },
+                    cx,
+                );
+            }
+        })
     }
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
@@ -2154,10 +2215,10 @@ impl ContextEditor {
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        use feature_flags::FeatureFlagAppExt;
-        let nudge = self.assistant_panel.upgrade().map(|assistant_panel| {
-            assistant_panel.read(cx).show_zed_ai_notice && cx.has_flag::<feature_flags::ZedPro>()
-        });
+        // This was previously gated behind the `zed-pro` feature flag. Since we
+        // aren't planning to ship that right now, we're just hard-coding this
+        // value to not show the nudge.
+        let nudge = Some(false);
 
         if nudge.map_or(false, |value| value) {
             Some(
@@ -3039,18 +3100,15 @@ impl FollowableItem for ContextEditor {
         let context_id = ContextId::from_proto(state.context_id);
         let editor_state = state.editor?;
 
-        let (project, panel) = workspace.update(cx, |workspace, cx| {
-            Some((
-                workspace.project().clone(),
-                workspace.panel::<AssistantPanel>(cx)?,
-            ))
-        })?;
+        let project = workspace.read(cx).project().clone();
+        let assistant_panel_delegate = <dyn AssistantPanelDelegate>::try_global(cx)?;
 
-        let context_editor =
-            panel.update(cx, |panel, cx| panel.open_remote_context(context_id, cx));
+        let context_editor_task = workspace.update(cx, |workspace, cx| {
+            assistant_panel_delegate.open_remote_context(workspace, context_id, cx)
+        });
 
         Some(cx.spawn(|mut cx| async move {
-            let context_editor = context_editor.await?;
+            let context_editor = context_editor_task.await?;
             context_editor
                 .update(&mut cx, |context_editor, cx| {
                     context_editor.remote_id = Some(id);
@@ -3464,6 +3522,48 @@ fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
     }
 
     None
+}
+
+pub fn humanize_token_count(count: usize) -> String {
+    match count {
+        0..=999 => count.to_string(),
+        1000..=9999 => {
+            let thousands = count / 1000;
+            let hundreds = (count % 1000 + 50) / 100;
+            if hundreds == 0 {
+                format!("{}k", thousands)
+            } else if hundreds == 10 {
+                format!("{}k", thousands + 1)
+            } else {
+                format!("{}.{}k", thousands, hundreds)
+            }
+        }
+        _ => format!("{}k", (count + 500) / 1000),
+    }
+}
+
+pub fn make_lsp_adapter_delegate(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
+    project.update(cx, |project, cx| {
+        // TODO: Find the right worktree.
+        let Some(worktree) = project.worktrees(cx).next() else {
+            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
+        };
+        let http_client = project.client().http_client().clone();
+        project.lsp_store().update(cx, |_, cx| {
+            Ok(Some(LocalLspAdapterDelegate::new(
+                project.languages().clone(),
+                project.environment(),
+                cx.weak_model(),
+                &worktree,
+                http_client,
+                project.fs().clone(),
+                cx,
+            ) as Arc<dyn LspAdapterDelegate>))
+        })
+    })
 }
 
 #[cfg(test)]

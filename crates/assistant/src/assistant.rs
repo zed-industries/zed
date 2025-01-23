@@ -1,15 +1,11 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
+mod assistant_configuration;
 pub mod assistant_panel;
-mod context_editor;
-mod context_history;
 mod inline_assistant;
-mod slash_command;
-pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod terminal_inline_assistant;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
@@ -19,16 +15,14 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
-use prompt_library::{PromptBuilder, PromptLoadingParams};
+use prompt_library::PromptBuilder;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
-use util::ResultExt;
 
 pub use crate::assistant_panel::{AssistantPanel, AssistantPanelEvent};
 pub(crate) use crate::inline_assistant::*;
@@ -37,32 +31,13 @@ use crate::slash_command_settings::SlashCommandSettings;
 actions!(
     assistant,
     [
-        Assist,
-        Edit,
-        Split,
-        CopyCode,
-        CycleMessageRole,
-        QuoteSelection,
-        InsertIntoEditor,
-        ToggleFocus,
         InsertActivePrompt,
         DeployHistory,
-        DeployPromptLibrary,
-        ConfirmCommand,
         NewContext,
-        ToggleModelSelector,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
     ]
 );
-
-#[derive(PartialEq, Clone)]
-pub enum InsertDraggedFiles {
-    ProjectPaths(Vec<PathBuf>),
-    ExternalFiles(Vec<PathBuf>),
-}
-
-impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 
@@ -116,9 +91,9 @@ impl Assistant {
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    stdout_is_a_pty: bool,
+    prompt_builder: Arc<PromptBuilder>,
     cx: &mut AppContext,
-) -> Arc<PromptBuilder> {
+) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
@@ -158,16 +133,6 @@ pub fn init(
     assistant_panel::init(cx);
     context_server::init(cx);
 
-    let prompt_builder = PromptBuilder::new(Some(PromptLoadingParams {
-        fs: fs.clone(),
-        repo_path: stdout_is_a_pty
-            .then(|| std::env::current_dir().log_err())
-            .flatten(),
-        cx,
-    }))
-    .log_err()
-    .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
     inline_assistant::init(
         fs.clone(),
@@ -198,8 +163,6 @@ pub fn init(
         });
     })
     .detach();
-
-    prompt_builder
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {
@@ -331,24 +294,6 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
     } else {
         slash_command_registry
             .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
-}
-
-pub fn humanize_token_count(count: usize) -> String {
-    match count {
-        0..=999 => count.to_string(),
-        1000..=9999 => {
-            let thousands = count / 1000;
-            let hundreds = (count % 1000 + 50) / 100;
-            if hundreds == 0 {
-                format!("{}k", thousands)
-            } else if hundreds == 10 {
-                format!("{}k", thousands + 1)
-            } else {
-                format!("{}.{}k", thousands, hundreds)
-            }
-        }
-        _ => format!("{}k", (count + 500) / 1000),
     }
 }
 

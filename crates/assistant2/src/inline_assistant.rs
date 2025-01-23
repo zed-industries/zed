@@ -204,7 +204,7 @@ impl InlineAssistant {
 
     pub fn inline_assist(
         workspace: &mut Workspace,
-        _action: &zed_actions::InlineAssist,
+        _action: &zed_actions::assistant::InlineAssist,
         cx: &mut ViewContext<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);

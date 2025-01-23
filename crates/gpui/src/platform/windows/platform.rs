@@ -167,7 +167,7 @@ impl WindowsPlatform {
 
     #[inline]
     fn run_foreground_task(&self) {
-        if let Ok(runnable) = self.main_receiver.try_recv() {
+        for runnable in self.main_receiver.drain() {
             runnable.run();
         }
     }
