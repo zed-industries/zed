@@ -127,6 +127,8 @@ impl StatusItemView for ImageInfo {
         active_pane_item: Option<&dyn ItemHandle>,
         cx: &mut ViewContext<Self>,
     ) {
+        self._observe_active_image = None;
+
         if let Some(image_view) = active_pane_item.and_then(|item| item.act_as::<ImageView>(cx)) {
             self.update_metadata(&image_view, cx);
             self._observe_active_image = Some(cx.observe(&image_view, |this, view, cx| {
@@ -136,9 +138,8 @@ impl StatusItemView for ImageInfo {
             self.width = None;
             self.height = None;
             self.file_size = None;
-            self.color_type = None;
             self.format = None;
-            self._observe_active_image = None;
+            self.color_type = None;
         }
         cx.notify();
     }

@@ -34,6 +34,7 @@ impl From<NonZeroU64> for ImageId {
     }
 }
 
+#[derive(Debug)]
 pub enum ImageItemEvent {
     ReloadNeeded,
     Reloaded,
@@ -92,7 +93,7 @@ fn image_color_type_description(color_type: ExtendedColorType) -> String {
 }
 
 impl ImageItem {
-    async fn image_info(
+    pub async fn image_info(
         image: Model<ImageItem>,
         project: Model<Project>,
         cx: &mut AsyncAppContext,
@@ -279,7 +280,7 @@ impl ProjectItem for ImageItem {
                 let image_metadata =
                     Self::image_info(image_model.clone(), project, &mut cx).await?;
 
-                image_model.update(&mut cx, |image_model, _| {
+                image_model.update(&mut cx, |image_model, _cx| {
                     image_model.image_meta = Some(image_metadata);
                 })?;
 

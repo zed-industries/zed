@@ -36,6 +36,28 @@ impl ImageView {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
+
+        if image_item.read(cx).image_meta.is_none() {
+            let image_item_clone = image_item.downgrade();
+            let project_clone = project.downgrade();
+
+            cx.spawn(|view, mut cx| async move {
+                if let (Some(image_item), Some(project)) =
+                    (image_item_clone.upgrade(), project_clone.upgrade())
+                {
+                    let metadata =
+                        ImageItem::image_info(image_item.clone(), project, &mut cx).await?;
+
+                    image_item.update(&mut cx, |image_item, _cx| {
+                        image_item.image_meta = Some(metadata);
+                    })?;
+                }
+
+                view.update(&mut cx, |_, cx| cx.notify())
+            })
+            .detach();
+        }
+
         Self {
             image_item,
             project,
