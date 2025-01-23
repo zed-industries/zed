@@ -1,5 +1,5 @@
 use gpui::{
-    div, hash_pattern, linear_color_stop, linear_gradient, prelude::*, px, rgb, size, App,
+    div, linear_color_stop, linear_gradient, pattern_slash, prelude::*, px, rgb, size, App,
     AppContext, Bounds, ViewContext, WindowBounds, WindowOptions,
 };
 
@@ -27,39 +27,26 @@ impl Render for PatternExample {
                     .border_color(gpui::blue())
                     .w(px(240.0))
                     .h(px(40.0))
-                    .bg(hash_pattern(gpui::red())),
+                    .bg(pattern_slash(gpui::red())),
             )
             .child(
                 div()
+                    .flex()
+                    .flex_col()
                     .border_1()
                     .border_color(gpui::blue())
-                    .w(px(240.0))
-                    .h(px(40.0))
-                    .bg(hash_pattern(gpui::red())),
-            )
-            .child(
-                div()
-                    .border_1()
-                    .border_color(gpui::blue())
-                    .w(px(240.0))
-                    .h(px(40.0))
-                    .bg(hash_pattern(gpui::red())),
-            )
-            .child(
-                div()
-                    .border_1()
-                    .border_color(gpui::blue())
-                    .w(px(240.0))
-                    .h(px(40.0))
-                    .bg(hash_pattern(gpui::red())),
-            )
-            .child(
-                div()
-                    .border_1()
-                    .border_color(gpui::blue())
-                    .w(px(240.0))
-                    .h(px(40.0))
-                    .bg(hash_pattern(gpui::red())),
+                    .child(
+                        div()
+                            .w(px(240.0))
+                            .h(px(40.0))
+                            .bg(pattern_slash(gpui::red())),
+                    )
+                    .child(
+                        div()
+                            .w(px(240.0))
+                            .h(px(40.0))
+                            .bg(pattern_slash(gpui::green())),
+                    )
             )
             .child(
                 div()

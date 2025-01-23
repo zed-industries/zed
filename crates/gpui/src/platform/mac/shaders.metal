@@ -797,7 +797,7 @@ float4 over(float4 below, float4 above) {
 GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid,
                                      Hsla color0, Hsla color1) {
   GradientColor out;
-  if (tag == 0) {
+  if (tag == 0 || tag == 2) {
     out.solid = hsla_to_rgba(solid);
   } else if (tag == 1) {
     out.color0 = hsla_to_rgba(color0);
