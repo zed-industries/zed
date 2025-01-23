@@ -245,9 +245,10 @@ impl RenderOnce for ListItem {
                                 })
                             })
                     })
-                    .when_some(self.on_click, |this, on_click| {
-                        this.cursor_pointer().on_click(on_click)
-                    })
+                    .when_some(
+                        self.on_click.filter(|_| !self.disabled),
+                        |this, on_click| this.cursor_pointer().on_click(on_click),
+                    )
                     .when(self.outlined, |this| {
                         this.border_1()
                             .border_color(cx.theme().colors().border)
