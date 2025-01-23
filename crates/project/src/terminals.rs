@@ -490,9 +490,10 @@ impl Project {
             "windows" => "\r",
             _ => "\n",
         };
-        if smol::block_on(self.fs.metadata(path.as_ref())).is_err() {
-            return None;
-        }
+        smol::block_on(self.fs.metadata(path.as_ref()))
+            .ok()
+            .flatten()?;
+
         Some(format!(
             "{} {} ; clear{}",
             activate_keyword, quoted, line_ending
