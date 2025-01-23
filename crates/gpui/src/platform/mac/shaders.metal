@@ -815,6 +815,12 @@ GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid,
   return out;
 }
 
+float2x2 rotate2d(float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return float2x2(c, -s, s, c);
+}
+
 float4 gradient_color(Background background,
                       float2 position,
                       Bounds_ScaledPixels bounds,
@@ -866,6 +872,23 @@ float4 gradient_color(Background background,
         }
       }
       break;
+    }
+    case 2: {
+        float width = 4.;
+        float radians = (fmod(45., 360.0) - 90.0) * (M_PI_F / 180.0);
+        float2x2 rotation = rotate2d(radians);
+        float2 rotated_point = rotation * position;
+        rotated_point.x = fmod(rotated_point.x, width);
+        float distance = quad_sdf(
+            rotated_point,
+            Bounds_ScaledPixels {
+                Point_ScaledPixels { 0., bounds.origin.y },
+                Size_ScaledPixels { width, bounds.size.height * 3. }
+            },
+            Corners_ScaledPixels { 0., 0., 0., 0. }
+        );
+        color = solid_color * saturate(0.5 - distance);
+        break;
     }
   }
 

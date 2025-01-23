@@ -553,6 +553,7 @@ impl<'de> Deserialize<'de> for Hsla {
 pub(crate) enum BackgroundTag {
     Solid = 0,
     LinearGradient = 1,
+    PatternHash = 2,
 }
 
 /// A color space for color interpolation.
@@ -683,6 +684,7 @@ impl Background {
         match self.tag {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
+            BackgroundTag::PatternHash => self.solid.is_transparent(),
         }
     }
 }
