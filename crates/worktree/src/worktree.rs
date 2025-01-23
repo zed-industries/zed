@@ -5794,7 +5794,7 @@ impl<'a> GitTraversal<'a> {
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
             if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
-                self.current_entry_status = Some(statuses.item().unwrap().combined_status());
+                self.current_entry_status = statuses.item().map(|item| item.combined_status());
             }
         }
     }
