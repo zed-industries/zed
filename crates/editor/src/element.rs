@@ -2087,6 +2087,9 @@ impl EditorElement {
                     .get(&display_row)
                     .unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
+                if row_info.diff_status == Some(DiffHunkStatus::Removed) {
+                    return None;
+                }
 
                 let color = cx.theme().colors().editor_line_number;
                 let shaped_line = self

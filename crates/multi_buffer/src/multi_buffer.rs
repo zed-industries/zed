@@ -5019,9 +5019,9 @@ impl MultiBufferSnapshot {
                 .buffer
                 .line_indents_in_row_range(buffer_start_row..buffer_end_row);
             cursor.next();
-            return Some(line_indents.map(move |(buffer_row, indent)| {
+            return Some(line_indents.filter_map(move |(buffer_row, indent)| {
                 let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
-                (MultiBufferRow(row), indent, &region.excerpt.buffer)
+                Some((MultiBufferRow(row), indent, &region.excerpt.buffer))
             }));
         })
         .flatten()
@@ -6766,23 +6766,18 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             };
         }
 
-        let result = if region.is_main_buffer {
-            let overshoot = self.point - region.range.start;
-            let buffer_point = region.buffer_range.start + overshoot;
-            Some(RowInfo {
-                buffer_row: Some(buffer_point.row),
-                diff_status: if region.is_inserted_hunk && self.point < region.range.end {
-                    Some(DiffHunkStatus::Added)
-                } else {
-                    None
-                },
-            })
-        } else {
-            Some(RowInfo {
-                buffer_row: None,
-                diff_status: Some(DiffHunkStatus::Removed),
-            })
-        };
+        let overshoot = self.point - region.range.start;
+        let buffer_point = region.buffer_range.start + overshoot;
+        let result = Some(RowInfo {
+            buffer_row: Some(buffer_point.row),
+            diff_status: if region.is_inserted_hunk && self.point < region.range.end {
+                Some(DiffHunkStatus::Added)
+            } else if !region.is_main_buffer {
+                Some(DiffHunkStatus::Removed)
+            } else {
+                None
+            },
+        });
         self.point += Point::new(1, 0);
         result
     }

@@ -1255,18 +1255,18 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_eq!(
         snapshot
             .row_infos(MultiBufferRow(0))
-            .map(|info| info.buffer_row)
+            .map(|info| (info.buffer_row, info.diff_status))
             .collect::<Vec<_>>(),
         vec![
-            Some(0),
-            Some(1),
-            None,
-            Some(2),
-            Some(3),
-            None,
-            None,
-            Some(4),
-            Some(5)
+            (Some(0), Some(DiffHunkStatus::Added)),
+            (Some(1), None),
+            (Some(1), Some(DiffHunkStatus::Removed)),
+            (Some(2), Some(DiffHunkStatus::Added)),
+            (Some(3), None),
+            (Some(3), Some(DiffHunkStatus::Removed)),
+            (Some(4), Some(DiffHunkStatus::Removed)),
+            (Some(4), None),
+            (Some(5), None)
         ]
     );
 
@@ -1924,7 +1924,7 @@ impl ReferenceMultibuffer {
                     // Add the deleted text for the hunk.
                     if !hunk.diff_base_byte_range.is_empty() {
                         let mut base_text = base_buffer
-                            .text_for_range(hunk.diff_base_byte_range)
+                            .text_for_range(hunk.diff_base_byte_range.clone())
                             .collect::<String>();
                         if !base_text.ends_with('\n') {
                             base_text.push('\n');
@@ -1933,7 +1933,9 @@ impl ReferenceMultibuffer {
                         text.push_str(&base_text);
                         regions.push(ReferenceRegion {
                             range: len..text.len(),
-                            buffer_start: None,
+                            buffer_start: Some(
+                                base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
+                            ),
                             status: Some(DiffHunkStatus::Removed),
                         });
                     }
@@ -2298,7 +2300,13 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             snapshot.widest_line_number(),
             expected_row_infos
                 .into_iter()
-                .filter_map(|info| info.buffer_row)
+                .filter_map(
+                    |info| if info.diff_status == Some(DiffHunkStatus::Removed) {
+                        None
+                    } else {
+                        info.buffer_row
+                    }
+                )
                 .max()
                 .unwrap()
                 + 1
