@@ -155,12 +155,11 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
-        let mut has_git_repo = false;
-        if let Some(project) = &editor.project {
+        let has_git_repo = editor.project.as_ref().map_or(false, |project| {
             project.update(cx, |project, cx| {
-                has_git_repo = project.get_first_worktree_root_repo(cx).is_some()
-            });
-        };
+                project.get_first_worktree_root_repo(cx).is_some()
+            })
+        });
 
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
