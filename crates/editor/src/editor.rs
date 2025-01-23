@@ -507,6 +507,11 @@ struct InlineCompletionState {
 
 enum InlineCompletionHighlight {}
 
+pub enum MenuInlineCompletionsPolicy {
+    Never,
+    ByProvider,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
 
@@ -678,6 +683,7 @@ pub struct Editor {
     // inline completions based on its mode.
     enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
+    menu_inline_completions_policy: MenuInlineCompletionsPolicy,
     inlay_hint_cache: InlayHintCache,
     diff_map: DiffMap,
     next_inlay_id: usize,
@@ -1336,6 +1342,7 @@ impl Editor {
             editor_actions: Rc::default(),
             show_inline_completions_override: None,
             enable_inline_completions: true,
+            menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
@@ -1755,6 +1762,10 @@ impl Editor {
             self.take_active_inline_completion(cx);
             cx.notify();
         }
+    }
+
+    pub fn set_menu_inline_completions_policy(&mut self, value: MenuInlineCompletionsPolicy) {
+        self.menu_inline_completions_policy = value;
     }
 
     pub fn set_autoindent(&mut self, autoindent: bool) {
@@ -5037,7 +5048,13 @@ impl Editor {
     }
 
     fn show_inline_completions_in_menu(&self, cx: &AppContext) -> bool {
-        EditorSettings::get_global(cx).show_inline_completions_in_menu
+        let by_provider = matches!(
+            self.menu_inline_completions_policy,
+            MenuInlineCompletionsPolicy::ByProvider
+        );
+
+        by_provider
+            && EditorSettings::get_global(cx).show_inline_completions_in_menu
             && self
                 .inline_completion_provider()
                 .map_or(false, |provider| provider.show_completions_in_menu())
