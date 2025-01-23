@@ -194,12 +194,15 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
-                    .child(div().pr_1().child(ZedPredictBanner::new(
-                        self.workspace.clone(),
-                        self.user_store.clone(),
-                        self.fs.clone(),
-                        cx,
-                    )))
+                    .when_some(
+                        ZedPredictBanner::new(
+                            self.workspace.clone(),
+                            self.user_store.clone(),
+                            self.fs.clone(),
+                            cx,
+                        ),
+                        |element, banner| element.child(div().pr_1().child(banner))
+                    )
                     .child(
                         h_flex()
                             .gap_1()

@@ -2,13 +2,15 @@ use std::sync::Arc;
 
 use client::UserStore;
 use fs::Fs;
-use gpui::{Model, Render, View, WeakView};
+use gpui::{Model, WeakView};
+use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use ui::{prelude::*, ButtonLike};
 use workspace::Workspace;
 
 use crate::ZedPredictModal;
 
 /// Prompts user to try AI inline prediction feature
+#[derive(IntoElement)]
 pub struct ZedPredictBanner {
     workspace: WeakView<Workspace>,
     user_store: Model<UserStore>,
@@ -21,17 +23,24 @@ impl ZedPredictBanner {
         user_store: Model<UserStore>,
         fs: Arc<dyn Fs>,
         cx: &mut WindowContext,
-    ) -> View<Self> {
-        cx.new_view(|_| ZedPredictBanner {
-            workspace,
-            user_store,
-            fs,
-        })
+    ) -> Option<Self> {
+        let provider = all_language_settings(None, cx).inline_completions.provider;
+
+        match provider {
+            InlineCompletionProvider::None
+            | InlineCompletionProvider::Copilot
+            | InlineCompletionProvider::Supermaven => Some(Self {
+                workspace,
+                user_store,
+                fs,
+            }),
+            InlineCompletionProvider::Zed => None,
+        }
     }
 }
 
-impl Render for ZedPredictBanner {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+impl RenderOnce for ZedPredictBanner {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
             .h_5()
             .rounded_md()
