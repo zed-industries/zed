@@ -15,8 +15,6 @@ use ui::prelude::*;
 
 use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
 use settings::Settings;
-use theme::Theme;
-use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
