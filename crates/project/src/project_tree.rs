@@ -25,7 +25,7 @@ use crate::{
     ProjectPath,
 };
 
-pub(crate) use server_tree::{LanguageServerTree, LaunchDisposition};
+pub(crate) use server_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition};
 
 struct WorktreeRoots {
     roots: RootPathTrie<LanguageServerName>,

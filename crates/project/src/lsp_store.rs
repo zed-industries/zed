@@ -6,7 +6,7 @@ use crate::{
     lsp_ext_command,
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
-    project_tree::{LanguageServerTree, LaunchDisposition, ProjectTree},
+    project_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition, ProjectTree},
     relativize_path, resolve_path,
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -983,9 +983,11 @@ impl LocalLspStore {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
 
-            let Some(path): Option<Arc<Path>> = file.path().parent().map(Arc::from) else {
-                return vec![];
-            };
+            let path: Arc<Path> = file
+                .path()
+                .parent()
+                .map(Arc::from)
+                .unwrap_or_else(|| file.path().clone());
             let worktree_path = ProjectPath { worktree_id, path };
             let Some(worktree) = self
                 .worktree_store
@@ -996,9 +998,14 @@ impl LocalLspStore {
             };
             let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
             let root = self.lsp_tree.update(cx, |this, cx| {
-                this.get(worktree_path, &language.name(), delegate, cx)
-                    .filter_map(|node| node.server_id())
-                    .collect::<Vec<_>>()
+                this.get(
+                    worktree_path,
+                    AdapterQuery::Language(&language.name()),
+                    delegate,
+                    cx,
+                )
+                .filter_map(|node| node.server_id())
+                .collect::<Vec<_>>()
             });
 
             root
@@ -1740,7 +1747,7 @@ impl LocalLspStore {
                 let nodes = self.lsp_tree.update(cx, |this, cx| {
                     this.get(
                         ProjectPath { worktree_id, path },
-                        &language.name(),
+                        AdapterQuery::Language(&language.name()),
                         delegate,
                         cx,
                     )
@@ -1860,9 +1867,11 @@ impl LocalLspStore {
         let Some(language) = buffer.language().cloned() else {
             return;
         };
-        let Some(path): Option<Arc<Path>> = file.path().parent().map(Arc::from) else {
-            return;
-        };
+        let path: Arc<Path> = file
+            .path()
+            .parent()
+            .map(Arc::from)
+            .unwrap_or_else(|| file.path().clone());
         let Some(worktree) = self
             .worktree_store
             .read(cx)
@@ -1874,7 +1883,7 @@ impl LocalLspStore {
         let servers = self.lsp_tree.clone().update(cx, |this, cx| {
             this.get(
                 ProjectPath { worktree_id, path },
-                &language.name(),
+                AdapterQuery::Language(&language.name()),
                 delegate.clone(),
                 cx,
             )
@@ -5361,12 +5370,35 @@ impl LspStore {
 
     fn register_local_language_server(
         &mut self,
-        worktree_id: WorktreeId,
+        worktree: Model<Worktree>,
         language_server_name: LanguageServerName,
         language_server_id: LanguageServerId,
+        cx: &mut AppContext,
     ) {
-        self.as_local_mut()
-            .unwrap()
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        let worktree_id = worktree.read(cx).id();
+        let path = ProjectPath {
+            worktree_id,
+            path: Arc::from("".as_ref()),
+        };
+        let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
+        local.lsp_tree.update(cx, |this, cx| {
+            for node in this.get(
+                path,
+                AdapterQuery::Adapter(&language_server_name),
+                delegate,
+                cx,
+            ) {
+                node.server_id_or_init(|disposition| {
+                    assert_eq!(disposition.server_name, &language_server_name);
+
+                    language_server_id
+                });
+            }
+        });
+        local
             .language_server_ids
             .entry((worktree_id, language_server_name))
             .or_default()
@@ -5609,9 +5641,10 @@ impl LspStore {
                     lsp_store
                         .update(&mut cx, |lsp_store, cx| {
                             lsp_store.register_local_language_server(
-                                worktree.read(cx).id(),
+                                worktree.clone(),
                                 language_server_name,
                                 language_server_id,
+                                cx,
                             )
                         })
                         .ok();
