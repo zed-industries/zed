@@ -33,7 +33,9 @@ impl DebugAdapter for LldbDebugAdapter {
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
-        let lldb_dap_path = if cfg!(target_os = "macos") {
+        let lldb_dap_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path.to_string_lossy().into()
+        } else if cfg!(target_os = "macos") {
             util::command::new_smol_command("xcrun")
                 .args(&["-f", "lldb-dap"])
                 .output()
@@ -42,8 +44,6 @@ impl DebugAdapter for LldbDebugAdapter {
                 .and_then(|output| String::from_utf8(output.stdout).ok())
                 .map(|path| path.trim().to_string())
                 .ok_or(anyhow!("Failed to find lldb-dap in user's path"))?
-        } else if let Some(user_installed_path) = user_installed_path {
-            user_installed_path.to_string_lossy().into()
         } else {
             delegate
                 .which(OsStr::new("lldb-dap"))
