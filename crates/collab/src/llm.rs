@@ -410,7 +410,6 @@ async fn perform_completion(
                 })
                 .boxed()
         }
-        LanguageModelProvider::Bedrock => Err(anyhow!("Unimplemented")).boxed(),
     };
 
     Ok(Response::new(Body::wrap_stream(TokenCountingStream {

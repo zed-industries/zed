@@ -77,7 +77,6 @@ fn authorize_access_for_country(
         LanguageModelProvider::Anthropic => anthropic::is_supported_country(country_code),
         LanguageModelProvider::OpenAi => open_ai::is_supported_country(country_code),
         LanguageModelProvider::Google => google_ai::is_supported_country(country_code),
-        LanguageModelProvider::Bedrock => todo!(),
     };
     if !is_country_supported_by_provider {
         Err(Error::http(

@@ -32,6 +32,8 @@ impl AwsConnector for AwsHttpConnector {
 
         let coerced_body = convert_to_async_body(aws_body);
 
+        println!("{:?}", parts.uri);
+
         let fut_resp = self.client.send(Request::from_parts(parts.into(), coerced_body));
 
         HttpConnectorFuture::new(async move {

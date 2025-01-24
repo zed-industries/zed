@@ -42,6 +42,7 @@ pub async fn complete(
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
+    // executor: &BackgroundExcectuor
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>> {
     let local_runtime = tokio::runtime::Runtime::new()?;
     local_runtime.spawn(async move {
@@ -49,8 +50,7 @@ pub async fn stream_completion(
             .model_id(request.model.clone())
             .set_messages(request.messages.into())
             .send()
-            .await
-            .context("Failed to send request to Bedrock");
+            .await;
 
         match response {
             Ok(output) => {
@@ -59,13 +59,13 @@ pub async fn stream_completion(
                         Ok(Some(output)) => Some((Ok(output), stream)),
                         Ok(None) => Some((Ok(ContentBlockStop(ContentBlockStopEvent::builder().build().unwrap())), stream)),
                         Err(e) => {
-                            Some((Err(BedrockError::Other(anyhow!(e))), stream))
+                            Some((Err(BedrockError::Other(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e)))), stream))
                         }
                     }
                 }));
                 Ok(stream)
             }
-            Err(e) => Err(anyhow!(e)),
+            Err(e) => Err(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e))),
         }
     }).await?
 }

@@ -8,9 +8,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
-use crate::provider::bedrock::{AmazonBedrockCredentials, AmazonBedrockSettings};
 use crate::provider::{
     self,
+    bedrock::AmazonBedrockSettings,
     anthropic::AnthropicSettings,
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,

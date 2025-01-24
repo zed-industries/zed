@@ -43,8 +43,10 @@ const PROVIDER_NAME: &str = "Amazon Bedrock";
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
-    pub region: Option<String>,
-    pub credentials: Option<AmazonBedrockCredentials>,
+    pub region: String,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub session_token: Option<String>,
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -58,53 +60,38 @@ pub struct AvailableModel {
     pub default_temperature: Option<f32>,
 }
 
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct AmazonBedrockCredentials {
-    pub access_key_id: String,
-    pub secret_access_key: String,
-    pub session_token: Option<String>,
-}
-
 // Different because we don't want to overwrite their AWS credentials
 const ZED_BEDROCK_AAID: &str = "ZED_ACCESS_KEY_ID";
 const ZED_BEDROCK_SK: &str = "ZED_SECRET_ACCESS_KEY";
 const ZED_BEDROCK_REGION: &str = "ZED_AWS_REGION";
 
 pub struct State {
-    credentials: Option<AmazonBedrockCredentials>,
+    aa_id: Option<String>,
+    sk: Option<String>,
     credentials_from_env: bool,
     region: Option<String>,
     _subscription: Subscription,
 }
 
 pub struct BedrockLanguageModelProvider {
-    runtime_client: bedrock_client::Client,
+    http_client: Arc<dyn HttpClient>,
     state: gpui::Model<State>,
 }
 
 impl State {
     fn reset_credentials(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let delete_aa_id = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .credentials
-                .clone()
-                .unwrap_or_default()
-                .access_key_id,
+            &AllLanguageModelSettings::get_global(cx).bedrock.access_key_id
         );
         let delete_sk: Task<Result<()>> = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .credentials
-                .clone()
-                .unwrap_or_default()
-                .secret_access_key,
+            &AllLanguageModelSettings::get_global(cx).bedrock.secret_access_key,
         );
         cx.spawn(|this, mut cx| async move {
             delete_aa_id.await.ok();
             delete_sk.await.ok();
             this.update(&mut cx, |this, cx| {
-                this.credentials = None;
+                this.aa_id = None;
+                this.sk = None;
                 this.credentials_from_env = false;
                 cx.notify();
             })
@@ -135,11 +122,8 @@ impl State {
             write_region.await?;
 
             this.update(&mut cx, |this, cx| {
-                this.credentials = Some(AmazonBedrockCredentials {
-                    access_key_id,
-                    secret_access_key: secret_key,
-                    session_token: None,
-                });
+                this.aa_id = Some(access_key_id);
+                this.sk = Some(secret_key);
                 this.region = Some(region);
                 cx.notify();
             })
@@ -147,7 +131,7 @@ impl State {
     }
 
     fn is_authenticated(&self) -> bool {
-        self.credentials.is_some()
+        self.aa_id.is_some() && self.sk.is_some()
     }
 
     fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -186,11 +170,8 @@ impl State {
 
                 this.update(&mut cx, |this, cx| {
                     this.credentials_from_env = from_env;
-                    this.credentials = Some(AmazonBedrockCredentials {
-                        access_key_id: aa_id,
-                        secret_access_key: sk,
-                        session_token: None,
-                    });
+                    this.aa_id = Some(aa_id);
+                    this.sk = Some(sk);
                     this.region = Some(region);
                     cx.notify();
                 })
@@ -200,9 +181,11 @@ impl State {
 }
 
 impl BedrockLanguageModelProvider {
+    // This has to succeed
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let state = cx.new_model(|cx| State {
-            credentials: None,
+            aa_id: None,
+            sk: None,
             region: Some(String::from("us-east-1")),
             credentials_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
@@ -210,35 +193,8 @@ impl BedrockLanguageModelProvider {
             }),
         });
 
-        let region_def: String = state
-            .read(cx)
-            .region
-            .clone()
-            .or_else(|| Some(String::from("us-east-1")))
-            .unwrap();
-        let creds_clone = &state
-            .read(cx)
-            .credentials
-            .clone()
-            .or_else(|| Some(AmazonBedrockCredentials::default()))
-            .unwrap();
-
-        let coerced_client = AwsHttpClient::new(http_client);
-
-        let client_config = Config::builder()
-            .http_client(coerced_client)
-            .region(Region::new(region_def))
-            .credentials_provider(Credentials::from_keys(
-                &creds_clone.clone().access_key_id,
-                &creds_clone.clone().secret_access_key,
-                creds_clone.clone().session_token,
-            ))
-            .build();
-
-        let runtime_client = bedrock_client::Client::from_conf(client_config);
-
         Self {
-            runtime_client,
+            http_client: http_client.clone(),
             state,
         }
     }
@@ -247,7 +203,7 @@ impl BedrockLanguageModelProvider {
 struct BedrockModel {
     id: LanguageModelId,
     model: Model,
-    runtime_client: bedrock_client::Client,
+    http_client: Arc<dyn HttpClient>,
     state: gpui::Model<State>,
     request_limiter: RateLimiter,
 }
@@ -256,17 +212,37 @@ impl BedrockModel {
     fn stream_completion(
         &self,
         request: bedrock::Request,
-        _: &AsyncAppContext,
+        cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
-        let runtime_client = self.runtime_client.clone();
+        let http_client = self.http_client.clone();
 
-        // Todo: ensure app state isn't dropped
+        let Ok((aa_id, sk, region)) = cx.read_model(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).bedrock;
+            (state.aa_id.clone(), state.sk.clone(), settings.region.clone())
+        }) else {
+            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+        };
+
+        // instantiate aws client here
+        // we'll throw it in the model's struct after
+        // Config::builder might be an expensive operation, figure out if it works or not
+        let runtime_client = bedrock_client::Client::from_conf(
+            Config::builder()
+                .credentials_provider(Credentials::new(
+                    aa_id.unwrap(),
+                    sk.unwrap(),
+                    None,
+                    None,
+                    "Keychain",
+                ))
+                .region(Region::new(region))
+                .build(),
+        );
 
         async move {
             let request = bedrock::stream_completion(runtime_client, request);
             request.await.context("Failed to stream completion")
-        }
-        .boxed()
+        }.boxed()
     }
 }
 
@@ -399,10 +375,10 @@ pub fn get_bedrock_tokens(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     }
 
     futures::stream::unfold(
@@ -456,7 +432,7 @@ pub fn map_to_language_model_completion_events(
                 }
             }
             None
-        }
+        },
     ).filter_map(|event| async move { event })
 }
 
@@ -502,7 +478,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                 Arc::new(BedrockModel {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
-                    runtime_client: self.runtime_client.clone(), // too many copies of the bedrock client created here, figure out how to safely share it
+                    http_client: self.http_client.clone(),
                     state: self.state.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -553,7 +529,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-        .detach();
+            .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -569,7 +545,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                .log_err();
+                    .log_err();
             }
         }));
 
@@ -607,7 +583,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, cx: &mut ViewContext<Self>) {
@@ -624,7 +600,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &ViewContext<Self>) -> TextStyle {
