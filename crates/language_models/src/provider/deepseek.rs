@@ -148,11 +148,27 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         IconName::AiDeepSeek
     }
 
-    fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
         models.insert("deepseek-chat", deepseek::Model::Chat);
         models.insert("deepseek-reasoner", deepseek::Model::Reasoner);
+
+        for available_model in AllLanguageModelSettings::get_global(cx)
+            .deepseek
+            .available_models
+            .iter()
+        {
+            models.insert(
+                &available_model.name,
+                deepseek::Model::Custom {
+                    name: available_model.name.clone(),
+                    display_name: available_model.display_name.clone(),
+                    max_tokens: available_model.max_tokens,
+                    max_output_tokens: available_model.max_output_tokens,
+                },
+            );
+        }
 
         models
             .into_values()

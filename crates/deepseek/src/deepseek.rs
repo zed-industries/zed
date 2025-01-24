@@ -53,6 +53,14 @@ pub enum Model {
     Chat,
     #[serde(rename = "deepseek-reasoner")]
     Reasoner,
+    #[serde(rename = "custom")]
+    Custom {
+        name: String,
+        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        display_name: Option<String>,
+        max_tokens: usize,
+        max_output_tokens: Option<u32>,
+    },
 }
 
 impl Model {
@@ -64,10 +72,11 @@ impl Model {
         }
     }
 
-    pub const fn id(&self) -> &str {
+    pub fn id(&self) -> &str {
         match self {
             Self::Chat => "deepseek-chat",
             Self::Reasoner => "deepseek-reasoner",
+            Self::Custom { name, .. } => name,
         }
     }
 
@@ -75,12 +84,16 @@ impl Model {
         match self {
             Self::Chat => "DeepSeek Chat",
             Self::Reasoner => "DeepSeek Reasoner",
+            Self::Custom {
+                name, display_name, ..
+            } => display_name.as_ref().unwrap_or(name).as_str(),
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Chat | Self::Reasoner => 64_000,
+            Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
@@ -88,6 +101,9 @@ impl Model {
         match self {
             Self::Chat => Some(8_192),
             Self::Reasoner => Some(8_192),
+            Self::Custom {
+                max_output_tokens, ..
+            } => *max_output_tokens,
         }
     }
 }
