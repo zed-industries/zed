@@ -204,24 +204,23 @@ fn should_recalculate_indented_range(
     if prev_row.0 == new_row.0 {
         return false;
     }
-    if let Some((_, _, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
-        // todo!() wrong co-ordinates
+    if snapshot.buffer_snapshot.is_singleton() {
         if !current_indent_range.row_range.contains(&new_row) {
             return true;
         }
 
-        let old_line_indent = snapshot.line_indent_for_row(prev_row.0);
-        let new_line_indent = snapshot.line_indent_for_row(new_row.0);
+        let old_line_indent = snapshot.buffer_snapshot.line_indent_for_row(prev_row);
+        let new_line_indent = snapshot.buffer_snapshot.line_indent_for_row(new_row);
 
         if old_line_indent.is_line_empty()
             || new_line_indent.is_line_empty()
             || old_line_indent != new_line_indent
-            || snapshot.max_point().row == new_row.0
+            || snapshot.buffer_snapshot.max_point().row == new_row.0
         {
             return true;
         }
 
-        let next_line_indent = snapshot.line_indent_for_row(new_row.0 + 1);
+        let next_line_indent = snapshot.buffer_snapshot.line_indent_for_row(new_row + 1);
         next_line_indent.is_line_empty() || next_line_indent != old_line_indent
     } else {
         true

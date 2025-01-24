@@ -152,6 +152,14 @@ impl MultiBufferRow {
     pub const MAX: Self = Self(u32::MAX);
 }
 
+impl std::ops::Add<usize> for MultiBufferRow {
+    type Output = Self;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        MultiBufferRow(self.0 + rhs as u32)
+    }
+}
+
 #[derive(Clone)]
 struct History {
     next_transaction_id: TransactionId,
@@ -3700,6 +3708,10 @@ impl MultiBufferSnapshot {
         }
 
         (start..end, word_kind)
+    }
+
+    pub fn is_singleton(&self) -> bool {
+        self.singleton
     }
 
     pub fn as_singleton(&self) -> Option<(&ExcerptId, BufferId, &BufferSnapshot)> {
