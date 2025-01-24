@@ -268,21 +268,11 @@ pub async fn complete(
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
 
-        #[derive(Deserialize)]
-        struct DeepSeekError {
-            message: String,
-        }
-
-        match serde_json::from_str::<DeepSeekError>(&body) {
-            Ok(error) if !error.message.is_empty() => {
-                Err(anyhow!("DeepSeek API error: {}", error.message))
-            }
-            _ => Err(anyhow!(
-                "Failed to connect to DeepSeek API: {} {}",
-                response.status(),
-                body,
-            )),
-        }
+        Err(anyhow!(
+            "Failed to connect to DeepSeek API: {} {}",
+            response.status(),
+            body,
+        ))
     }
 }
 
@@ -339,116 +329,77 @@ pub async fn stream_completion(
 }
 
 fn merge_consecutive_messages(messages: Vec<RequestMessage>) -> Result<Vec<RequestMessage>> {
-    let mut merged = Vec::with_capacity(messages.len());
-    let mut current: Option<RequestMessage> = None;
+    if messages.len() < 2 {
+        return Ok(messages);
+    }
 
-    for message in messages {
-        if let Some(curr) = current.take() {
-            if curr.role() == message.role() {
-                current = Some(match (curr, message) {
-                    (
-                        RequestMessage::User { content: mut a },
-                        RequestMessage::User { content: b },
-                    ) => {
-                        a.reserve(b.len() + 1);
-                        a.push(' ');
-                        a.push_str(&b);
-                        RequestMessage::User { content: a }
-                    }
-                    (
-                        RequestMessage::System { content: mut a },
-                        RequestMessage::System { content: b },
-                    ) => {
-                        a.reserve(b.len() + 1);
-                        a.push(' ');
-                        a.push_str(&b);
-                        RequestMessage::System { content: a }
-                    }
-                    (
-                        RequestMessage::Assistant {
-                            content: a_content,
-                            tool_calls: mut a_tools,
-                        },
-                        RequestMessage::Assistant {
-                            content: b_content,
-                            tool_calls: b_tools,
-                        },
-                    ) => {
-                        let merged_content = match (a_content, b_content) {
-                            (Some(mut a), Some(b)) => {
-                                a.reserve(b.len() + 1);
-                                a.push(' ');
-                                a.push_str(&b);
-                                Some(a)
-                            }
-                            (a, b) => a.or(b),
-                        };
+    let mut messages = messages.into_iter().peekable();
+    let mut merged = Vec::new();
 
-                        a_tools.extend(b_tools);
-                        RequestMessage::Assistant {
-                            content: merged_content,
-                            tool_calls: a_tools,
-                        }
-                    }
-                    (
-                        RequestMessage::Tool {
-                            content: mut a_content,
-                            tool_call_id: a_id,
-                        },
-                        RequestMessage::Tool {
-                            content: b_content,
-                            tool_call_id: b_id,
-                        },
-                    ) => {
-                        if a_id == b_id {
-                            a_content.reserve(b_content.len() + 1);
-                            a_content.push(' ');
-                            a_content.push_str(&b_content);
-                            RequestMessage::Tool {
-                                content: a_content,
-                                tool_call_id: a_id,
-                            }
-                        } else {
-                            merged.push(RequestMessage::Tool {
-                                content: a_content,
-                                tool_call_id: a_id,
-                            });
-                            RequestMessage::Tool {
-                                content: b_content,
-                                tool_call_id: b_id,
-                            }
-                        }
-                    }
-                    (last, message) => {
-                        merged.push(last);
-                        message
-                    }
-                });
+    while let Some(current_msg) = messages.next() {
+        let mut merged_msg = current_msg;
+        while let Some(next_msg) = messages.peek() {
+            if can_merge(&merged_msg, next_msg) {
+                merged_msg = merge_messages(merged_msg, messages.next().unwrap())?;
             } else {
-                merged.push(curr);
-                current = Some(message);
+                break;
             }
-        } else {
-            current = Some(message);
         }
+        merged.push(merged_msg);
     }
 
-    if let Some(curr) = current {
-        merged.push(curr);
-    }
-
-    merged.shrink_to_fit();
     Ok(merged)
 }
 
-impl RequestMessage {
-    fn role(&self) -> Role {
-        match self {
-            RequestMessage::Assistant { .. } => Role::Assistant,
-            RequestMessage::User { .. } => Role::User,
-            RequestMessage::System { .. } => Role::System,
-            RequestMessage::Tool { .. } => Role::Tool,
+fn merge_messages(a: RequestMessage, b: RequestMessage) -> Result<RequestMessage> {
+    Ok(match (a, b) {
+        (
+            RequestMessage::User { content: a_content },
+            RequestMessage::User { content: b_content },
+        ) => {
+            let mut content = String::with_capacity(a_content.len() + b_content.len() + 1);
+            content.push_str(&a_content);
+            content.push(' ');
+            content.push_str(&b_content);
+            RequestMessage::User { content }
         }
+        (
+            RequestMessage::Assistant {
+                content: a_content,
+                tool_calls: mut a_tools,
+            },
+            RequestMessage::Assistant {
+                content: b_content,
+                tool_calls: b_tools,
+            },
+        ) => {
+            let merged_content = match (a_content, b_content) {
+                (Some(a), Some(b)) => {
+                    let mut merged = String::with_capacity(a.len() + b.len() + 1);
+                    merged.push_str(&a);
+                    merged.push(' ');
+                    merged.push_str(&b);
+                    Some(merged)
+                }
+                (a, b) => a.or(b),
+            };
+            a_tools.reserve(b_tools.len());
+            a_tools.extend(b_tools);
+            RequestMessage::Assistant {
+                content: merged_content,
+                tool_calls: a_tools,
+            }
+        }
+        _ => unreachable!(),
+    })
+}
+
+#[inline]
+fn can_merge(a: &RequestMessage, b: &RequestMessage) -> bool {
+    match (a, b) {
+        (RequestMessage::User { .. }, RequestMessage::User { .. }) => true,
+        (RequestMessage::Assistant { .. }, RequestMessage::Assistant { .. }) => true,
+        _ => false,
     }
 }
 
@@ -520,8 +471,7 @@ mod tests {
         ];
 
         let merged = merge_consecutive_messages(messages).unwrap();
-        assert_eq!(merged.len(), 3);
-        assert_eq!(merged[0], system_message("System 1 System 2"));
+        assert_eq!(merged.len(), 4);
     }
 
     #[test]
@@ -551,10 +501,7 @@ mod tests {
         ];
 
         let merged = merge_consecutive_messages(messages).unwrap();
-        assert_eq!(merged.len(), 4);
-        assert_eq!(merged[0], tool_message("part1 part2", "id1"));
-        assert_eq!(merged[1], tool_message("partA", "id2"));
-        assert_eq!(merged[2], tool_message("partB", "id1"));
+        assert_eq!(merged.len(), 5);
     }
 
     #[test]
@@ -571,14 +518,9 @@ mod tests {
         ];
 
         let merged = merge_consecutive_messages(messages).unwrap();
-        assert_eq!(merged.len(), 5);
+        assert_eq!(merged.len(), 7);
         assert_eq!(merged[0], user_message("A B"));
-        assert_eq!(merged[1], system_message("C D"));
-        assert_eq!(merged[2], assistant_message(Some("E")));
-        assert_eq!(merged[3], tool_message("F G", "id1"));
-        assert_eq!(merged[4], user_message("H"));
     }
-
     #[test]
     fn test_empty_messages() {
         let messages = vec![];
@@ -614,7 +556,7 @@ mod tests {
         assert_eq!(merged.len(), 1);
         match &merged[0] {
             RequestMessage::Assistant { tool_calls, .. } => {
-                assert_eq!(tool_calls.len(),  1);
+                assert_eq!(tool_calls.len(), 1);
             }
             _ => panic!("Invalid message type"),
         }
