@@ -3767,9 +3767,6 @@ impl Window {
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.rendered_frame
             .dispatch_tree
-<<<<<<< HEAD
-            .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
-=======
             .bindings_for_action(
                 action,
                 &self.window.rendered_frame.dispatch_tree.context_stack,
@@ -3781,7 +3778,6 @@ impl Window {
     /// binding should take precedence.
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         RefCell::borrow(&self.keymap).all_bindings_for_input(input)
->>>>>>> main
     }
 
     /// Returns any bindings that would invoke an action on the given focus handle if it were

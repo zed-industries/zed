@@ -35,12 +35,8 @@ pub struct ActiveThread {
 impl ActiveThread {
     pub fn new(
         thread: Model<Thread>,
-<<<<<<< HEAD
-        workspace: WeakModel<Workspace>,
-=======
         thread_store: Model<ThreadStore>,
         workspace: WeakView<Workspace>,
->>>>>>> main
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,

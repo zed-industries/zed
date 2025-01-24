@@ -215,15 +215,7 @@ impl TabSwitcherDelegate {
                 PaneEvent::AddItem { .. }
                 | PaneEvent::RemovedItem { .. }
                 | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-<<<<<<< HEAD
-                    let selected_item_id = picker.delegate.selected_item_id();
-                    picker.delegate.update_matches(window, cx);
-                    if let Some(item_id) = selected_item_id {
-                        picker.delegate.select_item(item_id, window, cx);
-                    }
-=======
                     picker.delegate.update_matches(cx);
->>>>>>> main
                     cx.notify();
                 }),
                 _ => {}
@@ -232,12 +224,8 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-<<<<<<< HEAD
-    fn update_matches(&mut self, _: &mut Window, cx: &mut AppContext) {
-=======
     fn update_matches(&mut self, cx: &mut WindowContext) {
         let selected_item_id = self.selected_item_id();
->>>>>>> main
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {
             return;
@@ -284,20 +272,6 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-<<<<<<< HEAD
-    fn select_item(
-        &mut self,
-        item_id: EntityId,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
-    ) {
-        let selected_idx = self
-            .matches
-            .iter()
-            .position(|tab_match| tab_match.item.item_id() == item_id)
-            .unwrap_or(0);
-        self.set_selected_index(selected_idx, window, cx);
-=======
     fn compute_selected_index(&mut self, prev_selected_item_id: Option<EntityId>) -> usize {
         if self.matches.is_empty() {
             return 0;
@@ -326,7 +300,6 @@ impl TabSwitcherDelegate {
         }
 
         0
->>>>>>> main
     }
 
     fn close_item_at(

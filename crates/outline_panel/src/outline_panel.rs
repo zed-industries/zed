@@ -5011,49 +5011,6 @@ fn subscribe_for_editor_events(
                     outline_panel.reveal_entry_for_selection(editor.clone(), window, cx);
                     cx.notify();
                 }
-<<<<<<< HEAD
-                EditorEvent::ExcerptsAdded { excerpts, .. } => {
-                    outline_panel
-                        .new_entries_for_fs_update
-                        .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
-                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
-                }
-                EditorEvent::ExcerptsRemoved { ids } => {
-                    let mut ids = ids.iter().collect::<HashSet<_>>();
-                    for excerpts in outline_panel.excerpts.values_mut() {
-                        excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
-                        if ids.is_empty() {
-                            break;
-                        }
-                    }
-                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
-                }
-                EditorEvent::ExcerptsExpanded { ids } => {
-                    outline_panel.invalidate_outlines(ids);
-                    outline_panel.update_non_fs_items(window, cx);
-                }
-                EditorEvent::ExcerptsEdited { ids } => {
-                    outline_panel.invalidate_outlines(ids);
-                    outline_panel.update_non_fs_items(window, cx);
-                }
-                EditorEvent::BufferFoldToggled { ids, .. } => {
-                    outline_panel.invalidate_outlines(ids);
-                    let mut latest_unfolded_buffer_id = None;
-                    let mut latest_folded_buffer_id = None;
-                    let mut ignore_selections_change = false;
-                    outline_panel.new_entries_for_fs_update.extend(
-                        ids.iter()
-                            .filter(|id| {
-                                outline_panel
-                                    .excerpts
-                                    .iter()
-                                    .find_map(|(buffer_id, excerpts)| {
-                                        if excerpts.contains_key(id) {
-                                            ignore_selections_change |= outline_panel
-                                                .preserve_selection_on_buffer_fold_toggles
-                                                .remove(buffer_id);
-                                            Some(buffer_id)
-=======
                 outline_panel.update_fs_entries(editor, debounce, cx);
             }
             EditorEvent::ExcerptsExpanded { ids } => {
@@ -5109,7 +5066,6 @@ fn subscribe_for_editor_events(
                                     FsEntry::ExternalFile(external) => {
                                         if external.buffer_id == toggled_buffer_id {
                                             Some(fs_entry.clone())
->>>>>>> main
                                         } else {
                                             None
                                         }

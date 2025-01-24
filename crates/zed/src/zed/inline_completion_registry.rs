@@ -5,29 +5,13 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-<<<<<<< HEAD
-use gpui::{AnyWindowHandle, AppContext, Context, ModelContext, WeakModel, Window};
-=======
 use gpui::{AnyWindowHandle, AppContext, Context, Model, ViewContext, WeakView};
->>>>>>> main
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use workspace::Workspace;
 use zed_predict_tos::ZedPredictTos;
 
-<<<<<<< HEAD
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let editors: Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>> = Rc::default();
-    cx.observe_new_models({
-        let editors = editors.clone();
-        let client = client.clone();
-        move |editor: &mut Editor, window, cx: &mut ModelContext<Editor>| {
-            let Some(window) = window else {
-                return;
-            };
-
-=======
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new_views({
@@ -35,7 +19,6 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
         let client = client.clone();
         let user_store = user_store.clone();
         move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
->>>>>>> main
             if editor.mode() != EditorMode::Full {
                 return;
             }
@@ -55,11 +38,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
             let provider = all_language_settings(None, cx).inline_completions.provider;
-<<<<<<< HEAD
-            assign_inline_completion_provider(editor, provider, &client, window, cx);
-=======
             assign_inline_completion_provider(editor, provider, &client, user_store.clone(), cx);
->>>>>>> main
         }
     })
     .detach();
@@ -68,9 +47,6 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
-<<<<<<< HEAD
-                assign_inline_completion_provider(editor, provider, &client, window, cx);
-=======
                 assign_inline_completion_provider(
                     editor,
                     provider,
@@ -78,7 +54,6 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
                     user_store.clone(),
                     cx,
                 );
->>>>>>> main
             })
         });
     }
@@ -168,9 +143,6 @@ fn assign_inline_completion_providers(
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
-<<<<<<< HEAD
-                assign_inline_completion_provider(editor, provider, &client, window, cx);
-=======
                 assign_inline_completion_provider(
                     editor,
                     provider,
@@ -178,7 +150,6 @@ fn assign_inline_completion_providers(
                     user_store.clone(),
                     cx,
                 );
->>>>>>> main
             })
         });
     }
@@ -231,13 +202,8 @@ fn assign_inline_completion_provider(
     editor: &mut Editor,
     provider: language::language_settings::InlineCompletionProvider,
     client: &Arc<Client>,
-<<<<<<< HEAD
-    window: &mut Window,
-    cx: &mut ModelContext<Editor>,
-=======
     user_store: Model<UserStore>,
     cx: &mut ViewContext<Editor>,
->>>>>>> main
 ) {
     match provider {
         language::language_settings::InlineCompletionProvider::None => {}

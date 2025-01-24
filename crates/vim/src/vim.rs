@@ -42,11 +42,7 @@ use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-<<<<<<< HEAD
-use ui::{px, IntoElement};
-=======
 use ui::{px, IntoElement, SharedString, VisualContext};
->>>>>>> main
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 

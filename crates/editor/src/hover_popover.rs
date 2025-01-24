@@ -798,13 +798,8 @@ impl InfoPopover {
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
-<<<<<<< HEAD
-    local_diagnostic: DiagnosticEntry<Anchor>,
-    parsed_content: Option<Model<Markdown>>,
-=======
     pub(crate) local_diagnostic: DiagnosticEntry<Anchor>,
     parsed_content: Option<View<Markdown>>,
->>>>>>> main
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
     pub keyboard_grace: Rc<RefCell<bool>>,

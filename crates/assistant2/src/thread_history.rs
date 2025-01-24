@@ -32,19 +32,8 @@ impl ThreadHistory {
         }
     }
 
-<<<<<<< HEAD
-    pub fn select_prev(
-        &mut self,
-        _: &menu::SelectPrev,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
-
-=======
     pub fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         let count = self.thread_store.read(cx).thread_count();
->>>>>>> main
         if count > 0 {
             if self.selected_index == 0 {
                 self.set_selected_index(count - 1, window, cx);
@@ -54,19 +43,8 @@ impl ThreadHistory {
         }
     }
 
-<<<<<<< HEAD
-    pub fn select_next(
-        &mut self,
-        _: &menu::SelectNext,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
-
-=======
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         let count = self.thread_store.read(cx).thread_count();
->>>>>>> main
         if count > 0 {
             if self.selected_index == count - 1 {
                 self.set_selected_index(0, window, cx);
@@ -76,35 +54,15 @@ impl ThreadHistory {
         }
     }
 
-<<<<<<< HEAD
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
-=======
     fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
         let count = self.thread_store.read(cx).thread_count();
->>>>>>> main
         if count > 0 {
             self.set_selected_index(0, window, cx);
         }
     }
 
-<<<<<<< HEAD
-    fn select_last(
-        &mut self,
-        _: &menu::SelectLast,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
-=======
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         let count = self.thread_store.read(cx).thread_count();
->>>>>>> main
         if count > 0 {
             self.set_selected_index(count - 1, window, cx);
         }
@@ -122,42 +80,20 @@ impl ThreadHistory {
         cx.notify();
     }
 
-<<<<<<< HEAD
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
-
-        if let Some(thread) = threads.get(self.selected_index) {
-            self.assistant_panel
-                .update(cx, move |this, cx| {
-                    let thread_id = thread.read(cx).id().clone();
-                    this.open_thread(&thread_id, window, cx)
-                })
-=======
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
                 .update(cx, move |this, cx| this.open_thread(&thread.id, cx))
->>>>>>> main
                 .ok();
 
             cx.notify();
         }
     }
 
-<<<<<<< HEAD
-    fn remove_selected_thread(
-        &mut self,
-        _: &RemoveSelectedThread,
-        _window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
-=======
     fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, cx: &mut ViewContext<Self>) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
->>>>>>> main
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
@@ -178,13 +114,8 @@ impl Focusable for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-<<<<<<< HEAD
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
-=======
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
->>>>>>> main
         let selected_index = self.selected_index;
 
         v_flex()
@@ -240,25 +171,15 @@ impl Render for ThreadHistory {
 
 #[derive(IntoElement)]
 pub struct PastThread {
-<<<<<<< HEAD
-    thread: Model<Thread>,
-    assistant_panel: WeakModel<AssistantPanel>,
-=======
     thread: SavedThreadMetadata,
     assistant_panel: WeakView<AssistantPanel>,
->>>>>>> main
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
-<<<<<<< HEAD
-        thread: Model<Thread>,
-        assistant_panel: WeakModel<AssistantPanel>,
-=======
         thread: SavedThreadMetadata,
         assistant_panel: WeakView<AssistantPanel>,
->>>>>>> main
         selected: bool,
     ) -> Self {
         Self {
@@ -270,16 +191,8 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-<<<<<<< HEAD
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
-        let (id, summary) = {
-            let thread = self.thread.read(cx);
-            (thread.id().clone(), thread.summary_or_default())
-        };
-=======
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let summary = self.thread.summary;
->>>>>>> main
 
         let thread_timestamp = time_format::format_localized_timestamp(
             OffsetDateTime::from_unix_timestamp(self.thread.updated_at.timestamp()).unwrap(),
@@ -315,13 +228,8 @@ impl RenderOnce for PastThread {
                             .tooltip(Tooltip::text("Delete Thread"))
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
-<<<<<<< HEAD
-                                let id = id.clone();
-                                move |_event, _, cx| {
-=======
                                 let id = self.thread.id.clone();
                                 move |_event, cx| {
->>>>>>> main
                                     assistant_panel
                                         .update(cx, |this, cx| {
                                             this.delete_thread(&id, cx);
@@ -333,19 +241,11 @@ impl RenderOnce for PastThread {
             )
             .on_click({
                 let assistant_panel = self.assistant_panel.clone();
-<<<<<<< HEAD
-                let id = id.clone();
-                move |_event, window, cx| {
-                    assistant_panel
-                        .update(cx, |this, cx| {
-                            this.open_thread(&id, window, cx);
-=======
                 let id = self.thread.id.clone();
                 move |_event, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
                             this.open_thread(&id, cx).detach_and_log_err(cx);
->>>>>>> main
                         })
                         .ok();
                 }

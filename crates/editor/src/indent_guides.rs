@@ -1,18 +1,11 @@
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-<<<<<<< HEAD
-use gpui::{AppContext, ModelContext, Task, Window};
-use language::{language_settings::language_settings, BufferRow};
-use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
-use text::{BufferId, LineIndent, Point};
-=======
 use gpui::{AppContext, Task};
 use language::language_settings::language_settings;
 use multi_buffer::{IndentGuide, MultiBufferRow};
 use text::{LineIndent, Point};
 use ui::ViewContext;
->>>>>>> main
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
@@ -41,13 +34,8 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-<<<<<<< HEAD
-        cx: &mut ModelContext<Editor>,
-    ) -> Option<Vec<MultiBufferIndentGuide>> {
-=======
         cx: &mut ViewContext<Editor>,
     ) -> Option<Vec<IndentGuide>> {
->>>>>>> main
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
                 language_settings(

@@ -2,14 +2,9 @@ use crate::{Toast, Workspace};
 use anyhow::Context;
 use anyhow::{anyhow, Result};
 use gpui::{
-<<<<<<< HEAD
-    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
-    EventEmitter, Global, Model, ModelContext, PromptLevel, Render, ScrollHandle, Task, Window,
-=======
     svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, EventEmitter,
     Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext, VisualContext,
     WindowContext,
->>>>>>> main
 };
 use std::rc::Rc;
 use std::{any::TypeId, time::Duration};
@@ -51,85 +46,7 @@ pub trait Notification: EventEmitter<DismissEvent> + Render {}
 
 impl<V: EventEmitter<DismissEvent> + Render> Notification for V {}
 
-<<<<<<< HEAD
-pub trait NotificationHandle: Send {
-    fn id(&self) -> EntityId;
-    fn to_any(&self) -> AnyView;
-}
-
-impl<T: Notification> NotificationHandle for Model<T> {
-    fn id(&self) -> EntityId {
-        self.entity_id()
-    }
-
-    fn to_any(&self) -> AnyView {
-        self.clone().into()
-    }
-}
-
-impl From<&dyn NotificationHandle> for AnyView {
-    fn from(val: &dyn NotificationHandle) -> Self {
-        val.to_any()
-    }
-}
-
-pub(crate) struct NotificationTracker {
-    notifications_sent: HashMap<TypeId, Vec<NotificationId>>,
-}
-
-impl Global for NotificationTracker {}
-
-impl std::ops::Deref for NotificationTracker {
-    type Target = HashMap<TypeId, Vec<NotificationId>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.notifications_sent
-    }
-}
-
-impl DerefMut for NotificationTracker {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.notifications_sent
-    }
-}
-
-impl NotificationTracker {
-    fn new() -> Self {
-        Self {
-            notifications_sent: Default::default(),
-        }
-    }
-}
-
 impl Workspace {
-    pub fn has_shown_notification_once<V: Notification>(
-        &self,
-        id: &NotificationId,
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
-        cx.global::<NotificationTracker>()
-            .get(&TypeId::of::<V>())
-            .map(|ids| ids.contains(id))
-            .unwrap_or(false)
-    }
-
-    pub fn show_notification_once<V: Notification>(
-        &mut self,
-        id: NotificationId,
-        cx: &mut ModelContext<Self>,
-        build_notification: impl FnOnce(&mut ModelContext<Self>) -> Model<V>,
-    ) {
-        if !self.has_shown_notification_once::<V>(&id, cx) {
-            let tracker = cx.global_mut::<NotificationTracker>();
-            let entry = tracker.entry(TypeId::of::<V>()).or_default();
-            entry.push(id.clone());
-            self.show_notification::<V>(id, cx, build_notification)
-        }
-    }
-
-=======
-impl Workspace {
->>>>>>> main
     #[cfg(any(test, feature = "test-support"))]
     pub fn notification_ids(&self) -> Vec<NotificationId> {
         self.notifications
@@ -197,10 +114,6 @@ impl Workspace {
         });
     }
 
-<<<<<<< HEAD
-    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ModelContext<Self>) {
-        self.dismiss_notification_internal(id, cx)
-=======
     pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ViewContext<Self>) {
         self.notifications.retain(|(existing_id, _)| {
             if existing_id == id {
@@ -210,7 +123,6 @@ impl Workspace {
                 true
             }
         });
->>>>>>> main
     }
 
     pub fn show_toast(&mut self, toast: Toast, cx: &mut ModelContext<Self>) {
@@ -250,17 +162,6 @@ impl Workspace {
         cx.notify();
     }
 
-<<<<<<< HEAD
-    fn dismiss_notification_internal(&mut self, id: &NotificationId, cx: &mut ModelContext<Self>) {
-        self.notifications.retain(|(existing_id, _)| {
-            if existing_id == id {
-                cx.notify();
-                false
-            } else {
-                true
-            }
-        });
-=======
     pub fn show_initial_notifications(&mut self, cx: &mut ViewContext<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = cx
@@ -273,7 +174,6 @@ impl Workspace {
                 build_notification(cx)
             });
         }
->>>>>>> main
     }
 }
 
@@ -648,11 +548,7 @@ impl GlobalAppNotifications {
 pub fn show_app_notification<V: Notification + 'static>(
     id: NotificationId,
     cx: &mut AppContext,
-<<<<<<< HEAD
-    build_notification: impl Fn(&mut ModelContext<Workspace>) -> Model<V>,
-=======
     build_notification: impl Fn(&mut ViewContext<Workspace>) -> View<V> + 'static,
->>>>>>> main
 ) -> Result<()> {
     // Handle dismiss events by removing the notification from all workspaces.
     let build_notification: Rc<dyn Fn(&mut ViewContext<Workspace>) -> AnyView> = Rc::new({
@@ -676,15 +572,6 @@ pub fn show_app_notification<V: Notification + 'static>(
 
     let mut notify_errors = Vec::new();
 
-<<<<<<< HEAD
-    for workspace_window in workspaces_to_notify {
-        let notify_result = workspace_window.update(cx, |workspace, _, cx| {
-            workspace.show_notification(id.clone(), cx, &build_notification);
-        });
-        match notify_result {
-            Ok(()) => notified = true,
-            Err(notify_err) => notify_errors.push(notify_err),
-=======
     for window in cx.windows() {
         if let Some(workspace_window) = window.downcast::<Workspace>() {
             let notify_result = workspace_window.update(cx, |workspace, cx| {
@@ -696,7 +583,6 @@ pub fn show_app_notification<V: Notification + 'static>(
                 Ok(()) => {}
                 Err(notify_err) => notify_errors.push(notify_err),
             }
->>>>>>> main
         }
     }
 
@@ -718,18 +604,12 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut AppContext) {
     cx.global_mut::<GlobalAppNotifications>().remove(id);
     for window in cx.windows() {
         if let Some(workspace_window) = window.downcast::<Workspace>() {
-<<<<<<< HEAD
-            workspace_window
-                .update(cx, |workspace, _, cx| {
-                    workspace.dismiss_notification(&id, cx);
-=======
             let id = id.clone();
             // This spawn is necessary in order to dismiss the notification on which the click
             // occurred, because in that case we're already in the middle of an update.
             cx.spawn(move |mut cx| async move {
                 workspace_window.update(&mut cx, |workspace, cx| {
                     workspace.dismiss_notification(&id, cx)
->>>>>>> main
                 })
             })
             .detach_and_log_err(cx);
@@ -790,10 +670,6 @@ where
             Ok(value) => Some(value),
             Err(err) => {
                 let message: SharedString = format!("Error: {err}").into();
-<<<<<<< HEAD
-                show_app_notification(workspace_error_notification_id(), cx, |cx| {
-                    cx.new_model(|_cx| ErrorMessagePrompt::new(message.clone()))
-=======
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
                     let message = message.clone();
@@ -803,7 +679,6 @@ where
                             move |_cx| ErrorMessagePrompt::new(message)
                         })
                     }
->>>>>>> main
                 })
                 .with_context(|| format!("Error while showing error notification: {message}"))
                 .log_err();

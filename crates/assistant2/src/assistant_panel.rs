@@ -13,14 +13,9 @@ use client::zed_urls;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-<<<<<<< HEAD
-    prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Model, ModelContext, Pixels, Task, WeakModel, Window,
-=======
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Corner, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Model, Pixels, Subscription, Task, UpdateGlobal, View,
     ViewContext, WeakView, WindowContext,
->>>>>>> main
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -49,14 +44,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_models(
         |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
             workspace
-<<<<<<< HEAD
-                .register_action(|workspace, _: &ToggleFocus, window, cx| {
-                    workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
-                })
-                .register_action(|workspace, _: &NewThread, window, cx| {
-=======
                 .register_action(|workspace, _: &NewThread, cx| {
->>>>>>> main
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(window, cx));
                         workspace.focus_panel::<AssistantPanel>(window, cx);
@@ -100,18 +88,6 @@ enum ActiveView {
 }
 
 pub struct AssistantPanel {
-<<<<<<< HEAD
-    workspace: WeakModel<Workspace>,
-    fs: Arc<dyn Fs>,
-    language_registry: Arc<LanguageRegistry>,
-    thread_store: Model<ThreadStore>,
-    thread: Model<ActiveThread>,
-    message_editor: Model<MessageEditor>,
-    tools: Arc<ToolWorkingSet>,
-    local_timezone: UtcOffset,
-    active_view: ActiveView,
-    history: Model<ThreadHistory>,
-=======
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     fs: Arc<dyn Fs>,
@@ -130,19 +106,14 @@ pub struct AssistantPanel {
     history: View<ThreadHistory>,
     new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     open_history_context_menu_handle: PopoverMenuHandle<ContextMenu>,
->>>>>>> main
     width: Option<Pixels>,
     height: Option<Pixels>,
 }
 
 impl AssistantPanel {
     pub fn load(
-<<<<<<< HEAD
-        workspace: WeakModel<Workspace>,
-=======
         workspace: WeakView<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
->>>>>>> main
         cx: AsyncWindowContext,
     ) -> Task<Result<Model<Self>>> {
         cx.spawn(|mut cx| async move {
@@ -154,10 +125,6 @@ impl AssistantPanel {
                 })?
                 .await?;
 
-<<<<<<< HEAD
-            workspace.update_in(&mut cx, |workspace, window, cx| {
-                cx.new_model(|cx| Self::new(workspace, thread_store, tools, window, cx))
-=======
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
@@ -174,7 +141,6 @@ impl AssistantPanel {
 
             workspace.update(&mut cx, |workspace, cx| {
                 cx.new_view(|cx| Self::new(workspace, thread_store, context_store, tools, cx))
->>>>>>> main
             })
         })
     }
@@ -234,13 +200,9 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-<<<<<<< HEAD
-            history: cx.new_model(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
-=======
             history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
             new_item_context_menu_handle: PopoverMenuHandle::default(),
             open_history_context_menu_handle: PopoverMenuHandle::default(),
->>>>>>> main
             width: None,
             height: None,
         }
@@ -307,9 +269,6 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(window);
     }
 
-<<<<<<< HEAD
-    fn open_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-=======
     fn new_prompt_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.active_view = ActiveView::PromptEditor;
 
@@ -355,49 +314,11 @@ impl AssistantPanel {
     }
 
     fn open_history(&mut self, cx: &mut ViewContext<Self>) {
->>>>>>> main
         self.active_view = ActiveView::History;
         self.history.focus_handle(cx).focus(window);
         cx.notify();
     }
 
-<<<<<<< HEAD
-    pub(crate) fn open_thread(
-        &mut self,
-        thread_id: &ThreadId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let Some(thread) = self
-            .thread_store
-            .update(cx, |this, cx| this.open_thread(thread_id, cx))
-        else {
-            return;
-        };
-
-        self.active_view = ActiveView::Thread;
-        self.thread = cx.new_model(|cx| {
-            ActiveThread::new(
-                thread.clone(),
-                self.workspace.clone(),
-                self.language_registry.clone(),
-                self.tools.clone(),
-                window,
-                cx,
-            )
-        });
-        self.message_editor = cx.new_model(|cx| {
-            MessageEditor::new(
-                self.fs.clone(),
-                self.workspace.clone(),
-                self.thread_store.downgrade(),
-                thread,
-                window,
-                cx,
-            )
-        });
-        self.message_editor.focus_handle(cx).focus(window);
-=======
     fn open_prompt_editor_history(&mut self, cx: &mut ViewContext<Self>) {
         self.active_view = ActiveView::PromptEditorHistory;
         self.context_history = Some(cx.new_view(|cx| {
@@ -527,7 +448,6 @@ impl AssistantPanel {
                 self.new_thread(cx);
             }
         }
->>>>>>> main
     }
 
     pub(crate) fn active_thread(&self, cx: &AppContext) -> Model<Thread> {
@@ -578,17 +498,12 @@ impl Panel for AssistantPanel {
         "AssistantPanel2"
     }
 
-<<<<<<< HEAD
-    fn position(&self, _window: &Window, _cx: &AppContext) -> DockPosition {
-        DockPosition::Right
-=======
     fn position(&self, cx: &WindowContext) -> DockPosition {
         match AssistantSettings::get_global(cx).dock {
             AssistantDockPosition::Left => DockPosition::Left,
             AssistantDockPosition::Bottom => DockPosition::Bottom,
             AssistantDockPosition::Right => DockPosition::Right,
         }
->>>>>>> main
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
@@ -662,13 +577,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-<<<<<<< HEAD
-    fn render_toolbar(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
-
-=======
     fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
->>>>>>> main
         let thread = self.thread.read(cx);
 
         let title = match self.active_view {
@@ -712,45 +621,6 @@ impl AssistantPanel {
                     .border_color(cx.theme().colors().border)
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
-<<<<<<< HEAD
-                        IconButton::new("new-thread", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "New Thread",
-                                        &NewThread,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(NewThread.boxed_clone(), cx);
-                            }),
-                    )
-                    .child(
-                        IconButton::new("open-history", IconName::HistoryRerun)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Open History",
-                                        &OpenHistory,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(move |_event, window, cx| {
-                                window.dispatch_action(OpenHistory.boxed_clone(), cx);
-=======
                         PopoverMenu::new("assistant-toolbar-new-popover-menu")
                             .trigger(
                                 IconButton::new("new", IconName::Plus)
@@ -785,22 +655,15 @@ impl AssistantPanel {
                                             OpenPromptEditorHistory.boxed_clone(),
                                         )
                                 }))
->>>>>>> main
                             }),
                     )
                     .child(
                         IconButton::new("configure-assistant", IconName::Settings)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
-<<<<<<< HEAD
-                            .tooltip(Tooltip::text("Configure Assistant"))
-                            .on_click(move |_event, _window, _cx| {
-                                println!("Configure Assistant");
-=======
                             .tooltip(move |cx| Tooltip::text("Configure Assistant", cx))
                             .on_click(move |_event, cx| {
                                 cx.dispatch_action(OpenConfiguration.boxed_clone());
->>>>>>> main
                             }),
                     ),
             )
@@ -820,13 +683,6 @@ impl AssistantPanel {
         self.thread.clone().into_any_element()
     }
 
-<<<<<<< HEAD
-    fn render_thread_empty_state(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
-=======
     fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         let is_authenticated = provider
@@ -845,7 +701,6 @@ impl AssistantPanel {
     }
 
     fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
->>>>>>> main
         let recent_threads = self
             .thread_store
             .update(cx, |this, _cx| this.recent_threads(3));

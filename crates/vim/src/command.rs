@@ -133,32 +133,6 @@ pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
         })
     });
 
-<<<<<<< HEAD
-    Vim::action(editor, cx, |vim, action: &GoToLine, window, cx| {
-        vim.switch_mode(Mode::Normal, false, window, cx);
-        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
-            action.range.head().buffer_row(vim, editor, window, cx)
-        });
-        let buffer_row = match result {
-            None => return,
-            Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window) else {
-                    return;
-                };
-                workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
-                });
-                return;
-            }
-            Some(Ok(result)) => result,
-        };
-        vim.move_cursor(
-            Motion::StartOfDocument,
-            Some(buffer_row.0 as usize + 1),
-            window,
-            cx,
-        );
-=======
     Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
         vim.switch_mode(Mode::Normal, false, cx);
         let result = vim.update_editor(cx, |vim, editor, cx| {
@@ -183,7 +157,6 @@ pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
             });
             return;
         }
->>>>>>> main
     });
 
     Vim::action(editor, cx, |vim, action: &YankCommand, window, cx| {

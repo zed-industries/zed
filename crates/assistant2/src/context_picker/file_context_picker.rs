@@ -10,15 +10,11 @@ use editor::scroll::Autoscroll;
 use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
-<<<<<<< HEAD
-use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Stateful, Task, WeakModel};
-=======
 use gpui::{
     AnyElement, AppContext, DismissEvent, Empty, FocusHandle, FocusableView, Stateful, Task, View,
     WeakModel, WeakView,
 };
 use multi_buffer::{MultiBufferPoint, MultiBufferRow};
->>>>>>> main
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
@@ -36,14 +32,9 @@ pub struct FileContextPicker {
 
 impl FileContextPicker {
     pub fn new(
-<<<<<<< HEAD
-        context_picker: WeakModel<ContextPicker>,
-        workspace: WeakModel<Workspace>,
-=======
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         editor: WeakView<Editor>,
->>>>>>> main
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
@@ -75,14 +66,9 @@ impl Render for FileContextPicker {
 }
 
 pub struct FileContextPickerDelegate {
-<<<<<<< HEAD
-    context_picker: WeakModel<ContextPicker>,
-    workspace: WeakModel<Workspace>,
-=======
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
     editor: WeakView<Editor>,
->>>>>>> main
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -91,14 +77,9 @@ pub struct FileContextPickerDelegate {
 
 impl FileContextPickerDelegate {
     pub fn new(
-<<<<<<< HEAD
-        context_picker: WeakModel<ContextPicker>,
-        workspace: WeakModel<Workspace>,
-=======
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
         editor: WeakView<Editor>,
->>>>>>> main
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {

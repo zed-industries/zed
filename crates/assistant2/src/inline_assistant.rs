@@ -219,14 +219,8 @@ impl InlineAssistant {
 
     pub fn inline_assist(
         workspace: &mut Workspace,
-<<<<<<< HEAD
-        _action: &zed_actions::InlineAssist,
-        window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-=======
         _action: &zed_actions::assistant::InlineAssist,
         cx: &mut ViewContext<Workspace>,
->>>>>>> main
     ) {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled {

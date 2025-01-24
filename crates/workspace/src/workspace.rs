@@ -1088,14 +1088,9 @@ impl Workspace {
             }),
         ];
 
-<<<<<<< HEAD
-        cx.defer_in(window, |this, window, cx| {
-            this.update_window_title(window, cx);
-=======
         cx.defer(|this, cx| {
             this.update_window_title(cx);
             this.show_initial_notifications(cx);
->>>>>>> main
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -4814,12 +4809,8 @@ impl Workspace {
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
-<<<<<<< HEAD
-            .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
-=======
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
->>>>>>> main
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
             }))
@@ -4839,10 +4830,6 @@ impl Workspace {
                     .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
             .on_action(
-<<<<<<< HEAD
-                cx.listener(|workspace, _: &ActivatePreviousPane, window, cx| {
-                    workspace.activate_previous_pane(window, cx)
-=======
                 cx.listener(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx)),
             )
             .on_action(cx.listener(|workspace, _: &ActivateNextWindow, cx| {
@@ -4854,7 +4841,6 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
                     workspace.activate_pane_in_direction(action.0, cx)
->>>>>>> main
                 }),
             )
             .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
@@ -5237,16 +5223,6 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 struct DatabaseFailedNotification;
 
-<<<<<<< HEAD
-                MessageNotification::new("Failed to load the database file.")
-                    .with_click_message("File an issue")
-                    .on_click(|_, cx| cx.open_url(REPORT_ISSUE_URL))
-                    .show(
-                        NotificationId::unique::<DatabaseFailedNotification>(),
-                        workspace,
-                        cx,
-                    );
-=======
                 workspace.show_notification(
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
@@ -5258,7 +5234,6 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                         })
                     },
                 );
->>>>>>> main
             }
         })
         .log_err();

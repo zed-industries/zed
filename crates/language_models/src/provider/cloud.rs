@@ -864,12 +864,8 @@ impl ConfigurationView {
             .style(ButtonStyle::Subtle)
             .icon(IconName::ArrowUpRight)
             .icon_color(Color::Muted)
-<<<<<<< HEAD
-            .on_click(move |_, _, cx| cx.open_url("https://zed.dev/terms-of-service"));
-=======
             .icon_size(IconSize::XSmall)
             .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
->>>>>>> main
 
         let text = "To start using Zed AI, please read and accept the";
 

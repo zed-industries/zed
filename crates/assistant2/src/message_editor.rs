@@ -54,15 +54,9 @@ impl MessageEditor {
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-<<<<<<< HEAD
-        let editor = cx.new_model(|cx| {
-            let mut editor = Editor::auto_height(10, window, cx);
-            editor.set_placeholder_text("Ask anything…", cx);
-=======
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(10, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
->>>>>>> main
             editor.set_show_indent_guides(false, cx);
 
             editor
@@ -168,14 +162,6 @@ impl MessageEditor {
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 
-<<<<<<< HEAD
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-=======
     fn is_editor_empty(&self, cx: &AppContext) -> bool {
         self.editor.read(cx).text(cx).is_empty()
     }
@@ -187,7 +173,6 @@ impl MessageEditor {
     }
 
     fn send_to_model(&mut self, request_kind: RequestKind, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -295,15 +280,10 @@ impl MessageEditor {
         }
     }
 
-<<<<<<< HEAD
-    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.context_picker_menu_handle.is_deployed() {
-=======
     fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
         if self.context_picker_menu_handle.is_deployed()
             || self.inline_context_picker_menu_handle.is_deployed()
         {
->>>>>>> main
             cx.propagate();
         } else {
             self.context_strip.focus_handle(cx).focus(window);

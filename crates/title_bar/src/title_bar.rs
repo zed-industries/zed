@@ -500,9 +500,6 @@ impl TitleBar {
             }))
     }
 
-<<<<<<< HEAD
-    pub fn render_project_branch(&self, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
-=======
     // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
     pub fn render_current_repository(
         &self,
@@ -542,7 +539,6 @@ impl TitleBar {
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
->>>>>>> main
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -764,22 +760,9 @@ impl TitleBar {
                     .into()
                 })
                 .trigger(
-<<<<<<< HEAD
-                    ButtonLike::new("user-menu")
-                        .child(
-                            h_flex().gap_0p5().child(
-                                Icon::new(IconName::ChevronDown)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                        )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
-=======
                     IconButton::new("user-menu", IconName::ChevronDown)
                         .icon_size(IconSize::Small)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
->>>>>>> main
                 )
         }
     }

@@ -122,19 +122,9 @@ impl TerminalOutput {
     /// This method initializes a new terminal emulator with default configuration
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
-<<<<<<< HEAD
-    pub fn new(window: &mut Window, cx: &mut AppContext) -> Self {
-        let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
-        let term = alacritty_terminal::Term::new(
-            Config::default(),
-            &terminal_size(window, cx),
-            terminal::ZedListener(events_tx.clone()),
-        );
-=======
     pub fn new(cx: &mut WindowContext) -> Self {
         let term =
             alacritty_terminal::Term::new(Config::default(), &terminal_size(cx), VoidListener);
->>>>>>> main
 
         Self {
             parser: Processor::new(),

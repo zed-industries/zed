@@ -9,14 +9,10 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
-<<<<<<< HEAD
-use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, WeakModel};
-=======
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Task, View, WeakModel,
     WeakView,
 };
->>>>>>> main
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
@@ -48,12 +44,8 @@ enum ContextPickerMode {
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
-<<<<<<< HEAD
-    workspace: WeakModel<Workspace>,
-=======
     workspace: WeakView<Workspace>,
     editor: WeakView<Editor>,
->>>>>>> main
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -95,21 +87,7 @@ impl ContextPicker {
     ) -> Model<ContextMenu> {
         let context_picker = cx.model().clone();
 
-<<<<<<< HEAD
-        let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
-            let kind_entry = |kind: &'static ContextKind| {
-                let context_picker = context_picker.clone();
-
-                ContextMenuEntry::new(kind.label())
-                    .icon(kind.icon())
-                    .handler(move |window, cx| {
-                        context_picker.update(cx, |this, cx| this.select_kind(*kind, window, cx))
-                    })
-            };
-
-=======
         let menu = ContextMenu::build(cx, move |menu, cx| {
->>>>>>> main
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
@@ -167,10 +145,6 @@ impl ContextPicker {
         menu
     }
 
-<<<<<<< HEAD
-    fn select_kind(&mut self, kind: ContextKind, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let context_picker = cx.model().downgrade();
-=======
     /// Whether threads are allowed as context.
     pub fn allow_threads(&self) -> bool {
         self.thread_store.is_some()
@@ -178,7 +152,6 @@ impl ContextPicker {
 
     fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
         let context_picker = cx.view().downgrade();
->>>>>>> main
 
         match kind {
             ContextKind::File => {
@@ -312,15 +285,11 @@ impl ContextPicker {
         cx.notify();
     }
 
-<<<<<<< HEAD
-    fn add_recent_thread(&self, thread: ThreadContextEntry, cx: &mut ModelContext<Self>) {
-=======
     fn add_recent_thread(
         &self,
         thread: ThreadContextEntry,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
->>>>>>> main
         let Some(context_store) = self.context_store.upgrade() else {
             return Task::ready(Err(anyhow!("context store not available")));
         };

@@ -170,13 +170,9 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-<<<<<<< HEAD
-        let inline_completion_button = cx.new_model(|cx| {
-=======
         let popover_menu_handle = PopoverMenuHandle::default();
 
         let inline_completion_button = cx.new_view(|cx| {
->>>>>>> main
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
@@ -400,16 +396,6 @@ fn initialize_panels(
             notification_panel,
         )?;
 
-<<<<<<< HEAD
-        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
-            workspace.add_panel(project_panel, window, cx);
-            workspace.add_panel(outline_panel, window, cx);
-            workspace.add_panel(terminal_panel, window, cx);
-            workspace.add_panel(channels_panel, window, cx);
-            workspace.add_panel(chat_panel, window, cx);
-            workspace.add_panel(notification_panel, window, cx);
-            workspace.add_panel(assistant_panel, window, cx)
-=======
         workspace_handle.update(&mut cx, |workspace, cx| {
             workspace.add_panel(project_panel, cx);
             workspace.add_panel(outline_panel, cx);
@@ -417,7 +403,6 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
->>>>>>> main
         })?;
 
         let git_ui_enabled = {
@@ -474,12 +459,8 @@ fn initialize_panels(
 
             (Some(assistant_panel), None)
         };
-<<<<<<< HEAD
-        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
-=======
 
         workspace_handle.update(&mut cx, |workspace, cx| {
->>>>>>> main
             if let Some(assistant2_panel) = assistant2_panel {
                 workspace.add_panel(assistant2_panel, window, cx);
             }

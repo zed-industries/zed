@@ -1829,13 +1829,8 @@ impl PromptEditor {
         self.subscribe_to_editor(window, cx);
     }
 
-<<<<<<< HEAD
-    fn placeholder_text(codegen: &Codegen, window: &Window, _cx: &AppContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, window)
-=======
     fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
         let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, cx)
->>>>>>> main
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

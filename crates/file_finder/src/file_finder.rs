@@ -1235,22 +1235,8 @@ impl PickerDelegate for FileFinderDelegate {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
-<<<<<<< HEAD
-                                .update_in(&mut cx, |editor, window, cx| {
-                                    let snapshot = editor.snapshot(window, cx).display_snapshot;
-                                    let point = snapshot
-                                        .buffer_snapshot
-                                        .clip_point(Point::new(row, col), Bias::Left);
-                                    editor.change_selections(
-                                        Some(Autoscroll::center()),
-                                        window,
-                                        cx,
-                                        |s| s.select_ranges([point..point]),
-                                    );
-=======
                                 .update(&mut cx, |editor, cx| {
                                     editor.go_to_singleton_buffer_point(Point::new(row, col), cx);
->>>>>>> main
                                 })
                                 .log_err();
                         }

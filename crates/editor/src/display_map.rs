@@ -68,13 +68,8 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-<<<<<<< HEAD
-use text::LineIndent;
-use ui::{px, AppContext, SharedString, Window};
-=======
 use text::{BufferId, LineIndent};
 use ui::{px, SharedString, WindowContext};
->>>>>>> main
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 

@@ -6,13 +6,8 @@ use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
-<<<<<<< HEAD
-    AsyncWindowContext, Corner, Entity, IntoElement, Model, ModelContext, ParentElement, Render,
-    Subscription, WeakModel, Window,
-=======
     AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
     View, ViewContext, WeakView, WindowContext,
->>>>>>> main
 };
 use language::{
     language_settings::{
@@ -51,13 +46,9 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-<<<<<<< HEAD
-    workspace: WeakModel<Workspace>,
-=======
     workspace: WeakView<Workspace>,
     user_store: Model<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
->>>>>>> main
 }
 
 enum SupermavenButtonStatus {
@@ -126,11 +117,7 @@ impl Render for InlineCompletionButton {
                                         .ok();
                                 }
                             }))
-<<<<<<< HEAD
-                            .tooltip(Tooltip::text("GitHub Copilot")),
-=======
                             .tooltip(|cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)),
->>>>>>> main
                     );
                 }
                 let this = cx.model().clone();
@@ -149,17 +136,11 @@ impl Render for InlineCompletionButton {
                         })
                         .anchor(Corner::BottomRight)
                         .trigger(
-<<<<<<< HEAD
-                            IconButton::new("copilot-icon", icon)
-                                .tooltip(Tooltip::text("GitHub Copilot")),
-                        ),
-=======
                             IconButton::new("copilot-icon", icon).tooltip(|cx| {
                                 Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
                             }),
                         )
                         .with_handle(self.popover_menu_handle.clone()),
->>>>>>> main
                 )
             }
 
@@ -192,12 +173,8 @@ impl Render for InlineCompletionButton {
 
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
-<<<<<<< HEAD
-                let this = cx.model().clone();
-=======
                 let has_menu = status.has_menu();
                 let this = cx.view().clone();
->>>>>>> main
                 let fs = self.fs.clone();
 
                 return div().child(
@@ -229,12 +206,6 @@ impl Render for InlineCompletionButton {
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-<<<<<<< HEAD
-                        .trigger(
-                            IconButton::new("supermaven-icon", icon)
-                                .tooltip(Tooltip::text(tooltip_text.clone())),
-                        ),
-=======
                         .trigger(IconButton::new("supermaven-icon", icon).tooltip(move |cx| {
                             if has_menu {
                                 Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
@@ -243,7 +214,6 @@ impl Render for InlineCompletionButton {
                             }
                         }))
                         .with_handle(self.popover_menu_handle.clone()),
->>>>>>> main
                 );
             }
 
@@ -252,11 +222,6 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-<<<<<<< HEAD
-                let this = cx.model().clone();
-                let button = IconButton::new("zeta", IconName::ZedPredict)
-                    .tooltip(Tooltip::text("Edit Prediction"));
-=======
                 if !self
                     .user_store
                     .read(cx)
@@ -303,7 +268,6 @@ impl Render for InlineCompletionButton {
                         button.tooltip(|cx| Tooltip::for_action("Edit Prediction", &ToggleMenu, cx))
                     },
                 );
->>>>>>> main
 
                 let is_refreshing = self
                     .inline_completion_provider
@@ -341,13 +305,9 @@ impl InlineCompletionButton {
     pub fn new(
         workspace: WeakModel<Workspace>,
         fs: Arc<dyn Fs>,
-<<<<<<< HEAD
-        cx: &mut ModelContext<Self>,
-=======
         user_store: Model<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut ViewContext<Self>,
->>>>>>> main
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()

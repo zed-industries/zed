@@ -10739,11 +10739,6 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppCon
         .unindent(),
     );
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        for _ in 0..3 {
-            editor.go_to_prev_hunk(&GoToPrevHunk, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.go_to_prev_hunk(&GoToPrevHunk, cx);
     });
@@ -10766,7 +10761,6 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppCon
     cx.update_editor(|editor, cx| {
         for _ in 0..2 {
             editor.go_to_prev_hunk(&GoToPrevHunk, cx);
->>>>>>> main
         }
     });
 
@@ -10785,22 +10779,12 @@ async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppCon
         .unindent(),
     );
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.fold(&Fold, window, cx);
-
-        //Make sure that the fold only gets one hunk
-        for _ in 0..4 {
-            editor.go_to_next_hunk(&GoToHunk, window, cx);
-        }
-=======
     cx.update_editor(|editor, cx| {
         editor.fold(&Fold, cx);
     });
 
     cx.update_editor(|editor, cx| {
         editor.go_to_next_hunk(&GoToHunk, cx);
->>>>>>> main
     });
 
     cx.assert_editor_state(
@@ -10842,14 +10826,9 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
     let mut assert = |before, after| {
         let _state_context = cx.set_state(before);
-<<<<<<< HEAD
-        cx.update_editor(|editor, window, cx| {
-            editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, window, cx)
-=======
         cx.run_until_parked();
         cx.update_editor(|editor, cx| {
             editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, cx)
->>>>>>> main
         });
         cx.assert_editor_state(after);
     };
@@ -12417,13 +12396,9 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             let change_set = cx.new_model(|cx| {
                 BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
             });
-<<<<<<< HEAD
-            editor.diff_map.add_change_set(change_set, window, cx)
-=======
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
->>>>>>> main
         }
     });
     cx.executor().run_until_parked();
@@ -12826,15 +12801,9 @@ async fn test_toggle_selected_diff_hunks(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.go_to_next_hunk(&GoToHunk, window, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.go_to_next_hunk(&GoToHunk, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
->>>>>>> main
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12853,17 +12822,10 @@ async fn test_toggle_selected_diff_hunks(
         .unindent(),
     );
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        for _ in 0..3 {
-            editor.go_to_next_hunk(&GoToHunk, window, cx);
-            editor.toggle_hunk_diff(&ToggleHunkDiff, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         for _ in 0..2 {
             editor.go_to_next_hunk(&GoToHunk, cx);
             editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
->>>>>>> main
         }
     });
     executor.run_until_parked();
@@ -12973,13 +12935,8 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
->>>>>>> main
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -13023,13 +12980,8 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         .unindent(),
     );
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
->>>>>>> main
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -13053,175 +13005,6 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
 }
 
 #[gpui::test]
-<<<<<<< HEAD
-async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-
-    let diff_base = r#"
-        use some::mod1;
-        use some::mod2;
-
-        const A: u32 = 42;
-        const B: u32 = 42;
-        const C: u32 = 42;
-
-        fn main() {
-            println!("hello");
-
-            println!("world");
-        }
-
-        fn another() {
-            println!("another");
-        }
-
-        fn another2() {
-            println!("another2");
-        }
-        "#
-    .unindent();
-
-    cx.set_state(
-        &r#"
-        «use some::mod2;
-
-        const A: u32 = 42;
-        const C: u32 = 42;
-
-        fn main() {
-            //println!("hello");
-
-            println!("world");
-            //
-            //ˇ»
-        }
-
-        fn another() {
-            println!("another");
-            println!("another");
-        }
-
-            println!("another2");
-        }
-        "#
-        .unindent(),
-    );
-
-    cx.set_diff_base(&diff_base);
-    executor.run_until_parked();
-
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, window, cx);
-    });
-    executor.run_until_parked();
-
-    cx.assert_state_with_diff(
-        r#"
-        - use some::mod1;
-          «use some::mod2;
-
-          const A: u32 = 42;
-        - const B: u32 = 42;
-          const C: u32 = 42;
-
-          fn main() {
-        -     println!("hello");
-        +     //println!("hello");
-
-              println!("world");
-        +     //
-        +     //ˇ»
-          }
-
-          fn another() {
-              println!("another");
-        +     println!("another");
-          }
-
-        - fn another2() {
-              println!("another2");
-          }
-        "#
-        .unindent(),
-    );
-
-    // Fold across some of the diff hunks. They should no longer appear expanded.
-    cx.update_editor(|editor, window, cx| {
-        editor.fold_selected_ranges(&FoldSelectedRanges, window, cx)
-    });
-    cx.executor().run_until_parked();
-
-    // Hunks are not shown if their position is within a fold
-    cx.assert_state_with_diff(
-        r#"
-          «use some::mod2;
-
-          const A: u32 = 42;
-          const C: u32 = 42;
-
-          fn main() {
-              //println!("hello");
-
-              println!("world");
-              //
-              //ˇ»
-          }
-
-          fn another() {
-              println!("another");
-        +     println!("another");
-          }
-
-        - fn another2() {
-              println!("another2");
-          }
-        "#
-        .unindent(),
-    );
-
-    cx.update_editor(|editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.unfold_lines(&UnfoldLines, window, cx);
-    });
-    cx.executor().run_until_parked();
-
-    // The deletions reappear when unfolding.
-    cx.assert_state_with_diff(
-        r#"
-        - use some::mod1;
-          «use some::mod2;
-
-          const A: u32 = 42;
-        - const B: u32 = 42;
-          const C: u32 = 42;
-
-          fn main() {
-        -     println!("hello");
-        +     //println!("hello");
-
-              println!("world");
-        +     //
-        +     //
-          }
-
-          fn another() {
-              println!("another");
-        +     println!("another");
-          }
-
-        - fn another2() {
-              println!("another2");
-          }
-          ˇ»"#
-        .unindent(),
-    );
-}
-
-#[gpui::test]
-=======
->>>>>>> main
 async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13308,13 +13091,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 let change_set = cx.new_model(|cx| {
                     BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
                 });
-<<<<<<< HEAD
-                editor.diff_map.add_change_set(change_set, window, cx)
-=======
                 editor
                     .buffer
                     .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
->>>>>>> main
             }
         })
         .unwrap();
@@ -13352,15 +13131,9 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
         .unindent(),
     );
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.select_all(&SelectAll, window, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.select_all(&SelectAll, cx);
         editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
->>>>>>> main
     });
     cx.executor().run_until_parked();
 
@@ -13428,33 +13201,19 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
         Editor::new(EditorMode::Full, multi_buffer, None, true, window, cx)
     });
     editor
-<<<<<<< HEAD
-        .update(cx, |editor, window, cx| {
-            let buffer = buffer.read(cx).text_snapshot();
-            let change_set = cx
-                .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), buffer, cx));
-            editor.diff_map.add_change_set(change_set, window, cx)
-=======
         .update(cx, |editor, cx| {
             let change_set = cx
                 .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
->>>>>>> main
         })
         .unwrap();
 
     let mut cx = EditorTestContext::for_editor(editor, cx).await;
     cx.run_until_parked();
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&Default::default(), window, cx)
-    });
-=======
     cx.update_editor(|editor, cx| editor.expand_all_diff_hunks(&Default::default(), cx));
->>>>>>> main
     cx.executor().run_until_parked();
 
     cx.assert_state_with_diff(
@@ -13515,13 +13274,8 @@ async fn test_edits_around_expanded_insertion_hunks(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
->>>>>>> main
     });
     executor.run_until_parked();
 
@@ -13753,13 +13507,8 @@ async fn test_edits_around_expanded_deletion_hunks(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
 
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
->>>>>>> main
     });
     executor.run_until_parked();
 
@@ -13965,13 +13714,8 @@ async fn test_edit_after_expanded_modification_hunk(
 
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
-<<<<<<< HEAD
-    cx.update_editor(|editor, window, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, window, cx);
-=======
     cx.update_editor(|editor, cx| {
         editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
->>>>>>> main
     });
     executor.run_until_parked();
 
@@ -15450,170 +15194,6 @@ async fn test_inline_completion_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     // Simple insertion
-<<<<<<< HEAD
-    {
-        let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-
-        window
-            .update(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
-                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
-                let edits = vec![(edit_range, " beautiful".to_string())];
-
-                let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, false, cx)
-                else {
-                    panic!("Failed to generate inline completion text");
-                };
-
-                assert_eq!(text, "Hello, beautiful world!");
-                assert_eq!(highlights.len(), 1);
-                assert_eq!(highlights[0].0, 6..16);
-                assert_eq!(
-                    highlights[0].1.background_color,
-                    Some(cx.theme().status().created_background)
-                );
-            })
-            .unwrap();
-    }
-
-    // Replacement
-    {
-        let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple("This is a test.", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-
-        window
-            .update(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let edits = vec![(
-                    snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
-                        ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 4)),
-                    "That".to_string(),
-                )];
-
-                let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, false, cx)
-                else {
-                    panic!("Failed to generate inline completion text");
-                };
-
-                assert_eq!(text, "That is a test.");
-                assert_eq!(highlights.len(), 1);
-                assert_eq!(highlights[0].0, 0..4);
-                assert_eq!(
-                    highlights[0].1.background_color,
-                    Some(cx.theme().status().created_background)
-                );
-            })
-            .unwrap();
-    }
-
-    // Multiple edits
-    {
-        let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-
-        window
-            .update(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let edits = vec![
-                    (
-                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 0))
-                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 5)),
-                        "Greetings".into(),
-                    ),
-                    (
-                        snapshot.buffer_snapshot.anchor_after(Point::new(0, 12))
-                            ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 12)),
-                        " and universe".into(),
-                    ),
-                ];
-
-                let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, false, cx)
-                else {
-                    panic!("Failed to generate inline completion text");
-                };
-
-                assert_eq!(text, "Greetings, world and universe!");
-                assert_eq!(highlights.len(), 2);
-                assert_eq!(highlights[0].0, 0..9);
-                assert_eq!(highlights[1].0, 16..29);
-                assert_eq!(
-                    highlights[0].1.background_color,
-                    Some(cx.theme().status().created_background)
-                );
-                assert_eq!(
-                    highlights[1].1.background_color,
-                    Some(cx.theme().status().created_background)
-                );
-            })
-            .unwrap();
-    }
-
-    // Multiple lines with edits
-    {
-        let window = cx.add_window(|window, cx| {
-            let buffer =
-                MultiBuffer::build_simple("First line\nSecond line\nThird line\nFourth line", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-
-        window
-            .update(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let edits = vec![
-                    (
-                        snapshot.buffer_snapshot.anchor_before(Point::new(1, 7))
-                            ..snapshot.buffer_snapshot.anchor_before(Point::new(1, 11)),
-                        "modified".to_string(),
-                    ),
-                    (
-                        snapshot.buffer_snapshot.anchor_before(Point::new(2, 0))
-                            ..snapshot.buffer_snapshot.anchor_before(Point::new(2, 10)),
-                        "New third line".to_string(),
-                    ),
-                    (
-                        snapshot.buffer_snapshot.anchor_before(Point::new(3, 6))
-                            ..snapshot.buffer_snapshot.anchor_before(Point::new(3, 6)),
-                        " updated".to_string(),
-                    ),
-                ];
-
-                let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, false, cx)
-                else {
-                    panic!("Failed to generate inline completion text");
-                };
-
-                assert_eq!(text, "Second modified\nNew third line\nFourth updated line");
-                assert_eq!(highlights.len(), 3);
-                assert_eq!(highlights[0].0, 7..15); // "modified"
-                assert_eq!(highlights[1].0, 16..30); // "New third line"
-                assert_eq!(highlights[2].0, 37..45); // " updated"
-
-                for highlight in &highlights {
-                    assert_eq!(
-                        highlight.1.background_color,
-                        Some(cx.theme().status().created_background)
-                    );
-                }
-            })
-            .unwrap();
-    }
-=======
     assert_highlighted_edits(
         "Hello, world!",
         vec![(Point::new(0, 6)..Point::new(0, 6), " beautiful".into())],
@@ -15706,7 +15286,6 @@ async fn test_inline_completion_text(cx: &mut TestAppContext) {
         },
     )
     .await;
->>>>>>> main
 }
 
 #[gpui::test]
@@ -15714,53 +15293,6 @@ async fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     // Deletion
-<<<<<<< HEAD
-    {
-        let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-
-        window
-            .update(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 5))
-                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 11));
-                let edits = vec![(edit_range, "".to_string())];
-
-                let InlineCompletionText::Edit { text, highlights } =
-                    inline_completion_edit_text(&snapshot, &edits, true, cx)
-                else {
-                    panic!("Failed to generate inline completion text");
-                };
-
-                assert_eq!(text, "Hello, world!");
-                assert_eq!(highlights.len(), 1);
-                assert_eq!(highlights[0].0, 5..11);
-                assert_eq!(
-                    highlights[0].1.background_color,
-                    Some(cx.theme().status().deleted_background)
-                );
-            })
-            .unwrap();
-    }
-
-    // Insertion
-    {
-        let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple("Hello, world!", cx);
-            Editor::new(EditorMode::Full, buffer, None, true, window, cx)
-        });
-        let cx = &mut VisualTestContext::from_window(*window, cx);
-
-        window
-            .update(cx, |editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                let edit_range = snapshot.buffer_snapshot.anchor_after(Point::new(0, 6))
-                    ..snapshot.buffer_snapshot.anchor_before(Point::new(0, 6));
-                let edits = vec![(edit_range, " digital".to_string())];
-=======
     assert_highlighted_edits(
         "Hello, world!",
         vec![(Point::new(0, 5)..Point::new(0, 11), "".to_string())],
@@ -15808,7 +15340,6 @@ async fn assert_highlighted_edits(
         Editor::new(EditorMode::Full, buffer, None, true, cx)
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
->>>>>>> main
 
     let (buffer, snapshot) = window
         .update(cx, |editor, cx| {
@@ -16163,13 +15694,8 @@ fn assert_hunk_revert(
     cx.set_diff_base(base_text);
     cx.executor().run_until_parked();
 
-<<<<<<< HEAD
-    let reverted_hunk_statuses = cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-=======
     let actual_hunk_statuses_before = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
->>>>>>> main
         let reverted_hunk_statuses = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())

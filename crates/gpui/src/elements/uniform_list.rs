@@ -363,9 +363,6 @@ impl Element for UniformList {
                     let visible_range = first_visible_element_ix
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
-<<<<<<< HEAD
-                    let mut items = (self.render_items)(visible_range.clone(), window, cx);
-=======
                     let items = if y_flipped {
                         let flipped_range = self.item_count.saturating_sub(visible_range.end)
                             ..self.item_count.saturating_sub(visible_range.start);
@@ -375,7 +372,6 @@ impl Element for UniformList {
                     } else {
                         (self.render_items)(visible_range.clone(), cx)
                     };
->>>>>>> main
 
                     let content_mask = ContentMask { bounds };
                     window.with_content_mask(Some(content_mask), |window| {

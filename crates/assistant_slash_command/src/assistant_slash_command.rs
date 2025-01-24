@@ -8,11 +8,7 @@ pub use crate::slash_command_working_set::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-<<<<<<< HEAD
-use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakModel, Window};
-=======
 use gpui::{AppContext, SharedString, Task, WeakView, WindowContext};
->>>>>>> main
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
@@ -110,20 +106,6 @@ pub trait SlashCommand: 'static + Send + Sync {
     ) -> Task<SlashCommandResult>;
 }
 
-<<<<<<< HEAD
-pub type RenderFoldPlaceholder = Arc<
-    dyn Send
-        + Sync
-        + Fn(
-            ElementId,
-            Arc<dyn Fn(&mut Window, &mut AppContext)>,
-            &mut Window,
-            &mut AppContext,
-        ) -> AnyElement,
->;
-
-=======
->>>>>>> main
 #[derive(Debug, PartialEq)]
 pub enum SlashCommandContent {
     Text {

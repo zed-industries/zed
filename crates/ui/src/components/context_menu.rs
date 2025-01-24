@@ -42,13 +42,9 @@ pub struct ContextMenuEntry {
     label: SharedString,
     icon: Option<IconName>,
     icon_position: IconPosition,
-<<<<<<< HEAD
-    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
-=======
     icon_size: IconSize,
     icon_color: Option<Color>,
     handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
->>>>>>> main
     action: Option<Box<dyn Action>>,
     disabled: bool,
 }
@@ -60,13 +56,9 @@ impl ContextMenuEntry {
             label: label.into(),
             icon: None,
             icon_position: IconPosition::Start,
-<<<<<<< HEAD
-            handler: Rc::new(|_, _, _| {}),
-=======
             icon_size: IconSize::Small,
             icon_color: None,
             handler: Rc::new(|_, _| {}),
->>>>>>> main
             action: None,
             disabled: false,
         }
@@ -552,10 +544,6 @@ impl Render for ContextMenu {
                                     disabled,
                                 }) => {
                                     let handler = handler.clone();
-<<<<<<< HEAD
-                                    let menu = cx.model().downgrade();
-                                    let color = if *disabled {
-=======
                                     let menu = cx.view().downgrade();
                                     let icon_color = if *disabled {
                                         Color::Muted
@@ -563,7 +551,6 @@ impl Render for ContextMenu {
                                         icon_color.unwrap_or(Color::Default)
                                     };
                                     let label_color = if *disabled {
->>>>>>> main
                                         Color::Muted
                                     } else {
                                         Color::Default
