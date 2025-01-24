@@ -14,8 +14,8 @@ use editor::Editor;
 use fs::Fs;
 use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Corner, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, Pixels, Subscription, Task, UpdateGlobal, View,
-    ViewContext, WeakView, WindowContext,
+    FocusHandle, Focusable, FontWeight, Model, Pixels, Subscription, Task, UpdateGlobal,
+   
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -88,22 +88,22 @@ enum ActiveView {
 }
 
 pub struct AssistantPanel {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Model<ThreadStore>,
-    thread: View<ActiveThread>,
-    message_editor: View<MessageEditor>,
+    thread: Model<ActiveThread>,
+    message_editor: Model<MessageEditor>,
     context_store: Model<assistant_context_editor::ContextStore>,
-    context_editor: Option<View<ContextEditor>>,
-    context_history: Option<View<ContextHistory>>,
-    configuration: Option<View<AssistantConfiguration>>,
+    context_editor: Option<Model<ContextEditor>>,
+    context_history: Option<Model<ContextHistory>>,
+    configuration: Option<Model<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
-    history: View<ThreadHistory>,
+    history: Model<ThreadHistory>,
     new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     open_history_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     width: Option<Pixels>,
@@ -112,7 +112,7 @@ pub struct AssistantPanel {
 
 impl AssistantPanel {
     pub fn load(
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Model<Self>>> {
@@ -140,7 +140,7 @@ impl AssistantPanel {
                 .await?;
 
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, thread_store, context_store, tools, cx))
+                cx.new_model(|cx| Self::new(workspace, thread_store, context_store, tools, cx))
             })
         })
     }
@@ -200,7 +200,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
+            history: cx.new_model(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
             new_item_context_menu_handle: PopoverMenuHandle::default(),
             open_history_context_menu_handle: PopoverMenuHandle::default(),
             width: None,
@@ -211,7 +211,7 @@ impl AssistantPanel {
     pub fn toggle_focus(
         workspace: &mut Workspace,
         _: &ToggleFocus,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled {
@@ -269,7 +269,7 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(window);
     }
 
-    fn new_prompt_editor(&mut self, cx: &mut ViewContext<Self>) {
+    fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.active_view = ActiveView::PromptEditor;
 
         let context = self
@@ -279,7 +279,7 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        self.context_editor = Some(cx.new_view(|cx| {
+        self.context_editor = Some(cx.new_model(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
@@ -297,7 +297,7 @@ impl AssistantPanel {
         }
     }
 
-    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
+    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, window: &mut Window, cx: &mut ModelContext<Self>) {
         open_prompt_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
@@ -313,15 +313,15 @@ impl AssistantPanel {
         .detach_and_log_err(cx);
     }
 
-    fn open_history(&mut self, cx: &mut ViewContext<Self>) {
+    fn open_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.active_view = ActiveView::History;
         self.history.focus_handle(cx).focus(window);
         cx.notify();
     }
 
-    fn open_prompt_editor_history(&mut self, cx: &mut ViewContext<Self>) {
+    fn open_prompt_editor_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.active_view = ActiveView::PromptEditorHistory;
-        self.context_history = Some(cx.new_view(|cx| {
+        self.context_history = Some(cx.new_model(|cx| {
             ContextHistory::new(
                 self.project.clone(),
                 self.context_store.clone(),
@@ -340,7 +340,7 @@ impl AssistantPanel {
     fn open_saved_prompt_editor(
         &mut self,
         path: PathBuf,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let context = self
             .context_store
@@ -354,7 +354,7 @@ impl AssistantPanel {
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
             this.update(&mut cx, |this, cx| {
-                let editor = cx.new_view(|cx| {
+                let editor = cx.new_model(|cx| {
                     ContextEditor::for_context(
                         context,
                         fs,
@@ -376,7 +376,7 @@ impl AssistantPanel {
     pub(crate) fn open_thread(
         &mut self,
         thread_id: &ThreadId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let open_thread_task = self
             .thread_store
@@ -386,7 +386,7 @@ impl AssistantPanel {
             let thread = open_thread_task.await?;
             this.update(&mut cx, |this, cx| {
                 this.active_view = ActiveView::Thread;
-                this.thread = cx.new_view(|cx| {
+                this.thread = cx.new_model(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
@@ -396,7 +396,7 @@ impl AssistantPanel {
                         cx,
                     )
                 });
-                this.message_editor = cx.new_view(|cx| {
+                this.message_editor = cx.new_model(|cx| {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
@@ -410,9 +410,9 @@ impl AssistantPanel {
         })
     }
 
-    pub(crate) fn open_configuration(&mut self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.active_view = ActiveView::Configuration;
-        self.configuration = Some(cx.new_view(AssistantConfiguration::new));
+        self.configuration = Some(cx.new_model(AssistantConfiguration::new));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription =
@@ -424,9 +424,9 @@ impl AssistantPanel {
 
     fn handle_assistant_configuration_event(
         &mut self,
-        _view: View<AssistantConfiguration>,
+        _view: Model<AssistantConfiguration>,
         event: &AssistantConfigurationEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         match event {
             AssistantConfigurationEvent::NewThread(provider) => {
@@ -498,7 +498,7 @@ impl Panel for AssistantPanel {
         "AssistantPanel2"
     }
 
-    fn position(&self, cx: &WindowContext) -> DockPosition {
+    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
         match AssistantSettings::get_global(cx).dock {
             AssistantDockPosition::Left => DockPosition::Left,
             AssistantDockPosition::Bottom => DockPosition::Bottom,
@@ -577,7 +577,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
 
         let title = match self.active_view {
@@ -700,7 +700,7 @@ impl AssistantPanel {
         None
     }
 
-    fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_thread_empty_state(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let recent_threads = self
             .thread_store
             .update(cx, |this, _cx| this.recent_threads(3));
@@ -750,7 +750,7 @@ impl AssistantPanel {
                                         .icon(Some(IconName::Sliders))
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(|this, _, cx| {
+                                        .on_click(cx.listener(|this, _, window, cx| {
                                             this.open_configuration(cx);
                                         })),
                                 ),
@@ -1000,11 +1000,11 @@ impl Render for AssistantPanel {
 }
 
 struct PromptLibraryInlineAssist {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl PromptLibraryInlineAssist {
-    pub fn new(workspace: WeakView<Workspace>) -> Self {
+    pub fn new(workspace: WeakModel<Workspace>) -> Self {
         Self { workspace }
     }
 }
@@ -1012,9 +1012,9 @@ impl PromptLibraryInlineAssist {
 impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn assist(
         &self,
-        prompt_editor: &View<Editor>,
+        prompt_editor: &Model<Editor>,
         _initial_prompt: Option<String>,
-        cx: &mut ViewContext<PromptLibrary>,
+        window: &mut Window, cx: &mut ModelContext<PromptLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
             assistant.assist(&prompt_editor, self.workspace.clone(), None, cx)
@@ -1024,7 +1024,7 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn focus_assistant_panel(
         &self,
         workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
     ) -> bool {
         workspace.focus_panel::<AssistantPanel>(cx).is_some()
     }
@@ -1036,8 +1036,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_context_editor(
         &self,
         workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Option<View<ContextEditor>> {
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
+    ) -> Option<Model<ContextEditor>> {
         let panel = workspace.panel::<AssistantPanel>(cx)?;
         panel.update(cx, |panel, _cx| panel.context_editor.clone())
     }
@@ -1046,7 +1046,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         &self,
         workspace: &mut Workspace,
         path: std::path::PathBuf,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
     ) -> Task<Result<()>> {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return Task::ready(Err(anyhow!("Assistant panel not found")));
@@ -1059,8 +1059,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         &self,
         _workspace: &mut Workspace,
         _context_id: assistant_context_editor::ContextId,
-        _cx: &mut ViewContext<Workspace>,
-    ) -> Task<Result<View<ContextEditor>>> {
+        _window: &mut Window, _cx: &mut ModelContext<Workspace>,
+    ) -> Task<Result<Model<ContextEditor>>> {
         Task::ready(Err(anyhow!("opening remote context not implemented")))
     }
 
@@ -1068,7 +1068,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         &self,
         _workspace: &mut Workspace,
         _creases: Vec<(String, String)>,
-        _cx: &mut ViewContext<Workspace>,
+        _window: &mut Window, _cx: &mut ModelContext<Workspace>,
     ) {
     }
 }

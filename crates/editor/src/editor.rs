@@ -1634,7 +1634,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&self, cx: &mut WindowContext) -> EditorSnapshot {
+    pub fn snapshot(&self, window: &mut Window, cx: &mut AppContext) -> EditorSnapshot {
         let git_blame_gutter_max_author_length = self
             .render_git_blame_gutter(cx)
             .then(|| {
@@ -2564,7 +2564,7 @@ impl Editor {
         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
     }
 
-    pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+    pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.selection_mark_mode = false;
 
         if self.clear_expanded_diff_hunks(cx) {
@@ -3965,7 +3965,7 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
     }
 
-    fn toggle_zed_predict_tos(&mut self, cx: &mut ViewContext<Self>) {
+    fn toggle_zed_predict_tos(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
             return;
         };
@@ -5172,7 +5172,7 @@ impl Editor {
 
     fn inline_completion_menu_hint(
         &self,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<InlineCompletionMenuHint> {
         let provider = self.inline_completion_provider()?;
         if self.has_active_inline_completion() {
@@ -5472,7 +5472,7 @@ impl Editor {
         style: &EditorStyle,
         max_height_in_lines: u32,
         y_flipped: bool,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
@@ -6375,7 +6375,7 @@ impl Editor {
             .detach_and_notify_err(window, cx);
     }
 
-    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
+    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, window: &mut Window, cx: &mut ModelContext<Self>) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
         self.revert_hunks_in_ranges(selections, cx);
     }
@@ -6383,7 +6383,7 @@ impl Editor {
     fn revert_hunks_in_ranges(
         &mut self,
         ranges: impl Iterator<Item = Range<Point>>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         let mut revert_changes = HashMap::default();
         let snapshot = self.snapshot(cx);
@@ -6397,7 +6397,7 @@ impl Editor {
         }
     }
 
-    pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
+    pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(working_directory) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
@@ -6418,7 +6418,7 @@ impl Editor {
         &self,
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         hunk: &MultiBufferDiffHunk,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
         let change_set = buffer.change_set_for(hunk.buffer_id)?;
@@ -9817,14 +9817,14 @@ impl Editor {
         })
     }
 
-    pub fn go_to_singleton_buffer_point(&mut self, point: Point, cx: &mut ViewContext<Self>) {
+    pub fn go_to_singleton_buffer_point(&mut self, point: Point, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.go_to_singleton_buffer_range(point..point, cx);
     }
 
     pub fn go_to_singleton_buffer_range(
         &mut self,
         range: Range<Point>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let multibuffer = self.buffer().read(cx);
         let Some(buffer) = multibuffer.as_singleton() else {
@@ -9841,7 +9841,7 @@ impl Editor {
         });
     }
 
-    fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
+    fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.go_to_diagnostic_impl(Direction::Next, cx)
     }
 
@@ -11112,7 +11112,7 @@ impl Editor {
         &mut self,
         buffer_id: BufferId,
         group_id: usize,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
@@ -11265,7 +11265,7 @@ impl Editor {
         }
     }
 
-    pub fn set_mark(&mut self, _: &actions::SetMark, cx: &mut ViewContext<Self>) {
+    pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.selection_mark_mode {
             self.change_selections(None, cx, |s| {
                 s.move_with(|_, sel| {
@@ -11280,7 +11280,7 @@ impl Editor {
     pub fn swap_selection_ends(
         &mut self,
         _: &actions::SwapSelectionEnds,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         self.change_selections(None, cx, |s| {
             s.move_with(|_, sel| {
@@ -11293,7 +11293,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn toggle_fold(&mut self, _: &actions::ToggleFold, cx: &mut ViewContext<Self>) {
+    pub fn toggle_fold(&mut self, _: &actions::ToggleFold, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.is_singleton(cx) {
             let selection = self.selections.newest::<Point>(cx);
 
@@ -11770,7 +11770,7 @@ impl Editor {
         });
     }
 
-    pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
             return;
         }
@@ -11787,7 +11787,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
@@ -11868,7 +11868,7 @@ impl Editor {
         });
     }
 
-    pub fn expand_all_diff_hunks(&mut self, _: &ExpandAllHunkDiffs, cx: &mut ViewContext<Self>) {
+    pub fn expand_all_diff_hunks(&mut self, _: &ExpandAllHunkDiffs, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
@@ -11877,19 +11877,19 @@ impl Editor {
     pub fn toggle_selected_diff_hunks(
         &mut self,
         _: &ToggleSelectedDiffHunks,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.toggle_diff_hunks_in_ranges(ranges, cx);
     }
 
-    pub fn expand_selected_diff_hunks(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn expand_selected_diff_hunks(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.buffer
             .update(cx, |buffer, cx| buffer.expand_diff_hunks(ranges, cx))
     }
 
-    pub fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<Self>) -> bool {
+    pub fn clear_expanded_diff_hunks(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
         self.buffer.update(cx, |buffer, cx| {
             let ranges = vec![Anchor::min()..Anchor::max()];
             if !buffer.all_diff_hunks_expanded()
@@ -11906,7 +11906,7 @@ impl Editor {
     fn toggle_diff_hunks_in_ranges(
         &mut self,
         ranges: Vec<Range<Anchor>>,
-        cx: &mut ViewContext<'_, Editor>,
+        window: &mut Window, cx: &mut ModelContext<'_, Editor>,
     ) {
         self.buffer.update(cx, |buffer, cx| {
             if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
@@ -11920,7 +11920,7 @@ impl Editor {
     pub(crate) fn apply_all_diff_hunks(
         &mut self,
         _: &ApplyAllDiffHunks,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
@@ -11937,7 +11937,7 @@ impl Editor {
     pub(crate) fn apply_selected_diff_hunks(
         &mut self,
         _: &ApplyDiffHunk,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.snapshot(cx);
         let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx).into_iter());
@@ -11964,7 +11964,7 @@ impl Editor {
         }
     }
 
-    pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_gutter_hovered(&mut self, hovered: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         if hovered != self.gutter_hovered {
             self.gutter_hovered = hovered;
             cx.notify();
@@ -12536,23 +12536,23 @@ impl Editor {
         self.show_git_blame_gutter
     }
 
-    pub fn render_git_blame_gutter(&self, cx: &WindowContext) -> bool {
+    pub fn render_git_blame_gutter(&self, window: &Window, cx: &AppContext) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
-    pub fn render_git_blame_inline(&self, cx: &WindowContext) -> bool {
+    pub fn render_git_blame_inline(&self, window: &Window, cx: &AppContext) -> bool {
         self.show_git_blame_inline
             && self.focus_handle.is_focused(window)
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
 
-    fn has_blame_entries(&self, cx: &WindowContext) -> bool {
+    fn has_blame_entries(&self, window: &Window, cx: &AppContext) -> bool {
         self.blame()
             .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
-    fn newest_selection_head_on_empty_line(&self, cx: &WindowContext) -> bool {
+    fn newest_selection_head_on_empty_line(&self, window: &Window, cx: &AppContext) -> bool {
         let cursor_anchor = self.selections.newest_anchor().head();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -12561,7 +12561,7 @@ impl Editor {
         snapshot.line_len(buffer_row) == 0
     }
 
-    fn get_permalink_to_line(&self, cx: &mut ViewContext<Self>) -> Task<Result<url::Url>> {
+    fn get_permalink_to_line(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Task<Result<url::Url>> {
         let buffer_and_selection = maybe!({
             let selection = self.selections.newest::<Point>(cx);
             let selection_range = selection.range();
@@ -12868,7 +12868,7 @@ impl Editor {
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
     /// Returns a map of display rows that are highlighted and their corresponding highlight color.
     /// Allows to ignore certain kinds of highlights.
-    pub fn highlighted_display_rows(&self, cx: &mut WindowContext) -> BTreeMap<DisplayRow, Hsla> {
+    pub fn highlighted_display_rows(&self, window: &mut Window, cx: &mut AppContext) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
@@ -12983,7 +12983,7 @@ impl Editor {
     #[cfg(feature = "test-support")]
     pub fn all_text_background_highlights(
         &self,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let snapshot = self.snapshot(window, cx);
         let buffer = &snapshot.buffer_snapshot;
@@ -13828,7 +13828,7 @@ impl Editor {
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
     /// with each line being an array of {text, highlight} objects.
-    fn copy_highlight_json(&mut self, _: &CopyHighlightJson, cx: &mut ViewContext<Self>) {
+    fn copy_highlight_json(&mut self, _: &CopyHighlightJson, window: &mut Window, cx: &mut ModelContext<Self>) {
         #[derive(Serialize)]
         struct Chunk<'a> {
             text: String,
@@ -14131,7 +14131,7 @@ impl Editor {
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
 
-    fn character_size(&self, cx: &mut ViewContext<Self>) -> gpui::Point<Pixels> {
+    fn character_size(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> gpui::Point<Pixels> {
         let text_layout_details = self.text_layout_details(cx);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
@@ -15884,7 +15884,7 @@ fn inline_completion_edit_text(
     edits: &[(Range<Anchor>, String)],
     edit_preview: &EditPreview,
     include_deletions: bool,
-    cx: &WindowContext,
+    window: &Window, cx: &AppContext,
 ) -> Option<HighlightedEdits> {
     let edits = edits
         .iter()

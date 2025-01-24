@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AppContext, EventEmitter, FocusHandle, FocusableView, Model, Subscription, Task, View, WeakView,
+    AppContext, EventEmitter, FocusHandle, Focusable, Model, Subscription, Task,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -25,19 +25,19 @@ enum SavedContextPickerEvent {
 }
 
 pub struct ContextHistory {
-    picker: View<Picker<SavedContextPickerDelegate>>,
+    picker: Model<Picker<SavedContextPickerDelegate>>,
     _subscriptions: Vec<Subscription>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
 }
 
 impl ContextHistory {
     pub fn new(
         project: Model<Project>,
         context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
+        workspace: WeakModel<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = cx.new_view(|cx| {
+        let picker = cx.new_model(|cx| {
             Picker::uniform_list(
                 SavedContextPickerDelegate::new(project, context_store.clone()),
                 cx,
@@ -62,9 +62,9 @@ impl ContextHistory {
 
     fn handle_picker_event(
         &mut self,
-        _: View<Picker<SavedContextPickerDelegate>>,
+        _: Model<Picker<SavedContextPickerDelegate>>,
         event: &SavedContextPickerEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let SavedContextPickerEvent::Confirmed(context) = event;
 
@@ -90,12 +90,12 @@ impl ContextHistory {
 }
 
 impl Render for ContextHistory {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().size_full().child(self.picker.clone())
     }
 }
 
-impl FocusableView for ContextHistory {
+impl Focusable for ContextHistory {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -106,7 +106,7 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("History".into())
     }
 }
@@ -146,7 +146,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Search...".into()
     }
 

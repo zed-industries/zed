@@ -11,8 +11,8 @@ use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, FocusableView, Stateful, Task, View,
-    WeakModel, WeakView,
+    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, Focusable, Stateful, Task,
+    WeakModel,
 };
 use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use picker::{Picker, PickerDelegate};
@@ -32,9 +32,9 @@ pub struct FileContextPicker {
 
 impl FileContextPicker {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
-        editor: WeakView<Editor>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
+        editor: WeakModel<Editor>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
@@ -66,9 +66,9 @@ impl Render for FileContextPicker {
 }
 
 pub struct FileContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
-    editor: WeakView<Editor>,
+    context_picker: WeakModel<ContextPicker>,
+    workspace: WeakModel<Workspace>,
+    editor: WeakModel<Editor>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -77,9 +77,9 @@ pub struct FileContextPickerDelegate {
 
 impl FileContextPickerDelegate {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
-        editor: WeakView<Editor>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
+        editor: WeakModel<Editor>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
@@ -463,7 +463,7 @@ pub fn render_file_context_entry(
 fn render_fold_icon_button(
     icon: IconName,
     label: SharedString,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut AppContext) -> AnyElement> {
     Arc::new(move |fold_id, _fold_range, _cx| {
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
@@ -479,8 +479,8 @@ fn fold_toggle(
 ) -> impl Fn(
     MultiBufferRow,
     bool,
-    Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
-    &mut WindowContext,
+    Arc<dyn Fn(bool, &mut Window, &mut AppContext) + Send + Sync>,
+    &mut
 ) -> AnyElement {
     move |row, is_folded, fold, _cx| {
         Disclosure::new((name, row.0 as u64), !is_folded)

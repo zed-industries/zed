@@ -81,7 +81,7 @@ pub trait PanelHandle: Send + Sync {
     fn panel_focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &AppContext) -> u32;
-    fn move_to_next_position(&self, cx: &mut WindowContext) {
+    fn move_to_next_position(&self, window: &mut Window, cx: &mut AppContext) {
         let current_position = self.position(cx);
         let next_position = [
             DockPosition::Left,

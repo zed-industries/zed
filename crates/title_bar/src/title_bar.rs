@@ -104,7 +104,7 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
-    repository_selector: View<RepositorySelector>,
+    repository_selector: Model<RepositorySelector>,
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -311,7 +311,7 @@ impl TitleBar {
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
-            repository_selector: cx.new_view(|cx| RepositorySelector::new(project.clone(), cx)),
+            repository_selector: cx.new_model(|cx| RepositorySelector::new(project.clone(), cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
@@ -503,7 +503,7 @@ impl TitleBar {
     // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
     pub fn render_current_repository(
         &self,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<impl IntoElement> {
         if !self.git_ui_enabled.load(Ordering::SeqCst) {
             return None;
@@ -538,7 +538,7 @@ impl TitleBar {
         ))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {

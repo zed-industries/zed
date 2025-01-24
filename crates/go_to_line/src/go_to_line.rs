@@ -4,7 +4,7 @@ use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Anchor, Editor, MultiBuffer, ToPoint};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, Render, SharedString, Styled, Subscription, View, ViewContext,
+    Focusable, Model, Render, SharedString, Styled, Subscription,
     VisualContext,
 };
 use language::Buffer;
@@ -21,8 +21,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct GoToLine {
-    line_editor: View<Editor>,
-    active_editor: View<Editor>,
+    line_editor: Model<Editor>,
+    active_editor: Model<Editor>,
     active_buffer: Model<Buffer>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<f32>>,
@@ -63,9 +63,9 @@ impl GoToLine {
     }
 
     pub fn new(
-        active_editor: View<Editor>,
+        active_editor: Model<Editor>,
         active_buffer: Model<Buffer>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         let (cursor, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
             let cursor = editor.selections.last::<Point>(cx).head();
@@ -139,7 +139,7 @@ impl GoToLine {
         }
     }
 
-    fn highlight_current_line(&mut self, cx: &mut ViewContext<Self>) {
+    fn highlight_current_line(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
             let multibuffer = editor.buffer().read(cx);
@@ -164,7 +164,7 @@ impl GoToLine {
     fn anchor_from_query(
         &self,
         multibuffer: &MultiBuffer,
-        cx: &ViewContext<Editor>,
+        window: &Window, cx: &ModelContext<Editor>,
     ) -> Option<Anchor> {
         let (Some(row), column) = self.line_column_from_query(cx) else {
             return None;
@@ -188,7 +188,7 @@ impl GoToLine {
         cx.emit(DismissEvent);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
             let Some(start) = self.anchor_from_query(&multibuffer, cx) else {

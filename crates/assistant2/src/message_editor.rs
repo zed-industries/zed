@@ -54,7 +54,7 @@ impl MessageEditor {
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let editor = cx.new_view(|cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::auto_height(10, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
@@ -172,7 +172,7 @@ impl MessageEditor {
             .is_some()
     }
 
-    fn send_to_model(&mut self, request_kind: RequestKind, cx: &mut ViewContext<Self>) {
+    fn send_to_model(&mut self, request_kind: RequestKind, window: &mut Window, cx: &mut ModelContext<Self>) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -280,7 +280,7 @@ impl MessageEditor {
         }
     }
 
-    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.context_picker_menu_handle.is_deployed()
             || self.inline_context_picker_menu_handle.is_deployed()
         {

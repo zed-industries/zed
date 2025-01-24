@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{canvas, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, Subscription};
+use gpui::{canvas, AnyView, AppContext, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use ui::{prelude::*, ElevationIndex};
 use workspace::Item;
@@ -13,7 +13,7 @@ pub struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let registry_subscription = cx.subscribe(
@@ -41,7 +41,7 @@ impl ConfigurationView {
         this
     }
 
-    fn build_configuration_views(&mut self, cx: &mut ViewContext<Self>) {
+    fn build_configuration_views(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         for provider in providers {
             self.add_configuration_view(&provider, cx);
@@ -55,7 +55,7 @@ impl ConfigurationView {
     fn add_configuration_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let configuration_view = provider.configuration_view(cx);
         self.configuration_views
@@ -65,7 +65,7 @@ impl ConfigurationView {
     fn render_provider_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Div {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
@@ -123,7 +123,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         let provider_views = providers
             .into_iter()
@@ -182,7 +182,7 @@ pub enum ConfigurationViewEvent {
 
 impl EventEmitter<ConfigurationViewEvent> for ConfigurationView {}
 
-impl FocusableView for ConfigurationView {
+impl Focusable for ConfigurationView {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -191,7 +191,7 @@ impl FocusableView for ConfigurationView {
 impl Item for ConfigurationView {
     type Event = ConfigurationViewEvent;
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some("Configuration".into())
     }
 }

@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, SharedString, Task, TaskLabel, WindowContext,
+    Pixels, SharedString, Task, TaskLabel,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;

@@ -865,7 +865,7 @@ impl ConfigurationView {
             .icon(IconName::ArrowUpRight)
             .icon_color(Color::Muted)
             .icon_size(IconSize::XSmall)
-            .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
+            .on_click(move |_, window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
         let text = "To start using Zed AI, please read and accept the";
 

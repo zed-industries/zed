@@ -5,7 +5,7 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use gpui::{AnyWindowHandle, AppContext, Context, Model, ViewContext, WeakView};
+use gpui::{AnyWindowHandle, AppContext, Context, Model};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -13,8 +13,8 @@ use workspace::Workspace;
 use zed_predict_tos::ZedPredictTos;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
-    let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
-    cx.observe_new_views({
+    let editors: Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>> = Rc::default();
+    cx.observe_new_models({
         let editors = editors.clone();
         let client = client.clone();
         let user_store = user_store.clone();
@@ -203,7 +203,7 @@ fn assign_inline_completion_provider(
     provider: language::language_settings::InlineCompletionProvider,
     client: &Arc<Client>,
     user_store: Model<UserStore>,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window, cx: &mut ModelContext<Editor>,
 ) {
     match provider {
         language::language_settings::InlineCompletionProvider::None => {}

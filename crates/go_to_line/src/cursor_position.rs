@@ -166,7 +166,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().when_some(self.position, |el, (position, is_main_buffer)| {
             let mut text = format!(
                 "{}{}{FILE_ROW_COLUMN_DELIMITER}{}",

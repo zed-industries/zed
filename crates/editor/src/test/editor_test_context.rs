@@ -437,7 +437,7 @@ impl EditorTestContext {
 
 #[track_caller]
 pub fn assert_state_with_diff(
-    editor: &View<Editor>,
+    editor: &Model<Editor>,
     cx: &mut VisualTestContext,
     expected_diff_text: &str,
 ) {

@@ -38,8 +38,8 @@ pub struct ContextStrip {
 impl ContextStrip {
     pub fn new(
         context_store: Model<ContextStore>,
-        workspace: WeakView<Workspace>,
-        editor: WeakView<Editor>,
+        workspace: WeakModel<Workspace>,
+        editor: WeakModel<Editor>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
@@ -119,7 +119,7 @@ impl ContextStrip {
         })
     }
 
-    fn suggested_thread(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
+    fn suggested_thread(&self, window: &Window, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
         }

@@ -91,7 +91,7 @@ pub struct GitPanel {
     selected_entry: Option<usize>,
     show_scrollbar: bool,
     update_visible_entries_task: Task<()>,
-    commit_editor: View<Editor>,
+    commit_editor: Model<Editor>,
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
     width: Option<Pixels>,
@@ -100,11 +100,11 @@ pub struct GitPanel {
 
 fn commit_message_editor(
     active_repository: Option<&RepositoryHandle>,
-    cx: &mut ViewContext<'_, Editor>,
+    window: &mut Window, cx: &mut ModelContext<'_, Editor>,
 ) -> Editor {
     let theme = ThemeSettings::get_global(cx);
 
-    let mut text_style = cx.text_style();
+    let mut text_style = window.text_style();
     let refinement = TextStyleRefinement {
         font_family: Some(theme.buffer_font.family.clone()),
         font_features: Some(FontFeatures::disable_ligatures()),
@@ -166,7 +166,7 @@ impl GitPanel {
             .detach();
 
             let commit_editor =
-                cx.new_view(|cx| commit_message_editor(active_repository.as_ref(), cx));
+                cx.new_model(|cx| commit_message_editor(active_repository.as_ref(), cx));
 
             let scroll_handle = UniformListScrollHandle::new();
 
@@ -187,7 +187,7 @@ impl GitPanel {
                 all_staged: None,
                 current_modifiers: window.modifiers(),
                 width: Some(px(360.)),
-                scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
+                scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.model()),
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
@@ -242,7 +242,7 @@ impl GitPanel {
         git_panel
     }
 
-    fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+    fn serialize(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         // TODO: we can store stage status here
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
@@ -445,7 +445,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn select_first_entry_if_none(&mut self, cx: &mut ViewContext<Self>) {
+    fn select_first_entry_if_none(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let have_entries = self
             .active_repository
             .as_ref()
@@ -490,7 +490,7 @@ impl GitPanel {
         }
     }
 
-    fn toggle_staged_for_entry(&mut self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
+    fn toggle_staged_for_entry(&mut self, entry: &GitListEntry, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -517,7 +517,7 @@ impl GitPanel {
         }
     }
 
-    fn open_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
+    fn open_entry(&self, entry: &GitListEntry, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -534,7 +534,7 @@ impl GitPanel {
         cx.emit(Event::OpenedEntry { path });
     }
 
-    fn stage_all(&mut self, _: &git::StageAll, cx: &mut ViewContext<Self>) {
+    fn stage_all(&mut self, _: &git::StageAll, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -548,7 +548,7 @@ impl GitPanel {
         };
     }
 
-    fn unstage_all(&mut self, _: &git::UnstageAll, cx: &mut ViewContext<Self>) {
+    fn unstage_all(&mut self, _: &git::UnstageAll, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -572,7 +572,7 @@ impl GitPanel {
     }
 
     /// Commit all staged changes
-    fn commit_changes(&mut self, _: &git::CommitChanges, cx: &mut ViewContext<Self>) {
+    fn commit_changes(&mut self, _: &git::CommitChanges, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -583,7 +583,7 @@ impl GitPanel {
     }
 
     /// Commit all changes, regardless of whether they are staged or not
-    fn commit_all_changes(&mut self, _: &git::CommitAllChanges, cx: &mut ViewContext<Self>) {
+    fn commit_all_changes(&mut self, _: &git::CommitAllChanges, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -593,7 +593,7 @@ impl GitPanel {
         active_repository.commit_all(self.err_sender.clone(), cx);
     }
 
-    fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
+    fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut ModelContext<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
         let Some(room) = self
@@ -692,8 +692,8 @@ impl GitPanel {
         }
     }
 
-    fn schedule_update(&mut self, cx: &mut ViewContext<Self>) {
-        let handle = cx.view().downgrade();
+    fn schedule_update(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+        let handle = cx.model().downgrade();
         self.update_visible_entries_task = cx.spawn(|_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(this) = handle.upgrade() {
@@ -701,14 +701,14 @@ impl GitPanel {
                     this.update_visible_entries(cx);
                     let active_repository = this.active_repository.as_ref();
                     this.commit_editor =
-                        cx.new_view(|cx| commit_message_editor(active_repository, cx));
+                        cx.new_model(|cx| commit_message_editor(active_repository, cx));
                 })
                 .ok();
             }
         });
     }
 
-    fn update_visible_entries(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_visible_entries(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.visible_entries.clear();
 
         let Some(repo) = self.active_repository.as_ref() else {
@@ -775,7 +775,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn show_err_toast(&self, id: &'static str, e: anyhow::Error, cx: &mut ViewContext<Self>) {
+    fn show_err_toast(&self, id: &'static str, e: anyhow::Error, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };

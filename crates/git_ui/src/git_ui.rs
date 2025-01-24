@@ -2,7 +2,7 @@ use ::settings::Settings;
 use git::status::FileStatus;
 use git_panel_settings::GitPanelSettings;
 use gpui::AppContext;
-use ui::{ActiveTheme, Color, Icon, IconName, IntoElement, WindowContext};
+use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
 pub mod git_panel;
 mod git_panel_settings;
@@ -13,7 +13,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 // TODO: Add updated status colors to theme
-pub fn git_status_icon(status: FileStatus, cx: &WindowContext) -> impl IntoElement {
+pub fn git_status_icon(status: FileStatus, window: &Window, cx: &AppContext) -> impl IntoElement {
     let (icon_name, color) = if status.is_conflicted() {
         (
             IconName::Warning,

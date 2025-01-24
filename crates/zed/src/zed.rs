@@ -172,7 +172,7 @@ pub fn initialize_workspace(
 
         let popover_menu_handle = PopoverMenuHandle::default();
 
-        let inline_completion_button = cx.new_view(|cx| {
+        let inline_completion_button = cx.new_model(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),

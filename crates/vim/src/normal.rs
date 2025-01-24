@@ -29,7 +29,7 @@ use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{actions, ViewContext};
+use gpui::{actions};
 use language::{Point, SelectionGoal, ToPoint};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -469,7 +469,7 @@ impl Vim {
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }
 
-    fn show_location(&mut self, _: &ShowLocation, cx: &mut ViewContext<Self>) {
+    fn show_location(&mut self, _: &ShowLocation, window: &mut Window, cx: &mut ModelContext<Self>) {
         let count = Vim::take_count(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
@@ -508,7 +508,7 @@ impl Vim {
         });
     }
 
-    fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
+    fn toggle_comments(&mut self, _: &ToggleComments, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

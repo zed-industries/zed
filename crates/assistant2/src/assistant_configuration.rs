@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{Action, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, Subscription};
+use gpui::{Action, AnyView, AppContext, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use ui::{prelude::*, ElevationIndex};
 use zed_actions::assistant::DeployPromptLibrary;
@@ -13,7 +13,7 @@ pub struct AssistantConfiguration {
 }
 
 impl AssistantConfiguration {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let registry_subscription = cx.subscribe(
@@ -41,7 +41,7 @@ impl AssistantConfiguration {
         this
     }
 
-    fn build_provider_configuration_views(&mut self, cx: &mut ViewContext<Self>) {
+    fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, cx);
@@ -55,7 +55,7 @@ impl AssistantConfiguration {
     fn add_provider_configuration_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let configuration_view = provider.configuration_view(cx);
         self.configuration_views_by_provider
@@ -63,7 +63,7 @@ impl AssistantConfiguration {
     }
 }
 
-impl FocusableView for AssistantConfiguration {
+impl Focusable for AssistantConfiguration {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -79,7 +79,7 @@ impl AssistantConfiguration {
     fn render_provider_configuration(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
@@ -135,7 +135,7 @@ impl AssistantConfiguration {
 }
 
 impl Render for AssistantConfiguration {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()

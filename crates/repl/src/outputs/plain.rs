@@ -122,7 +122,7 @@ impl TerminalOutput {
     /// This method initializes a new terminal emulator with default configuration
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
-    pub fn new(cx: &mut WindowContext) -> Self {
+    pub fn new(window: &mut Window, cx: &mut AppContext) -> Self {
         let term =
             alacritty_terminal::Term::new(Config::default(), &terminal_size(cx), VoidListener);
 

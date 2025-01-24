@@ -384,7 +384,7 @@ impl EditorElement {
         register_action(view, cx, Editor::expand_all_diff_hunks);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
-                task.detach_and_notify_err(cx);
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
@@ -3758,11 +3758,11 @@ impl EditorElement {
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
         display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
-        editor: View<Editor>,
-        cx: &mut WindowContext,
+        editor: Model<Editor>,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Vec<AnyElement> {
         let point_for_position =
-            position_map.point_for_position(text_hitbox.bounds, cx.mouse_position());
+            position_map.point_for_position(text_hitbox.bounds, window.mouse_position());
 
         let mut controls = vec![];
 
@@ -5123,13 +5123,13 @@ impl EditorElement {
         }
     }
 
-    fn paint_diff_hunk_controls(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+    fn paint_diff_hunk_controls(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut AppContext) {
         for mut diff_hunk_control in layout.diff_hunk_controls.drain(..) {
             diff_hunk_control.paint(cx);
         }
     }
 
-    fn paint_blocks(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+    fn paint_blocks(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut AppContext) {
         for mut block in layout.blocks.drain(..) {
             block.element.paint(window, cx);
         }
@@ -5225,7 +5225,7 @@ impl EditorElement {
         });
     }
 
-    fn paint_mouse_listeners(&mut self, layout: &EditorLayout, cx: &mut WindowContext) {
+    fn paint_mouse_listeners(&mut self, layout: &EditorLayout, window: &mut Window, cx: &mut AppContext) {
         self.paint_scroll_wheel_listener(layout, cx);
 
         window.on_mouse_event({
@@ -5449,7 +5449,7 @@ fn header_jump_data(
 fn inline_completion_tab_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
-    cx: &WindowContext,
+    window: &Window, cx: &AppContext,
 ) -> AnyElement {
     let tab_kbd = h_flex()
         .px_0p5()
@@ -8488,8 +8488,8 @@ mod tests {
 fn diff_hunk_controls(
     hunk_range: Range<Anchor>,
     line_height: Pixels,
-    editor: &View<Editor>,
-    cx: &mut WindowContext,
+    editor: &Model<Editor>,
+    window: &mut Window, cx: &mut AppContext,
 ) -> AnyElement {
     h_flex()
         .h(line_height)

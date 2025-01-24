@@ -36,7 +36,7 @@ impl ActiveThread {
     pub fn new(
         thread: Model<Thread>,
         thread_store: Model<ThreadStore>,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,

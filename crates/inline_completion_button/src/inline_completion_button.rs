@@ -7,7 +7,7 @@ use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
     AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
-    View, ViewContext, WeakView, WindowContext,
+   
 };
 use language::{
     language_settings::{
@@ -46,7 +46,7 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     user_store: Model<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
@@ -174,7 +174,7 @@ impl Render for InlineCompletionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.view().clone();
+                let this = cx.model().clone();
                 let fs = self.fs.clone();
 
                 return div().child(
@@ -251,7 +251,7 @@ impl Render for InlineCompletionButton {
                                     cx,
                                 )
                             })
-                            .on_click(cx.listener(move |_, _, cx| {
+                            .on_click(cx.listener(move |_, _, window, cx| {
                                 let user_store = user_store.clone();
 
                                 if let Some(workspace) = workspace.upgrade() {
@@ -261,7 +261,7 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
-                let this = cx.view().clone();
+                let this = cx.model().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict).when(
                     !self.popover_menu_handle.is_deployed(),
                     |button| {
@@ -307,7 +307,7 @@ impl InlineCompletionButton {
         fs: Arc<dyn Fs>,
         user_store: Model<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
@@ -501,7 +501,7 @@ impl InlineCompletionButton {
         cx.notify();
     }
 
-    pub fn toggle_menu(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.popover_menu_handle.toggle(cx);
     }
 }

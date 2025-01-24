@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    Subscription, Task, View, WeakModel, WeakView,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
+    Subscription, Task, WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use project::{
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
 pub struct RepositorySelector {
-    picker: View<Picker<RepositorySelectorDelegate>>,
+    picker: Model<Picker<RepositorySelectorDelegate>>,
     /// The task used to update the picker's matches when there is a change to
     /// the repository list.
     update_matches_task: Option<Task<()>>,
@@ -19,7 +19,7 @@ pub struct RepositorySelector {
 }
 
 impl RepositorySelector {
-    pub fn new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(project: Model<Project>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let git_state = project.read(cx).git_state().cloned();
         let all_repositories = git_state
             .as_ref()
@@ -27,14 +27,14 @@ impl RepositorySelector {
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
-            repository_selector: cx.view().downgrade(),
+            repository_selector: cx.model().downgrade(),
             repository_entries: all_repositories,
             filtered_repositories,
             selected_index: 0,
         };
 
         let picker =
-            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
+            cx.new_model(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
 
         let _subscriptions = if let Some(git_state) = git_state {
             vec![cx.subscribe(&git_state, Self::handle_project_git_event)]
@@ -53,7 +53,7 @@ impl RepositorySelector {
         &mut self,
         git_state: Model<GitState>,
         _event: &project::git::Event,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         // TODO handle events individually
         let task = self.picker.update(cx, |this, cx| {
@@ -67,14 +67,14 @@ impl RepositorySelector {
 
 impl EventEmitter<DismissEvent> for RepositorySelector {}
 
-impl FocusableView for RepositorySelector {
+impl Focusable for RepositorySelector {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for RepositorySelector {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
@@ -84,13 +84,13 @@ pub struct RepositorySelectorPopoverMenu<T>
 where
     T: PopoverTrigger,
 {
-    repository_selector: View<RepositorySelector>,
+    repository_selector: Model<RepositorySelector>,
     trigger: T,
     handle: Option<PopoverMenuHandle<RepositorySelector>>,
 }
 
 impl<T: PopoverTrigger> RepositorySelectorPopoverMenu<T> {
-    pub fn new(repository_selector: View<RepositorySelector>, trigger: T) -> Self {
+    pub fn new(repository_selector: Model<RepositorySelector>, trigger: T) -> Self {
         Self {
             repository_selector,
             trigger,
@@ -105,7 +105,7 @@ impl<T: PopoverTrigger> RepositorySelectorPopoverMenu<T> {
 }
 
 impl<T: PopoverTrigger> RenderOnce for RepositorySelectorPopoverMenu<T> {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         let repository_selector = self.repository_selector.clone();
 
         PopoverMenu::new("repository-switcher")
@@ -118,7 +118,7 @@ impl<T: PopoverTrigger> RenderOnce for RepositorySelectorPopoverMenu<T> {
 
 pub struct RepositorySelectorDelegate {
     project: WeakModel<Project>,
-    repository_selector: WeakView<RepositorySelector>,
+    repository_selector: WeakModel<RepositorySelector>,
     repository_entries: Vec<RepositoryHandle>,
     filtered_repositories: Vec<RepositoryHandle>,
     selected_index: usize,
@@ -148,7 +148,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
         cx.notify();
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Select a repository...".into()
     }
 

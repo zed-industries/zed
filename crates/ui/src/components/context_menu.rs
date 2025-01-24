@@ -44,7 +44,7 @@ pub struct ContextMenuEntry {
     icon_position: IconPosition,
     icon_size: IconSize,
     icon_color: Option<Color>,
-    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
 }
@@ -544,7 +544,7 @@ impl Render for ContextMenu {
                                     disabled,
                                 }) => {
                                     let handler = handler.clone();
-                                    let menu = cx.view().downgrade();
+                                    let menu = cx.model().downgrade();
                                     let icon_color = if *disabled {
                                         Color::Muted
                                     } else {

@@ -10,8 +10,8 @@ use anyhow::{anyhow, Result};
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Task, View, WeakModel,
-    WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Task, WeakModel,
+   
 };
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
@@ -44,8 +44,8 @@ enum ContextPickerMode {
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
-    workspace: WeakView<Workspace>,
-    editor: WeakView<Editor>,
+    workspace: WeakModel<Workspace>,
+    editor: WeakModel<Editor>,
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -56,7 +56,7 @@ impl ContextPicker {
         workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
-        editor: WeakView<Editor>,
+        editor: WeakModel<Editor>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -150,8 +150,8 @@ impl ContextPicker {
         self.thread_store.is_some()
     }
 
-    fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
-        let context_picker = cx.view().downgrade();
+    fn select_kind(&mut self, kind: ContextKind, window: &mut Window, cx: &mut ModelContext<Self>) {
+        let context_picker = cx.model().downgrade();
 
         match kind {
             ContextKind::File => {
@@ -288,7 +288,7 @@ impl ContextPicker {
     fn add_recent_thread(
         &self,
         thread: ThreadContextEntry,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
             return Task::ready(Err(anyhow!("context store not available")));

@@ -1816,7 +1816,7 @@ impl Workspace {
     pub fn move_focused_panel_to_next_position(
         &mut self,
         _: &MoveFocusedPanelToNextPosition,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
         let active_dock = docks
@@ -5028,7 +5028,7 @@ impl Workspace {
         self.zoomed.as_ref()
     }
 
-    pub fn activate_next_window(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_next_window(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
@@ -5044,7 +5044,7 @@ impl Workspace {
         next_window.update(cx, |_, cx| cx.activate_window()).ok();
     }
 
-    pub fn activate_previous_window(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn activate_previous_window(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
@@ -5227,7 +5227,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {
-                        cx.new_view(|_| {
+                        cx.new_model(|_| {
                             MessageNotification::new("Failed to load the database file.")
                                 .with_click_message("File an issue")
                                 .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
@@ -8539,7 +8539,7 @@ mod tests {
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
         let panel = workspace.update(cx, |workspace, cx| {
-            let panel = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
+            let panel = cx.new_model(|cx| TestPanel::new(DockPosition::Right, cx));
             workspace.add_panel(panel.clone(), cx);
 
             workspace
