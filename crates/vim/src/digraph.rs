@@ -68,16 +68,6 @@ impl Vim {
         if let Some(Operator::Literal { prefix }) = self.active_operator() {
             if let Some(prefix) = prefix {
                 if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
-                    // In the ctrl-v escape sequence,
-                    // - We need to do three things when reaching 'escape'
-                    // 1. Process the literal command
-                    // 2. Exit literal mode.
-                    // 3. Fire 'escape' outside of literal mode.
-                    // 1 & 2 are handled with `handle_literal_input`
-                    // 3 is handled via this dispatch_keystroke.
-                    // PROBLEM: We're still in literal mode when we get there.
-                    // Literal mode is _editor state_ (e.g. keycontext dispatch .set_state())
-                    // And the current rendering does not clear that with the current setup
                     window.defer(cx, |window, cx| {
                         window.dispatch_keystroke(keystroke, cx);
                     });
