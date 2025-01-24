@@ -64,7 +64,7 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &str {
+    pub const fn id(&self) -> &str {
         match self {
             Self::Chat => "deepseek-chat",
             Self::Reasoner => "deepseek-reasoner",
@@ -239,8 +239,12 @@ pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    request: Request,
+    mut request: Request,
 ) -> Result<Response> {
+    if &request.model == Model::Reasoner.id() {
+        request.messages = merge_consecutive_messages(request.messages)?;
+    }
+
     let uri = format!("{api_url}/v1/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -286,8 +290,12 @@ pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
-    request: Request,
+    mut request: Request,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
+    if &request.model == Model::Reasoner.id() {
+        request.messages = merge_consecutive_messages(request.messages)?;
+    }
+
     let uri = format!("{api_url}/v1/chat/completions");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -327,5 +335,288 @@ pub async fn stream_completion(
             response.status(),
             body,
         ))
+    }
+}
+
+fn merge_consecutive_messages(messages: Vec<RequestMessage>) -> Result<Vec<RequestMessage>> {
+    let mut merged = Vec::with_capacity(messages.len());
+    let mut current: Option<RequestMessage> = None;
+
+    for message in messages {
+        if let Some(curr) = current.take() {
+            if curr.role() == message.role() {
+                current = Some(match (curr, message) {
+                    (
+                        RequestMessage::User { content: mut a },
+                        RequestMessage::User { content: b },
+                    ) => {
+                        a.reserve(b.len() + 1);
+                        a.push(' ');
+                        a.push_str(&b);
+                        RequestMessage::User { content: a }
+                    }
+                    (
+                        RequestMessage::System { content: mut a },
+                        RequestMessage::System { content: b },
+                    ) => {
+                        a.reserve(b.len() + 1);
+                        a.push(' ');
+                        a.push_str(&b);
+                        RequestMessage::System { content: a }
+                    }
+                    (
+                        RequestMessage::Assistant {
+                            content: a_content,
+                            tool_calls: mut a_tools,
+                        },
+                        RequestMessage::Assistant {
+                            content: b_content,
+                            tool_calls: b_tools,
+                        },
+                    ) => {
+                        let merged_content = match (a_content, b_content) {
+                            (Some(mut a), Some(b)) => {
+                                a.reserve(b.len() + 1);
+                                a.push(' ');
+                                a.push_str(&b);
+                                Some(a)
+                            }
+                            (a, b) => a.or(b),
+                        };
+
+                        a_tools.extend(b_tools);
+                        RequestMessage::Assistant {
+                            content: merged_content,
+                            tool_calls: a_tools,
+                        }
+                    }
+                    (
+                        RequestMessage::Tool {
+                            content: mut a_content,
+                            tool_call_id: a_id,
+                        },
+                        RequestMessage::Tool {
+                            content: b_content,
+                            tool_call_id: b_id,
+                        },
+                    ) => {
+                        if a_id == b_id {
+                            a_content.reserve(b_content.len() + 1);
+                            a_content.push(' ');
+                            a_content.push_str(&b_content);
+                            RequestMessage::Tool {
+                                content: a_content,
+                                tool_call_id: a_id,
+                            }
+                        } else {
+                            merged.push(RequestMessage::Tool {
+                                content: a_content,
+                                tool_call_id: a_id,
+                            });
+                            RequestMessage::Tool {
+                                content: b_content,
+                                tool_call_id: b_id,
+                            }
+                        }
+                    }
+                    (last, message) => {
+                        merged.push(last);
+                        message
+                    }
+                });
+            } else {
+                merged.push(curr);
+                current = Some(message);
+            }
+        } else {
+            current = Some(message);
+        }
+    }
+
+    if let Some(curr) = current {
+        merged.push(curr);
+    }
+
+    merged.shrink_to_fit();
+    Ok(merged)
+}
+
+impl RequestMessage {
+    fn role(&self) -> Role {
+        match self {
+            RequestMessage::Assistant { .. } => Role::Assistant,
+            RequestMessage::User { .. } => Role::User,
+            RequestMessage::System { .. } => Role::System,
+            RequestMessage::Tool { .. } => Role::Tool,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user_message(content: &str) -> RequestMessage {
+        RequestMessage::User {
+            content: content.to_string(),
+        }
+    }
+
+    fn system_message(content: &str) -> RequestMessage {
+        RequestMessage::System {
+            content: content.to_string(),
+        }
+    }
+
+    fn assistant_message(content: Option<&str>) -> RequestMessage {
+        RequestMessage::Assistant {
+            content: content.map(|s| s.to_string()),
+            tool_calls: vec![],
+        }
+    }
+
+    fn tool_message(content: &str, id: &str) -> RequestMessage {
+        RequestMessage::Tool {
+            content: content.to_string(),
+            tool_call_id: id.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_no_consecutive_messages() {
+        let messages = vec![
+            user_message("Hello"),
+            system_message("System prompt"),
+            user_message("How are you?"),
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 3);
+    }
+
+    #[test]
+    fn test_merge_user_messages() {
+        let messages = vec![
+            user_message("Hello"),
+            user_message("How are you?"),
+            system_message("System"),
+            user_message("Another question"),
+            user_message("And another"),
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0], user_message("Hello How are you?"));
+        assert_eq!(merged[2], user_message("Another question And another"));
+    }
+
+    #[test]
+    fn test_merge_system_messages() {
+        let messages = vec![
+            system_message("System 1"),
+            system_message("System 2"),
+            user_message("User message"),
+            system_message("System 3"),
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0], system_message("System 1 System 2"));
+    }
+
+    #[test]
+    fn test_merge_assistant_messages() {
+        let messages = vec![
+            assistant_message(Some("First")),
+            assistant_message(Some("Second")),
+            assistant_message(None),
+            user_message("User"),
+            assistant_message(Some("Alone")),
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0], assistant_message(Some("First Second")));
+        assert_eq!(merged[2], assistant_message(Some("Alone")));
+    }
+
+    #[test]
+    fn test_merge_tool_messages() {
+        let messages = vec![
+            tool_message("part1", "id1"),
+            tool_message("part2", "id1"),
+            tool_message("partA", "id2"),
+            tool_message("partB", "id1"),
+            user_message("test"),
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged[0], tool_message("part1 part2", "id1"));
+        assert_eq!(merged[1], tool_message("partA", "id2"));
+        assert_eq!(merged[2], tool_message("partB", "id1"));
+    }
+
+    #[test]
+    fn test_mixed_roles() {
+        let messages = vec![
+            user_message("A"),
+            user_message("B"),
+            system_message("C"),
+            system_message("D"),
+            assistant_message(Some("E")),
+            tool_message("F", "id1"),
+            tool_message("G", "id1"),
+            user_message("H"),
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 5);
+        assert_eq!(merged[0], user_message("A B"));
+        assert_eq!(merged[1], system_message("C D"));
+        assert_eq!(merged[2], assistant_message(Some("E")));
+        assert_eq!(merged[3], tool_message("F G", "id1"));
+        assert_eq!(merged[4], user_message("H"));
+    }
+
+    #[test]
+    fn test_empty_messages() {
+        let messages = vec![];
+        let merged = merge_consecutive_messages(messages);
+        assert!(merged.is_ok());
+        assert!(merged.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_tool_calls_retention() {
+        let tool_call = ToolCall {
+            id: "test_id".to_string(),
+            content: ToolCallContent::Function {
+                function: FunctionContent {
+                    name: "test".to_string(),
+                    arguments: "{}".to_string(),
+                },
+            },
+        };
+
+        let messages = vec![
+            RequestMessage::Assistant {
+                content: Some("First".into()),
+                tool_calls: vec![tool_call],
+            },
+            RequestMessage::Assistant {
+                content: Some("Second".into()),
+                tool_calls: vec![],
+            },
+        ];
+
+        let merged = merge_consecutive_messages(messages).unwrap();
+        assert_eq!(merged.len(), 1);
+        match &merged[0] {
+            RequestMessage::Assistant { tool_calls, .. } => {
+                assert_eq!(tool_calls.len(),  1);
+            }
+            _ => panic!("Invalid message type"),
+        }
     }
 }
