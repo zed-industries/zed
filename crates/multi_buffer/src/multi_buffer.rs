@@ -279,6 +279,7 @@ impl ExcerptBoundary {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
     pub buffer_row: Option<u32>,
+    pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<git::diff::DiffHunkStatus>,
 }
 
@@ -6774,6 +6775,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             self.point += Point::new(1, 0);
             return Some(RowInfo {
                 buffer_row: Some(0),
+                multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
             });
         }
@@ -6785,6 +6787,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 region = next_region;
             } else {
                 if self.point == self.cursor.diff_transforms.end(&()).0 .0 {
+                    let multibuffer_row = MultiBufferRow(self.point.row);
                     self.point += Point::new(1, 0);
                     let last_excerpt = self
                         .cursor
@@ -6799,6 +6802,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                         .row;
                     return Some(RowInfo {
                         buffer_row: Some(last_row),
+                        multibuffer_row: Some(multibuffer_row),
                         diff_status: None,
                     });
                 } else {
@@ -6811,6 +6815,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         let buffer_point = region.buffer_range.start + overshoot;
         let result = Some(RowInfo {
             buffer_row: Some(buffer_point.row),
+            multibuffer_row: Some(MultiBufferRow(self.point.row)),
             diff_status: if region.is_inserted_hunk && self.point < region.range.end {
                 Some(DiffHunkStatus::Added)
             } else if !region.is_main_buffer {

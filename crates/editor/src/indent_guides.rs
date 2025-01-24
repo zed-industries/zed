@@ -205,6 +205,7 @@ fn should_recalculate_indented_range(
         return false;
     }
     if let Some((_, _, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
+        // todo!() wrong co-ordinates
         if !current_indent_range.row_range.contains(&new_row) {
             return true;
         }
