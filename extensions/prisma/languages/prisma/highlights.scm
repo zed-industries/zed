@@ -22,6 +22,8 @@
 (attribute (identifier) @label)
 (attribute (call_expression (identifier) @label))
 (attribute (call_expression (member_expression (identifier) @label)))
+(block_attribute_declaration (identifier) @label)
+(block_attribute_declaration (call_expression (identifier) @label))
 (type_expression (identifier) @property)
 
 "(" @punctuation.bracket
@@ -32,3 +34,4 @@
 "}" @punctuation.bracket
 "=" @operator
 "@" @label
+"@@" @label
