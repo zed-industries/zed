@@ -16,12 +16,14 @@ use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
+use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
+    thread_store: Model<ThreadStore>,
     thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
@@ -33,6 +35,7 @@ pub struct ActiveThread {
 impl ActiveThread {
     pub fn new(
         thread: Model<Thread>,
+        thread_store: Model<ThreadStore>,
         workspace: WeakView<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
@@ -47,6 +50,7 @@ impl ActiveThread {
             workspace,
             language_registry,
             tools,
+            thread_store,
             thread: thread.clone(),
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
@@ -192,8 +196,13 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::StreamedCompletion => {}
-            ThreadEvent::SummaryChanged => {}
+            ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
+                self.thread_store
+                    .update(cx, |thread_store, cx| {
+                        thread_store.save_thread(&self.thread, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
@@ -210,6 +219,12 @@ impl ActiveThread {
                 {
                     self.push_message(message_id, message_text, cx);
                 }
+
+                self.thread_store
+                    .update(cx, |thread_store, cx| {
+                        thread_store.save_thread(&self.thread, cx)
+                    })
+                    .detach_and_log_err(cx);
 
                 cx.notify();
             }

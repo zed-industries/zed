@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, AssistantPanelDelegate, ContextEditor, ContextHistory,
-    SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate, AssistantPanelDelegate, ConfigurationError, ContextEditor,
+    ContextHistory, SlashCommandCompletionProvider,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -179,6 +179,7 @@ impl AssistantPanel {
             thread: cx.new_view(|cx| {
                 ActiveThread::new(
                     thread.clone(),
+                    thread_store.clone(),
                     workspace,
                     language_registry,
                     tools.clone(),
@@ -239,6 +240,7 @@ impl AssistantPanel {
         self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
+                self.thread_store.clone(),
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
@@ -361,34 +363,41 @@ impl AssistantPanel {
         })
     }
 
-    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
-        let Some(thread) = self
+    pub(crate) fn open_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let open_thread_task = self
             .thread_store
-            .update(cx, |this, cx| this.open_thread(thread_id, cx))
-        else {
-            return;
-        };
+            .update(cx, |this, cx| this.open_thread(thread_id, cx));
 
-        self.active_view = ActiveView::Thread;
-        self.thread = cx.new_view(|cx| {
-            ActiveThread::new(
-                thread.clone(),
-                self.workspace.clone(),
-                self.language_registry.clone(),
-                self.tools.clone(),
-                cx,
-            )
-        });
-        self.message_editor = cx.new_view(|cx| {
-            MessageEditor::new(
-                self.fs.clone(),
-                self.workspace.clone(),
-                self.thread_store.downgrade(),
-                thread,
-                cx,
-            )
-        });
-        self.message_editor.focus_handle(cx).focus(cx);
+        cx.spawn(|this, mut cx| async move {
+            let thread = open_thread_task.await?;
+            this.update(&mut cx, |this, cx| {
+                this.active_view = ActiveView::Thread;
+                this.thread = cx.new_view(|cx| {
+                    ActiveThread::new(
+                        thread.clone(),
+                        this.thread_store.clone(),
+                        this.workspace.clone(),
+                        this.language_registry.clone(),
+                        this.tools.clone(),
+                        cx,
+                    )
+                });
+                this.message_editor = cx.new_view(|cx| {
+                    MessageEditor::new(
+                        this.fs.clone(),
+                        this.workspace.clone(),
+                        this.thread_store.downgrade(),
+                        thread,
+                        cx,
+                    )
+                });
+                this.message_editor.focus_handle(cx).focus(cx);
+            })
+        })
     }
 
     pub(crate) fn open_configuration(&mut self, cx: &mut ViewContext<Self>) {
@@ -437,7 +446,8 @@ impl AssistantPanel {
 
     pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
         self.thread_store
-            .update(cx, |this, cx| this.delete_thread(thread_id, cx));
+            .update(cx, |this, cx| this.delete_thread(thread_id, cx))
+            .detach_and_log_err(cx);
     }
 }
 
@@ -652,10 +662,34 @@ impl AssistantPanel {
         self.thread.clone().into_any()
     }
 
+    fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let is_authenticated = provider
+            .as_ref()
+            .map_or(false, |provider| provider.is_authenticated(cx));
+
+        if provider.is_some() && is_authenticated {
+            return None;
+        }
+
+        if !is_authenticated {
+            return Some(ConfigurationError::ProviderNotAuthenticated);
+        }
+
+        None
+    }
+
     fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let recent_threads = self
             .thread_store
-            .update(cx, |this, cx| this.recent_threads(3, cx));
+            .update(cx, |this, _cx| this.recent_threads(3));
+
+        let create_welcome_heading = || {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
+        };
 
         v_flex()
             .gap_2()
@@ -669,6 +703,52 @@ impl AssistantPanel {
                         .mx_auto()
                         .mb_4(),
                 ),
+            )
+            .when(
+                matches!(
+                    self.configuration_error(cx),
+                    Some(ConfigurationError::ProviderNotAuthenticated)
+                ),
+                |parent| {
+                    parent.child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(create_welcome_heading())
+                            .child(
+                                h_flex().mb_2().w_full().justify_center().child(
+                                    Label::new(
+                                        "To start using the assistant, configure at least one LLM provider.",
+                                    )
+                                    .color(Color::Muted),
+                                ),
+                            )
+                            .child(
+                                h_flex().w_full().justify_center().child(
+                                    Button::new("open-configuration", "Configure a Provider")
+                                        .size(ButtonSize::Compact)
+                                        .icon(Some(IconName::Sliders))
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.open_configuration(cx);
+                                        })),
+                                ),
+                            ),
+                    )
+                },
+            )
+            .when(
+                recent_threads.is_empty() && self.configuration_error(cx).is_none(),
+                |parent| {
+                    parent.child(
+                        v_flex().gap_0p5().child(create_welcome_heading()).child(
+                            h_flex().w_full().justify_center().child(
+                                Label::new("Start typing to chat with your codebase")
+                                    .color(Color::Muted),
+                            ),
+                        ),
+                    )
+                },
             )
             .when(!recent_threads.is_empty(), |parent| {
                 parent

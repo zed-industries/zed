@@ -396,12 +396,12 @@ pub fn render_file_context_entry(
 
     h_flex()
         .id(id)
-        .gap_1()
+        .gap_1p5()
         .w_full()
-        .child(file_icon.size(IconSize::Small))
+        .child(file_icon.size(IconSize::Small).color(Color::Muted))
         .child(
             h_flex()
-                .gap_2()
+                .gap_1()
                 .child(Label::new(file_name))
                 .children(directory.map(|directory| {
                     Label::new(directory)
@@ -409,11 +409,12 @@ pub fn render_file_context_entry(
                         .color(Color::Muted)
                 })),
         )
-        .child(div().w_full())
         .when_some(added, |el, added| match added {
             FileInclusion::Direct(_) => el.child(
                 h_flex()
-                    .gap_1()
+                    .w_full()
+                    .justify_end()
+                    .gap_0p5()
                     .child(
                         Icon::new(IconName::Check)
                             .size(IconSize::Small)
@@ -426,7 +427,9 @@ pub fn render_file_context_entry(
 
                 el.child(
                     h_flex()
-                        .gap_1()
+                        .w_full()
+                        .justify_end()
+                        .gap_0p5()
                         .child(
                             Icon::new(IconName::Check)
                                 .size(IconSize::Small)
