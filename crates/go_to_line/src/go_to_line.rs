@@ -245,7 +245,7 @@ impl Render for GoToLine {
 mod tests {
     use super::*;
     use cursor_position::{CursorPosition, SelectionStats};
-    use editor::actions::SelectAll;
+    use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
@@ -437,6 +437,159 @@ mod tests {
                 "After selecting a text with multibyte unicode characters, the character count should be correct"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_unicode_line_numbers(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let text = "ēlo你好";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            editor.move_to_beginning(&MoveToBeginning, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(Point::new(0, 0), current_position(&workspace, cx));
+
+        for (i, c) in text.chars().enumerate() {
+            editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+            cx.executor().advance_clock(Duration::from_millis(200));
+            assert_eq!(
+                Point::new(0, i as u32 + 1),
+                current_position(&workspace, cx),
+                "Wrong position for char '{c}' in string '{text}'",
+            );
+        }
+
+        editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(
+            Point::new(0, text.chars().count() as u32),
+            current_position(&workspace, cx),
+            "After reaching the end of the text, position should not change when moving right"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_go_into_unicode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let text = "ēlo你好";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            editor.move_to_beginning(&MoveToBeginning, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(Point::new(0, 0), current_position(&workspace, cx));
+
+        for (i, c) in text.chars().enumerate() {
+            let i = i as u32;
+            let point = Point::new(0, i + 1);
+            go_to_point(point, &workspace, cx);
+            cx.executor().advance_clock(Duration::from_millis(200));
+            assert_eq!(
+                point,
+                current_position(&workspace, cx),
+                "When going to {point:?}, expecting the cursor to be at char '{c}' in string '{text}'",
+            );
+        }
+
+        go_to_point(Point::new(111, 222), &workspace, cx);
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(
+            Point::new(0, text.chars().count() as u32),
+            current_position(&workspace, cx),
+            "When going into too large point, should go to the end of the text"
+        );
+    }
+
+    fn current_position(workspace: &View<Workspace>, cx: &mut VisualTestContext) -> Point {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .status_bar()
+                .read(cx)
+                .item_of_type::<CursorPosition>()
+                .expect("missing cursor position item")
+                .read(cx)
+                .position()
+                .expect("No position found")
+        })
+    }
+
+    fn go_to_point(point: Point, workspace: &View<Workspace>, cx: &mut VisualTestContext) {
+        let _go_to_line_view = open_go_to_line_view(workspace, cx);
+        cx.simulate_input(&format!("{}:{}", point.row, point.column));
+        cx.dispatch_action(menu::Confirm);
     }
 
     fn open_go_to_line_view(

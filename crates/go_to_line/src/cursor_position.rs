@@ -78,6 +78,8 @@ impl CursorPosition {
                                 if buffer.excerpts().count() > 0 {
                                     for selection in editor.selections.all::<usize>(cx) {
                                         cursor_position.selected_count.characters += buffer
+                                            // TODO kb bad bad perf
+                                            // See `test_unicode_characters_selection`
                                             .text_for_range(selection.start..selection.end)
                                             .map(|t| t.chars().count())
                                             .sum::<usize>();
@@ -161,6 +163,11 @@ impl CursorPosition {
     #[cfg(test)]
     pub(crate) fn selection_stats(&self) -> &SelectionStats {
         &self.selected_count
+    }
+
+    #[cfg(test)]
+    pub(crate) fn position(&self) -> Option<Point> {
+        self.position
     }
 }
 
