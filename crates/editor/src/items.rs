@@ -20,7 +20,6 @@ use language::{
     SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::AnchorRangeExt;
 use project::{
     lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
     ProjectItem as _, ProjectPath,
@@ -528,6 +527,7 @@ fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor)
         excerpt_id,
         text_anchor: language::proto::deserialize_anchor(anchor.anchor?)?,
         buffer_id: buffer.buffer_id_for_excerpt(excerpt_id),
+        diff_base_anchor: None,
     })
 }
 
@@ -1435,58 +1435,33 @@ impl SearchableItem for Editor {
         cx.background_executor().spawn(async move {
             let mut ranges = Vec::new();
 
-            if let Some((_, _, excerpt_buffer)) = buffer.as_singleton() {
-                let search_within_ranges = if search_within_ranges.is_empty() {
-                    vec![None]
-                } else {
-                    search_within_ranges
-                        .into_iter()
-                        .map(|range| Some(range.to_offset(&buffer)))
-                        .collect::<Vec<_>>()
-                };
-
-                for range in search_within_ranges {
-                    let buffer = &buffer;
-                    ranges.extend(
-                        query
-                            .search(excerpt_buffer, range.clone())
-                            .await
-                            .into_iter()
-                            .map(|matched_range| {
-                                let offset = range.clone().map(|r| r.start).unwrap_or(0);
-                                buffer.anchor_after(matched_range.start + offset)
-                                    ..buffer.anchor_before(matched_range.end + offset)
-                            }),
-                    );
-                }
+            let search_within_ranges = if search_within_ranges.is_empty() {
+                vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
             } else {
-                let search_within_ranges = if search_within_ranges.is_empty() {
-                    vec![buffer.anchor_before(0)..buffer.anchor_after(buffer.len())]
-                } else {
-                    search_within_ranges
-                };
-
-                for (excerpt_id, search_buffer, search_range) in
-                    buffer.excerpts_in_ranges(search_within_ranges)
-                {
-                    if !search_range.is_empty() {
-                        ranges.extend(
-                            query
-                                .search(search_buffer, Some(search_range.clone()))
-                                .await
-                                .into_iter()
-                                .map(|match_range| {
-                                    let start = search_buffer
-                                        .anchor_after(search_range.start + match_range.start);
-                                    let end = search_buffer
-                                        .anchor_before(search_range.start + match_range.end);
-                                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                                        ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
-                                }),
-                        );
-                    }
-                }
+                search_within_ranges
             };
+
+            for (search_buffer, search_range, excerpt_id) in
+                buffer.ranges_to_buffer_ranges(search_within_ranges.into_iter())
+            {
+                ranges.extend(
+                    query
+                        .search(search_buffer, Some(search_range.clone()))
+                        .await
+                        .into_iter()
+                        .map(|match_range| {
+                            let start =
+                                search_buffer.anchor_after(search_range.start + match_range.start);
+                            let end =
+                                search_buffer.anchor_before(search_range.start + match_range.end);
+                            Anchor::range_in_buffer(
+                                excerpt_id,
+                                search_buffer.remote_id(),
+                                start..end,
+                            )
+                        }),
+                );
+            }
 
             ranges
         })

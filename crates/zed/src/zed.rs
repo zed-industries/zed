@@ -1469,7 +1469,7 @@ mod tests {
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        WorkspaceHandle, SERIALIZATION_THROTTLE_TIME,
     };
 
     #[gpui::test]
@@ -2866,7 +2866,9 @@ mod tests {
             })
             .unwrap();
 
-        cx.run_until_parked();
+        cx.background_executor
+            .advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.update(|_| {});
         editor_1.assert_released();
         editor_2.assert_released();
         buffer.assert_released();

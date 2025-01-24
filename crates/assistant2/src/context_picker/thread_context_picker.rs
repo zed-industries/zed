@@ -209,9 +209,13 @@ pub fn render_thread_context_entry(
     });
 
     h_flex()
-        .gap_1()
+        .gap_1p5()
         .w_full()
-        .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
+        .child(
+            Icon::new(IconName::MessageCircle)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        )
         .child(Label::new(thread.summary.clone()))
         .child(div().w_full())
         .when(added, |el| {

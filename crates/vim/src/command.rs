@@ -138,22 +138,27 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
         vim.switch_mode(Mode::Normal, false, cx);
         let result = vim.update_editor(cx, |vim, editor, cx| {
-            action.range.head().buffer_row(vim, editor, cx)
+            let snapshot = editor.snapshot(cx);
+            let buffer_row = action.range.head().buffer_row(vim, editor, cx)?;
+            let current = editor.selections.newest::<Point>(cx);
+            let target = snapshot
+                .buffer_snapshot
+                .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges([target..target]);
+            });
+
+            anyhow::Ok(())
         });
-        let buffer_row = match result {
-            None => return,
-            Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(cx) else {
-                    return;
-                };
-                workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, cx);
-                });
+        if let Some(e @ Err(_)) = result {
+            let Some(workspace) = vim.workspace(cx) else {
                 return;
-            }
-            Some(Ok(result)) => result,
-        };
-        vim.move_cursor(Motion::StartOfDocument, Some(buffer_row.0 as usize + 1), cx);
+            };
+            workspace.update(cx, |workspace, cx| {
+                e.notify_err(workspace, cx);
+            });
+            return;
+        }
     });
 
     Vim::action(editor, cx, |vim, action: &YankCommand, cx| {
@@ -462,7 +467,22 @@ impl Position {
     ) -> Result<MultiBufferRow> {
         let snapshot = editor.snapshot(cx);
         let target = match self {
-            Position::Line { row, offset } => row.saturating_add_signed(offset.saturating_sub(1)),
+            Position::Line { row, offset } => {
+                if let Some(anchor) = editor.active_excerpt(cx).and_then(|(_, buffer, _)| {
+                    editor.buffer().read(cx).buffer_point_to_anchor(
+                        &buffer,
+                        Point::new(row.saturating_sub(1), 0),
+                        cx,
+                    )
+                }) {
+                    anchor
+                        .to_point(&snapshot.buffer_snapshot)
+                        .row
+                        .saturating_add_signed(*offset)
+                } else {
+                    row.saturating_add_signed(offset.saturating_sub(1))
+                }
+            }
             Position::Mark { name, offset } => {
                 let Some(mark) = vim.marks.get(&name.to_string()).and_then(|vec| vec.last()) else {
                     return Err(anyhow!("mark {} not set", name));
@@ -697,7 +717,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("foldc", "lose"), editor::actions::Fold)
             .bang(editor::actions::FoldRecursive)
             .range(act_on_range),
-        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(act_on_range),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleSelectedDiffHunks)
+            .range(act_on_range),
         VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
         VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {

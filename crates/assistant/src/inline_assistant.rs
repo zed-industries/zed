@@ -250,22 +250,19 @@ impl InlineAssistant {
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();
-        for (excerpt_id, buffer, buffer_range) in
-            snapshot.excerpts_in_ranges(selections.iter().map(|selection| {
+        for (buffer, buffer_range, excerpt_id) in
+            snapshot.ranges_to_buffer_ranges(selections.iter().map(|selection| {
                 snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
             }))
         {
-            let start = Anchor {
-                buffer_id: Some(buffer.remote_id()),
+            let start = buffer.anchor_before(buffer_range.start);
+            let end = buffer.anchor_after(buffer_range.end);
+
+            codegen_ranges.push(Anchor::range_in_buffer(
                 excerpt_id,
-                text_anchor: buffer.anchor_before(buffer_range.start),
-            };
-            let end = Anchor {
-                buffer_id: Some(buffer.remote_id()),
-                excerpt_id,
-                text_anchor: buffer.anchor_after(buffer_range.end),
-            };
-            codegen_ranges.push(start..end);
+                buffer.remote_id(),
+                start..end,
+            ));
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                 self.telemetry.report_assistant_event(AssistantEvent {
@@ -823,7 +820,7 @@ impl InlineAssistant {
                     let ranges = multibuffer_snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
                         .first()
-                        .and_then(|(excerpt, _)| excerpt.buffer().language())
+                        .and_then(|(buffer, _, _)| buffer.language())
                         .map(|language| language.name())
                 });
                 report_assistant_event(
@@ -2648,17 +2645,17 @@ impl CodegenAlternative {
     ) -> Self {
         let snapshot = multi_buffer.read(cx).snapshot(cx);
 
-        let (old_excerpt, _) = snapshot
+        let (buffer, _, _) = snapshot
             .range_to_buffer_ranges(range.clone())
             .pop()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
-            let text = old_excerpt.buffer().as_rope().clone();
-            let line_ending = old_excerpt.buffer().line_ending();
-            let language = old_excerpt.buffer().language().cloned();
+            let text = buffer.as_rope().clone();
+            let line_ending = buffer.line_ending();
+            let language = buffer.language().cloned();
             let language_registry = multi_buffer
                 .read(cx)
-                .buffer(old_excerpt.buffer_id())
+                .buffer(buffer.remote_id())
                 .unwrap()
                 .read(cx)
                 .language_registry();
@@ -2898,7 +2895,7 @@ impl CodegenAlternative {
             let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
             ranges
                 .first()
-                .and_then(|(excerpt, _)| excerpt.buffer().language())
+                .and_then(|(buffer, _, _)| buffer.language())
                 .map(|language| language.name())
         };
 

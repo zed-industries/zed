@@ -115,6 +115,8 @@ impl ContextPicker {
 
                     ContextMenuEntry::new(kind.label())
                         .icon(kind.icon())
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
                         .handler(move |cx| {
                             context_picker.update(cx, |this, cx| this.select_kind(kind, cx))
                         })

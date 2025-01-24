@@ -829,6 +829,7 @@ impl GitPanel {
                                 Tooltip::text("Stage all changes", cx)
                             }
                         })
+                        .disabled(entry_count == 0)
                         .on_click(cx.listener(move |git_panel, _, cx| match all_staged {
                             true => git_panel.unstage_all(&UnstageAll, cx),
                             false => git_panel.stage_all(&StageAll, cx),

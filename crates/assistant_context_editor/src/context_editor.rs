@@ -3499,7 +3499,7 @@ fn size_for_image(data: &RenderImage, max_size: Size<Pixels>) -> Size<Pixels> {
     }
 }
 
-enum ConfigurationError {
+pub enum ConfigurationError {
     NoProvider,
     ProviderNotAuthenticated,
 }

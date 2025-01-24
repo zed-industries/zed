@@ -5651,12 +5651,7 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes
-                .base_text
-                .as_ref()
-                .unwrap()
-                .read(cx)
-                .text(),
+            &uncommitted_changes.base_text.as_ref().unwrap().text(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5686,12 +5681,7 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes
-                .base_text
-                .as_ref()
-                .unwrap()
-                .read(cx)
-                .text(),
+            &uncommitted_changes.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });

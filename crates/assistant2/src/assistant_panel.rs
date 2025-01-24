@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
-    make_lsp_adapter_delegate, AssistantPanelDelegate, ContextEditor, ContextHistory,
-    SlashCommandCompletionProvider,
+    make_lsp_adapter_delegate, AssistantPanelDelegate, ConfigurationError, ContextEditor,
+    ContextHistory, SlashCommandCompletionProvider,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -662,10 +662,34 @@ impl AssistantPanel {
         self.thread.clone().into_any()
     }
 
+    fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        let is_authenticated = provider
+            .as_ref()
+            .map_or(false, |provider| provider.is_authenticated(cx));
+
+        if provider.is_some() && is_authenticated {
+            return None;
+        }
+
+        if !is_authenticated {
+            return Some(ConfigurationError::ProviderNotAuthenticated);
+        }
+
+        None
+    }
+
     fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let recent_threads = self
             .thread_store
             .update(cx, |this, _cx| this.recent_threads(3));
+
+        let create_welcome_heading = || {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
+        };
 
         v_flex()
             .gap_2()
@@ -679,6 +703,52 @@ impl AssistantPanel {
                         .mx_auto()
                         .mb_4(),
                 ),
+            )
+            .when(
+                matches!(
+                    self.configuration_error(cx),
+                    Some(ConfigurationError::ProviderNotAuthenticated)
+                ),
+                |parent| {
+                    parent.child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(create_welcome_heading())
+                            .child(
+                                h_flex().mb_2().w_full().justify_center().child(
+                                    Label::new(
+                                        "To start using the assistant, configure at least one LLM provider.",
+                                    )
+                                    .color(Color::Muted),
+                                ),
+                            )
+                            .child(
+                                h_flex().w_full().justify_center().child(
+                                    Button::new("open-configuration", "Configure a Provider")
+                                        .size(ButtonSize::Compact)
+                                        .icon(Some(IconName::Sliders))
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(cx.listener(|this, _, cx| {
+                                            this.open_configuration(cx);
+                                        })),
+                                ),
+                            ),
+                    )
+                },
+            )
+            .when(
+                recent_threads.is_empty() && self.configuration_error(cx).is_none(),
+                |parent| {
+                    parent.child(
+                        v_flex().gap_0p5().child(create_welcome_heading()).child(
+                            h_flex().w_full().justify_center().child(
+                                Label::new("Start typing to chat with your codebase")
+                                    .color(Color::Muted),
+                            ),
+                        ),
+                    )
+                },
             )
             .when(!recent_threads.is_empty(), |parent| {
                 parent

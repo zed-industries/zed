@@ -234,7 +234,12 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().gap_2().child(Label::new(directory_name)))
+                .start_slot(
+                    Icon::new(IconName::Folder)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .child(Label::new(directory_name))
                 .when(added, |el| {
                     el.end_slot(
                         h_flex()
