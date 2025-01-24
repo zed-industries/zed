@@ -31,17 +31,13 @@ impl AwsConnector for AwsHttpConnector {
 
         let coerced_body = convert_to_async_body(aws_body);
 
-        println!("{:?}", parts.uri);
-        println!("{:?}", parts.headers);
-        println!("{:?}", parts.method);
-
         let fut_resp = self.client.send(Request::from_parts(parts.into(), coerced_body));
 
         HttpConnectorFuture::new(async move {
             let response = fut_resp
                 .await
                 .map_err(|e| ConnectorError::other(e.into(), None))?
-                .map(|b| convert_to_sdk_body(b));
+                .map(|b| async { convert_to_sdk_body(b).await });
             match HttpResponse::try_from(response) {
                 Ok(response) => Ok(response),
                 Err(err) => Err(ConnectorError::other(err.into(), None)),
