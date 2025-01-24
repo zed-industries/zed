@@ -15833,43 +15833,5 @@ fn assert_hunk_revert(
     });
     cx.executor().run_until_parked();
     cx.assert_editor_state(expected_reverted_text_with_selections);
-    assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
-}
-        release_channel::init(SemanticVersion::default(), cx);
-        client::init_settings(cx);
-        language::init(cx);
-        Project::init_settings(cx);
-        workspace::init_settings(cx);
-        crate::init(cx);
-    });
-
-    update_test_language_settings(cx, f);
-}
-
-#[track_caller]
-fn assert_hunk_revert(
-    not_reverted_text_with_selections: &str,
-    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
-    expected_reverted_text_with_selections: &str,
-    base_text: &str,
-    cx: &mut EditorLspTestContext,
-) {
-    cx.set_state(not_reverted_text_with_selections);
-    cx.set_diff_base(base_text);
-    cx.executor().run_until_parked();
-
-    let actual_hunk_statuses_before = cx.update_editor(|editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let reverted_hunk_statuses = snapshot
-            .buffer_snapshot
-            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
-            .map(|hunk| hunk.status())
-            .collect::<Vec<_>>();
-
-        editor.revert_selected_hunks(&RevertSelectedHunks, window, cx);
-        reverted_hunk_statuses
-    });
-    cx.executor().run_until_parked();
-    cx.assert_editor_state(expected_reverted_text_with_selections);
-    assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
+    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
 }
