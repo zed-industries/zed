@@ -11,6 +11,8 @@
 
 (number) @number
 (string) @string
+(false) @boolean
+(true) @boolean
 (arguments) @property
 (call_expression (identifier) @function)
 (enumeral) @constant
