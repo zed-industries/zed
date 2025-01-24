@@ -23,7 +23,6 @@ use gpui::{
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
-use project::Fs;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
@@ -106,13 +105,13 @@ pub struct TitleBar {
     repository_selector: View<RepositorySelector>,
     project: Model<Project>,
     user_store: Model<UserStore>,
-    fs: Arc<dyn Fs>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     should_move: bool,
     application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     git_ui_enabled: Arc<AtomicBool>,
+    zed_predict_banner: View<ZedPredictBanner>,
 }
 
 impl Render for TitleBar {
@@ -196,15 +195,7 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
-                    .when_some(
-                        ZedPredictBanner::new(
-                            self.workspace.clone(),
-                            self.user_store.clone(),
-                            self.fs.clone(),
-                            cx,
-                        ),
-                        |element, banner| element.child(div().pr_1().child(banner))
-                    )
+                    .child(self.zed_predict_banner.clone())
                     .child(
                         h_flex()
                             .gap_1()
@@ -312,6 +303,10 @@ impl TitleBar {
             }
         }));
 
+        let zed_predict_banner = cx.new_view(|cx| {
+            ZedPredictBanner::new(workspace.weak_handle(), user_store.clone(), fs.clone(), cx)
+        });
+
         Self {
             platform_style,
             content: div().id(id.into()),
@@ -323,9 +318,9 @@ impl TitleBar {
             project,
             user_store,
             client,
-            fs,
             _subscriptions: subscriptions,
             git_ui_enabled: is_git_ui_enabled,
+            zed_predict_banner,
         }
     }
 

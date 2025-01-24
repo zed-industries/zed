@@ -222,11 +222,16 @@ impl Zeta {
                 .read(cx)
                 .current_user_has_accepted_terms()
                 .unwrap_or(false),
-            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
-                client::user::Event::TermsStatusUpdated { accepted } => {
-                    this.tos_accepted = *accepted;
+            _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
+                match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        this.tos_accepted = user_store
+                            .read(cx)
+                            .current_user_has_accepted_terms()
+                            .unwrap_or(false);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }),
         }
     }
