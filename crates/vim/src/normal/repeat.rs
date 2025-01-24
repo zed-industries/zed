@@ -205,7 +205,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let count = dbg!(Vim::take_count(cx));
+        let count = Vim::take_count(cx);
 
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
@@ -252,8 +252,6 @@ impl Vim {
             self.switch_mode(mode, false, window, cx)
         }
 
-        dbg!(&actions);
-        dbg!(count);
         match selection {
             RecordedSelection::SingleLine { cols } => {
                 if cols > 1 {

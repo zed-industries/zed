@@ -2,6 +2,7 @@ use std::{
     any::{type_name, TypeId},
     cell::{Cell, Ref, RefCell, RefMut},
     marker::PhantomData,
+    mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -32,11 +33,12 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor,
-    Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
-    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
-    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    DispatchPhase, DisplayId, DrawPhase, Entity, EventEmitter, FocusHandle, FocusMap,
+    ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle,
+    PromptLevel, Render, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId,
 };
 
 mod async_context;
@@ -221,6 +223,12 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewModelListener =
     Box<dyn FnMut(AnyModel, &mut Option<&mut Window>, &mut AppContext) + 'static>;
 
+#[derive(Debug, Clone)]
+pub(crate) struct EntityWindow {
+    pub dirty: Rc<Cell<bool>>,
+    pub draw_phase: Rc<Cell<DrawPhase>>,
+}
+
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
 /// You need a reference to an `AppContext` to access the state of a [Model].
@@ -263,7 +271,7 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) windows_dirty: FxHashMap<EntityId, FxHashMap<WindowId, Rc<Cell<bool>>>>,
+    pub(crate) entity_windows: FxHashMap<EntityId, FxHashMap<WindowId, EntityWindow>>,
     pub(crate) entities_to_invalidate: FxHashMap<WindowId, FxHashSet<EntityId>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -318,7 +326,7 @@ impl AppContext {
                 pending_global_notifications: FxHashSet::default(),
                 observers: SubscriberSet::new(),
                 tracked_entities: FxHashMap::default(),
-                windows_dirty: FxHashMap::default(),
+                entity_windows: FxHashMap::default(),
                 entities_to_invalidate: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
@@ -460,21 +468,21 @@ impl AppContext {
     pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,
-        dirty_bit: Rc<Cell<bool>>,
+        window: EntityWindow,
         entities: &FxHashSet<EntityId>,
     ) {
         let mut tracked_entities =
             std::mem::take(self.tracked_entities.entry(window_handle.id).or_default());
         for entity in tracked_entities.iter() {
-            self.windows_dirty.entry(*entity).and_modify(|windows| {
+            self.entity_windows.entry(*entity).and_modify(|windows| {
                 windows.remove(&window_handle.id);
             });
         }
         for entity in entities.iter() {
-            self.windows_dirty
+            self.entity_windows
                 .entry(*entity)
                 .or_default()
-                .insert(window_handle.id, dirty_bit.clone());
+                .insert(window_handle.id, window.clone());
         }
         tracked_entities.clear();
         tracked_entities.extend(entities.iter().copied());
@@ -835,7 +843,6 @@ impl AppContext {
             self.release_dropped_focus_handles();
 
             if let Some(effect) = self.pending_effects.pop_front() {
-                dbg!(&effect);
                 match effect {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
@@ -873,12 +880,10 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        // Windows aren't being marked dirty by vim code;
                         window.dirty.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
-                    dbg!("drawing window");
                     self.update_window(window, |_, window, cx| window.draw(cx))
                         .unwrap();
                 }
@@ -916,7 +921,7 @@ impl AppContext {
             .clone()
             .write()
             .retain(|handle_id, count| {
-                if count.0.load(SeqCst) == 0 {
+                if count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {
@@ -1056,10 +1061,7 @@ impl AppContext {
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    #[track_caller]
     pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static) {
-        dbg!(core::panic::Location::caller());
-
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
@@ -1151,11 +1153,9 @@ impl AppContext {
         &mut self,
         mut f: impl FnMut(&mut Self) + 'static,
     ) -> Subscription {
-        dbg!(type_name::<G>());
         let (subscription, activate) = self.global_observers.insert(
-            dbg!(TypeId::of::<G>()),
+            TypeId::of::<G>(),
             Box::new(move |cx| {
-                dbg!(type_name::<G>());
                 f(cx);
                 true
             }),
@@ -1178,7 +1178,6 @@ impl AppContext {
     /// Restore the global of the given type after it is moved to the stack.
     pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
-        dbg!(global_type, type_name::<G>());
 
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, lease.global);
@@ -1558,24 +1557,31 @@ impl AppContext {
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     pub fn notify(&mut self, entity_id: EntityId) {
-        if self.pending_notifications.insert(entity_id) {
-            self.pending_effects
-                .push_back(Effect::Notify { emitter: entity_id });
-        }
+        let entity_windows = mem::take(self.entity_windows.entry(entity_id).or_default());
 
-        let mut windows = SmallVec::<[WindowId; 1]>::new();
-        if let Some(windows_dirty) = self.windows_dirty.get(&entity_id) {
-            for (window, bit) in windows_dirty.iter() {
-                bit.set(true);
-                windows.push(*window);
+        if entity_windows.is_empty() {
+            if self.pending_notifications.insert(entity_id) {
+                self.pending_effects
+                    .push_back(Effect::Notify { emitter: entity_id });
+            }
+        } else {
+            let mut windows = SmallVec::<[WindowId; 1]>::new();
+            for (window_id, window) in entity_windows.iter() {
+                if window.draw_phase.get() == DrawPhase::None {
+                    window.dirty.set(true);
+                    windows.push(*window_id);
+                    self.push_effect(Effect::Notify { emitter: entity_id });
+                }
+            }
+            for window in windows {
+                self.entities_to_invalidate
+                    .entry(window)
+                    .or_default()
+                    .insert(entity_id);
             }
         }
-        for window in windows {
-            self.entities_to_invalidate
-                .entry(window)
-                .or_default()
-                .insert(entity_id);
-        }
+
+        self.entity_windows.insert(entity_id, entity_windows);
     }
 
     /// Get the name for this App.

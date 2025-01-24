@@ -2,18 +2,18 @@ use crate::{
     point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
     AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, Bounds,
     BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler,
-    IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Model, ModelContext, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EntityWindow,
+    EventEmitter, FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
+    ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
+    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, ScaledPixels, Scene,
+    Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -37,7 +37,6 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{DerefMut, Range},
-    panic::Location,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -120,7 +119,7 @@ thread_local! {
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, (AtomicUsize, core::panic::Location<'static>)>>;
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -154,26 +153,20 @@ impl FocusId {
 
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
-    caller: Location<'static>,
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
 }
 
 impl std::fmt::Debug for FocusHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("FocusHandle({:?} {:?})", self.id, self.caller))
+        f.write_fmt(format_args!("FocusHandle({:?})", self.id))
     }
 }
 
 impl FocusHandle {
-    #[track_caller]
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let caller = core::panic::Location::caller();
-        let id = handles
-            .write()
-            .insert((AtomicUsize::new(1), caller.clone()));
+        let id = handles.write().insert(AtomicUsize::new(1));
         Self {
-            caller: *caller,
             id,
             handles: handles.clone(),
         }
@@ -181,13 +174,12 @@ impl FocusHandle {
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let (ref_count, caller) = lock.get(id)?;
+        let ref_count = lock.get(id)?;
         if ref_count.load(SeqCst) == 0 {
             None
         } else {
             ref_count.fetch_add(1, SeqCst);
             Some(Self {
-                caller: *caller,
                 id,
                 handles: handles.clone(),
             })
@@ -261,7 +253,6 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
-            .0
             .fetch_sub(1, SeqCst);
     }
 }
@@ -561,7 +552,7 @@ pub struct Window {
     pub(crate) needs_present: Rc<Cell<bool>>,
     pub(crate) last_input_timestamp: Rc<Cell<Instant>>,
     pub(crate) refreshing: bool,
-    pub(crate) draw_phase: DrawPhase,
+    pub(crate) draw_phase: Rc<Cell<DrawPhase>>,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -840,7 +831,7 @@ impl Window {
             needs_present,
             last_input_timestamp,
             refreshing: false,
-            draw_phase: DrawPhase::None,
+            draw_phase: Rc::new(Cell::new(DrawPhase::None)),
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -907,7 +898,7 @@ impl Window {
 
         self.mark_entity_dirty(view_id);
 
-        if notify_effect && self.draw_phase == DrawPhase::None {
+        if notify_effect && self.draw_phase.get() == DrawPhase::None {
             self.dirty.set(true);
             cx.push_effect(Effect::Notify { emitter: view_id });
         }
@@ -975,7 +966,7 @@ impl Window {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
-        if self.draw_phase == DrawPhase::None {
+        if self.draw_phase.get() == DrawPhase::None {
             self.refreshing = true;
             self.dirty.set(true);
         }
@@ -994,8 +985,6 @@ impl Window {
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle) {
-        dbg!(handle);
-        dbg!(std::backtrace::Backtrace::force_capture());
         if !self.focus_enabled || self.focus == Some(handle.id) {
             return;
         }
@@ -1404,7 +1393,10 @@ impl Window {
         F: FnOnce(&mut Self) -> R,
     {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
 
@@ -1497,7 +1489,7 @@ impl Window {
             element_arena.clear();
         });
 
-        self.draw_phase = DrawPhase::Focus;
+        self.draw_phase.set(DrawPhase::Focus);
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
@@ -1534,7 +1526,7 @@ impl Window {
         self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
         self.refreshing = false;
-        self.draw_phase = DrawPhase::None;
+        self.draw_phase.set(DrawPhase::None);
         self.needs_present.set(true);
     }
 
@@ -1543,7 +1535,14 @@ impl Window {
         let mut entities = mem::take(entities_ref.deref_mut());
         drop(entities_ref);
         let handle = self.handle;
-        cx.record_entities_accessed(handle, self.dirty.clone(), &entities);
+        cx.record_entities_accessed(
+            handle,
+            EntityWindow {
+                dirty: self.dirty.clone(),
+                draw_phase: self.draw_phase.clone(),
+            },
+            &entities,
+        );
         let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
@@ -1564,7 +1563,7 @@ impl Window {
     }
 
     fn draw_roots(&mut self, cx: &mut AppContext) {
-        self.draw_phase = DrawPhase::Prepaint;
+        self.draw_phase.set(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
         // Layout all root elements.
@@ -1597,7 +1596,7 @@ impl Window {
         self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
 
         // Now actually paint the elements.
-        self.draw_phase = DrawPhase::Paint;
+        self.draw_phase.set(DrawPhase::Paint);
         root_element.paint(self, cx);
 
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
@@ -1852,7 +1851,10 @@ impl Window {
         F: FnOnce(&mut Self) -> R,
     {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
         if let Some(style) = style {
@@ -1869,7 +1871,7 @@ impl Window {
     /// during the prepaint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -1883,7 +1885,7 @@ impl Window {
     /// during the paint phase of element drawing.
     pub fn set_tooltip(&mut self, tooltip: AnyTooltip) -> TooltipId {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -1902,7 +1904,10 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
         if let Some(mask) = mask {
@@ -1924,7 +1929,7 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout, or prepaint"
         );
@@ -1946,7 +1951,7 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout, or prepaint"
         );
@@ -1966,7 +1971,10 @@ impl Window {
         }
 
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during prepaint, or paint"
         );
         self.element_opacity = opacity;
@@ -1982,7 +1990,7 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn transact<T, U>(&mut self, f: impl FnOnce(&mut Self) -> Result<T, U>) -> Result<T, U> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2014,7 +2022,7 @@ impl Window {
     /// called during the prepaint phase of element drawing.
     pub fn request_autoscroll(&mut self, bounds: Bounds<Pixels>) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2025,7 +2033,7 @@ impl Window {
     /// described in [`request_autoscroll`].
     pub fn take_autoscroll(&mut self) -> Option<Bounds<Pixels>> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2066,7 +2074,7 @@ impl Window {
     /// prepaint phase of element drawing.
     pub fn element_offset(&self) -> Point<Pixels> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2080,7 +2088,10 @@ impl Window {
     /// prepaint phase of element drawing.
     pub(crate) fn element_opacity(&self) -> f32 {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during prepaint, or paint"
         );
         self.element_opacity.unwrap_or(1.0)
@@ -2089,7 +2100,10 @@ impl Window {
     /// Obtain the current content mask. This method should only be called during element drawing.
     pub fn content_mask(&self) -> ContentMask<Pixels> {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during prepaint, or paint"
         );
         self.content_mask_stack
@@ -2129,7 +2143,10 @@ impl Window {
         S: 'static,
     {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
 
@@ -2215,7 +2232,10 @@ impl Window {
         S: 'static,
     {
         debug_assert!(
-            matches!(self.draw_phase, DrawPhase::Prepaint | DrawPhase::Paint),
+            matches!(
+                self.draw_phase.get(),
+                DrawPhase::Prepaint | DrawPhase::Paint
+            ),
             "this method can only be called during request_layout, prepaint, or paint"
         );
 
@@ -2248,7 +2268,7 @@ impl Window {
         priority: usize,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout or prepaint"
         );
@@ -2272,7 +2292,7 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2305,7 +2325,7 @@ impl Window {
         shadows: &[BoxShadow],
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2333,7 +2353,7 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2358,7 +2378,7 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2384,7 +2404,7 @@ impl Window {
         style: &UnderlineStyle,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2423,7 +2443,7 @@ impl Window {
         style: &StrikethroughStyle,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2465,7 +2485,7 @@ impl Window {
         color: Hsla,
     ) -> Result<()> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2529,7 +2549,7 @@ impl Window {
         font_size: Pixels,
     ) -> Result<()> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2589,7 +2609,7 @@ impl Window {
         cx: &AppContext,
     ) -> Result<()> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2646,7 +2666,7 @@ impl Window {
         grayscale: bool,
     ) -> Result<()> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2695,7 +2715,7 @@ impl Window {
         use crate::PaintSurface;
 
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2738,7 +2758,7 @@ impl Window {
         cx: &mut AppContext,
     ) -> LayoutId {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout, or prepaint"
         );
@@ -2775,7 +2795,7 @@ impl Window {
         measure: F,
     ) -> LayoutId {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout, or prepaint"
         );
@@ -2799,7 +2819,7 @@ impl Window {
         cx: &mut AppContext,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout, or prepaint"
         );
@@ -2815,7 +2835,7 @@ impl Window {
     /// This method should only be called as part of element drawing.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during request_layout, prepaint, or paint"
         );
@@ -2837,7 +2857,7 @@ impl Window {
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2861,7 +2881,7 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn set_key_context(&mut self, context: KeyContext) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2874,7 +2894,7 @@ impl Window {
     /// This method should only be called as part of the prepaint phase of element drawing.
     pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle, _: &AppContext) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2891,7 +2911,7 @@ impl Window {
     /// directly instead of always using editors via views.
     pub fn set_view_id(&mut self, view_id: EntityId) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Prepaint,
             "this method can only be called during prepaint"
         );
@@ -2918,7 +2938,7 @@ impl Window {
         cx: &AppContext,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2941,7 +2961,7 @@ impl Window {
         mut handler: impl FnMut(&Event, DispatchPhase, &mut Window, &mut AppContext) + 'static,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2971,7 +2991,7 @@ impl Window {
         listener: impl Fn(&Event, DispatchPhase, &mut Window, &mut AppContext) + 'static,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );
@@ -2996,7 +3016,7 @@ impl Window {
         listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut AppContext) + 'static,
     ) {
         debug_assert_eq!(
-            self.draw_phase,
+            self.draw_phase.get(),
             DrawPhase::Paint,
             "this method can only be called during paint"
         );

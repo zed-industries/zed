@@ -17,17 +17,14 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("NORMAL BEFORE?");
         if self.active_operator().is_some() {
             self.operator_stack.clear();
             self.sync_vim_settings(window, cx);
             return;
         }
         let count = Vim::take_count(cx).unwrap_or(1);
-        dbg!(count);
         self.stop_recording_immediately(action.boxed_clone(), cx);
         if count <= 1 || dbg!(Vim::globals(cx).dot_replaying) {
-            dbg!("dot replaying?");
             self.create_mark("^".into(), false, window, cx);
             self.update_editor(window, cx, |_, editor, window, cx| {
                 editor.dismiss_menus_and_popups(false, window, cx);
@@ -109,9 +106,7 @@ mod test {
         cx.set_shared_state("ˇhello\n").await;
         cx.simulate_shared_keystrokes("3 i - escape").await;
         cx.shared_state().await.assert_eq("--ˇ-hello\n");
-        dbg!("here?");
         cx.simulate_shared_keystrokes(".").await;
-        dbg!("here?");
         cx.shared_state().await.assert_eq("----ˇ--hello\n");
         cx.simulate_shared_keystrokes("2 .").await;
         cx.shared_state().await.assert_eq("-----ˇ---hello\n");

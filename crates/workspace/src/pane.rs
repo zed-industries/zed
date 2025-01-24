@@ -869,7 +869,6 @@ impl Pane {
                 }
             }
         }
-        dbg!("here?");
         if let Some((index, existing_item)) = existing_item {
             // If the item is already open, and the item is a preview item
             // and we are not allowing items to open as preview, mark the item as persistent.
@@ -880,7 +879,6 @@ impl Pane {
                     }
                 }
             }
-            dbg!("here?");
             self.activate_item(index, focus_item, focus_item, window, cx);
             existing_item
         } else {
@@ -897,7 +895,6 @@ impl Pane {
             if allow_preview {
                 self.set_preview_item_id(Some(new_item.item_id()), cx);
             }
-            dbg!("here?");
             self.add_item(
                 new_item.clone(),
                 true,
@@ -906,7 +903,6 @@ impl Pane {
                 window,
                 cx,
             );
-            dbg!("here?");
 
             new_item
         }
@@ -940,7 +936,6 @@ impl Pane {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        dbg!("here?");
         self.close_items_over_max_tabs(window, cx);
 
         if item.is_singleton(cx) {
@@ -959,7 +954,6 @@ impl Pane {
                 }
             }
         }
-        dbg!("here?");
         // If no destination index is specified, add or move the item after the
         // active item (or at the start of tab bar, if the active item is pinned)
         let mut insertion_index = {
@@ -995,7 +989,6 @@ impl Pane {
             }
         });
 
-        dbg!("here?");
         if let Some(existing_item_index) = existing_item_index {
             // If the item already exists, move it to the desired destination and activate it
 
@@ -1025,7 +1018,6 @@ impl Pane {
                 cx.notify();
             }
 
-            dbg!("here?");
             self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
         } else {
             self.items.insert(insertion_index, item.clone());
@@ -1037,11 +1029,9 @@ impl Pane {
             }
 
             self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
-            dbg!("here?");
             cx.notify();
         }
 
-        dbg!("here?");
         cx.emit(Event::AddItem { item });
     }
 
@@ -1135,7 +1125,6 @@ impl Pane {
         cx: &mut ModelContext<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
-        dbg!("here?");
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index
@@ -1145,7 +1134,6 @@ impl Pane {
                     prev_item.deactivated(window, cx);
                 }
             }
-            dbg!("here?");
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
                     .retain(|entry| entry.entity_id != newly_active_item.item_id());
@@ -1156,15 +1144,14 @@ impl Pane {
                         .fetch_add(1, Ordering::SeqCst),
                 });
             }
-            dbg!("here?");
+
             self.update_toolbar(window, cx);
             self.update_status_bar(window, cx);
-            dbg!("here?");
+
             if focus_item {
-                dbg!("here?");
                 self.focus_active_item(window, cx);
             }
-            dbg!("here?");
+
             cx.emit(Event::ActivateItem {
                 local: activate_pane,
                 focus_changed: focus_item,
@@ -1175,7 +1162,6 @@ impl Pane {
                     .scroll_to_item(index - self.pinned_tab_count);
             }
 
-            dbg!("here?");
             cx.notify();
         }
     }
