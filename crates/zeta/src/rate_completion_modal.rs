@@ -1,11 +1,13 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
+use command_palette_hooks::CommandPaletteFilter;
 use editor::Editor;
+use feature_flags::{FeatureFlagAppExt as _, PredictEditsRatingFeatureFlag};
 use gpui::{
     actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     View, ViewContext,
 };
 use language::language_settings;
-use std::time::Duration;
+use std::{any::TypeId, time::Duration};
 use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
 use workspace::{ModalView, Workspace};
 
@@ -25,8 +27,33 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, cx| {
-            RateCompletionModal::toggle(workspace, cx);
+            if cx.has_flag::<PredictEditsRatingFeatureFlag>() {
+                RateCompletionModal::toggle(workspace, cx);
+            }
         });
+    })
+    .detach();
+
+    feature_gate_predict_edits_rating_actions(cx);
+}
+
+fn feature_gate_predict_edits_rating_actions(cx: &mut AppContext) {
+    let rate_completion_action_types = [TypeId::of::<RateCompletions>()];
+
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_action_types(&rate_completion_action_types);
+    });
+
+    cx.observe_flag::<PredictEditsRatingFeatureFlag, _>(move |is_enabled, cx| {
+        if is_enabled {
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                filter.show_action_types(rate_completion_action_types.iter());
+            });
+        } else {
+            CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                filter.hide_action_types(&rate_completion_action_types);
+            });
+        }
     })
     .detach();
 }

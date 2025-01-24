@@ -60,6 +60,11 @@ impl FeatureFlag for PredictEditsFeatureFlag {
     const NAME: &'static str = "predict-edits";
 }
 
+pub struct PredictEditsRatingFeatureFlag;
+impl FeatureFlag for PredictEditsRatingFeatureFlag {
+    const NAME: &'static str = "predict-edits-rating";
+}
+
 pub struct GitUiFeatureFlag;
 impl FeatureFlag for GitUiFeatureFlag {
     const NAME: &'static str = "git-ui";

@@ -2,7 +2,7 @@ use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
-use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
+use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRatingFeatureFlag};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
@@ -439,19 +439,22 @@ impl InlineCompletionButton {
     fn build_zeta_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let workspace = self.workspace.clone();
         ContextMenu::build(cx, |menu, cx| {
-            self.build_language_settings_menu(menu, cx)
-                .separator()
-                .entry(
-                    "Rate Completions",
-                    Some(RateCompletions.boxed_clone()),
-                    move |cx| {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                RateCompletionModal::toggle(workspace, cx)
-                            })
-                            .ok();
-                    },
-                )
+            self.build_language_settings_menu(menu, cx).when(
+                cx.has_flag::<PredictEditsRatingFeatureFlag>(),
+                |this| {
+                    this.separator().entry(
+                        "Rate Completions",
+                        Some(RateCompletions.boxed_clone()),
+                        move |cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, cx)
+                                })
+                                .ok();
+                        },
+                    )
+                },
+            )
         })
     }
 
