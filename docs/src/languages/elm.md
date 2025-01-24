@@ -11,13 +11,13 @@ Zed support for Elm requires installation of `elm`, `elm-format`, `elm-review` a
 
 1. [Install Elm](https://guide.elm-lang.org/install/elm.html) (or run `brew install elm` on macOS).
 2. Install `elm-review` to support code linting:
-    ```sh
-    npm install elm-review --save-dev
-    ```
+   ```sh
+   npm install elm-review --save-dev
+   ```
 3. Install `elm-format` to support automatic formatting
-    ```sh
-    npm install -g elm-format
-    ```
+   ```sh
+   npm install -g elm-format
+   ```
 
 ## Configuring `elm-language-server`
 
