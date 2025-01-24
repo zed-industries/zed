@@ -17,7 +17,9 @@ use ui::{
     KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
 };
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, tasks::schedule_resolved_tasks, ModalView, Workspace};
+use workspace::{
+    notifications::NotifyResultExt, tasks::schedule_resolved_tasks, ModalView, Workspace,
+};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -313,10 +315,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let inventory = self
-                    .task_store
-                    .read(cx)
-                    .task_inventory();
+                let inventory = self.task_store.read(cx).task_inventory();
 
                 let Some(inventory) = inventory else {
                     return;

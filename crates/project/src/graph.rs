@@ -13,11 +13,8 @@ pub(crate) struct Graph {
 
 #[derive(Debug)]
 pub(crate) enum Error {
-    Cycle {
-        src_node: u32,
-        dst_node: u32
-    },
-    NodeNotFound
+    Cycle { src_node: u32, dst_node: u32 },
+    NodeNotFound,
 }
 
 impl Graph {

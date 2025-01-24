@@ -1,7 +1,7 @@
-use itertools::Itertools as _;
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
 use gpui::{App, AppContext as _, Context, Task as AsyncTask, Window};
+use itertools::Itertools as _;
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, WorktreeId};
 use task::{RevealTarget, TaskId};
@@ -98,7 +98,11 @@ pub fn init(cx: &mut App) {
 
                                     let pre_tasks = inventory
                                         .read(cx)
-                                        .build_pre_task_queue(&last_scheduled_task, &task_source_kind, &task_context)
+                                        .build_pre_task_queue(
+                                            &last_scheduled_task,
+                                            &task_source_kind,
+                                            &task_context,
+                                        )
                                         .notify_err(workspace, cx)
                                         .unwrap_or(vec![])
                                         .into_iter()

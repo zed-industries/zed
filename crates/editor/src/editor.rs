@@ -164,8 +164,11 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::{item::{ItemHandle, PreviewTabsSettings}, notifications::NotifyResultExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
+use workspace::{
+    item::{ItemHandle, PreviewTabsSettings},
+    notifications::NotifyResultExt,
+};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };

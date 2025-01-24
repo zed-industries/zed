@@ -22,7 +22,10 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::{graph::{self, Graph}, worktree_store::WorktreeStore};
+use crate::{
+    graph::{self, Graph},
+    worktree_store::WorktreeStore,
+};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -200,7 +203,7 @@ impl Inventory {
                 ));
             }
 
-            Err(node_not_found) => unreachable!("{node_not_found:?}")
+            Err(node_not_found) => unreachable!("{node_not_found:?}"),
         };
 
         Ok(tasks_sorted
@@ -211,8 +214,7 @@ impl Inventory {
                 let task = nodes.get(indexes.get(idx)?)?;
                 Some((task.1.clone(), task.3.clone()))
             })
-            .collect_vec()
-        )
+            .collect_vec())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
