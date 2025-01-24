@@ -77,12 +77,12 @@ impl CursorPosition {
                                 let buffer = editor.buffer().read(cx).snapshot(cx);
                                 if buffer.excerpts().count() > 0 {
                                     for selection in editor.selections.all::<usize>(cx) {
-                                        cursor_position.selected_count.characters += buffer
-                                            // TODO kb bad bad perf
-                                            // See `test_unicode_characters_selection`
-                                            .text_for_range(selection.start..selection.end)
-                                            .map(|t| t.chars().count())
-                                            .sum::<usize>();
+                                        let text_summary = buffer
+                                            .text_summary_for_range::<text::TextSummary, _>(
+                                                selection.start..selection.end,
+                                            );
+                                        cursor_position.selected_count.characters +=
+                                            text_summary.chars;
                                         if last_selection.as_ref().map_or(true, |last_selection| {
                                             selection.id > last_selection.id
                                         }) {

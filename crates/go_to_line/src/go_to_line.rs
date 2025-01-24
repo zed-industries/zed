@@ -194,7 +194,8 @@ impl GoToLine {
                 return;
             };
             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                s.select_anchor_ranges([start..start])
+                // TODO kb change here, navigate to the beginning of the line, then iterate over chars to get it.
+                    s.select_anchor_ranges([start..start])
             });
             editor.focus(cx);
             cx.notify()
