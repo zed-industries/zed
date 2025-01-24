@@ -67,6 +67,13 @@ pub(crate) fn rust_lang() -> Arc<Language> {
             ("<" @open ">" @close)
             ("\"" @open "\"" @close)
             (closure_parameters "|" @open "|" @close)"#})),
+        text_objects: Some(Cow::from(indoc! {r#"
+            (function_item
+                body: (_
+                    "{"
+                    (_)* @function.inside
+                    "}" )) @function.around
+        "#})),
         ..Default::default()
     })
     .expect("Could not parse queries");

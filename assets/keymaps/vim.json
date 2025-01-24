@@ -436,7 +436,7 @@
     "bindings": {
       "d": "vim::CurrentLine",
       "s": ["vim::PushOperator", "DeleteSurrounds"],
-      "o": "editor::ToggleHunkDiff", // "d o"
+      "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "p": "editor::RevertSelectedHunks" // "d p"
     }
   },

@@ -6,7 +6,6 @@ use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
-use editor::scroll::Autoscroll;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -14,7 +13,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
-use language::{Bias, Point};
+use language::Point;
 use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
 use settings::Settings;
@@ -236,11 +235,7 @@ pub async fn open_paths_with_positions(
             workspace
                 .update(cx, |_, cx| {
                     active_editor.update(cx, |editor, cx| {
-                        let snapshot = editor.snapshot(cx).display_snapshot;
-                        let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                        editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                            s.select_ranges([point..point])
-                        });
+                        editor.go_to_singleton_buffer_point(point, cx);
                     });
                 })
                 .log_err();

@@ -6,7 +6,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
+    language_settings::{language_settings, LanguageSettings},
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
@@ -144,7 +144,7 @@ struct BufferBranchState {
 /// An immutable, cheaply cloneable representation of a fixed
 /// state of a buffer.
 pub struct BufferSnapshot {
-    text: text::BufferSnapshot,
+    pub text: text::BufferSnapshot,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -587,22 +587,6 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct IndentGuide {
-    pub buffer_id: BufferId,
-    pub start_row: BufferRow,
-    pub end_row: BufferRow,
-    pub depth: u32,
-    pub tab_size: u32,
-    pub settings: IndentGuideSettings,
-}
-
-impl IndentGuide {
-    pub fn indent_level(&self) -> u32 {
-        self.depth * self.tab_size
-    }
-}
-
 #[derive(Clone)]
 pub struct EditPreview {
     applied_edits_snapshot: text::BufferSnapshot,
@@ -934,6 +918,36 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             _subscriptions: Vec::new(),
+        }
+    }
+
+    pub fn build_snapshot(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = BufferSnapshot> {
+        let entity_id = cx.reserve_model::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        async move {
+            let text =
+                TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+            let mut syntax = SyntaxMap::new(&text).snapshot();
+            if let Some(language) = language.clone() {
+                let text = text.clone();
+                let language = language.clone();
+                let language_registry = language_registry.clone();
+                syntax.reparse(&text, language_registry, language);
+            }
+            BufferSnapshot {
+                text,
+                syntax,
+                file: None,
+                diagnostics: Default::default(),
+                remote_selections: Default::default(),
+                language,
+                non_text_state_update_count: 0,
+            }
         }
     }
 
@@ -2633,7 +2647,8 @@ impl Buffer {
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
-            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+            let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+            new_text = new_text.to_uppercase();
 
             edits.push((range, new_text));
         }
@@ -3730,10 +3745,8 @@ impl BufferSnapshot {
 
     pub fn runnable_ranges(
         &self,
-        range: Range<Anchor>,
+        offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
-
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar.runnable_config.as_ref().map(|config| &config.query)
         });
@@ -3831,245 +3844,6 @@ impl BufferSnapshot {
                 return test_range;
             }
         })
-    }
-
-    pub fn indent_guides_in_range(
-        &self,
-        range: Range<Anchor>,
-        ignore_disabled_for_language: bool,
-        cx: &AppContext,
-    ) -> Vec<IndentGuide> {
-        let language_settings =
-            language_settings(self.language().map(|l| l.name()), self.file.as_ref(), cx);
-        let settings = language_settings.indent_guides;
-        if !ignore_disabled_for_language && !settings.enabled {
-            return Vec::new();
-        }
-        let tab_size = language_settings.tab_size.get() as u32;
-
-        let start_row = range.start.to_point(self).row;
-        let end_row = range.end.to_point(self).row;
-        let row_range = start_row..end_row + 1;
-
-        let mut row_indents = self.line_indents_in_row_range(row_range.clone());
-
-        let mut result_vec = Vec::new();
-        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
-
-        while let Some((first_row, mut line_indent)) = row_indents.next() {
-            let current_depth = indent_stack.len() as u32;
-
-            // When encountering empty, continue until found useful line indent
-            // then add to the indent stack with the depth found
-            let mut found_indent = false;
-            let mut last_row = first_row;
-            if line_indent.is_line_empty() {
-                let mut trailing_row = end_row;
-                while !found_indent {
-                    let (target_row, new_line_indent) =
-                        if let Some(display_row) = row_indents.next() {
-                            display_row
-                        } else {
-                            // This means we reached the end of the given range and found empty lines at the end.
-                            // We need to traverse further until we find a non-empty line to know if we need to add
-                            // an indent guide for the last visible indent.
-                            trailing_row += 1;
-
-                            const TRAILING_ROW_SEARCH_LIMIT: u32 = 25;
-                            if trailing_row > self.max_point().row
-                                || trailing_row > end_row + TRAILING_ROW_SEARCH_LIMIT
-                            {
-                                break;
-                            }
-                            let new_line_indent = self.line_indent_for_row(trailing_row);
-                            (trailing_row, new_line_indent)
-                        };
-
-                    if new_line_indent.is_line_empty() {
-                        continue;
-                    }
-                    last_row = target_row.min(end_row);
-                    line_indent = new_line_indent;
-                    found_indent = true;
-                    break;
-                }
-            } else {
-                found_indent = true
-            }
-
-            let depth = if found_indent {
-                line_indent.len(tab_size) / tab_size
-                    + ((line_indent.len(tab_size) % tab_size) > 0) as u32
-            } else {
-                current_depth
-            };
-
-            match depth.cmp(&current_depth) {
-                Ordering::Less => {
-                    for _ in 0..(current_depth - depth) {
-                        let mut indent = indent_stack.pop().unwrap();
-                        if last_row != first_row {
-                            // In this case, we landed on an empty row, had to seek forward,
-                            // and discovered that the indent we where on is ending.
-                            // This means that the last display row must
-                            // be on line that ends this indent range, so we
-                            // should display the range up to the first non-empty line
-                            indent.end_row = first_row.saturating_sub(1);
-                        }
-
-                        result_vec.push(indent)
-                    }
-                }
-                Ordering::Greater => {
-                    for next_depth in current_depth..depth {
-                        indent_stack.push(IndentGuide {
-                            buffer_id: self.remote_id(),
-                            start_row: first_row,
-                            end_row: last_row,
-                            depth: next_depth,
-                            tab_size,
-                            settings,
-                        });
-                    }
-                }
-                _ => {}
-            }
-
-            for indent in indent_stack.iter_mut() {
-                indent.end_row = last_row;
-            }
-        }
-
-        result_vec.extend(indent_stack);
-
-        result_vec
-    }
-
-    pub async fn enclosing_indent(
-        &self,
-        mut buffer_row: BufferRow,
-    ) -> Option<(Range<BufferRow>, LineIndent)> {
-        let max_row = self.max_point().row;
-        if buffer_row >= max_row {
-            return None;
-        }
-
-        let mut target_indent = self.line_indent_for_row(buffer_row);
-
-        // If the current row is at the start of an indented block, we want to return this
-        // block as the enclosing indent.
-        if !target_indent.is_line_empty() && buffer_row < max_row {
-            let next_line_indent = self.line_indent_for_row(buffer_row + 1);
-            if !next_line_indent.is_line_empty()
-                && target_indent.raw_len() < next_line_indent.raw_len()
-            {
-                target_indent = next_line_indent;
-                buffer_row += 1;
-            }
-        }
-
-        const SEARCH_ROW_LIMIT: u32 = 25000;
-        const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
-        const YIELD_INTERVAL: u32 = 100;
-
-        let mut accessed_row_counter = 0;
-
-        // If there is a blank line at the current row, search for the next non indented lines
-        if target_indent.is_line_empty() {
-            let start = buffer_row.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT);
-            let end = (max_row + 1).min(buffer_row + SEARCH_WHITESPACE_ROW_LIMIT);
-
-            let mut non_empty_line_above = None;
-            for (row, indent) in self
-                .text
-                .reversed_line_indents_in_row_range(start..buffer_row)
-            {
-                accessed_row_counter += 1;
-                if accessed_row_counter == YIELD_INTERVAL {
-                    accessed_row_counter = 0;
-                    yield_now().await;
-                }
-                if !indent.is_line_empty() {
-                    non_empty_line_above = Some((row, indent));
-                    break;
-                }
-            }
-
-            let mut non_empty_line_below = None;
-            for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
-                accessed_row_counter += 1;
-                if accessed_row_counter == YIELD_INTERVAL {
-                    accessed_row_counter = 0;
-                    yield_now().await;
-                }
-                if !indent.is_line_empty() {
-                    non_empty_line_below = Some((row, indent));
-                    break;
-                }
-            }
-
-            let (row, indent) = match (non_empty_line_above, non_empty_line_below) {
-                (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
-                    if above_indent.raw_len() >= below_indent.raw_len() {
-                        (above_row, above_indent)
-                    } else {
-                        (below_row, below_indent)
-                    }
-                }
-                (Some(above), None) => above,
-                (None, Some(below)) => below,
-                _ => return None,
-            };
-
-            target_indent = indent;
-            buffer_row = row;
-        }
-
-        let start = buffer_row.saturating_sub(SEARCH_ROW_LIMIT);
-        let end = (max_row + 1).min(buffer_row + SEARCH_ROW_LIMIT);
-
-        let mut start_indent = None;
-        for (row, indent) in self
-            .text
-            .reversed_line_indents_in_row_range(start..buffer_row)
-        {
-            accessed_row_counter += 1;
-            if accessed_row_counter == YIELD_INTERVAL {
-                accessed_row_counter = 0;
-                yield_now().await;
-            }
-            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
-                start_indent = Some((row, indent));
-                break;
-            }
-        }
-        let (start_row, start_indent_size) = start_indent?;
-
-        let mut end_indent = (end, None);
-        for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
-            accessed_row_counter += 1;
-            if accessed_row_counter == YIELD_INTERVAL {
-                accessed_row_counter = 0;
-                yield_now().await;
-            }
-            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
-                end_indent = (row.saturating_sub(1), Some(indent));
-                break;
-            }
-        }
-        let (end_row, end_indent_size) = end_indent;
-
-        let indent = if let Some(end_indent_size) = end_indent_size {
-            if start_indent_size.raw_len() > end_indent_size.raw_len() {
-                start_indent_size
-            } else {
-                end_indent_size
-            }
-        } else {
-            start_indent_size
-        };
-
-        Some((start_row..end_row, indent))
     }
 
     /// Returns selections for remote peers intersecting the given range.
@@ -4393,6 +4167,10 @@ impl<'a> BufferChunks<'a> {
     /// The current byte offset in the buffer.
     pub fn offset(&self) -> usize {
         self.range.start
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
     }
 
     fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {

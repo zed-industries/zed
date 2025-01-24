@@ -86,9 +86,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .await
         .unwrap();
 
-    change_set.update(cx, |change_set, cx| {
+    change_set.update(cx, |change_set, _| {
         assert_eq!(
-            change_set.base_text_string(cx).unwrap(),
+            change_set.base_text_string().unwrap(),
             "fn one() -> usize { 0 }"
         );
     });
@@ -150,9 +150,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    change_set.update(cx, |change_set, cx| {
+    change_set.update(cx, |change_set, _| {
         assert_eq!(
-            change_set.base_text_string(cx).unwrap(),
+            change_set.base_text_string().unwrap(),
             "fn one() -> usize { 100 }"
         );
     });

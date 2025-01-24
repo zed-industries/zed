@@ -102,6 +102,8 @@ use crate::persistence::{
     SerializedAxis,
 };
 
+pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
     env::var("ZED_WINDOW_SIZE")
         .ok()
@@ -4344,7 +4346,6 @@ impl Workspace {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         const CHUNK_SIZE: usize = 200;
-        const THROTTLE_TIME: Duration = Duration::from_millis(200);
 
         let mut serializable_items = items_rx.ready_chunks(CHUNK_SIZE);
 
@@ -4369,7 +4370,9 @@ impl Workspace {
                 }
             }
 
-            cx.background_executor().timer(THROTTLE_TIME).await;
+            cx.background_executor()
+                .timer(SERIALIZATION_THROTTLE_TIME)
+                .await;
         }
 
         Ok(())

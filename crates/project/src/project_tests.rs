@@ -5651,7 +5651,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &unstaged_changes.base_text.as_ref().unwrap().text(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5681,7 +5681,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &unstaged_changes.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });

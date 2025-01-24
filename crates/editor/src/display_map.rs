@@ -30,8 +30,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
-    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
@@ -54,7 +54,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -68,7 +68,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::LineIndent;
+use text::{BufferId, LineIndent};
 use ui::{px, SharedString, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -367,8 +367,12 @@ impl DisplayMap {
         block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
     }
 
-    pub(crate) fn buffer_folded(&self, buffer_id: language::BufferId) -> bool {
+    pub(crate) fn is_buffer_folded(&self, buffer_id: language::BufferId) -> bool {
         self.block_map.folded_buffers.contains(&buffer_id)
+    }
+
+    pub(crate) fn folded_buffers(&self) -> &HashSet<BufferId> {
+        &self.block_map.folded_buffers
     }
 
     pub fn insert_creases(
@@ -716,13 +720,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(
-        &self,
-        start_row: DisplayRow,
-    ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
-        self.block_snapshot
-            .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(MultiBufferRow))
+    pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
+        self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
 
     pub fn widest_line_number(&self) -> u32 {

@@ -146,7 +146,7 @@ impl ProjectDiffEditor {
         let editor = cx.new_view(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, cx);
-            diff_display_editor.set_expand_all_diff_hunks();
+            diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor
         });
 
@@ -310,9 +310,11 @@ impl ProjectDiffEditor {
                     .update(&mut cx, |project_diff_editor, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
                         project_diff_editor.editor.update(cx, |editor, cx| {
-                            for change_set in change_sets {
-                                editor.diff_map.add_change_set(change_set, cx)
-                            }
+                            editor.buffer.update(cx, |buffer, cx| {
+                                for change_set in change_sets {
+                                    buffer.add_change_set(change_set, cx)
+                                }
+                            });
                         });
                     })
                     .ok();
@@ -1105,6 +1107,8 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    use crate::test::editor_test_context::assert_state_with_diff;
+
     use super::*;
 
     // TODO finish
@@ -1183,19 +1187,13 @@ mod tests {
             let change_set = cx.new_model(|cx| {
                 BufferChangeSet::new_with_base_text(
                     old_text.clone(),
-                    file_a_editor
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .unwrap()
-                        .read(cx)
-                        .text_snapshot(),
+                    &file_a_editor.buffer().read(cx).as_singleton().unwrap(),
                     cx,
                 )
             });
-            file_a_editor
-                .diff_map
-                .add_change_set(change_set.clone(), cx);
+            file_a_editor.buffer.update(cx, |buffer, cx| {
+                buffer.add_change_set(change_set.clone(), cx)
+            });
             project.update(cx, |project, cx| {
                 project.buffer_store().update(cx, |buffer_store, cx| {
                     buffer_store.set_change_set(
@@ -1225,15 +1223,17 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
+        let editor = project_diff_editor.update(cx, |view, _| view.editor.clone());
 
-        project_diff_editor.update(cx, |project_diff_editor, cx| {
-            assert_eq!(
-                // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
-                project_diff_editor.editor.read(cx).text(cx),
-                format!("{change}{old_text}"),
-                "Should have a new change shown in the beginning, and the old text shown as deleted text afterwards"
-            );
-        });
+        assert_state_with_diff(
+            &editor,
+            cx,
+            indoc::indoc! {
+            "
+                - This is file_a
+                + an edit after git addThis is file_aˇ",
+            },
+        );
     }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
