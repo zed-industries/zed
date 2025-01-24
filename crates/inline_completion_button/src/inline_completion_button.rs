@@ -220,16 +220,16 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                if !self
-                    .user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false)
-                {
+                let current_user_terms_accepted =
+                    self.user_store.read(cx).current_user_has_accepted_terms();
+
+                if !current_user_terms_accepted.unwrap_or(false) {
                     let workspace = self.workspace.clone();
                     let user_store = self.user_store.clone();
                     let client = self.client.clone();
                     let fs = self.fs.clone();
+
+                    let signed_in = current_user_terms_accepted.is_some();
 
                     return div().child(
                         ButtonLike::new("zeta-pending-tos-icon")
@@ -243,11 +243,15 @@ impl Render for InlineCompletionButton {
                                 ))
                                 .into_any_element(),
                             )
-                            .tooltip(|cx| {
+                            .tooltip(move |cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
-                                    "Read Terms of Service",
+                                    if signed_in {
+                                        "Read Terms of Service"
+                                    } else {
+                                        "Sign in to use"
+                                    },
                                     cx,
                                 )
                             })

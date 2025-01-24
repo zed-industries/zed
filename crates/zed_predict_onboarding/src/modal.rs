@@ -22,8 +22,11 @@ pub struct ZedPredictModal {
 
 #[derive(PartialEq, Eq)]
 enum SignInStatus {
+    /// Signed out or signed in but not from this modal
     Idle,
+    /// Authentication triggered from this modal
     Waiting,
+    /// Signed in after authentication from this modal
     SignedIn,
 }
 
