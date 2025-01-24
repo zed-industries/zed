@@ -748,15 +748,8 @@ impl TitleBar {
                     .into()
                 })
                 .trigger(
-                    ButtonLike::new("user-menu")
-                        .child(
-                            h_flex().gap_0p5().child(
-                                Icon::new(IconName::ChevronDown)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                        )
-                        .style(ButtonStyle::Subtle)
+                    IconButton::new("user-menu", IconName::ChevronDown)
+                        .icon_size(IconSize::Small)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
         }
