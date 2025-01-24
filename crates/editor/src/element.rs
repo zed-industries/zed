@@ -2168,7 +2168,6 @@ impl EditorElement {
             .into_iter()
             .map(|row_info| {
                 if let Some(row) = row_info.multibuffer_row {
-                    // todo!
                     snapshot.render_crease_trailer(row, cx)
                 } else {
                     None
