@@ -33,6 +33,8 @@ impl AwsConnector for AwsHttpConnector {
         let coerced_body = convert_to_async_body(aws_body);
 
         println!("{:?}", parts.uri);
+        println!("{:?}", parts.headers);
+        println!("{:?}", parts.method);
 
         let fut_resp = self.client.send(Request::from_parts(parts.into(), coerced_body));
 
@@ -53,6 +55,15 @@ impl AwsConnector for AwsHttpConnector {
 pub struct AwsHttpClient {
     client: Arc<dyn HttpClient>
 }
+
+impl Clone for AwsHttpClient {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone()
+        }
+    }
+}
+
 
 impl std::fmt::Debug for AwsHttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {

@@ -80,7 +80,7 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20241022-v2:0",
+            Model::Claude3_5Sonnet => "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
             Model::Claude3Sonnet => "anthropic.claude-3-sonnet-20240229-v1:0",
             Model::Claude3_5Haiku => "anthropic.claude-3-5-haiku-20241022-v1:0",

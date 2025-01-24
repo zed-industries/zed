@@ -74,7 +74,7 @@ pub struct State {
 }
 
 pub struct BedrockLanguageModelProvider {
-    http_client: Arc<dyn HttpClient>,
+    http_client: AwsHttpClient,
     state: gpui::Model<State>,
 }
 
@@ -86,12 +86,17 @@ impl State {
         let delete_sk: Task<Result<()>> = cx.delete_credentials(
             &AllLanguageModelSettings::get_global(cx).bedrock.secret_access_key,
         );
+        let delete_region = cx.delete_credentials(
+            &AllLanguageModelSettings::get_global(cx).bedrock.region,
+        );
         cx.spawn(|this, mut cx| async move {
             delete_aa_id.await.ok();
             delete_sk.await.ok();
+            delete_region.await.ok();
             this.update(&mut cx, |this, cx| {
                 this.aa_id = None;
                 this.sk = None;
+                this.region = None;
                 this.credentials_from_env = false;
                 cx.notify();
             })
@@ -115,7 +120,11 @@ impl State {
             "Bearer",
             secret_key.as_bytes(),
         );
-        let write_region = cx.write_credentials(ZED_BEDROCK_REGION, "Bearer", region.as_bytes());
+        let write_region = cx.write_credentials(
+            ZED_BEDROCK_REGION,
+            "Bearer",
+            region.as_bytes()
+        );
         cx.spawn(|this, mut cx| async move {
             write_aa_id.await?;
             write_sk.await?;
@@ -193,17 +202,97 @@ impl BedrockLanguageModelProvider {
             }),
         });
 
+        let coerced_client = AwsHttpClient::new(http_client.clone());
+
         Self {
-            http_client: http_client.clone(),
+            http_client: coerced_client,
             state,
         }
     }
 }
 
+impl LanguageModelProvider for BedrockLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId(PROVIDER_ID.into())
+    }
+
+    fn name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName(PROVIDER_NAME.into())
+    }
+
+    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+        let mut models = BTreeMap::default();
+
+        for model in bedrock::Model::iter() {
+            if !matches!(model, bedrock::Model::Custom { .. }) {
+                models.insert(model.id().to_string(), model);
+            }
+        }
+
+        // Override with available models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .bedrock
+            .available_models
+            .iter()
+        {
+            models.insert(
+                model.name.clone(),
+                bedrock::Model::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    default_temperature: model.default_temperature,
+                },
+            );
+        }
+
+        models
+            .into_values()
+            .map(|model| {
+                Arc::new(BedrockModel {
+                    id: LanguageModelId::from(model.id().to_string()),
+                    model,
+                    http_client: self.http_client.clone(),
+                    state: self.state.clone(),
+                    request_limiter: RateLimiter::new(4),
+                }) as Arc<dyn LanguageModel>
+            })
+            .collect()
+    }
+
+    fn is_authenticated(&self, cx: &AppContext) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+            .into()
+    }
+
+    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.reset_credentials(cx))
+    }
+}
+
+impl LanguageModelProviderState for BedrockLanguageModelProvider {
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+}
+
+
 struct BedrockModel {
     id: LanguageModelId,
     model: Model,
-    http_client: Arc<dyn HttpClient>,
+    http_client: AwsHttpClient,
     state: gpui::Model<State>,
     request_limiter: RateLimiter,
 }
@@ -214,14 +303,14 @@ impl BedrockModel {
         request: bedrock::Request,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
-        let http_client = self.http_client.clone();
-
         let Ok((aa_id, sk, region)) = cx.read_model(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).bedrock;
-            (state.aa_id.clone(), state.sk.clone(), settings.region.clone())
+            (state.aa_id.clone(), state.sk.clone(), state.region.clone())
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
+
+        println!("aa_id: {:?}, sk: {:?}, region: {:?}", aa_id, sk, region);
 
         // instantiate aws client here
         // we'll throw it in the model's struct after
@@ -235,7 +324,8 @@ impl BedrockModel {
                     None,
                     "Keychain",
                 ))
-                .region(Region::new(region))
+                .region(Region::new(region.unwrap()))
+                .http_client(self.http_client.clone())
                 .build(),
         );
 
@@ -434,83 +524,6 @@ pub fn map_to_language_model_completion_events(
             None
         },
     ).filter_map(|event| async move { event })
-}
-
-impl LanguageModelProvider for BedrockLanguageModelProvider {
-    fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
-    }
-
-    fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
-    }
-
-    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
-
-        for model in bedrock::Model::iter() {
-            if !matches!(model, bedrock::Model::Custom { .. }) {
-                models.insert(model.id().to_string(), model);
-            }
-        }
-
-        // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .bedrock
-            .available_models
-            .iter()
-        {
-            models.insert(
-                model.name.clone(),
-                bedrock::Model::Custom {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    max_output_tokens: model.max_output_tokens,
-                    default_temperature: model.default_temperature,
-                },
-            );
-        }
-
-        models
-            .into_values()
-            .map(|model| {
-                Arc::new(BedrockModel {
-                    id: LanguageModelId::from(model.id().to_string()),
-                    model,
-                    http_client: self.http_client.clone(),
-                    state: self.state.clone(),
-                    request_limiter: RateLimiter::new(4),
-                }) as Arc<dyn LanguageModel>
-            })
-            .collect()
-    }
-
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
-        self.state.read(cx).is_authenticated()
-    }
-
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
-    }
-
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.reset_credentials(cx))
-    }
-}
-
-impl LanguageModelProviderState for BedrockLanguageModelProvider {
-    type ObservableEntity = State;
-
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
-        Some(self.state.clone())
-    }
 }
 
 struct ConfigurationView {

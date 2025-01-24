@@ -42,7 +42,6 @@ pub async fn complete(
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
-    // executor: &BackgroundExcectuor
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>> {
     let local_runtime = tokio::runtime::Runtime::new()?;
     local_runtime.spawn(async move {
