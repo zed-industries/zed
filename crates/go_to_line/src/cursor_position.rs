@@ -1,4 +1,4 @@
-use editor::{Editor, ToPoint};
+use editor::Editor;
 use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -73,23 +73,16 @@ impl CursorPosition {
                                 cursor_position.context = None;
                             }
                             editor::EditorMode::Full => {
-                                let mut last_selection = None::<Selection<usize>>;
-                                let buffer = editor.buffer().read(cx).snapshot(cx);
-                                if buffer.excerpts().count() > 0 {
-                                    for selection in editor.selections.all::<usize>(cx) {
-                                        let text_summary = buffer
+                                let mut last_selection = None::<Selection<Point>>;
+                                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                                if multi_buffer_snapshot.excerpts().count() > 0 {
+                                    for selection in editor.selections.all::<Point>(cx) {
+                                        let text_summary = multi_buffer_snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
                                                 selection.start..selection.end,
                                             );
                                         cursor_position.selected_count.characters +=
                                             text_summary.chars;
-                                        if last_selection.as_ref().map_or(true, |last_selection| {
-                                            selection.id > last_selection.id
-                                        }) {
-                                            last_selection = Some(selection);
-                                        }
-                                    }
-                                    for selection in editor.selections.all::<Point>(cx) {
                                         if selection.end != selection.start {
                                             cursor_position.selected_count.lines +=
                                                 (selection.end.row - selection.start.row) as usize;
@@ -97,11 +90,16 @@ impl CursorPosition {
                                                 cursor_position.selected_count.lines += 1;
                                             }
                                         }
+                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                            selection.id > last_selection.id
+                                        }) {
+                                            last_selection = Some(selection);
+                                        }
                                     }
                                 }
                                 cursor_position.position = last_selection.and_then(|s| {
                                     buffer
-                                        .point_to_buffer_point(s.head().to_point(&buffer))
+                                        .point_to_buffer_point(s.head())
                                         .map(|(_, point, is_main_buffer)| (point, is_main_buffer))
                                 });
                                 cursor_position.context = Some(editor.focus_handle(cx));
