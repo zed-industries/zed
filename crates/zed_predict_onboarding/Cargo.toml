@@ -16,7 +16,10 @@ doctest = false
 test-support = []
 
 [dependencies]
+chrono.workspace = true
 client.workspace = true
+db.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language.workspace = true
@@ -24,5 +27,5 @@ menu.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+util.workspace = true
 workspace.workspace = true
-feature_flags.workspace = true

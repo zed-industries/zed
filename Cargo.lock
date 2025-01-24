@@ -16509,7 +16509,9 @@ dependencies = [
 name = "zed_predict_onboarding"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "client",
+ "db",
  "feature_flags",
  "fs",
  "gpui",
@@ -16518,6 +16520,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 

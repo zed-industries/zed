@@ -98,7 +98,6 @@ pub struct UserStore {
     current_plan: Option<proto::Plan>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
-    zed_predict_banner_dismissed_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -157,7 +156,6 @@ impl UserStore {
             current_user: current_user_rx,
             current_plan: None,
             accepted_tos_at: None,
-            zed_predict_banner_dismissed_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
             participant_indices: Default::default(),
@@ -228,8 +226,6 @@ impl UserStore {
                                             };
 
                                             this.set_current_user_accepted_tos_at(accepted_tos_at);
-                                            // TODO: load from user details
-                                            this.set_zed_predict_banner_dismissed_at(None);
                                             cx.emit(Event::PrivateUserInfoUpdated);
                                         })
                                     } else {
@@ -245,7 +241,6 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(&mut cx, |this, cx| {
-                                this.zed_predict_banner_dismissed_at = None;
                                 this.accepted_tos_at = None;
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
@@ -734,24 +729,10 @@ impl UserStore {
         })
     }
 
-    pub fn current_user_has_dismissed_zed_predict_banner(&self) -> Option<bool> {
-        self.zed_predict_banner_dismissed_at.map(|d| d.is_some())
-    }
-
     fn set_current_user_accepted_tos_at(&mut self, accepted_tos_at: Option<u64>) {
         self.accepted_tos_at = Some(
             accepted_tos_at.and_then(|timestamp| DateTime::from_timestamp(timestamp as i64, 0)),
         );
-    }
-
-    pub fn dismiss_zed_predict_banner(&mut self, cx: &mut ModelContext<Self>) {
-        // TODO az: persist
-        self.set_zed_predict_banner_dismissed_at(Some(Utc::now()));
-        cx.emit(Event::PrivateUserInfoUpdated);
-    }
-
-    pub fn set_zed_predict_banner_dismissed_at(&mut self, dismissed_at: Option<DateTime<Utc>>) {
-        self.zed_predict_banner_dismissed_at = Some(dismissed_at);
     }
 
     fn load_users(
