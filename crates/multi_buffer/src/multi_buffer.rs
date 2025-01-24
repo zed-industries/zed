@@ -3446,7 +3446,7 @@ impl MultiBufferSnapshot {
         std::iter::from_fn(move || {
             let region = cursor.region()?;
             if region.range.start > end {
-                break;
+                return None;
             }
             let start_overshoot = start.saturating_sub(region.range.start);
             let end_overshoot = end.saturating_sub(region.range.start);
@@ -3472,7 +3472,7 @@ impl MultiBufferSnapshot {
                 deleted_hunk_anchor,
             );
             cursor.next();
-            Some(result);
+            Some(result)
         })
     }
 
