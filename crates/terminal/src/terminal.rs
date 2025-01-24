@@ -493,7 +493,7 @@ impl TerminalBuilder {
                 while let Some(event) = events_rx.next().await {
                     // Process the first event immediately to reduce latency
                     accumulated_events_tx
-                        .send(EventOrAccumulator::Event(event))
+                        .feed(EventOrAccumulator::Event(event))
                         .await?;
                     'outer: loop {
                         let start_time = Instant::now();
@@ -520,7 +520,7 @@ impl TerminalBuilder {
                             }
                         }
                         accumulated_events_tx
-                            .send(EventOrAccumulator::Accumulator(event_accumulator))
+                            .feed(EventOrAccumulator::Accumulator(event_accumulator))
                             .await?;
                     }
                 }
