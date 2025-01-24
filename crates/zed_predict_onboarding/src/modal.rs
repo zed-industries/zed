@@ -121,26 +121,20 @@ impl Render for ZedPredictModal {
                 cx.focus(&this.focus_handle);
             }))
             .child(
-                h_flex()
-                    .max_h_32()
+                div()
                     .p_1()
-                    .overflow_hidden()
-                    .flex_wrap()
-                    .gap_1()
                     .absolute()
                     .top_0()
                     .left_0()
                     .right_0()
-                    // TODO: replace with single SVG
-                    .children((0..254).enumerate().map(|(index, _)| {
-                        let opacity = 0.24 - (index as f32 * 0.0016);
+                    .h(px(200.))
+                    .child(
                         svg()
-                            .path("icons/zed_predict.svg")
+                            .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(14.))
-                            .h(px(14.))
-                            .opacity(opacity.max(0.001))
-                    })),
+                            .w(px(420.))
+                            .h(px(128.)),
+                    ),
             )
             .child(
                 h_flex()
