@@ -664,14 +664,16 @@ impl AssistantPanel {
     }
 
     fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return Some(ConfigurationError::NoProvider);
+        };
 
         if !provider.is_authenticated(cx) {
             return Some(ConfigurationError::ProviderNotAuthenticated);
         }
 
         if provider.must_accept_terms(cx) {
-            return Some(ConfigurationError::ProviderPendingTermsAcceptance);
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance(provider));
         }
 
         None
@@ -690,6 +692,7 @@ impl AssistantPanel {
         };
 
         let configuration_error = self.configuration_error(cx);
+        let no_error = configuration_error.is_none();
 
         v_flex()
             .gap_2()
@@ -704,57 +707,51 @@ impl AssistantPanel {
                         .mb_4(),
                 ),
             )
-            .when(
-                matches!(
-                    configuration_error,
-                    Some(ConfigurationError::ProviderNotAuthenticated)
-                ),
-                |parent| {
-                    parent.child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(create_welcome_heading())
-                            .child(
-                                h_flex().mb_2().w_full().justify_center().child(
-                                    Label::new(
-                                        "To start using the assistant, configure at least one LLM provider.",
-                                    )
-                                    .color(Color::Muted),
+            .map(|parent| {
+                match configuration_error {
+                    Some(ConfigurationError::ProviderNotAuthenticated) | Some(ConfigurationError::NoProvider)  => {
+                        parent.child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(create_welcome_heading())
+                                .child(
+                                    h_flex().mb_2().w_full().justify_center().child(
+                                        Label::new(
+                                            "To start using the assistant, configure at least one LLM provider.",
+                                        )
+                                        .color(Color::Muted),
+                                    ),
+                                )
+                                .child(
+                                    h_flex().w_full().justify_center().child(
+                                        Button::new("open-configuration", "Configure a Provider")
+                                            .size(ButtonSize::Compact)
+                                            .icon(Some(IconName::Sliders))
+                                            .icon_size(IconSize::Small)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.open_configuration(cx);
+                                            })),
+                                    ),
                                 ),
-                            )
-                            .child(
-                                h_flex().w_full().justify_center().child(
-                                    Button::new("open-configuration", "Configure a Provider")
-                                        .size(ButtonSize::Compact)
-                                        .icon(Some(IconName::Sliders))
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(|this, _, cx| {
-                                            this.open_configuration(cx);
-                                        })),
-                                ),
-                            ),
-                    )
-                },
-            )
+                        )
+                    }
+                    Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
+                        parent.child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(create_welcome_heading())
+                                .children(provider.render_accept_terms(
+                                    LanguageModelProviderTosView::ThreadEmptyState,
+                                    cx,
+                                )),
+                        )
+                    }
+                    None => parent,
+                }
+            })
             .when(
-                matches!(
-                    configuration_error,
-                    Some(ConfigurationError::ProviderPendingTermsAcceptance)
-                ),
-                |parent| {
-                    let provider = LanguageModelRegistry::read_global(cx).active_provider();
-
-                    parent.child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(create_welcome_heading())
-                            .children(provider.and_then(|provider| provider.render_accept_terms(LanguageModelProviderTosView::ThreadEmptyState, cx)))
-                    )
-                },
-            )
-            .when(
-                recent_threads.is_empty() && self.configuration_error(cx).is_none(),
+                recent_threads.is_empty() && no_error,
                 |parent| {
                     parent.child(
                         v_flex().gap_0p5().child(create_welcome_heading()).child(

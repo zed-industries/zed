@@ -32,8 +32,8 @@ use gpui::{
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
 use language_model::{
-    LanguageModelImage, LanguageModelProviderTosView, LanguageModelRegistry, LanguageModelToolUse,
-    Role,
+    LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
+    LanguageModelToolUse, Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
@@ -2263,7 +2263,7 @@ impl ContextEditor {
             let label = match configuration_error {
                 ConfigurationError::NoProvider => "No LLM provider selected.",
                 ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured.",
-                ConfigurationError::ProviderPendingTermsAcceptance => {
+                ConfigurationError::ProviderPendingTermsAcceptance(_) => {
                     "LLM provider requires accepting the Terms of Service."
                 }
             };
@@ -3508,7 +3508,7 @@ fn size_for_image(data: &RenderImage, max_size: Size<Pixels>) -> Size<Pixels> {
 pub enum ConfigurationError {
     NoProvider,
     ProviderNotAuthenticated,
-    ProviderPendingTermsAcceptance,
+    ProviderPendingTermsAcceptance(Arc<dyn LanguageModelProvider>),
 }
 
 fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
