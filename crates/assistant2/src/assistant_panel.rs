@@ -9,6 +9,7 @@ use assistant_context_editor::{
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
+
 use client::zed_urls;
 use editor::Editor;
 use fs::Fs;
@@ -18,7 +19,7 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use language::LanguageRegistry;
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
 use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use settings::{update_settings_file, Settings};
@@ -663,17 +664,16 @@ impl AssistantPanel {
     }
 
     fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let is_authenticated = provider
-            .as_ref()
-            .map_or(false, |provider| provider.is_authenticated(cx));
+        let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
+            return Some(ConfigurationError::NoProvider);
+        };
 
-        if provider.is_some() && is_authenticated {
-            return None;
+        if !provider.is_authenticated(cx) {
+            return Some(ConfigurationError::ProviderNotAuthenticated);
         }
 
-        if !is_authenticated {
-            return Some(ConfigurationError::ProviderNotAuthenticated);
+        if provider.must_accept_terms(cx) {
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance(provider));
         }
 
         None
@@ -691,6 +691,9 @@ impl AssistantPanel {
                 .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
         };
 
+        let configuration_error = self.configuration_error(cx);
+        let no_error = configuration_error.is_none();
+
         v_flex()
             .gap_2()
             .child(
@@ -704,41 +707,51 @@ impl AssistantPanel {
                         .mb_4(),
                 ),
             )
-            .when(
-                matches!(
-                    self.configuration_error(cx),
-                    Some(ConfigurationError::ProviderNotAuthenticated)
-                ),
-                |parent| {
-                    parent.child(
-                        v_flex()
-                            .gap_0p5()
-                            .child(create_welcome_heading())
-                            .child(
-                                h_flex().mb_2().w_full().justify_center().child(
-                                    Label::new(
-                                        "To start using the assistant, configure at least one LLM provider.",
-                                    )
-                                    .color(Color::Muted),
+            .map(|parent| {
+                match configuration_error {
+                    Some(ConfigurationError::ProviderNotAuthenticated) | Some(ConfigurationError::NoProvider)  => {
+                        parent.child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(create_welcome_heading())
+                                .child(
+                                    h_flex().mb_2().w_full().justify_center().child(
+                                        Label::new(
+                                            "To start using the assistant, configure at least one LLM provider.",
+                                        )
+                                        .color(Color::Muted),
+                                    ),
+                                )
+                                .child(
+                                    h_flex().w_full().justify_center().child(
+                                        Button::new("open-configuration", "Configure a Provider")
+                                            .size(ButtonSize::Compact)
+                                            .icon(Some(IconName::Sliders))
+                                            .icon_size(IconSize::Small)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.open_configuration(cx);
+                                            })),
+                                    ),
                                 ),
-                            )
-                            .child(
-                                h_flex().w_full().justify_center().child(
-                                    Button::new("open-configuration", "Configure a Provider")
-                                        .size(ButtonSize::Compact)
-                                        .icon(Some(IconName::Sliders))
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(|this, _, cx| {
-                                            this.open_configuration(cx);
-                                        })),
-                                ),
-                            ),
-                    )
-                },
-            )
+                        )
+                    }
+                    Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
+                        parent.child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(create_welcome_heading())
+                                .children(provider.render_accept_terms(
+                                    LanguageModelProviderTosView::ThreadEmptyState,
+                                    cx,
+                                )),
+                        )
+                    }
+                    None => parent,
+                }
+            })
             .when(
-                recent_threads.is_empty() && self.configuration_error(cx).is_none(),
+                recent_threads.is_empty() && no_error,
                 |parent| {
                     parent.child(
                         v_flex().gap_0p5().child(create_welcome_heading()).child(
