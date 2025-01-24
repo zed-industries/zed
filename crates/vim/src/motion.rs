@@ -2619,7 +2619,7 @@ fn section_motion(
     direction: Direction,
     is_start: bool,
 ) -> DisplayPoint {
-    if let Some((_, _, buffer)) = map.buffer_snapshot.as_singleton() {
+    if map.buffer_snapshot.as_singleton().is_some() {
         for _ in 0..times {
             let offset = map
                 .display_point_to_point(display_point, Bias::Left)
@@ -2627,13 +2627,14 @@ fn section_motion(
             let range = if direction == Direction::Prev {
                 0..offset
             } else {
-                offset..buffer.len()
+                offset..map.buffer_snapshot.len()
             };
 
             // we set a max start depth here because we want a section to only be "top level"
             // similar to vim's default of '{' in the first column.
             // (and without it, ]] at the start of editor.rs is -very- slow)
-            let mut possibilities = buffer
+            let mut possibilities = map
+                .buffer_snapshot
                 .text_object_ranges(range, language::TreeSitterOptions::max_start_depth(3))
                 .filter(|(_, object)| {
                     matches!(
@@ -2665,7 +2666,7 @@ fn section_motion(
             let offset = if direction == Direction::Prev {
                 possibilities.max().unwrap_or(0)
             } else {
-                possibilities.min().unwrap_or(buffer.len())
+                possibilities.min().unwrap_or(map.buffer_snapshot.len())
             };
 
             let new_point = map.clip_point(offset.to_display_point(&map), Bias::Left);

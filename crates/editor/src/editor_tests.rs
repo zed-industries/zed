@@ -5481,6 +5481,109 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let base_text = r#"
+        impl A {
+            // this is an unstaged comment
+
+            fn b() {
+                c();
+            }
+
+            // this is another unstaged comment
+
+            fn d() {
+                // e
+                // f
+            }
+        }
+
+        fn g() {
+            // h
+        }
+    "#
+    .unindent();
+
+    let text = r#"
+        ˇimpl A {
+
+            fn b() {
+                c();
+            }
+
+            fn d() {
+                // e
+                // f
+            }
+        }
+
+        fn g() {
+            // h
+        }
+    "#
+    .unindent();
+
+    let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+    cx.set_state(&text);
+    cx.set_diff_base(&base_text);
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_diff_hunks(&Default::default(), cx);
+    });
+
+    cx.assert_state_with_diff(
+        "
+        ˇimpl A {
+      -     // this is an unstaged comment
+
+            fn b() {
+                c();
+            }
+
+      -     // this is another unstaged comment
+      -
+            fn d() {
+                // e
+                // f
+            }
+        }
+
+        fn g() {
+            // h
+        }
+    "
+        .unindent(),
+    );
+
+    let expected_display_text = "
+        impl A {
+            // this is an unstaged comment
+
+            fn b() {
+                ⋯
+            }
+
+            // this is another unstaged comment
+
+            fn d() {
+                ⋯
+            }
+        }
+
+        fn g() {
+            ⋯
+        }
+        "
+    .unindent();
+
+    cx.update_editor(|editor, cx| {
+        editor.fold_function_bodies(&FoldFunctionBodies, cx);
+        assert_eq!(editor.display_text(cx), expected_display_text);
+    });
+}
+
+#[gpui::test]
 async fn test_autoindent(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 

@@ -98,7 +98,8 @@ use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, EditPreview, HighlightedEdits, IndentKind, IndentSize,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
+    TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -9279,15 +9280,26 @@ impl Editor {
     }
 
     pub fn go_to_singleton_buffer_point(&mut self, point: Point, cx: &mut ViewContext<Self>) {
+        self.go_to_singleton_buffer_range(point..point, cx);
+    }
+
+    pub fn go_to_singleton_buffer_range(
+        &mut self,
+        range: Range<Point>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let multibuffer = self.buffer().read(cx);
         let Some(buffer) = multibuffer.as_singleton() else {
             return;
         };
-        let Some(anchor) = multibuffer.buffer_point_to_anchor(&buffer, point, cx) else {
+        let Some(start) = multibuffer.buffer_point_to_anchor(&buffer, range.start, cx) else {
+            return;
+        };
+        let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
         self.change_selections(Some(Autoscroll::center()), cx, |s| {
-            s.select_anchor_ranges([anchor..anchor])
+            s.select_anchor_ranges([start..end])
         });
     }
 
@@ -9729,15 +9741,12 @@ impl Editor {
                     };
                     let pane = workspace.read(cx).active_pane().clone();
 
-                    let range = target.range.to_offset(target.buffer.read(cx));
+                    let range = target.range.to_point(target.buffer.read(cx));
                     let range = editor.range_for_match(&range);
+                    let range = collapse_multiline_range(range);
 
                     if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                        let buffer = target.buffer.read(cx);
-                        let range = check_multiline_range(buffer, range);
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([range]);
-                        });
+                        editor.go_to_singleton_buffer_range(range.clone(), cx);
                     } else {
                         cx.window_context().defer(move |cx| {
                             let target_editor: View<Self> =
@@ -9760,15 +9769,7 @@ impl Editor {
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
-                                let buffer = target.buffer.read(cx);
-                                let range = check_multiline_range(buffer, range);
-                                target_editor.change_selections(
-                                    Some(Autoscroll::focused()),
-                                    cx,
-                                    |s| {
-                                        s.select_ranges([range]);
-                                    },
-                                );
+                                target_editor.go_to_singleton_buffer_range(range, cx);
                                 pane.update(cx, |pane, _| pane.enable_history());
                             });
                         });
@@ -10852,11 +10853,14 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some((_, _, buffer)) = snapshot.as_singleton() else {
-            return;
-        };
-        let creases = buffer
-            .function_body_fold_ranges(0..buffer.len())
+
+        let ranges = snapshot
+            .text_object_ranges(0..snapshot.len(), TreeSitterOptions::default())
+            .filter_map(|(range, obj)| (obj == TextObject::InsideFunction).then_some(range))
+            .collect::<Vec<_>>();
+
+        let creases = ranges
+            .into_iter()
             .map(|range| Crease::simple(range, self.display_map.read(cx).fold_placeholder.clone()))
             .collect();
 
@@ -11812,28 +11816,22 @@ impl Editor {
             let selection = self.selections.newest::<Point>(cx);
             let selection_range = selection.range();
 
-            let (buffer, selection) = if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-                (buffer, selection_range.start.row..selection_range.end.row)
+            let multi_buffer = self.buffer().read(cx);
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let buffer_ranges = multi_buffer_snapshot.range_to_buffer_ranges(selection_range);
+
+            let (buffer, range, _) = if selection.reversed {
+                buffer_ranges.first()
             } else {
-                let multi_buffer = self.buffer().read(cx);
-                let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-                let buffer_ranges = multi_buffer_snapshot.range_to_buffer_ranges(selection_range);
+                buffer_ranges.last()
+            }?;
 
-                let (buffer, range, _) = if selection.reversed {
-                    buffer_ranges.first()
-                } else {
-                    buffer_ranges.last()
-                }?;
-
-                let selection = text::ToPoint::to_point(&range.start, &buffer).row
-                    ..text::ToPoint::to_point(&range.end, &buffer).row;
-                (
-                    multi_buffer.buffer(buffer.remote_id()).unwrap().clone(),
-                    selection,
-                )
-            };
-
-            Some((buffer, selection))
+            let selection = text::ToPoint::to_point(&range.start, &buffer).row
+                ..text::ToPoint::to_point(&range.end, &buffer).row;
+            Some((
+                multi_buffer.buffer(buffer.remote_id()).unwrap().clone(),
+                selection,
+            ))
         });
 
         let Some((buffer, selection)) = buffer_and_selection else {
@@ -13020,17 +13018,13 @@ impl Editor {
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
     /// with each line being an array of {text, highlight} objects.
     fn copy_highlight_json(&mut self, _: &CopyHighlightJson, cx: &mut ViewContext<Self>) {
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
-            return;
-        };
-
         #[derive(Serialize)]
         struct Chunk<'a> {
             text: String,
             highlight: Option<&'a str>,
         }
 
-        let snapshot = buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let range = self
             .selected_text_range(false, cx)
             .and_then(|selection| {
@@ -15289,8 +15283,8 @@ impl RowRangeExt for Range<DisplayRow> {
 
 /// If select range has more than one line, we
 /// just point the cursor to range.start.
-fn check_multiline_range(buffer: &Buffer, range: Range<usize>) -> Range<usize> {
-    if buffer.offset_to_point(range.start).row == buffer.offset_to_point(range.end).row {
+fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
+    if range.start.row == range.end.row {
         range
     } else {
         range.start..range.start

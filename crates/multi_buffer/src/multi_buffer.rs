@@ -18,7 +18,8 @@ use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
     CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
     LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
-    TextDimension, ToOffset as _, ToPoint as _, TransactionId, Unclipped,
+    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
+    Unclipped,
 };
 use project::buffer_store::BufferChangeSet;
 use rope::DimensionPair;
@@ -4939,6 +4940,31 @@ impl MultiBufferSnapshot {
         )
     }
 
+    /// Returns enclosing bracket ranges containing the given range or returns None if the range is
+    /// not contained in a single excerpt
+    pub fn text_object_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        options: TreeSitterOptions,
+    ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.excerpt_containing(range.clone())
+            .map(|mut excerpt| {
+                excerpt
+                    .buffer()
+                    .text_object_ranges(excerpt.map_range_to_buffer(range), options)
+                    .filter_map(move |(range, text_object)| {
+                        if excerpt.contains_buffer_range(range.clone()) {
+                            Some((excerpt.map_range_from_buffer(range), text_object))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .into_iter()
+            .flatten()
+    }
+
     /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is
     /// not contained in a single excerpt
     pub fn bracket_ranges<T: ToOffset>(
@@ -6356,7 +6382,7 @@ impl<'a> MultiBufferExcerpt<'a> {
         let start = self.map_offset_to_buffer_internal(range.start);
         let end = if range.end > range.start {
             self.diff_transforms
-                .seek_forward(&OutputDimension(range.start), Bias::Right, &());
+                .seek_forward(&OutputDimension(range.end), Bias::Right, &());
             self.map_offset_to_buffer_internal(range.end)
         } else {
             start
