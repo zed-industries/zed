@@ -77,12 +77,12 @@ impl CursorPosition {
                                 let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if multi_buffer_snapshot.excerpts().count() > 0 {
                                     for selection in editor.selections.all::<Point>(cx) {
-                                        let text_summary = multi_buffer_snapshot
+                                        let selection_summary = multi_buffer_snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
-                                                selection.start..selection.end,
-                                            );
+                                            selection.start..selection.end,
+                                        );
                                         cursor_position.selected_count.characters +=
-                                            text_summary.chars;
+                                            selection_summary.chars;
                                         if selection.end != selection.start {
                                             cursor_position.selected_count.lines +=
                                                 (selection.end.row - selection.start.row) as usize;
@@ -97,10 +97,15 @@ impl CursorPosition {
                                         }
                                     }
                                 }
-                                cursor_position.position = last_selection.and_then(|s| {
-                                    buffer
-                                        .point_to_buffer_point(s.head())
-                                        .map(|(_, point, is_main_buffer)| (point, is_main_buffer))
+                                cursor_position.position = last_selection.map(|s| {
+                                    let last_position = s.head();
+                                    let line_start = Point::new(last_position.row, 0);
+                                    let chars_to_last_position = multi_buffer_snapshot
+                                        .text_summary_for_range::<text::TextSummary, _>(
+                                            line_start..last_position,
+                                        )
+                                        .chars;
+                                    Point::new(last_position.row, chars_to_last_position as u32)
                                 });
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
