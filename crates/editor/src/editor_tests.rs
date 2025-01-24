@@ -13109,6 +13109,7 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         one
       - two
         ˇthree
+      - four
         five
     "}
         .to_string(),
@@ -13125,38 +13126,6 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
     "}
         .to_string(),
     );
-
-    cx.update_editor(|editor, cx| {
-        editor.move_down(&Default::default(), cx);
-        editor.toggle_selected_diff_hunks(&Default::default(), cx);
-    });
-
-    cx.assert_state_with_diff(
-        indoc! { "
-        one
-        three
-      - four
-        ˇfive
-    "}
-        .to_string(),
-    );
-
-    cx.update_editor(|editor, cx| {
-        editor.move_up(&Default::default(), cx);
-        editor.move_up(&Default::default(), cx);
-        editor.toggle_selected_diff_hunks(&Default::default(), cx);
-    });
-
-    cx.assert_state_with_diff(
-        indoc! { "
-        one
-      - two
-        ˇthree
-      - four
-        five
-    "}
-        .to_string(),
-    )
 }
 
 #[gpui::test]
