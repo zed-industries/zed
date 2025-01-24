@@ -412,32 +412,68 @@ impl LanguageModelRequest {
     }
 
     pub fn into_deepseek(self, model: String, max_output_tokens: Option<u32>) -> deepseek::Request {
-        deepseek::Request {
-            temperature: if model.as_str() == "deepseek-reasoner" {
-                None
-            } else {
-                self.temperature
-            },
-            model,
-            messages: self
-                .messages
+        let is_reasoner = model == "deepseek-reasoner";
+
+        let len = self.messages.len();
+        let merged_messages =
+            self.messages
                 .into_iter()
-                .map(|msg| match msg.role {
-                    Role::User => deepseek::RequestMessage::User {
-                        content: msg.string_contents(),
-                    },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(msg.string_contents()),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => deepseek::RequestMessage::System {
-                        content: msg.string_contents(),
-                    },
-                })
-                .collect(),
+                .fold(Vec::with_capacity(len), |mut acc, msg| {
+                    let role = msg.role;
+                    let content = msg.string_contents();
+
+                    if is_reasoner {
+                        if let Some(last_msg) = acc.last_mut() {
+                            match (last_msg, role) {
+                                (deepseek::RequestMessage::User { content: last }, Role::User) => {
+                                    last.push(' ');
+                                    last.push_str(&content);
+                                    return acc;
+                                }
+
+                                (
+                                    deepseek::RequestMessage::Assistant {
+                                        content: last_content,
+                                        ..
+                                    },
+                                    Role::Assistant,
+                                ) => {
+                                    *last_content = last_content
+                                        .take()
+                                        .map(|c| {
+                                            let mut s =
+                                                String::with_capacity(c.len() + content.len() + 1);
+                                            s.push_str(&c);
+                                            s.push(' ');
+                                            s.push_str(&content);
+                                            s
+                                        })
+                                        .or(Some(content));
+
+                                    return acc;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    acc.push(match role {
+                        Role::User => deepseek::RequestMessage::User { content },
+                        Role::Assistant => deepseek::RequestMessage::Assistant {
+                            content: Some(content),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => deepseek::RequestMessage::System { content },
+                    });
+                    acc
+                });
+
+        deepseek::Request {
+            model,
+            messages: merged_messages,
             stream: true,
             max_tokens: max_output_tokens,
-
+            temperature: if is_reasoner { None } else { self.temperature },
             response_format: None,
             tools: self
                 .tools
