@@ -53,7 +53,7 @@ You can customize the formatting behavior of Prettier. For example to use single
 
 ### yaml-language-server Formatting
 
-To use `yaml-language-server` instead of Prettier, add the following to your Zed settings.json:
+To use `yaml-language-server` instead of Prettier for YAML formatting, add the following to your Zed settings.json:
 
 ```json
   "languages": {
@@ -62,24 +62,6 @@ To use `yaml-language-server` instead of Prettier, add the following to your Zed
     }
   }
 ```
-
-And to instruct `yaml-language-server` to use single quotes for YAML, include this as well:
-
-```json
-  "lsp": {
-    "yaml-language-server": {
-      "settings": {
-        "yaml": {
-          "format": {
-            "singleQuote": true
-          },
-        }
-      }
-    }
-  }
-```
-
-Additional `yaml-language-server` format options can found [here](https://github.com/redhat-developer/yaml-language-server?tab=readme-ov-file#language-server-settings).
 
 ## Schemas
 
