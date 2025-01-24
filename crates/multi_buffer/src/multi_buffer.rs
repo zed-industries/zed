@@ -796,7 +796,7 @@ impl MultiBuffer {
         for (ix, (range, new_text)) in edits.into_iter().enumerate() {
             let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
 
-            cursor.seek_forward(&range.start);
+            cursor.seek(&range.start);
             let mut start_region = cursor.region().expect("start offset out of bounds");
             if !start_region.is_main_buffer {
                 cursor.next();
@@ -2266,7 +2266,7 @@ impl MultiBuffer {
                         diff_hunk.buffer_range.start,
                     );
                 }
-                if diff_hunk.row_range.start.0 == peek_end.row
+                if diff_hunk.row_range.start.0 <= peek_end.row
                     && diff_hunk.excerpt_id == end.excerpt_id
                 {
                     end = Anchor::in_buffer(
