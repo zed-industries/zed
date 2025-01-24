@@ -20,7 +20,7 @@ pub(crate) struct SelectionStats {
 }
 
 pub struct CursorPosition {
-    position: Option<(Point, bool)>,
+    position: Option<Point>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
     workspace: WeakView<Workspace>,
@@ -176,10 +176,9 @@ impl CursorPosition {
 
 impl Render for CursorPosition {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().when_some(self.position, |el, (position, is_main_buffer)| {
+        div().when_some(self.position, |el, position| {
             let mut text = format!(
-                "{}{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                if is_main_buffer { "" } else { "(deleted) " },
+                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
                 position.row + 1,
                 position.column + 1
             );

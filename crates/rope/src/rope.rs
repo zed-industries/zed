@@ -996,6 +996,7 @@ impl TextSummary {
     pub fn newline() -> Self {
         Self {
             len: 1,
+            chars: 1,
             len_utf16: OffsetUtf16(1),
             first_line_chars: 0,
             last_line_chars: 0,
