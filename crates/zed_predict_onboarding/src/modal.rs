@@ -8,7 +8,7 @@ use gpui::{
 };
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
-use ui::{prelude::*, TintColor};
+use ui::{prelude::*, CheckboxWithLabel, TintColor};
 use workspace::{ModalView, Workspace};
 
 /// Introduces user to AI inline prediction feature and terms of service
@@ -104,7 +104,7 @@ impl ModalView for ZedPredictModal {}
 impl Render for ZedPredictModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .w_96()
+            .w(px(420.))
             .p_4()
             .relative()
             .gap_2()
@@ -149,12 +149,13 @@ impl Render for ZedPredictModal {
                     .justify_between()
                     .child(
                         v_flex()
+                            .gap_1()
                             .child(
                                 Label::new("Introducing Zed AI's")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
-                            .child(h_flex().child(Headline::new("Edit Prediction"))),
+                            .child(Headline::new("Edit Prediction").size(HeadlineSize::Large)),
                     )
                     .child({
                         let tab = |n: usize| {
@@ -192,6 +193,7 @@ impl Render for ZedPredictModal {
                         v_flex()
                             .gap_2()
                             .items_center()
+                            .pr_4()
                             .child(tab(0).ml_neg_20())
                             .child(tab(1))
                             .child(tab(2).ml_20())
@@ -205,48 +207,51 @@ impl Render for ZedPredictModal {
                 )),
             ))
             .child(
-                Label::new("Read and accept the terms of service to set Zed as your inline completions provider.").color(Color::Muted)
+                Label::new("To set Zed as your inline completions provider, ensure you:")
+                    .color(Color::Muted),
             )
+            .child(
+                h_flex()
+                    .gap_0p5()
+                    .child(CheckboxWithLabel::new(
+                        "tos-checkbox",
+                        Label::new("Have read and accepted the").color(Color::Muted),
+                        ToggleState::Unselected,
+                        |_, _| {},
+                    ))
+                    .child(
+                        Button::new("view-tos", "Terms of Service")
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::Indicator)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener(Self::view_terms)),
+                    ),
+            )
+            .child(CheckboxWithLabel::new(
+                "data-checkbox",
+                Label::new("Understood that Zed AI collects completion data").color(Color::Muted),
+                ToggleState::Unselected,
+                |_, _| {},
+            ))
             .child(
                 v_flex()
                     .mt_2()
                     .gap_2()
                     .w_full()
                     .child(
-                        Button::new("accept-tos", "Tab to Accept and Enable")
+                        Button::new("accept-tos", "Tab to Start")
                             .style(ButtonStyle::Tinted(TintColor::Accent))
                             .full_width()
                             .on_click(cx.listener(Self::accept_and_enable)),
                     )
                     .child(
-                        h_flex()
-                            .w_full()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .child(
-                                        Button::new("view-tos", "Terms of Service")
-                                            .full_width()
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::Indicator)
-                                            .icon_color(Color::Muted)
-                                            .on_click(cx.listener(Self::view_terms)),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .child(
-                                        Button::new("blog-post", "Read the Blog Post")
-                                            .full_width()
-                                            .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::Indicator)
-                                            .icon_color(Color::Muted)
-                                            .on_click(cx.listener(Self::view_blog)),
-                                    ),
-                            ),
-                    )
+                        Button::new("blog-post", "Read the Blog Post")
+                            .full_width()
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::Indicator)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener(Self::view_blog)),
+                    ),
             )
     }
 }
