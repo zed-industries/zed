@@ -540,7 +540,7 @@ impl Render for ContextMenu {
                                     };
                                     let label_element = if let Some(icon_name) = icon {
                                         h_flex()
-                                            .gap_2()
+                                            .gap_1p5()
                                             .when(*icon_position == IconPosition::Start, |flex| {
                                                 flex.child(
                                                     Icon::new(*icon_name)
