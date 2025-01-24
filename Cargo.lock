@@ -14179,6 +14179,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
 
 [[package]]
+name = "unified_palette"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "collections",
+ "command_palette_hooks",
+ "ctor",
+ "editor",
+ "env_logger 0.11.6",
+ "fuzzy",
+ "go_to_line",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "postage",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "telemetry",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "unindent"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

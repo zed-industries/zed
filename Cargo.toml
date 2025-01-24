@@ -148,6 +148,7 @@ members = [
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
+    "crates/unified_palette",
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
