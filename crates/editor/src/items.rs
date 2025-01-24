@@ -1782,7 +1782,7 @@ mod tests {
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
-                .metadata(Path::new(&path!("/file.rs")))
+                .metadata(Path::new(path!("/file.rs")))
                 .await
                 .unwrap()
                 .unwrap()

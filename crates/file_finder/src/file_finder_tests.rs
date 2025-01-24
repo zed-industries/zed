@@ -1481,7 +1481,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     app_state
         .fs
         .remove_file(
-            Path::new(&path!("/src/test/nonexistent.rs")),
+            Path::new(path!("/src/test/nonexistent.rs")),
             RemoveOptions::default(),
         )
         .await

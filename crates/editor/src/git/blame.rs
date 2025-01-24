@@ -807,7 +807,7 @@ mod tests {
         .await;
 
         fs.set_blame_for_repo(
-            Path::new(&path!("/my-repo/.git")),
+            Path::new(path!("/my-repo/.git")),
             vec![(
                 "file.txt".into(),
                 Blame {
@@ -956,7 +956,7 @@ mod tests {
         let blame_entries = gen_blame_entries(buffer_initial_text.max_point().row, &mut rng);
         log::info!("initial blame entries: {:?}", blame_entries);
         fs.set_blame_for_repo(
-            Path::new(&path!("/my-repo/.git")),
+            Path::new(path!("/my-repo/.git")),
             vec![(
                 "file.txt".into(),
                 Blame {
@@ -998,7 +998,7 @@ mod tests {
                     log::info!("regenerating blame entries: {:?}", blame_entries);
 
                     fs.set_blame_for_repo(
-                        Path::new(&path!("/my-repo/.git")),
+                        Path::new(path!("/my-repo/.git")),
                         vec![(
                             "file.txt".into(),
                             Blame {

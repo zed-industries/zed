@@ -622,8 +622,8 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // Renames are reported only to servers matching the buffer's language.
     fs.rename(
-        Path::new(&path!("/dir/test2.rs")),
-        Path::new(&path!("/dir/test3.rs")),
+        Path::new(path!("/dir/test2.rs")),
+        Path::new(path!("/dir/test3.rs")),
         Default::default(),
     )
     .await
@@ -672,8 +672,8 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // When the rename changes the extension of the file, the buffer gets closed on the old
     // language server and gets opened on the new one.
     fs.rename(
-        Path::new(&path!("/dir/test3.rs")),
-        Path::new(&path!("/dir/test3.json")),
+        Path::new(path!("/dir/test3.rs")),
+        Path::new(path!("/dir/test3.json")),
         Default::default(),
     )
     .await
@@ -2606,7 +2606,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         let params = params.text_document_position_params;
         assert_eq!(
             params.text_document.uri.to_file_path().unwrap(),
-            Path::new(&path!("/dir/b.rs")),
+            Path::new(path!("/dir/b.rs")),
         );
         assert_eq!(params.position, lsp::Position::new(0, 22));
 
@@ -2638,7 +2638,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
                 .as_local()
                 .unwrap()
                 .abs_path(cx),
-            Path::new(&path!("/dir/a.rs")),
+            Path::new(path!("/dir/a.rs")),
         );
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
@@ -2996,7 +2996,7 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let new_text = fs
-        .load(Path::new(&path!("/dir/file1")))
+        .load(Path::new(path!("/dir/file1")))
         .await
         .unwrap()
         .replace("\r\n", "\n");
@@ -3050,7 +3050,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     worktree.next_event(cx).await;
 
     cx.executor().run_until_parked();
-    let on_disk_text = fs.load(Path::new(&path!("/dir/file1"))).await.unwrap();
+    let on_disk_text = fs.load(Path::new(path!("/dir/file1"))).await.unwrap();
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), on_disk_text);
         assert!(!buffer.is_dirty(), "buffer should not be dirty");
@@ -3104,7 +3104,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    let on_disk_text = fs.load(Path::new(&path!("/dir/file1"))).await.unwrap();
+    let on_disk_text = fs.load(Path::new(path!("/dir/file1"))).await.unwrap();
     buffer.read_with(cx, |buffer, _| {
         let buffer_text = buffer.text();
         if buffer_text == on_disk_text {
@@ -3150,7 +3150,7 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     let new_text = fs
-        .load(Path::new(&path!("/dir/file1")))
+        .load(Path::new(path!("/dir/file1")))
         .await
         .unwrap()
         .replace("\r\n", "\n");
