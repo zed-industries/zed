@@ -3860,6 +3860,7 @@ impl Editor {
         ZedPredictModal::toggle(
             workspace,
             project.user_store().clone(),
+            project.client().clone(),
             project.fs().clone(),
             cx,
         );

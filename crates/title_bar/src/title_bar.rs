@@ -304,7 +304,13 @@ impl TitleBar {
         }));
 
         let zed_predict_banner = cx.new_view(|cx| {
-            ZedPredictBanner::new(workspace.weak_handle(), user_store.clone(), fs.clone(), cx)
+            ZedPredictBanner::new(
+                workspace.weak_handle(),
+                user_store.clone(),
+                client.clone(),
+                fs.clone(),
+                cx,
+            )
         });
 
         Self {

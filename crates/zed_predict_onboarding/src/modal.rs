@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use client::UserStore;
+use client::{Client, UserStore};
 use fs::Fs;
 use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, AppContext, ClickEvent, DismissEvent,
@@ -9,40 +9,49 @@ use gpui::{
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
 use ui::{prelude::*, CheckboxWithLabel, TintColor};
-use workspace::{ModalView, Workspace};
+use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
 
 /// Introduces user to AI inline prediction feature and terms of service
 pub struct ZedPredictModal {
-    workspace: View<Workspace>,
     user_store: Model<UserStore>,
+    client: Arc<Client>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
+    sign_in_status: SignInStatus,
+}
+
+#[derive(PartialEq, Eq)]
+enum SignInStatus {
+    Idle,
+    Waiting,
+    SignedIn,
 }
 
 impl ZedPredictModal {
     fn new(
-        workspace: View<Workspace>,
         user_store: Model<UserStore>,
+        client: Arc<Client>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         ZedPredictModal {
-            workspace,
             user_store,
+            client,
             fs,
             focus_handle: cx.focus_handle(),
+            sign_in_status: SignInStatus::Idle,
         }
     }
 
     pub fn toggle(
         workspace: View<Workspace>,
         user_store: Model<UserStore>,
+        client: Arc<Client>,
         fs: Arc<dyn Fs>,
         cx: &mut WindowContext,
     ) {
         workspace.update(cx, |this, cx| {
-            let workspace = cx.view().clone();
-            this.toggle_modal(cx, |cx| ZedPredictModal::new(workspace, user_store, fs, cx));
+            this.toggle_modal(cx, |cx| ZedPredictModal::new(user_store, client, fs, cx));
         });
     }
 
@@ -61,29 +70,42 @@ impl ZedPredictModal {
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
 
-        let workspace = self.workspace.clone();
-
         cx.spawn(|this, mut cx| async move {
-            match task.await {
-                Ok(_) => this.update(&mut cx, |this, cx| {
-                    update_settings_file::<AllLanguageSettings>(
-                        this.fs.clone(),
-                        cx,
-                        move |file, _| {
-                            file.features
-                                .get_or_insert(Default::default())
-                                .inline_completion_provider = Some(InlineCompletionProvider::Zed);
-                        },
-                    );
+            task.await?;
 
-                    cx.emit(DismissEvent);
-                }),
-                Err(err) => workspace.update(&mut cx, |this, cx| {
-                    this.show_error(&err, cx);
-                }),
-            }
+            this.update(&mut cx, |this, cx| {
+                update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
+                    file.features
+                        .get_or_insert(Default::default())
+                        .inline_completion_provider = Some(InlineCompletionProvider::Zed);
+                });
+
+                cx.emit(DismissEvent);
+            })
         })
-        .detach_and_log_err(cx);
+        .detach_and_notify_err(cx);
+    }
+
+    fn sign_in(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        let client = self.client.clone();
+        self.sign_in_status = SignInStatus::Waiting;
+
+        cx.spawn(move |this, mut cx| async move {
+            let result = client.authenticate_and_connect(true, &cx).await;
+
+            let status = match result {
+                Ok(_) => SignInStatus::SignedIn,
+                Err(_) => SignInStatus::Idle,
+            };
+
+            this.update(&mut cx, |this, cx| {
+                this.sign_in_status = status;
+                cx.notify()
+            })?;
+
+            result
+        })
+        .detach_and_notify_err(cx);
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -103,7 +125,7 @@ impl ModalView for ZedPredictModal {}
 
 impl Render for ZedPredictModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
+        let base = v_flex()
             .w(px(420.))
             .p_4()
             .relative()
@@ -199,11 +221,18 @@ impl Render for ZedPredictModal {
                         cx.emit(DismissEvent);
                     },
                 )),
-            ))
-            .child(
-                Label::new("To set Zed as your inline completions provider, ensure you:")
-                    .color(Color::Muted),
-            )
+            ));
+
+        if self.user_store.read(cx).current_user().is_some() {
+            base.child(match self.sign_in_status {
+                SignInStatus::Idle => {
+                    Label::new("To set Zed as your inline completions provider, ensure you:")
+                }
+                SignInStatus::SignedIn => Label::new(
+                    "Welcome! To set Zed as your inline completions provider, ensure you:",
+                ),
+                SignInStatus::Waiting => unreachable!(),
+            })
             .child(
                 h_flex()
                     .gap_0p5()
@@ -247,5 +276,28 @@ impl Render for ZedPredictModal {
                             .on_click(cx.listener(Self::view_blog)),
                     ),
             )
+        } else {
+            base.child(
+                v_flex()
+                    .mt_2()
+                    .gap_2()
+                    .w_full()
+                    .child(
+                        Button::new("accept-tos", "Sign in to use Zed AI")
+                            .disabled(self.sign_in_status == SignInStatus::Waiting)
+                            .style(ButtonStyle::Tinted(TintColor::Accent))
+                            .full_width()
+                            .on_click(cx.listener(Self::sign_in)),
+                    )
+                    .child(
+                        Button::new("blog-post", "Read the Blog Post")
+                            .full_width()
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::Indicator)
+                            .icon_color(Color::Muted)
+                            .on_click(cx.listener(Self::view_blog)),
+                    ),
+            )
+        }
     }
 }

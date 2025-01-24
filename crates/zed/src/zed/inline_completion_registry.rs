@@ -122,6 +122,7 @@ pub fn init(
                                     ZedPredictModal::toggle(
                                         workspace,
                                         user_store.clone(),
+                                        client.clone(),
                                         fs.clone(),
                                         cx,
                                     );

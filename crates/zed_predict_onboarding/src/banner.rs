@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use client::UserStore;
+use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{ClickEvent, Model, Subscription, WeakView};
@@ -14,6 +14,7 @@ use crate::ZedPredictModal;
 pub struct ZedPredictBanner {
     workspace: WeakView<Workspace>,
     user_store: Model<UserStore>,
+    client: Arc<Client>,
     fs: Arc<dyn Fs>,
     _subscription: Subscription,
 }
@@ -22,6 +23,7 @@ impl ZedPredictBanner {
     pub fn new(
         workspace: WeakView<Workspace>,
         user_store: Model<UserStore>,
+        client: Arc<Client>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -30,6 +32,7 @@ impl ZedPredictBanner {
         Self {
             workspace,
             user_store,
+            client,
             fs,
             _subscription: subscription,
         }
@@ -110,12 +113,19 @@ impl Render for ZedPredictBanner {
                     .on_click({
                         let workspace = self.workspace.clone();
                         let user_store = self.user_store.clone();
+                        let client = self.client.clone();
                         let fs = self.fs.clone();
                         move |_, cx| {
                             let Some(workspace) = workspace.upgrade() else {
                                 return;
                             };
-                            ZedPredictModal::toggle(workspace, user_store.clone(), fs.clone(), cx);
+                            ZedPredictModal::toggle(
+                                workspace,
+                                user_store.clone(),
+                                client.clone(),
+                                fs.clone(),
+                                cx,
+                            );
                         }
                     }),
             )

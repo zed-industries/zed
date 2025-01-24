@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::UserStore;
+use client::{Client, UserStore};
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
@@ -45,6 +45,7 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
+    client: Arc<Client>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     user_store: Model<UserStore>,
@@ -227,6 +228,7 @@ impl Render for InlineCompletionButton {
                 {
                     let workspace = self.workspace.clone();
                     let user_store = self.user_store.clone();
+                    let client = self.client.clone();
                     let fs = self.fs.clone();
 
                     return div().child(
@@ -254,6 +256,7 @@ impl Render for InlineCompletionButton {
                                     ZedPredictModal::toggle(
                                         workspace,
                                         user_store.clone(),
+                                        client.clone(),
                                         fs.clone(),
                                         cx,
                                     );
@@ -307,6 +310,7 @@ impl InlineCompletionButton {
         workspace: WeakView<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Model<UserStore>,
+        client: Arc<Client>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -325,6 +329,7 @@ impl InlineCompletionButton {
             inline_completion_provider: None,
             popover_menu_handle,
             workspace,
+            client,
             fs,
             user_store,
         }
