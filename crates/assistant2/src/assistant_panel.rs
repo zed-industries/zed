@@ -9,6 +9,7 @@ use assistant_context_editor::{
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
+
 use client::zed_urls;
 use editor::Editor;
 use fs::Fs;
@@ -18,7 +19,7 @@ use gpui::{
     ViewContext, WeakView, WindowContext,
 };
 use language::LanguageRegistry;
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
 use project::Project;
 use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use settings::{update_settings_file, Settings};
@@ -663,17 +664,14 @@ impl AssistantPanel {
     }
 
     fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        let is_authenticated = provider
-            .as_ref()
-            .map_or(false, |provider| provider.is_authenticated(cx));
+        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
 
-        if provider.is_some() && is_authenticated {
-            return None;
+        if !provider.is_authenticated(cx) {
+            return Some(ConfigurationError::ProviderNotAuthenticated);
         }
 
-        if !is_authenticated {
-            return Some(ConfigurationError::ProviderNotAuthenticated);
+        if provider.must_accept_terms(cx) {
+            return Some(ConfigurationError::ProviderPendingTermsAcceptance);
         }
 
         None
@@ -691,6 +689,8 @@ impl AssistantPanel {
                 .child(Headline::new("Welcome to the Assistant Panel").size(HeadlineSize::Small))
         };
 
+        let configuration_error = self.configuration_error(cx);
+
         v_flex()
             .gap_2()
             .child(
@@ -706,7 +706,7 @@ impl AssistantPanel {
             )
             .when(
                 matches!(
-                    self.configuration_error(cx),
+                    configuration_error,
                     Some(ConfigurationError::ProviderNotAuthenticated)
                 ),
                 |parent| {
@@ -734,6 +734,22 @@ impl AssistantPanel {
                                         })),
                                 ),
                             ),
+                    )
+                },
+            )
+            .when(
+                matches!(
+                    configuration_error,
+                    Some(ConfigurationError::ProviderPendingTermsAcceptance)
+                ),
+                |parent| {
+                    let provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+                    parent.child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(create_welcome_heading())
+                            .children(provider.and_then(|provider| provider.render_accept_terms(LanguageModelProviderTosView::ThreadEmptyState, cx)))
                     )
                 },
             )
