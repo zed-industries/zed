@@ -396,7 +396,7 @@ pub fn render_file_context_entry(
 
     h_flex()
         .id(id)
-        .gap_2()
+        .gap_1p5()
         .w_full()
         .child(file_icon.size(IconSize::Small).color(Color::Muted))
         .child(

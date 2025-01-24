@@ -209,7 +209,7 @@ pub fn render_thread_context_entry(
     });
 
     h_flex()
-        .gap_2()
+        .gap_1p5()
         .w_full()
         .child(
             Icon::new(IconName::MessageCircle)
