@@ -3444,37 +3444,35 @@ impl MultiBufferSnapshot {
         cursor.seek(&start);
 
         std::iter::from_fn(move || {
-            while let Some(region) = cursor.region() {
-                if region.range.start > end {
-                    break;
-                }
-                let start_overshoot = start.saturating_sub(region.range.start);
-                let end_overshoot = end.saturating_sub(region.range.start);
-                let start = region
-                    .buffer_range
-                    .end
-                    .min(region.buffer_range.start + start_overshoot);
-                let end = region
-                    .buffer_range
-                    .end
-                    .min(region.buffer_range.start + end_overshoot);
-
-                let region_excerpt_id = region.excerpt.id;
-                let deleted_hunk_anchor = if region.is_main_buffer {
-                    None
-                } else {
-                    Some(self.anchor_before(region.range.start))
-                };
-                let result = (
-                    region.buffer,
-                    start..end,
-                    region_excerpt_id,
-                    deleted_hunk_anchor,
-                );
-                cursor.next();
-                return Some(result);
+            let region = cursor.region()?;
+            if region.range.start > end {
+                break;
             }
-            None
+            let start_overshoot = start.saturating_sub(region.range.start);
+            let end_overshoot = end.saturating_sub(region.range.start);
+            let start = region
+                .buffer_range
+                .end
+                .min(region.buffer_range.start + start_overshoot);
+            let end = region
+                .buffer_range
+                .end
+                .min(region.buffer_range.start + end_overshoot);
+
+            let region_excerpt_id = region.excerpt.id;
+            let deleted_hunk_anchor = if region.is_main_buffer {
+                None
+            } else {
+                Some(self.anchor_before(region.range.start))
+            };
+            let result = (
+                region.buffer,
+                start..end,
+                region_excerpt_id,
+                deleted_hunk_anchor,
+            );
+            cursor.next();
+            Some(result);
         })
     }
 
