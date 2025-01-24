@@ -227,58 +227,60 @@ impl Render for ZedPredictModal {
             ));
 
         if self.user_store.read(cx).current_user().is_some() {
-            base.child(match self.sign_in_status {
-                SignInStatus::Idle => {
-                    Label::new("To set Zed as your inline completions provider, ensure you:")
+            let copy = match self.sign_in_status {
+                SignInStatus::Idle => "To set Zed as your inline completions provider, ensure you:",
+                SignInStatus::SignedIn => {
+                    "Welcome! To set Zed as your inline completions provider, ensure you:"
                 }
-                SignInStatus::SignedIn => Label::new(
-                    "Welcome! To set Zed as your inline completions provider, ensure you:",
-                ),
+
                 SignInStatus::Waiting => unreachable!(),
-            })
-            .child(
-                h_flex()
-                    .gap_0p5()
-                    .child(CheckboxWithLabel::new(
-                        "tos-checkbox",
-                        Label::new("Have read and accepted the").color(Color::Muted),
-                        ToggleState::Unselected,
-                        |_, _| {},
-                    ))
-                    .child(
-                        Button::new("view-tos", "Terms of Service")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Indicator)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(Self::view_terms)),
-                    ),
-            )
-            .child(CheckboxWithLabel::new(
-                "data-checkbox",
-                Label::new("Understood that Zed AI collects completion data").color(Color::Muted),
-                ToggleState::Unselected,
-                |_, _| {},
-            ))
-            .child(
-                v_flex()
-                    .mt_2()
-                    .gap_2()
-                    .w_full()
-                    .child(
-                        Button::new("accept-tos", "Tab to Start")
-                            .style(ButtonStyle::Tinted(TintColor::Accent))
-                            .full_width()
-                            .on_click(cx.listener(Self::accept_and_enable)),
-                    )
-                    .child(
-                        Button::new("blog-post", "Read the Blog Post")
-                            .full_width()
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Indicator)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(Self::view_blog)),
-                    ),
-            )
+            };
+
+            base.child(Label::new(copy).color(Color::Muted))
+                .child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(CheckboxWithLabel::new(
+                            "tos-checkbox",
+                            Label::new("Have read and accepted the").color(Color::Muted),
+                            ToggleState::Unselected,
+                            |_, _| {},
+                        ))
+                        .child(
+                            Button::new("view-tos", "Terms of Service")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_size(IconSize::Indicator)
+                                .icon_color(Color::Muted)
+                                .on_click(cx.listener(Self::view_terms)),
+                        ),
+                )
+                .child(CheckboxWithLabel::new(
+                    "data-checkbox",
+                    Label::new("Understood that Zed AI collects completion data")
+                        .color(Color::Muted),
+                    ToggleState::Unselected,
+                    |_, _| {},
+                ))
+                .child(
+                    v_flex()
+                        .mt_2()
+                        .gap_2()
+                        .w_full()
+                        .child(
+                            Button::new("accept-tos", "Tab to Start")
+                                .style(ButtonStyle::Tinted(TintColor::Accent))
+                                .full_width()
+                                .on_click(cx.listener(Self::accept_and_enable)),
+                        )
+                        .child(
+                            Button::new("blog-post", "Read the Blog Post")
+                                .full_width()
+                                .icon(IconName::ArrowUpRight)
+                                .icon_size(IconSize::Indicator)
+                                .icon_color(Color::Muted)
+                                .on_click(cx.listener(Self::view_blog)),
+                        ),
+                )
         } else {
             base.child(
                 v_flex()
