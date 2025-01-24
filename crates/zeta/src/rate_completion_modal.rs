@@ -1,7 +1,7 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::Editor;
-use feature_flags::{FeatureFlagAppExt as _, PredictEditsRatingFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use gpui::{
     actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     View, ViewContext,
@@ -27,7 +27,7 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, cx| {
-            if cx.has_flag::<PredictEditsRatingFeatureFlag>() {
+            if cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>() {
                 RateCompletionModal::toggle(workspace, cx);
             }
         });
@@ -44,7 +44,7 @@ fn feature_gate_predict_edits_rating_actions(cx: &mut AppContext) {
         filter.hide_action_types(&rate_completion_action_types);
     });
 
-    cx.observe_flag::<PredictEditsRatingFeatureFlag, _>(move |is_enabled, cx| {
+    cx.observe_flag::<PredictEditsRateCompletionsFeatureFlag, _>(move |is_enabled, cx| {
         if is_enabled {
             CommandPaletteFilter::update_global(cx, |filter, _cx| {
                 filter.show_action_types(rate_completion_action_types.iter());
