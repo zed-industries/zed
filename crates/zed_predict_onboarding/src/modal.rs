@@ -229,10 +229,7 @@ impl Render for ZedPredictModal {
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
                 SignInStatus::Idle => "To set Zed as your inline completions provider, ensure you:",
-                SignInStatus::SignedIn => {
-                    "Welcome! To set Zed as your inline completions provider, ensure you:"
-                }
-
+                SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
 
@@ -283,12 +280,16 @@ impl Render for ZedPredictModal {
                 )
         } else {
             base.child(
+                Label::new("To set Zed as your inline completions provider, please sign in.")
+                    .color(Color::Muted),
+            )
+            .child(
                 v_flex()
                     .mt_2()
                     .gap_2()
                     .w_full()
                     .child(
-                        Button::new("accept-tos", "Sign in to use Zed AI")
+                        Button::new("accept-tos", "Sign in with GitHub")
                             .disabled(self.sign_in_status == SignInStatus::Waiting)
                             .style(ButtonStyle::Tinted(TintColor::Accent))
                             .full_width()
