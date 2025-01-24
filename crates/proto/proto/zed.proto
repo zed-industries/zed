@@ -303,8 +303,8 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289;
+        GetCommittedText get_committed_text = 288;
+        GetCommittedTextResponse get_committed_text_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
     }
@@ -2023,16 +2023,16 @@ message WorktreeMetadata {
 message UpdateDiffBase {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    optional string staged_text = 3;
+    optional string base_text = 3;
 }
 
-message GetStagedText {
+message GetCommittedText {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message GetStagedTextResponse {
-    optional string staged_text = 1;
+message GetCommittedTextResponse {
+    optional string committed_text = 1;
 }
 
 message GetNotifications {

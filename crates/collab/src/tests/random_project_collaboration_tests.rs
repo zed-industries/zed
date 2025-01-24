@@ -117,7 +117,7 @@ enum ClientOperation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum GitOperation {
-    WriteGitIndex {
+    WriteGitHead {
         repo_path: PathBuf,
         contents: Vec<(PathBuf, String)>,
     },
@@ -930,7 +930,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             }
 
             ClientOperation::GitOperation { operation } => match operation {
-                GitOperation::WriteGitIndex {
+                GitOperation::WriteGitHead {
                     repo_path,
                     contents,
                 } => {
@@ -945,7 +945,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     }
 
                     log::info!(
-                        "{}: writing git index for repo {:?}: {:?}",
+                        "{}: writing git HEAD for repo {:?}: {:?}",
                         client.username,
                         repo_path,
                         contents
@@ -953,13 +953,13 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let dot_git_dir = repo_path.join(".git");
                     let contents = contents
-                        .iter()
-                        .map(|(path, contents)| (path.as_path(), contents.clone()))
+                        .into_iter()
+                        .map(|(path, contents)| (path.into(), contents))
                         .collect::<Vec<_>>();
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
                         client.fs().create_dir(&dot_git_dir).await?;
                     }
-                    client.fs().set_index_for_repo(&dot_git_dir, &contents);
+                    client.fs().set_head_for_repo(&dot_git_dir, &contents);
                 }
                 GitOperation::WriteGitBranch {
                     repo_path,
@@ -1339,7 +1339,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .get_uncommitted_changes(host_buffer.read(cx).remote_id())
                             .unwrap()
                             .read(cx)
                             .base_text_string(cx)
@@ -1348,7 +1348,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .get_uncommitted_changes(guest_buffer.read(cx).remote_id())
                             .unwrap()
                             .read(cx)
                             .base_text_string(cx)
@@ -1440,7 +1440,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
                 .map(|path| (path, Alphanumeric.sample_string(rng, 16)))
                 .collect();
 
-            GitOperation::WriteGitIndex {
+            GitOperation::WriteGitHead {
                 repo_path,
                 contents,
             }

@@ -5596,10 +5596,10 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let staged_contents = r#"
+    let committed_contents = r#"
         fn main() {
             println!("hello world");
         }
@@ -5625,9 +5625,9 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    fs.set_index_for_repo(
+    fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("src/main.rs"), staged_contents)],
+        &[("src/main.rs".into(), committed_contents)],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -5638,20 +5638,25 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let unstaged_changes = project
+    let uncommitted_changes = project
         .update(cx, |project, cx| {
-            project.open_unstaged_changes(buffer.clone(), cx)
+            project.open_uncommitted_changes(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &uncommitted_changes
+                .base_text
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .text(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5663,25 +5668,30 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let staged_contents = r#"
+    let committed_contents = r#"
         // print goodbye
         fn main() {
         }
     "#
     .unindent();
 
-    fs.set_index_for_repo(
+    fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("src/main.rs"), staged_contents)],
+        &[("src/main.rs".into(), committed_contents)],
     );
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &uncommitted_changes
+                .base_text
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });

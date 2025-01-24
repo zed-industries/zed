@@ -1245,7 +1245,7 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            get_unstaged_changes_for_buffers(&project, buffer.read(cx).all_buffers(), cx);
+            get_uncommitted_changes_for_buffers(&project, buffer.read(cx).all_buffers(), cx);
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
 
@@ -12545,7 +12545,7 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if !self.diff_map.diff_bases.contains_key(&buffer_id) {
                     if let Some(project) = &self.project {
-                        get_unstaged_changes_for_buffers(project, [buffer.clone()], cx);
+                        get_uncommitted_changes_for_buffers(project, [buffer.clone()], cx);
                     }
                 }
                 cx.emit(EditorEvent::ExcerptsAdded {
@@ -13279,7 +13279,7 @@ impl Editor {
     }
 }
 
-fn get_unstaged_changes_for_buffers(
+fn get_uncommitted_changes_for_buffers(
     project: &Model<Project>,
     buffers: impl IntoIterator<Item = Model<Buffer>>,
     cx: &mut ViewContext<Editor>,
@@ -13287,7 +13287,7 @@ fn get_unstaged_changes_for_buffers(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
+            tasks.push(project.open_uncommitted_changes(buffer.clone(), cx))
         }
     });
     cx.spawn(|this, mut cx| async move {

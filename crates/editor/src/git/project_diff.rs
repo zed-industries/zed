@@ -250,7 +250,7 @@ impl ProjectDiffEditor {
 
                             let Some(change_set) = project
                                 .update(&mut cx, |project, cx| {
-                                    project.open_unstaged_changes(buffer.clone(), cx)
+                                    project.open_uncommitted_changes(buffer.clone(), cx)
                                 })?
                                 .await
                                 .log_err()

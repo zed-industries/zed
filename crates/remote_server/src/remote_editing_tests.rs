@@ -44,9 +44,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         }),
     )
     .await;
-    fs.set_index_for_repo(
+    fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
+        &[("src/lib.rs".into(), "fn one() -> usize { 0 }".into())],
     );
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
@@ -81,7 +81,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .unwrap();
     let change_set = project
         .update(cx, |project, cx| {
-            project.open_unstaged_changes(buffer.clone(), cx)
+            project.open_uncommitted_changes(buffer.clone(), cx)
         })
         .await
         .unwrap();
@@ -145,9 +145,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
     });
 
-    fs.set_index_for_repo(
+    fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
+        &[("src/lib2.rs".into(), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
     change_set.update(cx, |change_set, cx| {

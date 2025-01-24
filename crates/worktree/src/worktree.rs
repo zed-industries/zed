@@ -871,7 +871,11 @@ impl Worktree {
         }
     }
 
-    pub fn load_staged_file(&self, path: &Path, cx: &AppContext) -> Task<Result<Option<String>>> {
+    pub fn load_committed_file(
+        &self,
+        path: &Path,
+        cx: &AppContext,
+    ) -> Task<Result<Option<String>>> {
         match self {
             Worktree::Local(this) => {
                 let path = Arc::from(path);
@@ -882,7 +886,7 @@ impl Worktree {
                             if let Some(git_repo) =
                                 snapshot.git_repositories.get(&repo.work_directory_id)
                             {
-                                return Ok(git_repo.repo_ptr.load_index_text(&repo_path));
+                                return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
                             }
                         }
                     }

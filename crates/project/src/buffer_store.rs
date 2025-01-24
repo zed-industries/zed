@@ -56,7 +56,7 @@ pub struct BufferStore {
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct SharedBuffer {
     buffer: Model<Buffer>,
-    unstaged_changes: Option<Model<BufferChangeSet>>,
+    uncommitted_changes: Option<Model<BufferChangeSet>>,
     lsp_handle: Option<OpenLspBufferHandle>,
 }
 
@@ -95,7 +95,7 @@ struct LocalBufferStore {
 enum OpenBuffer {
     Complete {
         buffer: WeakModel<Buffer>,
-        unstaged_changes: Option<WeakModel<BufferChangeSet>>,
+        uncommitted_changes: Option<WeakModel<BufferChangeSet>>,
     },
     Operations(Vec<Operation>),
 }
@@ -115,7 +115,7 @@ pub struct ProjectTransaction(pub HashMap<Model<Buffer>, language::Transaction>)
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl RemoteBufferStore {
-    fn load_staged_text(
+    fn load_committed_text(
         &self,
         buffer_id: BufferId,
         cx: &AppContext,
@@ -124,12 +124,12 @@ impl RemoteBufferStore {
         let client = self.upstream_client.clone();
         cx.background_executor().spawn(async move {
             Ok(client
-                .request(proto::GetStagedText {
+                .request(proto::GetCommittedText {
                     project_id,
                     buffer_id: buffer_id.to_proto(),
                 })
                 .await?
-                .staged_text)
+                .committed_text)
         })
     }
     pub fn wait_for_remote_buffer(
@@ -399,7 +399,7 @@ impl RemoteBufferStore {
 }
 
 impl LocalBufferStore {
-    fn load_staged_text(
+    fn load_committed_text(
         &self,
         buffer: &Model<Buffer>,
         cx: &AppContext,
@@ -417,7 +417,7 @@ impl LocalBufferStore {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
 
-        worktree.read(cx).load_staged_file(path.as_ref(), cx)
+        worktree.read(cx).load_committed_file(path.as_ref(), cx)
     }
 
     fn save_local_buffer(
@@ -537,7 +537,7 @@ impl LocalBufferStore {
             .filter_map(|buffer| {
                 if let OpenBuffer::Complete {
                     buffer,
-                    unstaged_changes,
+                    uncommitted_changes,
                 } = buffer
                 {
                     let buffer = buffer.upgrade()?.read(cx);
@@ -548,9 +548,9 @@ impl LocalBufferStore {
                     changed_repos
                         .iter()
                         .find(|(work_dir, _)| file.path.starts_with(work_dir))?;
-                    let unstaged_changes = unstaged_changes.as_ref()?.upgrade()?;
+                    let uncommitted_changes = uncommitted_changes.as_ref()?.upgrade()?;
                     let snapshot = buffer.text_snapshot();
-                    Some((unstaged_changes, snapshot, file.path.clone()))
+                    Some((uncommitted_changes, snapshot, file.path.clone()))
                 } else {
                     None
                 }
@@ -572,7 +572,7 @@ impl LocalBufferStore {
                         .filter_map(|(change_set, buffer_snapshot, path)| {
                             let local_repo = snapshot.local_repo_for_path(&path)?;
                             let relative_path = local_repo.relativize(&path).ok()?;
-                            let base_text = local_repo.repo().load_index_text(&relative_path);
+                            let base_text = local_repo.repo().load_committed_text(&relative_path);
                             Some((change_set, buffer_snapshot, base_text))
                         })
                         .collect::<Vec<_>>()
@@ -580,11 +580,11 @@ impl LocalBufferStore {
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (change_set, buffer_snapshot, staged_text) in diff_bases_by_buffer {
+                for (change_set, buffer_snapshot, base_text) in diff_bases_by_buffer {
                     change_set.update(cx, |change_set, cx| {
-                        if let Some(staged_text) = staged_text.clone() {
+                        if let Some(base_text) = base_text.clone() {
                             let _ =
-                                change_set.set_base_text(staged_text, buffer_snapshot.clone(), cx);
+                                change_set.set_base_text(base_text, buffer_snapshot.clone(), cx);
                         } else {
                             change_set.unset_base_text(buffer_snapshot.clone(), cx);
                         }
@@ -595,7 +595,7 @@ impl LocalBufferStore {
                             .send(proto::UpdateDiffBase {
                                 project_id: *project_id,
                                 buffer_id: buffer_snapshot.remote_id().to_proto(),
-                                staged_text,
+                                base_text,
                             })
                             .log_err();
                     }
@@ -904,7 +904,7 @@ impl BufferStore {
         client.add_model_request_handler(Self::handle_blame_buffer);
         client.add_model_request_handler(Self::handle_reload_buffers);
         client.add_model_request_handler(Self::handle_get_permalink_to_line);
-        client.add_model_request_handler(Self::handle_get_staged_text);
+        client.add_model_request_handler(Self::handle_get_committed_text);
         client.add_model_message_handler(Self::handle_update_diff_base);
     }
 
@@ -1022,13 +1022,13 @@ impl BufferStore {
             .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub fn open_unstaged_changes(
+    pub fn open_uncommitted_changes(
         &mut self,
         buffer: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<BufferChangeSet>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(change_set) = self.get_unstaged_changes(buffer_id) {
+        if let Some(change_set) = self.get_uncommitted_changes(buffer_id) {
             return Task::ready(Ok(change_set));
         }
 
@@ -1036,14 +1036,14 @@ impl BufferStore {
             hash_map::Entry::Occupied(e) => e.get().clone(),
             hash_map::Entry::Vacant(entry) => {
                 let load = match &self.state {
-                    BufferStoreState::Local(this) => this.load_staged_text(&buffer, cx),
-                    BufferStoreState::Remote(this) => this.load_staged_text(buffer_id, cx),
+                    BufferStoreState::Local(this) => this.load_committed_text(&buffer, cx),
+                    BufferStoreState::Remote(this) => this.load_committed_text(buffer_id, cx),
                 };
 
                 entry
                     .insert(
                         cx.spawn(move |this, cx| async move {
-                            Self::open_unstaged_changes_internal(this, load.await, buffer, cx)
+                            Self::open_uncommitted_changes_internal(this, load.await, buffer, cx)
                                 .await
                                 .map_err(Arc::new)
                         })
@@ -1063,7 +1063,7 @@ impl BufferStore {
             .insert(buffer_id, Task::ready(Ok(change_set)).shared());
     }
 
-    pub async fn open_unstaged_changes_internal(
+    pub async fn open_uncommitted_changes_internal(
         this: WeakModel<Self>,
         text: Result<Option<String>>,
         buffer: Model<Buffer>,
@@ -1098,10 +1098,11 @@ impl BufferStore {
             let buffer_id = buffer.read(cx).remote_id();
             this.loading_change_sets.remove(&buffer_id);
             if let Some(OpenBuffer::Complete {
-                unstaged_changes, ..
+                uncommitted_changes,
+                ..
             }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
             {
-                *unstaged_changes = Some(change_set.downgrade());
+                *uncommitted_changes = Some(change_set.downgrade());
             }
         })?;
 
@@ -1311,7 +1312,7 @@ impl BufferStore {
         let is_remote = buffer.read(cx).replica_id() != 0;
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer.downgrade(),
-            unstaged_changes: None,
+            uncommitted_changes: None,
         };
 
         let handle = cx.handle().downgrade();
@@ -1392,12 +1393,13 @@ impl BufferStore {
         })
     }
 
-    pub fn get_unstaged_changes(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
+    pub fn get_uncommitted_changes(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
         if let OpenBuffer::Complete {
-            unstaged_changes, ..
+            uncommitted_changes,
+            ..
         } = self.opened_buffers.get(&buffer_id)?
         {
-            unstaged_changes.as_ref()?.upgrade()
+            uncommitted_changes.as_ref()?.upgrade()
         } else {
             None
         }
@@ -1527,18 +1529,19 @@ impl BufferStore {
         for buffer in buffers {
             let buffer = buffer.read(cx).text_snapshot();
             if let Some(OpenBuffer::Complete {
-                unstaged_changes, ..
+                uncommitted_changes,
+                ..
             }) = self.opened_buffers.get_mut(&buffer.remote_id())
             {
-                if let Some(unstaged_changes) = unstaged_changes
+                if let Some(uncommitted_changes) = uncommitted_changes
                     .as_ref()
                     .and_then(|changes| changes.upgrade())
                 {
-                    unstaged_changes.update(cx, |unstaged_changes, cx| {
-                        futures.push(unstaged_changes.recalculate_diff(buffer.clone(), cx));
+                    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+                        futures.push(uncommitted_changes.recalculate_diff(buffer.clone(), cx));
                     });
                 } else {
-                    unstaged_changes.take();
+                    uncommitted_changes.take();
                 }
             }
         }
@@ -1648,7 +1651,7 @@ impl BufferStore {
                     .entry(buffer_id)
                     .or_insert_with(|| SharedBuffer {
                         buffer: buffer.clone(),
-                        unstaged_changes: None,
+                        uncommitted_changes: None,
                         lsp_handle: None,
                     });
 
@@ -1953,16 +1956,16 @@ impl BufferStore {
         })
     }
 
-    pub async fn handle_get_staged_text(
+    pub async fn handle_get_committed_text(
         this: Model<Self>,
-        request: TypedEnvelope<proto::GetStagedText>,
+        request: TypedEnvelope<proto::GetCommittedText>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::GetStagedTextResponse> {
+    ) -> Result<proto::GetCommittedTextResponse> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
         let change_set = this
             .update(&mut cx, |this, cx| {
                 let buffer = this.get(buffer_id)?;
-                Some(this.open_unstaged_changes(buffer, cx))
+                Some(this.open_uncommitted_changes(buffer, cx))
             })?
             .ok_or_else(|| anyhow!("no such buffer"))?
             .await?;
@@ -1973,16 +1976,16 @@ impl BufferStore {
                 .or_default();
             debug_assert!(shared_buffers.contains_key(&buffer_id));
             if let Some(shared) = shared_buffers.get_mut(&buffer_id) {
-                shared.unstaged_changes = Some(change_set.clone());
+                shared.uncommitted_changes = Some(change_set.clone());
             }
         })?;
-        let staged_text = change_set.read_with(&cx, |change_set, cx| {
+        let committed_text = change_set.read_with(&cx, |change_set, cx| {
             change_set
                 .base_text
                 .as_ref()
                 .map(|buffer| buffer.read(cx).text())
         })?;
-        Ok(proto::GetStagedTextResponse { staged_text })
+        Ok(proto::GetCommittedTextResponse { committed_text })
     }
 
     pub async fn handle_update_diff_base(
@@ -1993,11 +1996,11 @@ impl BufferStore {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
         let Some((buffer, change_set)) = this.update(&mut cx, |this, _| {
             if let OpenBuffer::Complete {
-                unstaged_changes,
+                uncommitted_changes,
                 buffer,
             } = this.opened_buffers.get(&buffer_id)?
             {
-                Some((buffer.upgrade()?, unstaged_changes.as_ref()?.upgrade()?))
+                Some((buffer.upgrade()?, uncommitted_changes.as_ref()?.upgrade()?))
             } else {
                 None
             }
@@ -2006,8 +2009,8 @@ impl BufferStore {
             return Ok(());
         };
         change_set.update(&mut cx, |change_set, cx| {
-            if let Some(staged_text) = request.payload.staged_text {
-                let _ = change_set.set_base_text(staged_text, buffer.read(cx).text_snapshot(), cx);
+            if let Some(base_text) = request.payload.base_text {
+                let _ = change_set.set_base_text(base_text, buffer.read(cx).text_snapshot(), cx);
             } else {
                 change_set.unset_base_text(buffer.read(cx).text_snapshot(), cx)
             }
@@ -2069,7 +2072,7 @@ impl BufferStore {
             buffer_id,
             SharedBuffer {
                 buffer: buffer.clone(),
-                unstaged_changes: None,
+                uncommitted_changes: None,
                 lsp_handle: None,
             },
         );

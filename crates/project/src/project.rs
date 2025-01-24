@@ -1920,7 +1920,7 @@ impl Project {
         })
     }
 
-    pub fn open_unstaged_changes(
+    pub fn open_uncommitted_changes(
         &mut self,
         buffer: Model<Buffer>,
         cx: &mut ModelContext<Self>,
@@ -1930,7 +1930,7 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_changes(buffer, cx)
+            buffer_store.open_uncommitted_changes(buffer, cx)
         })
     }
 

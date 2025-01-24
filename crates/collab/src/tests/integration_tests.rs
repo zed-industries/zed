@@ -2571,9 +2571,9 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a.fs().set_index_for_repo(
+    client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("a.txt"), diff_base.clone())],
+        &[("a.txt".into(), diff_base.clone())],
     );
 
     // Create the buffer
@@ -2583,7 +2583,7 @@ async fn test_git_diff_base_change(
         .unwrap();
     let change_set_local_a = project_local
         .update(cx_a, |p, cx| {
-            p.open_unstaged_changes(buffer_local_a.clone(), cx)
+            p.open_uncommitted_changes(buffer_local_a.clone(), cx)
         })
         .await
         .unwrap();
@@ -2611,7 +2611,7 @@ async fn test_git_diff_base_change(
         .unwrap();
     let change_set_remote_a = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_changes(buffer_remote_a.clone(), cx)
+            p.open_uncommitted_changes(buffer_remote_a.clone(), cx)
         })
         .await
         .unwrap();
@@ -2632,10 +2632,10 @@ async fn test_git_diff_base_change(
         );
     });
 
-    // Update the staged text of the open buffer
-    client_a.fs().set_index_for_repo(
+    // Update the HEAD text of the open buffer
+    client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("a.txt"), new_diff_base.clone())],
+        &[("a.txt".into(), new_diff_base.clone())],
     );
 
     // Wait for buffer_local_a to receive it
@@ -2681,9 +2681,9 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a.fs().set_index_for_repo(
+    client_a.fs().set_head_for_repo(
         Path::new("/dir/sub/.git"),
-        &[(Path::new("b.txt"), diff_base.clone())],
+        &[("b.txt".into(), diff_base.clone())],
     );
 
     // Create the buffer
@@ -2693,7 +2693,7 @@ async fn test_git_diff_base_change(
         .unwrap();
     let change_set_local_b = project_local
         .update(cx_a, |p, cx| {
-            p.open_unstaged_changes(buffer_local_b.clone(), cx)
+            p.open_uncommitted_changes(buffer_local_b.clone(), cx)
         })
         .await
         .unwrap();
@@ -2721,7 +2721,7 @@ async fn test_git_diff_base_change(
         .unwrap();
     let change_set_remote_b = project_remote
         .update(cx_b, |p, cx| {
-            p.open_unstaged_changes(buffer_remote_b.clone(), cx)
+            p.open_uncommitted_changes(buffer_remote_b.clone(), cx)
         })
         .await
         .unwrap();
@@ -2741,10 +2741,10 @@ async fn test_git_diff_base_change(
         );
     });
 
-    // Update the staged text
-    client_a.fs().set_index_for_repo(
+    // Update HEAD
+    client_a.fs().set_head_for_repo(
         Path::new("/dir/sub/.git"),
-        &[(Path::new("b.txt"), new_diff_base.clone())],
+        &[("b.txt".into(), new_diff_base.clone())],
     );
 
     // Wait for buffer_local_b to receive it

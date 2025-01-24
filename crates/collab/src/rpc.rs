@@ -309,7 +309,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitBranches>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetStagedText>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetCommittedText>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
