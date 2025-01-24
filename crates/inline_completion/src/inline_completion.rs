@@ -15,6 +15,7 @@ pub enum Direction {
 #[derive(Clone)]
 pub struct InlineCompletion {
     pub edits: Vec<(Range<language::Anchor>, String)>,
+    pub edit_preview: Option<language::EditPreview>,
 }
 
 pub trait InlineCompletionProvider: 'static + Sized {
@@ -22,6 +23,9 @@ pub trait InlineCompletionProvider: 'static + Sized {
     fn display_name() -> &'static str;
     fn show_completions_in_menu() -> bool;
     fn show_completions_in_normal_mode() -> bool;
+    fn show_tab_accept_marker() -> bool {
+        false
+    }
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -67,6 +71,7 @@ pub trait InlineCompletionProviderHandle {
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
     fn show_completions_in_normal_mode(&self) -> bool;
+    fn show_tab_accept_marker(&self) -> bool;
     fn needs_terms_acceptance(&self, cx: &AppContext) -> bool;
     fn is_refreshing(&self, cx: &AppContext) -> bool;
     fn refresh(
@@ -111,6 +116,10 @@ where
 
     fn show_completions_in_normal_mode(&self) -> bool {
         T::show_completions_in_normal_mode()
+    }
+
+    fn show_tab_accept_marker(&self) -> bool {
+        T::show_tab_accept_marker()
     }
 
     fn is_enabled(

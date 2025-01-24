@@ -2718,6 +2718,148 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 }
 
+#[gpui::test]
+async fn test_preview_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let text = indoc! {r#"
+        struct Person {
+            first_name: String,
+        }
+
+        impl Person {
+            fn last_name(&self) -> &String {
+                &self.last_name
+            }
+        }"#
+    };
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let highlighted_edits = preview_edits(
+        &buffer,
+        cx,
+        [
+            (Point::new(5, 7)..Point::new(5, 11), "first"),
+            (Point::new(6, 14)..Point::new(6, 18), "first"),
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        highlighted_edits.text,
+        "    fn lastfirst_name(&self) -> &String {\n        &self.lastfirst_name"
+    );
+
+    async fn preview_edits(
+        buffer: &Model<Buffer>,
+        cx: &mut TestAppContext,
+        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
+    ) -> HighlightedEdits {
+        let edits = buffer.read_with(cx, |buffer, _| {
+            edits
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
+                        text.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let edit_preview = buffer
+            .read_with(cx, |buffer, cx| {
+                buffer.preview_edits(edits.clone().into(), cx)
+            })
+            .await;
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, true, cx))
+    }
+}
+
+#[gpui::test]
+async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
+    use theme::ActiveTheme;
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let text = indoc! {r#"
+        struct Person {
+            _name: String
+        }"#
+    };
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "first")], cx);
+    let edit_preview = buffer
+        .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+        .await;
+
+    let highlighted_edits =
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+
+    let created_background = cx.read(|cx| cx.theme().status().created_background);
+
+    assert_eq!(highlighted_edits.text, "    first_name: String");
+    assert_eq!(highlighted_edits.highlights.len(), 1);
+    assert_eq!(highlighted_edits.highlights[0].0, 4..9);
+    assert_eq!(
+        highlighted_edits.highlights[0].1.background_color,
+        Some(created_background)
+    );
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "f")], cx);
+    cx.update(|cx| {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits.iter().cloned(), None, cx);
+        })
+    });
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 5)..Point::new(1, 5), "irst")], cx);
+    let highlighted_edits =
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+
+    assert_eq!(highlighted_edits.text, "    first_name: String");
+    assert_eq!(highlighted_edits.highlights.len(), 1);
+    assert_eq!(highlighted_edits.highlights[0].0, (5..9));
+    assert_eq!(
+        highlighted_edits.highlights[0].1.background_color,
+        Some(created_background)
+    );
+
+    fn construct_edits(
+        buffer: &Model<Buffer>,
+        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
+        cx: &mut TestAppContext,
+    ) -> Arc<[(Range<Anchor>, String)]> {
+        buffer
+            .read_with(cx, |buffer, _| {
+                edits
+                    .into_iter()
+                    .map(|(range, text)| {
+                        (
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                            text.to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .into()
+    }
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")

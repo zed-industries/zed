@@ -8,8 +8,8 @@ use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::{json, Value};
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
@@ -77,16 +77,25 @@ impl TypeScriptLspAdapter {
     pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
     }
-    async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
+    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
             .is_ok();
 
-        if is_yarn {
+        let tsdk_path = if is_yarn {
             ".yarn/sdks/typescript/lib"
         } else {
             "node_modules/typescript/lib"
+        };
+
+        if fs
+            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .await
+        {
+            Some(tsdk_path)
+        } else {
+            None
         }
     }
 }
@@ -233,9 +242,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        fs: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(adapter).await;
+        let tsdk_path = Self::tsdk_path(fs, adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
@@ -257,6 +267,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
@@ -353,6 +364,7 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,

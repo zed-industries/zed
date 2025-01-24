@@ -8,6 +8,25 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
+const ADDED_COLOR: Hsla = Hsla {
+    h: 142. / 360.,
+    s: 0.68,
+    l: 0.45,
+    a: 1.0,
+};
+const MODIFIED_COLOR: Hsla = Hsla {
+    h: 48. / 360.,
+    s: 0.76,
+    l: 0.47,
+    a: 1.0,
+};
+const REMOVED_COLOR: Hsla = Hsla {
+    h: 355. / 360.,
+    s: 0.65,
+    l: 0.65,
+    a: 1.0,
+};
+
 /// The default colors for the theme.
 ///
 /// Themes that do not specify all colors are refined off of these defaults.
@@ -116,6 +135,16 @@ impl ThemeColors {
             terminal_ansi_dim_cyan: cyan().light().step_10(),
             terminal_ansi_dim_white: neutral().light().step_11(),
             link_text_hover: orange().light().step_10(),
+            version_control_added: ADDED_COLOR,
+            version_control_added_background: ADDED_COLOR.opacity(0.1),
+            version_control_deleted: REMOVED_COLOR,
+            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
+            version_control_modified: MODIFIED_COLOR,
+            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
+            version_control_renamed: MODIFIED_COLOR,
+            version_control_conflict: orange().light().step_12(),
+            version_control_conflict_background: orange().light().step_12().opacity(0.1),
+            version_control_ignored: gray().light().step_12(),
         }
     }
 
@@ -223,6 +252,16 @@ impl ThemeColors {
             terminal_ansi_bright_white: neutral().dark().step_11(),
             terminal_ansi_dim_white: neutral().dark().step_10(),
             link_text_hover: orange().dark().step_10(),
+            version_control_added: ADDED_COLOR,
+            version_control_added_background: ADDED_COLOR.opacity(0.1),
+            version_control_deleted: REMOVED_COLOR,
+            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
+            version_control_modified: MODIFIED_COLOR,
+            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
+            version_control_renamed: MODIFIED_COLOR,
+            version_control_conflict: orange().dark().step_12(),
+            version_control_conflict_background: orange().dark().step_12().opacity(0.1),
+            version_control_ignored: gray().dark().step_12(),
         }
     }
 }

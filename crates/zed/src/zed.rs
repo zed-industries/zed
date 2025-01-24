@@ -399,6 +399,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
                 _ = timeout => false,
             }
         };
+
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {
@@ -3832,8 +3833,13 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            let prompt_builder =
-                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
+            let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
+            assistant::init(
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                prompt_builder.clone(),
+                cx,
+            );
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);

@@ -210,14 +210,17 @@ impl SearchQuery {
         }
     }
 
-    pub fn detect<T: Read>(&self, stream: T) -> Result<bool> {
+    pub(crate) fn detect(
+        &self,
+        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+    ) -> Result<bool> {
         if self.as_str().is_empty() {
             return Ok(false);
         }
 
         match self {
             Self::Text { search, .. } => {
-                let mat = search.stream_find_iter(stream).next();
+                let mat = search.stream_find_iter(reader).next();
                 match mat {
                     Some(Ok(_)) => Ok(true),
                     Some(Err(err)) => Err(err.into()),
@@ -227,7 +230,6 @@ impl SearchQuery {
             Self::Regex {
                 regex, multiline, ..
             } => {
-                let mut reader = BufReader::new(stream);
                 if *multiline {
                     let mut text = String::new();
                     if let Err(err) = reader.read_to_string(&mut text) {

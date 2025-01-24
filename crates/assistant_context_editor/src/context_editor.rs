@@ -15,8 +15,8 @@ use editor::{
         CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
-    Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
-    ToOffset as _, ToPoint,
+    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, ProposedChangeLocation,
+    ProposedChangesEditor, RowExt, ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
@@ -57,6 +57,13 @@ use workspace::{
     Workspace,
 };
 
+use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
+use crate::{
+    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
+};
+
 actions!(
     assistant,
     [
@@ -79,13 +86,6 @@ pub enum InsertDraggedFiles {
 }
 
 impl_internal_actions!(assistant, [InsertDraggedFiles]);
-
-use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
-use crate::{
-    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
-    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
-    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
-};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ScrollPosition {
@@ -220,6 +220,7 @@ impl ContextEditor {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Some(Box::new(completion_provider)));
+            editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
             editor
         });

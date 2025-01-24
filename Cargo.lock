@@ -456,6 +456,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "heed",
  "html_to_markdown",
  "http_client",
  "indoc",
@@ -470,6 +471,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "parking_lot",
+ "paths",
  "picker",
  "project",
  "prompt_library",
@@ -490,7 +492,6 @@ dependencies = [
  "time",
  "time_format",
  "ui",
- "unindent",
  "util",
  "uuid",
  "workspace",
@@ -3007,9 +3008,9 @@ checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
 name = "convert_case"
-version = "0.6.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
+checksum = "bb402b8d4c85569410425650ce3eddc7d698ed96d39a73f941b08fb63082f1e7"
 dependencies = [
  "unicode-segmentation",
 ]
@@ -3952,7 +3953,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "convert_case 0.6.0",
+ "convert_case 0.7.1",
  "ctor",
  "db",
  "emojis",
@@ -4223,9 +4224,9 @@ dependencies = [
 
 [[package]]
 name = "etagere"
-version = "0.2.13"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e2f1e3be19fb10f549be8c1bf013e8675b4066c445e36eb76d2ebb2f54ee495"
+checksum = "fc89bf99e5dc15954a60f707c1e09d7540e5cd9af85fa75caa0b510bc08c5342"
 dependencies = [
  "euclid",
  "svg_fmt",
@@ -5204,9 +5205,8 @@ dependencies = [
 
 [[package]]
 name = "git2"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b903b73e45dc0c6c596f2d37eccece7c1c8bb6e4407b001096387c63d0d93724"
+version = "0.20.0"
+source = "git+https://github.com/rust-lang/git2-rs?rev=a3b90cb3756c1bb63e2317bf9cfa57838178de5c#a3b90cb3756c1bb63e2317bf9cfa57838178de5c"
 dependencies = [
  "bitflags 2.8.0",
  "libc",
@@ -6308,9 +6308,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.7.0"
+version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62f822373a4fe84d4bb149bf54e584a7f4abec90e072ed49cda0edea5b95471f"
+checksum = "8c9c992b02b5b4c94ea26e32fe5bccb7aa7d9f390ab5c1221ff895bc7ea8b652"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
@@ -6789,6 +6789,7 @@ dependencies = [
  "async-trait",
  "collections",
  "extension",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",
@@ -7029,9 +7030,8 @@ dependencies = [
 
 [[package]]
 name = "libgit2-sys"
-version = "0.17.0+1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10472326a8a6477c3c20a64547b0059e4b0d086869eee31e6d7da728a8eb7224"
+version = "0.18.0+1.9.0"
+source = "git+https://github.com/rust-lang/git2-rs?rev=a3b90cb3756c1bb63e2317bf9cfa57838178de5c#a3b90cb3756c1bb63e2317bf9cfa57838178de5c"
 dependencies = [
  "cc",
  "libc",
@@ -7642,9 +7642,9 @@ dependencies = [
 
 [[package]]
 name = "metal"
-version = "0.30.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c3572083504c43e14aec05447f8a3d57cce0f66d7a3c1b9058572eca4d70ab9"
+checksum = "f569fb946490b5743ad69813cb19629130ce9374034abe31614a36402d18f99e"
 dependencies = [
  "bitflags 2.8.0",
  "block",
@@ -11578,9 +11578,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.24"
+version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cb6eb87a131f756572d7fb904f6e7b68633f09cca868c5df1c4b8d1a694bbba"
+checksum = "f79dfe2d285b0488816f30e700a7438c5a73d816b5b7d3ac72fbc48b0d185e03"
 dependencies = [
  "serde",
 ]
@@ -11627,9 +11627,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.135"
+version = "1.0.137"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b0d7ba2887406110130a978386c4e1befb98c674b4fba677954e4db976630d9"
+checksum = "930cfb6e6abf99298aaad7d29abbef7a9999a9a8806a40088f55f0dcec03146b"
 dependencies = [
  "indexmap",
  "itoa",
@@ -14092,7 +14092,7 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
- "convert_case 0.6.0",
+ "convert_case 0.7.1",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -16268,7 +16268,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.171.0"
+version = "0.172.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16406,7 +16406,7 @@ dependencies = [
 
 [[package]]
 name = "zed_csharp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -16420,7 +16420,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "zed_extension_api 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -16479,14 +16479,14 @@ dependencies = [
 
 [[package]]
 name = "zed_haskell"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
 
 [[package]]
 name = "zed_html"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -16500,7 +16500,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -16537,7 +16537,7 @@ dependencies = [
 
 [[package]]
 name = "zed_purescript"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -16559,7 +16559,7 @@ dependencies = [
 
 [[package]]
 name = "zed_terraform"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -16587,7 +16587,7 @@ dependencies = [
 
 [[package]]
 name = "zed_zig"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

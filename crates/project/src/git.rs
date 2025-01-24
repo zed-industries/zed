@@ -314,32 +314,28 @@ impl RepositoryHandle {
             && (commit_all || self.have_staged_changes());
     }
 
-    pub fn commit(
-        &self,
-        err_sender: mpsc::Sender<anyhow::Error>,
-        cx: &mut AppContext,
-    ) -> anyhow::Result<()> {
-        if !self.can_commit(false, cx) {
-            return Err(anyhow!("Unable to commit"));
-        }
+    pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut AppContext) {
         let message = self.commit_message.read(cx).as_rope().clone();
-        self.update_sender
-            .unbounded_send((Message::Commit(self.git_repo.clone(), message), err_sender))
-            .map_err(|_| anyhow!("Failed to submit commit operation"))?;
+        let result = self.update_sender.unbounded_send((
+            Message::Commit(self.git_repo.clone(), message),
+            err_sender.clone(),
+        ));
+        if result.is_err() {
+            cx.spawn(|_| async move {
+                err_sender
+                    .send(anyhow!("Failed to submit commit operation"))
+                    .await
+                    .ok();
+            })
+            .detach();
+            return;
+        }
         self.commit_message.update(cx, |commit_message, cx| {
             commit_message.set_text("", cx);
         });
-        Ok(())
     }
 
-    pub fn commit_all(
-        &self,
-        err_sender: mpsc::Sender<anyhow::Error>,
-        cx: &mut AppContext,
-    ) -> anyhow::Result<()> {
-        if !self.can_commit(true, cx) {
-            return Err(anyhow!("Unable to commit"));
-        }
+    pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut AppContext) {
         let to_stage = self
             .repository_entry
             .status()
@@ -347,15 +343,22 @@ impl RepositoryHandle {
             .map(|entry| entry.repo_path.clone())
             .collect::<Vec<_>>();
         let message = self.commit_message.read(cx).as_rope().clone();
-        self.update_sender
-            .unbounded_send((
-                Message::StageAndCommit(self.git_repo.clone(), message, to_stage),
-                err_sender,
-            ))
-            .map_err(|_| anyhow!("Failed to submit commit operation"))?;
+        let result = self.update_sender.unbounded_send((
+            Message::StageAndCommit(self.git_repo.clone(), message, to_stage),
+            err_sender.clone(),
+        ));
+        if result.is_err() {
+            cx.spawn(|_| async move {
+                err_sender
+                    .send(anyhow!("Failed to submit commit all operation"))
+                    .await
+                    .ok();
+            })
+            .detach();
+            return;
+        }
         self.commit_message.update(cx, |commit_message, cx| {
             commit_message.set_text("", cx);
         });
-        Ok(())
     }
 }

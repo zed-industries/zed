@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, WindowBackgroundAppearance};
+use gpui::{hsla, FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 
 use crate::{
     default_color_scales, AccentColors, Appearance, PlayerColors, StatusColors, SyntaxTheme,
@@ -34,6 +34,25 @@ pub(crate) fn zed_default_dark() -> Theme {
     let red = hsla(355. / 360., 65. / 100., 65. / 100., 1.0);
     let teal = hsla(187. / 360., 47. / 100., 55. / 100., 1.0);
     let yellow = hsla(39. / 360., 67. / 100., 69. / 100., 1.0);
+
+    const ADDED_COLOR: Hsla = Hsla {
+        h: 142. / 360.,
+        s: 0.68,
+        l: 0.45,
+        a: 1.0,
+    };
+    const MODIFIED_COLOR: Hsla = Hsla {
+        h: 48. / 360.,
+        s: 0.76,
+        l: 0.47,
+        a: 1.0,
+    };
+    const REMOVED_COLOR: Hsla = Hsla {
+        h: 355. / 360.,
+        s: 0.65,
+        l: 0.65,
+        a: 1.0,
+    };
 
     Theme {
         id: "one_dark".to_string(),
@@ -149,6 +168,16 @@ pub(crate) fn zed_default_dark() -> Theme {
                 scrollbar_track_border: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_foreground: hsla(218. / 360., 14. / 100., 71. / 100., 1.),
                 link_text_hover: blue,
+                version_control_added: ADDED_COLOR,
+                version_control_added_background: ADDED_COLOR.opacity(0.1),
+                version_control_deleted: REMOVED_COLOR,
+                version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
+                version_control_modified: MODIFIED_COLOR,
+                version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
+                version_control_renamed: MODIFIED_COLOR,
+                version_control_conflict: crate::orange().light().step_12(),
+                version_control_conflict_background: crate::orange().light().step_12().opacity(0.1),
+                version_control_ignored: crate::gray().light().step_12(),
             },
             status: StatusColors {
                 conflict: yellow,

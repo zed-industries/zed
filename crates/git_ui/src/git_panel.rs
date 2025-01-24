@@ -16,7 +16,6 @@ use project::git::RepositoryHandle;
 use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
@@ -91,7 +90,7 @@ pub struct GitPanel {
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
     show_scrollbar: bool,
-    rebuild_requested: Arc<AtomicBool>,
+    update_visible_entries_task: Task<()>,
     commit_editor: View<Editor>,
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
@@ -167,33 +166,11 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let rebuild_requested = Arc::new(AtomicBool::new(false));
-            let flag = rebuild_requested.clone();
-            let handle = cx.view().downgrade();
-            cx.spawn(|_, mut cx| async move {
-                loop {
-                    cx.background_executor().timer(UPDATE_DEBOUNCE).await;
-                    if flag.load(Ordering::Relaxed) {
-                        if let Some(this) = handle.upgrade() {
-                            this.update(&mut cx, |this, cx| {
-                                this.update_visible_entries(cx);
-                                let active_repository = this.active_repository.as_ref();
-                                this.commit_editor =
-                                    cx.new_view(|cx| commit_message_editor(active_repository, cx));
-                            })
-                            .ok();
-                        }
-                        flag.store(false, Ordering::Relaxed);
-                    }
-                }
-            })
-            .detach();
-
             if let Some(git_state) = git_state {
                 cx.subscribe(&git_state, move |this, git_state, event, cx| match event {
                     project::git::Event::RepositoriesUpdated => {
                         this.active_repository = git_state.read(cx).active_repository();
-                        this.schedule_update();
+                        this.schedule_update(cx);
                     }
                 })
                 .detach();
@@ -210,16 +187,16 @@ impl GitPanel {
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
+                update_visible_entries_task: Task::ready(()),
                 active_repository,
                 scroll_handle,
                 fs,
-                rebuild_requested,
                 commit_editor,
                 project,
                 err_sender,
                 workspace,
             };
-            git_panel.schedule_update();
+            git_panel.schedule_update(cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
             git_panel
         });
@@ -572,11 +549,10 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        if let Err(e) = active_repository.commit(self.err_sender.clone(), cx) {
-            self.show_err_toast("commit error", e, cx);
-        };
-        self.commit_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+        if !active_repository.can_commit(false, cx) {
+            return;
+        }
+        active_repository.commit(self.err_sender.clone(), cx);
     }
 
     /// Commit all changes, regardless of whether they are staged or not
@@ -584,11 +560,10 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        if let Err(e) = active_repository.commit_all(self.err_sender.clone(), cx) {
-            self.show_err_toast("commit all error", e, cx);
-        };
-        self.commit_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+        if !active_repository.can_commit(true, cx) {
+            return;
+        }
+        active_repository.commit_all(self.err_sender.clone(), cx);
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
@@ -689,8 +664,20 @@ impl GitPanel {
         }
     }
 
-    fn schedule_update(&mut self) {
-        self.rebuild_requested.store(true, Ordering::Relaxed);
+    fn schedule_update(&mut self, cx: &mut ViewContext<Self>) {
+        let handle = cx.view().downgrade();
+        self.update_visible_entries_task = cx.spawn(|_, mut cx| async move {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            if let Some(this) = handle.upgrade() {
+                this.update(&mut cx, |this, cx| {
+                    this.update_visible_entries(cx);
+                    let active_repository = this.active_repository.as_ref();
+                    this.commit_editor =
+                        cx.new_view(|cx| commit_message_editor(active_repository, cx));
+                })
+                .ok();
+            }
+        });
     }
 
     fn update_visible_entries(&mut self, cx: &mut ViewContext<Self>) {
@@ -847,7 +834,17 @@ impl GitPanel {
                             false => git_panel.stage_all(&StageAll, cx),
                         })),
                     )
-                    .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
+                    .child(
+                        div()
+                            .id("changes-checkbox-label")
+                            .text_buffer(cx)
+                            .text_ui_sm(cx)
+                            .child(changes_string)
+                            .on_click(cx.listener(move |git_panel, _, cx| match all_staged {
+                                true => git_panel.unstage_all(&UnstageAll, cx),
+                                false => git_panel.stage_all(&StageAll, cx),
+                            })),
+                    ),
             )
             .child(div().flex_grow())
             .child(
@@ -917,15 +914,15 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
-        let (can_commit, can_commit_all) = self.active_repository.as_ref().map_or_else(
-            || (false, false),
-            |active_repository| {
-                (
-                    active_repository.can_commit(false, cx),
-                    active_repository.can_commit(true, cx),
-                )
-            },
-        );
+        let (can_commit, can_commit_all) =
+            self.active_repository
+                .as_ref()
+                .map_or((false, false), |active_repository| {
+                    (
+                        active_repository.can_commit(false, cx),
+                        active_repository.can_commit(true, cx),
+                    )
+                });
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
@@ -1096,13 +1093,15 @@ impl GitPanel {
         let mut label_color = cx.theme().colors().text;
         if status_style == StatusStyle::LabelColor {
             label_color = if status.is_conflicted() {
-                cx.theme().status().conflict
+                cx.theme().colors().version_control_conflict
             } else if status.is_modified() {
-                cx.theme().status().modified
+                cx.theme().colors().version_control_modified
             } else if status.is_deleted() {
+                // Don't use `version_control_deleted` here or all the
+                // deleted entries will be likely a red color.
                 cx.theme().colors().text_disabled
             } else {
-                cx.theme().status().created
+                cx.theme().colors().version_control_added
             }
         }
 
@@ -1198,7 +1197,7 @@ impl GitPanel {
                 }),
             )
             .when(status_style == StatusStyle::Icon, |this| {
-                this.child(git_status_icon(status))
+                this.child(git_status_icon(status, cx))
             })
             .child(
                 h_flex()

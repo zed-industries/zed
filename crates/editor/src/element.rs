@@ -18,12 +18,13 @@ use crate::{
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions,
+    HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData,
+    LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -50,7 +51,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
-    MultiBufferRow, MultiBufferSnapshot, ToOffset,
+    MultiBufferRow, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
@@ -1628,7 +1629,8 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        single_line: true, ..
+                        display_mode: EditDisplayMode::TabAccept,
+                        ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
                 }
@@ -3386,7 +3388,12 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            InlineCompletion::Edit { edits, single_line } => {
+            InlineCompletion::Edit {
+                edits,
+                edit_preview,
+                display_mode,
+                snapshot,
+            } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
                 }
@@ -3410,38 +3417,38 @@ impl EditorElement {
                     return None;
                 }
 
-                if let (true, Some((range, _))) = (single_line, edits.first()) {
-                    let mut element = inline_completion_tab_indicator("Accept", None, cx);
+                match display_mode {
+                    EditDisplayMode::TabAccept => {
+                        let range = &edits.first()?.0;
+                        let target_display_point = range.end.to_display_point(editor_snapshot);
 
-                    let target_display_point = range.end.to_display_point(editor_snapshot);
-                    let target_line_end = DisplayPoint::new(
-                        target_display_point.row(),
-                        editor_snapshot.line_len(target_display_point.row()),
-                    );
-                    let origin = self.editor.update(cx, |editor, cx| {
-                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
-                    })?;
+                        let target_line_end = DisplayPoint::new(
+                            target_display_point.row(),
+                            editor_snapshot.line_len(target_display_point.row()),
+                        );
+                        let origin = self.editor.update(cx, |editor, cx| {
+                            editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                        })?;
 
-                    element.prepaint_as_root(
-                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
-                        AvailableSpace::min_size(),
-                        cx,
-                    );
+                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
 
-                    return Some(element);
+                        element.prepaint_as_root(
+                            text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                            AvailableSpace::min_size(),
+                            cx,
+                        );
+
+                        return Some(element);
+                    }
+                    EditDisplayMode::Inline => return None,
+                    EditDisplayMode::DiffPopover => {}
                 }
 
-                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
-                    return None;
-                }
+                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
+                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
+                })?;
 
-                let crate::InlineCompletionText::Edit { text, highlights } =
-                    crate::inline_completion_edit_text(editor_snapshot, edits, false, cx)
-                else {
-                    return None;
-                };
-
-                let line_count = text.lines().count() + 1;
+                let line_count = highlighted_edits.text.lines().count() + 1;
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3459,15 +3466,14 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text =
-                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
-                    .px_1()
                     .child(styled_text)
                     .into_any();
 
@@ -5245,34 +5251,6 @@ fn inline_completion_tab_indicator(
             )
         })
         .into_any()
-}
-
-fn all_edits_insertions_or_deletions(
-    edits: &Vec<(Range<Anchor>, String)>,
-    snapshot: &MultiBufferSnapshot,
-) -> bool {
-    let mut all_insertions = true;
-    let mut all_deletions = true;
-
-    for (range, new_text) in edits.iter() {
-        let range_is_empty = range.to_offset(&snapshot).is_empty();
-        let text_is_empty = new_text.is_empty();
-
-        if range_is_empty != text_is_empty {
-            if range_is_empty {
-                all_deletions = false;
-            } else {
-                all_insertions = false;
-            }
-        } else {
-            return false;
-        }
-
-        if !all_insertions && !all_deletions {
-            return false;
-        }
-    }
-    all_insertions || all_deletions
 }
 
 #[allow(clippy::too_many_arguments)]
