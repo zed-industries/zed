@@ -787,22 +787,43 @@ impl MultiBuffer {
             let original_indent_column = original_indent_columns.get(ix).copied().unwrap_or(0);
 
             cursor.seek_forward(&range.start);
-            let start_region = cursor.region().expect("start offset out of bounds");
-
-            cursor.seek_forward(&range.end);
-            let mut end_region = cursor.region().expect("end offset out of bounds");
-            if end_region.range.start == range.end
-                && end_region.range.start > start_region.range.start
-                && !end_region.is_main_buffer
-            {
-                cursor.prev();
-                end_region = cursor.region().unwrap();
+            let mut start_region = cursor.region().expect("start offset out of bounds");
+            if !start_region.is_main_buffer {
+                cursor.next();
+                if let Some(region) = cursor.region() {
+                    start_region = region;
+                } else {
+                    continue;
+                }
             }
 
-            let start_overshoot = range.start - start_region.range.start;
-            let buffer_start = start_region.buffer_range.start + start_overshoot;
-            let end_overshoot = range.end - end_region.range.start;
-            let buffer_end = end_region.buffer_range.start + end_overshoot;
+            if range.end < start_region.range.start {
+                continue;
+            }
+
+            if range.end > start_region.range.end {
+                cursor.seek_forward(&range.end);
+            }
+            let mut end_region = cursor.region().expect("end offset out of bounds");
+            if !end_region.is_main_buffer {
+                cursor.prev();
+                if let Some(region) = cursor.region() {
+                    end_region = region;
+                } else {
+                    continue;
+                }
+            }
+
+            if range.start > end_region.range.end {
+                continue;
+            }
+
+            let start_overshoot = range.start.saturating_sub(start_region.range.start);
+            let end_overshoot = range.end.saturating_sub(end_region.range.start);
+            let buffer_start = (start_region.buffer_range.start + start_overshoot)
+                .min(start_region.buffer_range.end);
+            let buffer_end =
+                (end_region.buffer_range.start + end_overshoot).min(end_region.buffer_range.end);
 
             if start_region.excerpt.id == end_region.excerpt.id {
                 if start_region.is_main_buffer {

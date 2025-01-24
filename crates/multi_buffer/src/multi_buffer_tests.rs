@@ -635,6 +635,27 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
             "
         },
     );
+
+    // Replace a range that ends in a deleted hunk.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.edit([(Point::new(5, 2)..Point::new(6, 2), "fty-")], None, cx);
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+              one
+              two
+            + __
+            + __THREE
+              four
+              fifty-seven
+            "
+        },
+    );
 }
 
 #[gpui::test]
