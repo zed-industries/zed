@@ -2189,9 +2189,13 @@ impl MultiBuffer {
         self.expand_or_collapse_diff_hunks(ranges, false, cx);
     }
 
-    pub fn set_all_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn set_all_diff_hunks_expanded(&mut self, cx: &mut ModelContext<Self>) {
         self.all_diff_hunks_expanded = true;
         self.expand_or_collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], true, cx);
+    }
+
+    pub fn all_diff_hunks_expanded(&mut self) -> bool {
+        self.all_diff_hunks_expanded
     }
 
     pub fn has_multiple_hunks(&self, cx: &AppContext) -> bool {

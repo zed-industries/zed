@@ -371,7 +371,7 @@ fn test_diff_boundary_anchors(cx: &mut AppContext) {
     let (before, after) = multibuffer.update(cx, |multibuffer, cx| {
         let before = multibuffer.snapshot(cx).anchor_before(Point::new(1, 0));
         let after = multibuffer.snapshot(cx).anchor_after(Point::new(1, 0));
-        multibuffer.set_all_hunks_expanded(cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
         (before, after)
     });
     cx.background_executor().run_until_parked();
@@ -519,7 +519,7 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_all_hunks_expanded(cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
     });
 
     assert_new_snapshot(

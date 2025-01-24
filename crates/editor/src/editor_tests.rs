@@ -14106,7 +14106,7 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
                 change_set
             });
 
-            multibuffer.set_all_hunks_expanded(cx);
+            multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_change_set(change_set, cx);
 
             buffer.read(cx).remote_id()

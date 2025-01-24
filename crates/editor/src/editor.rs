@@ -11187,7 +11187,7 @@ impl Editor {
 
     pub fn set_expand_all_diff_hunks(&mut self, cx: &mut AppContext) {
         self.buffer.update(cx, |buffer, cx| {
-            buffer.set_all_hunks_expanded(cx);
+            buffer.set_all_diff_hunks_expanded(cx);
         });
     }
 
@@ -11215,7 +11215,9 @@ impl Editor {
     pub fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<Self>) -> bool {
         self.buffer.update(cx, |buffer, cx| {
             let ranges = vec![Anchor::min()..Anchor::max()];
-            if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
+            if !buffer.all_diff_hunks_expanded()
+                && buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx)
+            {
                 buffer.collapse_diff_hunks(ranges, cx);
                 true
             } else {
