@@ -6456,7 +6456,7 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                text_hitbox.size.width,
+                                editor_width - (letter_size.width / 2.0),
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
@@ -6541,7 +6541,7 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                text_hitbox.size.width,
+                                editor_width - (letter_size.width / 2.0),
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
