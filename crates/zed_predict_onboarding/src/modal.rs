@@ -18,6 +18,8 @@ pub struct ZedPredictModal {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     sign_in_status: SignInStatus,
+    terms_of_service: bool,
+    data_collection: bool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -43,6 +45,8 @@ impl ZedPredictModal {
             fs,
             focus_handle: cx.focus_handle(),
             sign_in_status: SignInStatus::Idle,
+            terms_of_service: false,
+            data_collection: false,
         }
     }
 
@@ -226,6 +230,13 @@ impl Render for ZedPredictModal {
                 )),
             ));
 
+        let blog_post_button = Button::new("view-blog", "Read the Blog Post")
+            .full_width()
+            .icon(IconName::ArrowUpRight)
+            .icon_size(IconSize::Indicator)
+            .icon_color(Color::Muted)
+            .on_click(cx.listener(Self::view_blog));
+
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
                 SignInStatus::Idle => "To set Zed as your inline completions provider, ensure you:",
@@ -240,8 +251,11 @@ impl Render for ZedPredictModal {
                         .child(CheckboxWithLabel::new(
                             "tos-checkbox",
                             Label::new("Have read and accepted the").color(Color::Muted),
-                            ToggleState::Unselected,
-                            |_, _| {},
+                            self.terms_of_service.into(),
+                            cx.listener(move |this, state, cx| {
+                                this.terms_of_service = *state == ToggleState::Selected;
+                                cx.notify()
+                            }),
                         ))
                         .child(
                             Button::new("view-tos", "Terms of Service")
@@ -255,8 +269,11 @@ impl Render for ZedPredictModal {
                     "data-checkbox",
                     Label::new("Understood that Zed AI collects completion data")
                         .color(Color::Muted),
-                    ToggleState::Unselected,
-                    |_, _| {},
+                    self.data_collection.into(),
+                    cx.listener(move |this, state, cx| {
+                        this.data_collection = *state == ToggleState::Selected;
+                        cx.notify()
+                    }),
                 ))
                 .child(
                     v_flex()
@@ -264,19 +281,13 @@ impl Render for ZedPredictModal {
                         .gap_2()
                         .w_full()
                         .child(
-                            Button::new("accept-tos", "Tab to Start")
+                            Button::new("accept-tos", "Enable Edit Predictions")
+                                .disabled(!self.terms_of_service || !self.data_collection)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
                         )
-                        .child(
-                            Button::new("blog-post", "Read the Blog Post")
-                                .full_width()
-                                .icon(IconName::ArrowUpRight)
-                                .icon_size(IconSize::Indicator)
-                                .icon_color(Color::Muted)
-                                .on_click(cx.listener(Self::view_blog)),
-                        ),
+                        .child(blog_post_button),
                 )
         } else {
             base.child(
@@ -295,14 +306,7 @@ impl Render for ZedPredictModal {
                             .full_width()
                             .on_click(cx.listener(Self::sign_in)),
                     )
-                    .child(
-                        Button::new("blog-post", "Read the Blog Post")
-                            .full_width()
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Indicator)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(Self::view_blog)),
-                    ),
+                    .child(blog_post_button),
             )
         }
     }
