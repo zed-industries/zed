@@ -5766,6 +5766,28 @@ mod tests {
             ]
         );
 
+        // Test filename with whitespace
+        select_path(&panel, "root1", cx);
+        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+        let confirm = panel.update(cx, |panel, cx| {
+            // If we want to create a subdirectory, there should be no prefix slash.
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("new dir 2/", cx));
+            panel.confirm_edit(cx).unwrap()
+        });
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > .git",
+                "    v new dir 2  <== selected",
+                "    v new_dir",
+                "      .dockerignore",
+            ]
+        );
+
         // Test filename ends with "\"
         #[cfg(target_os = "windows")]
         {
@@ -5775,7 +5797,7 @@ mod tests {
                 // If we want to create a subdirectory, there should be no prefix slash.
                 panel
                     .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("new_dir_2\\", cx));
+                    .update(cx, |editor, cx| editor.set_text("new_dir_3\\", cx));
                 panel.confirm_edit(cx).unwrap()
             });
             confirm.await.unwrap();
@@ -5784,35 +5806,13 @@ mod tests {
                 &[
                     "v root1",
                     "    > .git",
+                    "    v new dir 2",
                     "    v new_dir",
-                    "    v new_dir_2  <== selected",
+                    "    v new_dir_3  <== selected",
                     "      .dockerignore",
                 ]
             );
         }
-
-        // Test filename with whitespace
-        select_path(&panel, "root1", cx);
-        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        let confirm = panel.update(cx, |panel, cx| {
-            // If we want to create a subdirectory, there should be no prefix slash.
-            panel
-                .filename_editor
-                .update(cx, |editor, cx| editor.set_text("new dir 3/", cx));
-            panel.confirm_edit(cx).unwrap()
-        });
-        confirm.await.unwrap();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &[
-                "v root1",
-                "    > .git",
-                "    v new dir 3  <== selected",
-                "    v new_dir",
-                "    v new_dir_2",
-                "      .dockerignore",
-            ]
-        );
     }
 
     #[gpui::test]
