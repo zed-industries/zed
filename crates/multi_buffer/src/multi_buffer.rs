@@ -2266,7 +2266,7 @@ impl MultiBuffer {
                         diff_hunk.buffer_range.start,
                     );
                 }
-                if diff_hunk.row_range.start.0 == peek_end.row
+                if diff_hunk.row_range.start.0 <= peek_end.row
                     && diff_hunk.excerpt_id == end.excerpt_id
                 {
                     end = Anchor::in_buffer(
