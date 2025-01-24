@@ -90,5 +90,10 @@ pub fn uri(input: TokenStream) -> TokenStream {
 #[proc_macro]
 #[cfg(not(target_os = "windows"))]
 pub fn uri(input: TokenStream) -> TokenStream {
-    input
+    let UriInput { uri } = parse_macro_input!(input as UriInput);
+    let uri = uri.value();
+
+    TokenStream::from(quote! {
+        #uri
+    })
 }

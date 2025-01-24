@@ -96,7 +96,6 @@ impl<'a> Matcher<'a> {
                 prefix,
                 lowercase_prefix,
             );
-            println!("  score: {}", score);
 
             if score > 0.0 {
                 results.push(build_match(&candidate, score, &self.match_positions));
@@ -472,9 +471,6 @@ mod tests {
         smart_case: bool,
         paths: &[&'a str],
     ) -> Vec<(&'a str, Vec<usize>)> {
-        println!("===============================");
-        println!("query: {:?}", query);
-        println!("paths: {:?}", paths);
         let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
         let query = query.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);

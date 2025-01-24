@@ -3420,11 +3420,7 @@ pub mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-        let file_path = if cfg!(target_os = "windows") {
-            "C:/a/main.rs"
-        } else {
-            "/a/main.rs"
-        };
+        let file_path = path!("/a/main.rs");
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());

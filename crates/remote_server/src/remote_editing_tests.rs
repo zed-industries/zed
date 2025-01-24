@@ -822,7 +822,7 @@ async fn test_remote_resolve_path_in_buffer(
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer(&path!("/code/project1/README.md"), &buffer, cx)
+            project.resolve_path_in_buffer(path!("/code/project1/README.md"), &buffer, cx)
         })
         .await
         .unwrap();

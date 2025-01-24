@@ -2438,7 +2438,7 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
-                vec![&path!("/dir1"), &path!("/dir2/b.txt")]
+                vec![path!("/dir1"), path!("/dir2/b.txt")]
                     .into_iter()
                     .map(Path::new)
                     .collect(),
@@ -2484,7 +2484,7 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
-                vec![&path!("/dir1"), &path!("/dir2/b.txt"), &path!("/dir3")]
+                vec![path!("/dir1"), path!("/dir2/b.txt"), path!("/dir3")]
                     .into_iter()
                     .map(Path::new)
                     .collect(),
@@ -2525,10 +2525,10 @@ mod tests {
             assert_eq!(
                 worktree_roots,
                 vec![
-                    &path!("/dir1"),
-                    &path!("/dir2/b.txt"),
-                    &path!("/dir3"),
-                    &path!("/d.txt")
+                    path!("/dir1"),
+                    path!("/dir2/b.txt"),
+                    path!("/dir3"),
+                    path!("/d.txt")
                 ]
                 .into_iter()
                 .map(Path::new)
@@ -2541,7 +2541,7 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 visible_worktree_roots,
-                vec![&path!("/dir1"), &path!("/dir2/b.txt"), &path!("/dir3")]
+                vec![path!("/dir1"), path!("/dir2/b.txt"), path!("/dir3")]
                     .into_iter()
                     .map(Path::new)
                     .collect(),

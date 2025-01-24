@@ -2158,7 +2158,7 @@ const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
 
 // NOTE:
 // This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
-// a directory to a name that some program has open.
+// a directory which some program has already open.
 // This is a limitation of the Windows.
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
@@ -2343,7 +2343,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 
 // NOTE:
 // This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
-// a directory to a name that some program has open.
+// a directory which some program has already open.
 // This is a limitation of the Windows.
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]

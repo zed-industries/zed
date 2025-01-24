@@ -707,16 +707,16 @@ mod test {
         assert_eq!(result.sections[5].label, "summercamp");
 
         // Ensure that things are in descending order, with properly relativized paths
-        assert_eq!(result.sections[1].label, "andromeda");
-        assert_eq!(result.sections[3].label, "ayu");
         assert_eq!(
             result.sections[0].label,
             separator!("zed/assets/themes/andromeda/LICENSE")
         );
+        assert_eq!(result.sections[1].label, "andromeda");
         assert_eq!(
             result.sections[2].label,
             separator!("zed/assets/themes/ayu/LICENSE")
         );
+        assert_eq!(result.sections[3].label, "ayu");
         assert_eq!(
             result.sections[4].label,
             separator!("zed/assets/themes/summercamp/LICENSE")
