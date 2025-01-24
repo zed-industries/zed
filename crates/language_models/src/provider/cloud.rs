@@ -862,21 +862,19 @@ impl ConfigurationView {
 
         let terms_button = Button::new("terms_of_service", "Terms of Service")
             .style(ButtonStyle::Subtle)
-            .icon(IconName::ExternalLink)
+            .icon(IconName::ArrowUpRight)
             .icon_color(Color::Muted)
+            .icon_size(IconSize::XSmall)
             .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
-        let text =
-            "In order to use Zed AI, please read and accept our terms and conditions to continue:";
+        let text = "To start using Zed AI, please read and accept the";
 
         let form = v_flex()
-            .gap_2()
-            .child(Label::new("Terms and Conditions"))
-            .child(Label::new(text))
-            .child(h_flex().justify_center().child(terms_button))
+            .gap_1()
+            .child(h_flex().child(Label::new(text)).child(terms_button))
             .child(
-                h_flex().justify_center().child(
-                    Button::new("accept_terms", "I've read and accept the terms of service")
+                h_flex().child(
+                    Button::new("accept_terms", "I've read and accept the Terms of Service")
                         .style(ButtonStyle::Tinted(TintColor::Accent))
                         .disabled(accept_terms_disabled)
                         .on_click({
