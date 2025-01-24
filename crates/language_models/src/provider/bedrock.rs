@@ -1,42 +1,35 @@
-use std::os::macos::raw::stat;
 use crate::AllLanguageModelSettings;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
-use aws_smithy_runtime_api::client::orchestrator::{HttpRequest, HttpResponse};
-use aws_smithy_runtime_api::http::StatusCode;
+use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ContentBlockStartEvent, ConverseStreamOutput,
+    ContentBlockDelta, ContentBlockStart, ConverseStreamOutput,
 };
 use bedrock::bedrock_client::Config;
 use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
-use collections::{BTreeMap, HashMap};
+use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
-use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-    View, WhiteSpace,
-};
-use http_client::{http, AsyncBody, HttpClient};
-use aws_http_client::AwsHttpClient;
+use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use gpui::{AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle, View, WhiteSpace};
+use http_client::HttpClient;
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
-use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
+use language_model::LanguageModelCompletionEvent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::Arc;
-use smol::stream;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
-use util::{maybe, ResultExt};
+use util::ResultExt;
 
 const PROVIDER_ID: &str = "amazon-bedrock";
 const PROVIDER_NAME: &str = "Amazon Bedrock";
@@ -123,7 +116,7 @@ impl State {
         let write_region = cx.write_credentials(
             ZED_BEDROCK_REGION,
             "Bearer",
-            region.as_bytes()
+            region.as_bytes(),
         );
         cx.spawn(|this, mut cx| async move {
             write_aa_id.await?;
@@ -304,7 +297,7 @@ impl BedrockModel {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
         let Ok((aa_id, sk, region)) = cx.read_model(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).bedrock;
+            let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
             (state.aa_id.clone(), state.sk.clone(), state.region.clone())
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
@@ -329,10 +322,10 @@ impl BedrockModel {
                 .build(),
         );
 
-        async move {
+        cx.foreground_executor().spawn(async move {
             let request = bedrock::stream_completion(runtime_client, request);
             request.await.context("Failed to stream completion")
-        }.boxed()
+        }).boxed()
     }
 }
 
@@ -466,11 +459,11 @@ pub fn get_bedrock_tokens(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    // cx: &AsyncAppContext,
 ) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct State {
         events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     }
-
     futures::stream::unfold(
         State {
             events

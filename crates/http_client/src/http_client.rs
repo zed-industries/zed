@@ -5,10 +5,8 @@ pub use anyhow::{anyhow, Result};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
-use std::fmt;
 
-use std::io::Read;
-use futures::future::{err, BoxFuture};
+use futures::future::BoxFuture;
 use http::request::Builder;
 
 #[cfg(feature = "test-support")]

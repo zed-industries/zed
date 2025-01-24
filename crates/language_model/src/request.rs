@@ -1,5 +1,5 @@
 use std::io::{Cursor, Write};
-use aws_sdk_bedrockruntime::types::{ContentBlock, ImageBlock};
+use aws_sdk_bedrockruntime::types::ContentBlock;
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;

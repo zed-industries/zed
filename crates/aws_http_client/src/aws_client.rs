@@ -6,7 +6,6 @@ use aws_smithy_runtime_api::client::http::{HttpConnector as AwsConnector, HttpCo
 use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsHttpRequest, HttpResponse};
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
-use aws_smithy_runtime_api::shared::IntoShared;
 use http_client::{HttpClient, Request};
 use crate::utils::{convert_to_async_body, convert_to_sdk_body};
 
@@ -23,12 +22,12 @@ impl std::fmt::Debug for AwsHttpConnector {
 impl AwsConnector for AwsHttpConnector {
     fn call(&self, request: AwsHttpRequest) -> AwsConnectorFuture {
         // convert AwsHttpRequest to Request<T>
-        let mut aws_req = match request.try_into_http1x() {
+        let aws_req = match request.try_into_http1x() {
             Ok(req) => req,
             Err(e) => return HttpConnectorFuture::ready(Err(ConnectorError::other(e.into(), None))),
         };
 
-        let (mut parts, aws_body) = aws_req.into_parts();
+        let (parts, aws_body) = aws_req.into_parts();
 
         let coerced_body = convert_to_async_body(aws_body);
 

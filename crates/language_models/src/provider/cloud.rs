@@ -46,7 +46,6 @@ use ui::{prelude::*, TintColor};
 use crate::provider::anthropic::map_to_language_model_completion_events;
 use crate::AllLanguageModelSettings;
 use super::anthropic::count_anthropic_tokens;
-use super::bedrock::get_bedrock_tokens;
 
 pub const PROVIDER_NAME: &str = "Zed";
 
