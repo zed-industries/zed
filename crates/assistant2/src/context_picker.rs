@@ -6,10 +6,12 @@ mod thread_context_picker;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::{anyhow, Result};
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakModel, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Task, View, WeakModel,
+    WeakView,
 };
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
@@ -237,7 +239,8 @@ impl ContextPicker {
                     },
                     move |cx| {
                         context_picker.update(cx, |this, cx| {
-                            this.add_recent_thread(thread.clone(), cx);
+                            this.add_recent_thread(thread.clone(), cx)
+                                .detach_and_log_err(cx);
                         })
                     },
                 )
@@ -260,25 +263,32 @@ impl ContextPicker {
         cx.notify();
     }
 
-    fn add_recent_thread(&self, thread: ThreadContextEntry, cx: &mut ViewContext<Self>) {
+    fn add_recent_thread(
+        &self,
+        thread: ThreadContextEntry,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
-            return;
+            return Task::ready(Err(anyhow!("context store not available")));
         };
 
-        let Some(thread) = self
+        let Some(thread_store) = self
             .thread_store
-            .clone()
-            .and_then(|this| this.upgrade())
-            .and_then(|this| this.update(cx, |this, cx| this.open_thread(&thread.id, cx)))
+            .as_ref()
+            .and_then(|thread_store| thread_store.upgrade())
         else {
-            return;
+            return Task::ready(Err(anyhow!("thread store not available")));
         };
 
-        context_store.update(cx, |context_store, cx| {
-            context_store.add_thread(thread, cx);
-        });
+        let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&thread.id, cx));
+        cx.spawn(|this, mut cx| async move {
+            let thread = open_thread_task.await?;
+            context_store.update(&mut cx, |context_store, cx| {
+                context_store.add_thread(thread, cx);
+            })?;
 
-        cx.notify();
+            this.update(&mut cx, |_this, cx| cx.notify())
+        })
     }
 
     fn recent_entries(&self, cx: &mut WindowContext) -> Vec<RecentEntry> {
@@ -332,19 +342,17 @@ impl ContextPicker {
             return recent;
         };
 
-        thread_store.update(cx, |thread_store, cx| {
+        thread_store.update(cx, |thread_store, _cx| {
             recent.extend(
                 thread_store
-                    .threads(cx)
+                    .threads()
                     .into_iter()
-                    .filter(|thread| !current_threads.contains(thread.read(cx).id()))
+                    .filter(|thread| !current_threads.contains(&thread.id))
                     .take(2)
                     .map(|thread| {
-                        let thread = thread.read(cx);
-
                         RecentEntry::Thread(ThreadContextEntry {
-                            id: thread.id().clone(),
-                            summary: thread.summary_or_default(),
+                            id: thread.id,
+                            summary: thread.summary,
                         })
                     }),
             )

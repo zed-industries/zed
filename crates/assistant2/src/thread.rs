@@ -18,6 +18,7 @@ use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
 use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
+use crate::thread_store::SavedThread;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -83,6 +84,40 @@ impl Thread {
             pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            context: BTreeMap::default(),
+            context_by_message: HashMap::default(),
+            completion_count: 0,
+            pending_completions: Vec::new(),
+            tools,
+            tool_uses_by_message: HashMap::default(),
+            tool_results_by_message: HashMap::default(),
+            pending_tool_uses_by_id: HashMap::default(),
+        }
+    }
+
+    pub fn from_saved(
+        id: ThreadId,
+        saved: SavedThread,
+        tools: Arc<ToolWorkingSet>,
+        _cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let next_message_id = MessageId(saved.messages.len());
+
+        Self {
+            id,
+            updated_at: saved.updated_at,
+            summary: Some(saved.summary),
+            pending_summary: Task::ready(None),
+            messages: saved
+                .messages
+                .into_iter()
+                .map(|message| Message {
+                    id: message.id,
+                    role: message.role,
+                    text: message.text,
+                })
+                .collect(),
+            next_message_id,
             context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             completion_count: 0,
