@@ -43,10 +43,6 @@ pub struct Assistant2FeatureFlag;
 
 impl FeatureFlag for Assistant2FeatureFlag {
     const NAME: &'static str = "assistant2";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 
 pub struct ToolUseFeatureFlag;

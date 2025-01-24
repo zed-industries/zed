@@ -12,6 +12,7 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
+use assistant_context_editor::AssistantPanelDelegate;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
@@ -48,6 +49,7 @@ use std::rc::Rc;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
+use ui::PopoverMenuHandle;
 use util::markdown::MarkdownString;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
@@ -168,12 +170,26 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
+<<<<<<< HEAD
         let inline_completion_button = cx.new_model(|cx| {
+=======
+        let popover_menu_handle = PopoverMenuHandle::default();
+
+        let inline_completion_button = cx.new_view(|cx| {
+>>>>>>> main
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
+                app_state.user_store.clone(),
+                popover_menu_handle.clone(),
                 cx,
             )
+        });
+
+        workspace.register_action({
+            move |_, _: &inline_completion_button::ToggleMenu, cx| {
+                popover_menu_handle.toggle(cx);
+            }
         });
 
         let diagnostic_summary =
@@ -367,8 +383,6 @@ fn initialize_panels(
             workspace_handle.clone(),
             cx.clone(),
         );
-        let assistant_panel =
-            assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
         let (
             project_panel,
@@ -377,7 +391,6 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
-            assistant_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -385,9 +398,9 @@ fn initialize_panels(
             channels_panel,
             chat_panel,
             notification_panel,
-            assistant_panel,
         )?;
 
+<<<<<<< HEAD
         workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
@@ -396,6 +409,15 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             workspace.add_panel(assistant_panel, window, cx)
+=======
+        workspace_handle.update(&mut cx, |workspace, cx| {
+            workspace.add_panel(project_panel, cx);
+            workspace.add_panel(outline_panel, cx);
+            workspace.add_panel(terminal_panel, cx);
+            workspace.add_panel(channels_panel, cx);
+            workspace.add_panel(chat_panel, cx);
+            workspace.add_panel(notification_panel, cx);
+>>>>>>> main
         })?;
 
         let git_ui_enabled = {
@@ -408,6 +430,7 @@ fn initialize_panels(
                 _ = timeout => false,
             }
         };
+
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {
@@ -431,20 +454,64 @@ fn initialize_panels(
                 _ = timeout => false,
             }
         };
-        let assistant2_panel = if is_assistant2_enabled {
-            Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
+
+        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+            let assistant2_panel = assistant2::AssistantPanel::load(
+                workspace_handle.clone(),
+                prompt_builder,
+                cx.clone(),
+            )
+            .await?;
+
+            (None, Some(assistant2_panel))
         } else {
-            None
+            let assistant_panel = assistant::AssistantPanel::load(
+                workspace_handle.clone(),
+                prompt_builder.clone(),
+                cx.clone(),
+            )
+            .await?;
+
+            (Some(assistant_panel), None)
         };
+<<<<<<< HEAD
         workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+=======
+
+        workspace_handle.update(&mut cx, |workspace, cx| {
+>>>>>>> main
             if let Some(assistant2_panel) = assistant2_panel {
                 workspace.add_panel(assistant2_panel, window, cx);
             }
 
+            if let Some(assistant_panel) = assistant_panel {
+                workspace.add_panel(assistant_panel, cx);
+            }
+
+            // Register the actions that are shared between `assistant` and `assistant2`.
+            //
+            // We need to do this here instead of within the individual `init`
+            // functions so that we only register the actions once.
+            //
+            // Once we ship `assistant2` we can push this back down into `assistant2::assistant_panel::init`.
             if is_assistant2_enabled {
-                workspace.register_action(assistant2::InlineAssistant::inline_assist);
+                <dyn AssistantPanelDelegate>::set_global(
+                    Arc::new(assistant2::ConcreteAssistantPanelDelegate),
+                    cx,
+                );
+
+                workspace
+                    .register_action(assistant2::AssistantPanel::toggle_focus)
+                    .register_action(assistant2::InlineAssistant::inline_assist);
             } else {
-                workspace.register_action(assistant::AssistantPanel::inline_assist);
+                <dyn AssistantPanelDelegate>::set_global(
+                    Arc::new(assistant::assistant_panel::ConcreteAssistantPanelDelegate),
+                    cx,
+                );
+
+                workspace
+                    .register_action(assistant::AssistantPanel::toggle_focus)
+                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 
@@ -1098,42 +1165,39 @@ pub fn handle_keymap_file_changes(
     let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
 
     cx.spawn(move |cx| async move {
-        let mut user_key_bindings = Vec::new();
+        let mut user_keymap_content = String::new();
         loop {
             select_biased! {
-                _ = base_keymap_rx.next() => {}
-                _ = keyboard_layout_rx.next() => {}
-                user_keymap_content = user_keymap_file_rx.next() => {
-                    if let Some(user_keymap_content) = user_keymap_content {
-                        cx.update(|cx| {
-                            let load_result = KeymapFile::load(&user_keymap_content, cx);
-                            match load_result {
-                                KeymapFileLoadResult::Success { key_bindings } => {
-                                    user_key_bindings = key_bindings;
-                                    dismiss_app_notification(&notification_id, cx);
-                                }
-                                KeymapFileLoadResult::SomeFailedToLoad {
-                                    key_bindings,
-                                    error_message
-                                } => {
-                                    user_key_bindings = key_bindings;
-                                    show_keymap_file_load_error(notification_id.clone(), error_message, cx);
-                                }
-                                KeymapFileLoadResult::AllFailedToLoad {
-                                    error_message
-                                } => {
-                                    show_keymap_file_load_error(notification_id.clone(), error_message, cx);
-                                }
-                                KeymapFileLoadResult::JsonParseFailure { error } => {
-                                    show_keymap_file_json_error(notification_id.clone(), error, cx);
-                                }
-                            };
-                        }).ok();
+                _ = base_keymap_rx.next() => {},
+                _ = keyboard_layout_rx.next() => {},
+                content = user_keymap_file_rx.next() => {
+                    if let Some(content) = content {
+                        user_keymap_content = content;
                     }
                 }
-            }
-            cx.update(|cx| reload_keymaps(cx, user_key_bindings.clone()))
-                .ok();
+            };
+            cx.update(|cx| {
+                let load_result = KeymapFile::load(&user_keymap_content, cx);
+                match load_result {
+                    KeymapFileLoadResult::Success { key_bindings } => {
+                        reload_keymaps(cx, key_bindings);
+                        dismiss_app_notification(&notification_id, cx);
+                    }
+                    KeymapFileLoadResult::SomeFailedToLoad {
+                        key_bindings,
+                        error_message,
+                    } => {
+                        if !key_bindings.is_empty() {
+                            reload_keymaps(cx, key_bindings);
+                        }
+                        show_keymap_file_load_error(notification_id.clone(), error_message, cx)
+                    }
+                    KeymapFileLoadResult::JsonParseFailure { error } => {
+                        show_keymap_file_json_error(notification_id.clone(), &error, cx)
+                    }
+                }
+            })
+            .ok();
         }
     })
     .detach();
@@ -1141,7 +1205,7 @@ pub fn handle_keymap_file_changes(
 
 fn show_keymap_file_json_error(
     notification_id: NotificationId,
-    error: anyhow::Error,
+    error: &anyhow::Error,
     cx: &mut AppContext,
 ) {
     let message: SharedString =
@@ -1202,7 +1266,7 @@ fn show_keymap_file_load_error(
             })
             .log_err();
         })
-        .log_err();
+        .ok();
     })
     .detach();
 }
@@ -1519,7 +1583,7 @@ mod tests {
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
-        WorkspaceHandle,
+        WorkspaceHandle, SERIALIZATION_THROTTLE_TIME,
     };
 
     #[gpui::test]
@@ -2952,7 +3016,9 @@ mod tests {
             })
             .unwrap();
 
-        cx.run_until_parked();
+        cx.background_executor
+            .advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.update(|_| {});
         editor_1.assert_released();
         editor_2.assert_released();
         buffer.assert_released();
@@ -3964,8 +4030,13 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            let prompt_builder =
-                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
+            let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
+            assistant::init(
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                prompt_builder.clone(),
+                cx,
+            );
             repl::init(app_state.fs.clone(), cx);
             repl::notebook::init(cx);
             tasks_ui::init(cx);

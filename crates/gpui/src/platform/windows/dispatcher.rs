@@ -21,7 +21,7 @@ use windows::{
     },
 };
 
-use crate::{PlatformDispatcher, TaskLabel, WM_ZED_EVENT_DISPATCHED_ON_MAIN_THREAD};
+use crate::{PlatformDispatcher, TaskLabel, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 
 pub(crate) struct WindowsDispatcher {
     main_sender: Sender<Runnable>,
@@ -105,7 +105,7 @@ impl PlatformDispatcher for WindowsDispatcher {
             unsafe {
                 PostThreadMessageW(
                     self.main_thread_id_win32,
-                    WM_ZED_EVENT_DISPATCHED_ON_MAIN_THREAD,
+                    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
                     WPARAM(self.validation_number),
                     LPARAM(0),
                 )

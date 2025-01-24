@@ -9,7 +9,7 @@ use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
-use editor::{scroll::Autoscroll, Bias, Editor};
+use editor::Editor;
 use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
@@ -1235,6 +1235,7 @@ impl PickerDelegate for FileFinderDelegate {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
+<<<<<<< HEAD
                                 .update_in(&mut cx, |editor, window, cx| {
                                     let snapshot = editor.snapshot(window, cx).display_snapshot;
                                     let point = snapshot
@@ -1246,6 +1247,10 @@ impl PickerDelegate for FileFinderDelegate {
                                         cx,
                                         |s| s.select_ranges([point..point]),
                                     );
+=======
+                                .update(&mut cx, |editor, cx| {
+                                    editor.go_to_singleton_buffer_point(Point::new(row, col), cx);
+>>>>>>> main
                                 })
                                 .log_err();
                         }

@@ -5,11 +5,7 @@ pub mod terminal_scrollbar;
 pub mod terminal_tab_tooltip;
 
 use collections::HashSet;
-use editor::{
-    actions::SelectAll,
-    scroll::{Autoscroll, ScrollbarAutoHide},
-    Editor, EditorSettings,
-};
+use editor::{actions::SelectAll, scroll::ScrollbarAutoHide, Editor, EditorSettings};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
@@ -17,7 +13,6 @@ use gpui::{
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task,
     WeakModel,
 };
-use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
 use schemars::JsonSchema;
@@ -56,7 +51,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
-use zed_actions::InlineAssist;
+use zed_actions::assistant::InlineAssist;
 
 use std::{
     cmp,
@@ -949,22 +944,29 @@ fn subscribe_for_terminal_events(
                                     if let Some(active_editor) = opened_item.downcast::<Editor>() {
                                         active_editor
                                             .downgrade()
+<<<<<<< HEAD
                                             .update_in(&mut cx, |editor, window, cx| {
                                                 let snapshot =
                                                     editor.snapshot(window, cx).display_snapshot;
                                                 let point = snapshot.buffer_snapshot.clip_point(
+=======
+                                            .update(&mut cx, |editor, cx| {
+                                                editor.go_to_singleton_buffer_point(
+>>>>>>> main
                                                     language::Point::new(
                                                         row.saturating_sub(1),
                                                         col.saturating_sub(1),
                                                     ),
+<<<<<<< HEAD
                                                     Bias::Left,
                                                 );
                                                 editor.change_selections(
                                                     Some(Autoscroll::center()),
                                                     window,
+=======
+>>>>>>> main
                                                     cx,
-                                                    |s| s.select_ranges([point..point]),
-                                                );
+                                                )
                                             })
                                             .log_err();
                                     }

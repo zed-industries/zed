@@ -15,7 +15,9 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
+use git_ui::repository_selector::RepositorySelector;
+use git_ui::repository_selector::RepositorySelectorPopoverMenu;
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, ModelContext, MouseButton, ParentElement, Render, Stateful,
@@ -25,6 +27,7 @@ use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -41,7 +44,7 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(
     collab,
@@ -101,6 +104,7 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
+    repository_selector: View<RepositorySelector>,
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -108,6 +112,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<Model<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
+    git_ui_enabled: Arc<AtomicBool>,
 }
 
 impl Render for TitleBar {
@@ -184,6 +189,7 @@ impl Render for TitleBar {
                                         title_bar
                                             .children(self.render_project_host(cx))
                                             .child(self.render_project_name(cx))
+                                            .children(self.render_current_repository(cx))
                                             .children(self.render_project_branch(cx))
                                     })
                             })
@@ -292,17 +298,27 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
+        let is_git_ui_enabled = Arc::new(AtomicBool::new(false));
+        subscriptions.push(cx.observe_flag::<GitUiFeatureFlag, _>({
+            let is_git_ui_enabled = is_git_ui_enabled.clone();
+            move |enabled, _cx| {
+                is_git_ui_enabled.store(enabled, Ordering::SeqCst);
+            }
+        }));
+
         Self {
             platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
+            repository_selector: cx.new_view(|cx| RepositorySelector::new(project.clone(), cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
             user_store,
             client,
             _subscriptions: subscriptions,
+            git_ui_enabled: is_git_ui_enabled,
         }
     }
 
@@ -484,7 +500,49 @@ impl TitleBar {
             }))
     }
 
+<<<<<<< HEAD
     pub fn render_project_branch(&self, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+=======
+    // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
+    pub fn render_current_repository(
+        &self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<impl IntoElement> {
+        if !self.git_ui_enabled.load(Ordering::SeqCst) {
+            return None;
+        }
+
+        let active_repository = self.project.read(cx).active_repository(cx)?;
+        let display_name = active_repository.display_name(self.project.read(cx), cx);
+
+        // TODO: what to render if no active repository?
+        Some(RepositorySelectorPopoverMenu::new(
+            self.repository_selector.clone(),
+            ButtonLike::new("active-repository")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex().w_full().gap_0p5().child(
+                        div()
+                            .overflow_x_hidden()
+                            .flex_grow()
+                            .whitespace_nowrap()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(display_name)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .into_any_element(),
+                            ),
+                    ),
+                ),
+        ))
+    }
+
+    pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
+>>>>>>> main
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -706,6 +764,7 @@ impl TitleBar {
                     .into()
                 })
                 .trigger(
+<<<<<<< HEAD
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex().gap_0p5().child(
@@ -716,6 +775,11 @@ impl TitleBar {
                         )
                         .style(ButtonStyle::Subtle)
                         .tooltip(Tooltip::text("Toggle User Menu")),
+=======
+                    IconButton::new("user-menu", IconName::ChevronDown)
+                        .icon_size(IconSize::Small)
+                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+>>>>>>> main
                 )
         }
     }

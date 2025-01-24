@@ -29,8 +29,13 @@ use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use editor::{display_map::ToDisplayPoint, movement};
+<<<<<<< HEAD
 use gpui::{actions, ModelContext, Window};
 use language::{Point, SelectionGoal};
+=======
+use gpui::{actions, ViewContext};
+use language::{Point, SelectionGoal, ToPoint};
+>>>>>>> main
 use log::error;
 use multi_buffer::MultiBufferRow;
 
@@ -56,6 +61,7 @@ actions!(
         ConvertToUpperCase,
         ConvertToLowerCase,
         ToggleComments,
+        ShowLocation,
         Undo,
         Redo,
     ]
@@ -75,6 +81,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, Vim::yank_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
+    Vim::action(editor, cx, Vim::show_location);
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
         vim.record_current_action(cx);
@@ -467,12 +474,55 @@ impl Vim {
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }
 
+<<<<<<< HEAD
     fn toggle_comments(
         &mut self,
         _: &ToggleComments,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
+=======
+    fn show_location(&mut self, _: &ShowLocation, cx: &mut ViewContext<Self>) {
+        let count = Vim::take_count(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            let selection = editor.selections.newest_anchor();
+            if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
+                let filename = if let Some(file) = buffer.read(cx).file() {
+                    if count.is_some() {
+                        if let Some(local) = file.as_local() {
+                            local.abs_path(cx).to_string_lossy().to_string()
+                        } else {
+                            file.full_path(cx).to_string_lossy().to_string()
+                        }
+                    } else {
+                        file.path().to_string_lossy().to_string()
+                    }
+                } else {
+                    "[No Name]".into()
+                };
+                let buffer = buffer.read(cx);
+                let snapshot = buffer.snapshot();
+                let lines = buffer.max_point().row + 1;
+                let current_line = selection.head().text_anchor.to_point(&snapshot).row;
+                let percentage = current_line as f32 / lines as f32;
+                let modified = if buffer.is_dirty() { " [modified]" } else { "" };
+                vim.status_label = Some(
+                    format!(
+                        "{}{} {} lines --{:.0}%--",
+                        filename,
+                        modified,
+                        lines,
+                        percentage * 100.0,
+                    )
+                    .into(),
+                );
+                cx.notify();
+            }
+        });
+    }
+
+    fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
+>>>>>>> main
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

@@ -41,9 +41,14 @@ pub struct ContextMenuEntry {
     toggle: Option<(IconPosition, bool)>,
     label: SharedString,
     icon: Option<IconName>,
-    icon_size: IconSize,
     icon_position: IconPosition,
+<<<<<<< HEAD
     handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
+=======
+    icon_size: IconSize,
+    icon_color: Option<Color>,
+    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+>>>>>>> main
     action: Option<Box<dyn Action>>,
     disabled: bool,
 }
@@ -54,9 +59,14 @@ impl ContextMenuEntry {
             toggle: None,
             label: label.into(),
             icon: None,
-            icon_size: IconSize::Small,
             icon_position: IconPosition::Start,
+<<<<<<< HEAD
             handler: Rc::new(|_, _, _| {}),
+=======
+            icon_size: IconSize::Small,
+            icon_color: None,
+            handler: Rc::new(|_, _| {}),
+>>>>>>> main
             action: None,
             disabled: false,
         }
@@ -74,6 +84,11 @@ impl ContextMenuEntry {
 
     pub fn icon_size(mut self, icon_size: IconSize) -> Self {
         self.icon_size = icon_size;
+        self
+    }
+
+    pub fn icon_color(mut self, icon_color: Color) -> Self {
+        self.icon_color = Some(icon_color);
         self
     }
 
@@ -148,7 +163,7 @@ impl ContextMenu {
                     delayed: false,
                     clicked: false,
                     _on_blur_subscription,
-                    keep_open_on_confirm: true,
+                    keep_open_on_confirm: false,
                 },
                 window,
                 cx,
@@ -192,8 +207,9 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
-            icon_size: IconSize::Small,
             icon_position: IconPosition::End,
+            icon_size: IconSize::Small,
+            icon_color: None,
             action,
             disabled: false,
         }));
@@ -213,8 +229,9 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             icon: None,
-            icon_size: IconSize::Small,
             icon_position: position,
+            icon_size: IconSize::Small,
+            icon_color: None,
             action,
             disabled: false,
         }));
@@ -265,6 +282,7 @@ impl ContextMenu {
             icon: None,
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
+            icon_color: None,
             disabled: false,
         }));
         self
@@ -289,6 +307,7 @@ impl ContextMenu {
             icon: None,
             icon_size: IconSize::Small,
             icon_position: IconPosition::End,
+            icon_color: None,
             disabled: true,
         }));
         self
@@ -304,6 +323,7 @@ impl ContextMenu {
             icon: Some(IconName::ArrowUpRight),
             icon_size: IconSize::XSmall,
             icon_position: IconPosition::End,
+            icon_color: None,
             disabled: false,
         }));
         self
@@ -525,39 +545,52 @@ impl Render for ContextMenu {
                                     label,
                                     handler,
                                     icon,
-                                    icon_size,
                                     icon_position,
+                                    icon_size,
+                                    icon_color,
                                     action,
                                     disabled,
                                 }) => {
                                     let handler = handler.clone();
+<<<<<<< HEAD
                                     let menu = cx.model().downgrade();
                                     let color = if *disabled {
+=======
+                                    let menu = cx.view().downgrade();
+                                    let icon_color = if *disabled {
+                                        Color::Muted
+                                    } else {
+                                        icon_color.unwrap_or(Color::Default)
+                                    };
+                                    let label_color = if *disabled {
+>>>>>>> main
                                         Color::Muted
                                     } else {
                                         Color::Default
                                     };
                                     let label_element = if let Some(icon_name) = icon {
                                         h_flex()
-                                            .gap_1()
+                                            .gap_1p5()
                                             .when(*icon_position == IconPosition::Start, |flex| {
                                                 flex.child(
                                                     Icon::new(*icon_name)
                                                         .size(*icon_size)
-                                                        .color(color),
+                                                        .color(icon_color),
                                                 )
                                             })
-                                            .child(Label::new(label.clone()).color(color))
+                                            .child(Label::new(label.clone()).color(label_color))
                                             .when(*icon_position == IconPosition::End, |flex| {
                                                 flex.child(
                                                     Icon::new(*icon_name)
                                                         .size(*icon_size)
-                                                        .color(color),
+                                                        .color(icon_color),
                                                 )
                                             })
                                             .into_any_element()
                                     } else {
-                                        Label::new(label.clone()).color(color).into_any_element()
+                                        Label::new(label.clone())
+                                            .color(label_color)
+                                            .into_any_element()
                                     };
 
                                     ListItem::new(ix)

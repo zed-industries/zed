@@ -18,6 +18,7 @@ use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
+use project::Fs;
 use serde_json::{json, Value};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
@@ -250,6 +251,7 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
@@ -931,6 +933,7 @@ impl LspAdapter for PyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,

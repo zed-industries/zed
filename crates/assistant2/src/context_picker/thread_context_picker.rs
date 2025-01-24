@@ -104,6 +104,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         "Search threads…".into()
     }
 
+<<<<<<< HEAD
     fn update_matches(
         &mut self,
         query: String,
@@ -112,11 +113,15 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     ) -> Task<()> {
         let Ok(threads) = self.thread_store.update(cx, |this, cx| {
             this.threads(cx)
+=======
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        let Ok(threads) = self.thread_store.update(cx, |this, _cx| {
+            this.threads()
+>>>>>>> main
                 .into_iter()
-                .map(|thread| {
-                    let id = thread.read(cx).id().clone();
-                    let summary = thread.read(cx).summary_or_default();
-                    ThreadContextEntry { id, summary }
+                .map(|thread| ThreadContextEntry {
+                    id: thread.id,
+                    summary: thread.summary,
                 })
                 .collect::<Vec<_>>()
         }) else {
@@ -175,19 +180,30 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             return;
         };
 
-        let Some(thread) = thread_store.update(cx, |this, cx| this.open_thread(&entry.id, cx))
-        else {
-            return;
-        };
+        let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&entry.id, cx));
 
-        self.context_store
-            .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
-            .ok();
+        cx.spawn(|this, mut cx| async move {
+            let thread = open_thread_task.await?;
+            this.update(&mut cx, |this, cx| {
+                this.delegate
+                    .context_store
+                    .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
+                    .ok();
 
+<<<<<<< HEAD
         match self.confirm_behavior {
             ConfirmBehavior::KeepOpen => {}
             ConfirmBehavior::Close => self.dismissed(window, cx),
         }
+=======
+                match this.delegate.confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+>>>>>>> main
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
@@ -223,9 +239,13 @@ pub fn render_thread_context_entry(
     });
 
     h_flex()
-        .gap_1()
+        .gap_1p5()
         .w_full()
-        .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
+        .child(
+            Icon::new(IconName::MessageCircle)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        )
         .child(Label::new(thread.summary.clone()))
         .child(div().w_full())
         .when(added, |el| {

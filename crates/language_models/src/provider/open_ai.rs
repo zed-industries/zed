@@ -362,9 +362,7 @@ pub fn count_open_ai_tokens(
                 .collect::<Vec<_>>();
 
             match model {
-                open_ai::Model::Custom { .. }
-                | open_ai::Model::O1Mini
-                | open_ai::Model::O1Preview => {
+                open_ai::Model::Custom { .. } | open_ai::Model::O1Mini | open_ai::Model::O1 => {
                     tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
                 }
                 _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),

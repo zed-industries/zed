@@ -1,7 +1,6 @@
-use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
-    assistant_panel, AssistantEditKind, CacheStatus, Context, ContextEvent, ContextId,
-    ContextOperation, InvokedSlashCommandId, MessageId, MessageStatus,
+    AssistantEdit, AssistantEditKind, CacheStatus, Context, ContextEvent, ContextId,
+    ContextOperation, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -48,7 +47,6 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -189,7 +187,6 @@ fn test_message_splitting(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
     LanguageModelRegistry::test(cx);
-    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
@@ -294,7 +291,6 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -390,7 +386,6 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     cx.set_global(settings_store);
     cx.update(LanguageModelRegistry::test);
     cx.update(Project::init_settings);
-    cx.update(assistant_panel::init);
     let fs = FakeFs::new(cx.background_executor.clone());
 
     fs.insert_tree(
@@ -698,7 +693,6 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     let project = Project::test(fs, [Path::new("/root")], cx).await;
     cx.update(LanguageModelRegistry::test);
 
-    cx.update(assistant_panel::init);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
     // Create a new context
@@ -1081,7 +1075,6 @@ async fn test_serialization(cx: &mut TestAppContext) {
     let settings_store = cx.update(SettingsStore::test);
     cx.set_global(settings_store);
     cx.update(LanguageModelRegistry::test);
-    cx.update(assistant_panel::init);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {
@@ -1173,7 +1166,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     cx.set_global(settings_store);
     cx.update(LanguageModelRegistry::test);
 
-    cx.update(assistant_panel::init);
     let slash_commands = cx.update(SlashCommandRegistry::default_global);
     slash_commands.register_command(FakeSlashCommand("cmd-1".into()), false);
     slash_commands.register_command(FakeSlashCommand("cmd-2".into()), false);
@@ -1446,7 +1438,6 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
-    assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context = cx.new_model(|cx| {

@@ -22,6 +22,7 @@ use gpui::{Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Upda
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
+use prompt_library::PromptBuilder;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
@@ -436,17 +437,22 @@ fn main() {
             cx,
         );
         snippet_provider::init(cx);
-        inline_completion_registry::init(app_state.client.clone(), cx);
-        let prompt_builder = assistant::init(
+        inline_completion_registry::init(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        );
+        let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
+        assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),
-            stdout_is_a_pty(),
+            prompt_builder.clone(),
             cx,
         );
         assistant2::init(
             app_state.fs.clone(),
             app_state.client.clone(),
-            stdout_is_a_pty(),
+            prompt_builder.clone(),
             cx,
         );
         assistant_tools::init(cx);

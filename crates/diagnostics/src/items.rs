@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use editor::{AnchorRangeExt, Editor};
+use editor::Editor;
 use gpui::{
     EventEmitter, IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
     Task, WeakModel, Window,
 };
-use language::{Diagnostic, DiagnosticEntry};
+use language::Diagnostic;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
@@ -160,11 +160,7 @@ impl DiagnosticIndicator {
             (buffer, cursor_position)
         });
         let new_diagnostic = buffer
-            .diagnostics_in_range(cursor_position..cursor_position, false)
-            .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
-                diagnostic,
-                range: range.to_offset(&buffer),
-            })
+            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);

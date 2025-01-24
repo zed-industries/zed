@@ -6,9 +6,17 @@ mod thread_context_picker;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::{anyhow, Result};
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
+<<<<<<< HEAD
 use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, WeakModel};
+=======
+use gpui::{
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Task, View, WeakModel,
+    WeakView,
+};
+>>>>>>> main
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
@@ -40,7 +48,12 @@ enum ContextPickerMode {
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
+<<<<<<< HEAD
     workspace: WeakModel<Workspace>,
+=======
+    workspace: WeakView<Workspace>,
+    editor: WeakView<Editor>,
+>>>>>>> main
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -51,6 +64,7 @@ impl ContextPicker {
         workspace: WeakModel<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
+        editor: WeakView<Editor>,
         confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -64,6 +78,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            editor,
             confirm_behavior,
         }
     }
@@ -80,6 +95,7 @@ impl ContextPicker {
     ) -> Model<ContextMenu> {
         let context_picker = cx.model().clone();
 
+<<<<<<< HEAD
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let kind_entry = |kind: &'static ContextKind| {
                 let context_picker = context_picker.clone();
@@ -91,6 +107,9 @@ impl ContextPicker {
                     })
             };
 
+=======
+        let menu = ContextMenu::build(cx, move |menu, cx| {
+>>>>>>> main
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
@@ -98,11 +117,41 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
+            let mut context_kinds = vec![
+                ContextKind::File,
+                ContextKind::Directory,
+                ContextKind::FetchedUrl,
+            ];
+            if self.allow_threads() {
+                context_kinds.push(ContextKind::Thread);
+            }
+
             let menu = menu
-                .when(has_recent, |menu| menu.label("Recent"))
+                .when(has_recent, |menu| {
+                    menu.custom_row(|_| {
+                        div()
+                            .mb_1()
+                            .child(
+                                Label::new("Recent")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                })
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
-                .extend(ContextKind::all().into_iter().map(kind_entry));
+                .extend(context_kinds.into_iter().map(|kind| {
+                    let context_picker = context_picker.clone();
+
+                    ContextMenuEntry::new(kind.label())
+                        .icon(kind.icon())
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .handler(move |cx| {
+                            context_picker.update(cx, |this, cx| this.select_kind(kind, cx))
+                        })
+                }));
 
             match self.confirm_behavior {
                 ConfirmBehavior::KeepOpen => menu.keep_open_on_confirm(),
@@ -118,8 +167,18 @@ impl ContextPicker {
         menu
     }
 
+<<<<<<< HEAD
     fn select_kind(&mut self, kind: ContextKind, window: &mut Window, cx: &mut ModelContext<Self>) {
         let context_picker = cx.model().downgrade();
+=======
+    /// Whether threads are allowed as context.
+    pub fn allow_threads(&self) -> bool {
+        self.thread_store.is_some()
+    }
+
+    fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
+        let context_picker = cx.view().downgrade();
+>>>>>>> main
 
         match kind {
             ContextKind::File => {
@@ -127,6 +186,7 @@ impl ContextPicker {
                     FileContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
+                        self.editor.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
                         window,
@@ -221,7 +281,8 @@ impl ContextPicker {
                     },
                     move |_window, cx| {
                         context_picker.update(cx, |this, cx| {
-                            this.add_recent_thread(thread.clone(), cx);
+                            this.add_recent_thread(thread.clone(), cx)
+                                .detach_and_log_err(cx);
                         })
                     },
                 )
@@ -251,25 +312,36 @@ impl ContextPicker {
         cx.notify();
     }
 
+<<<<<<< HEAD
     fn add_recent_thread(&self, thread: ThreadContextEntry, cx: &mut ModelContext<Self>) {
+=======
+    fn add_recent_thread(
+        &self,
+        thread: ThreadContextEntry,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+>>>>>>> main
         let Some(context_store) = self.context_store.upgrade() else {
-            return;
+            return Task::ready(Err(anyhow!("context store not available")));
         };
 
-        let Some(thread) = self
+        let Some(thread_store) = self
             .thread_store
-            .clone()
-            .and_then(|this| this.upgrade())
-            .and_then(|this| this.update(cx, |this, cx| this.open_thread(&thread.id, cx)))
+            .as_ref()
+            .and_then(|thread_store| thread_store.upgrade())
         else {
-            return;
+            return Task::ready(Err(anyhow!("thread store not available")));
         };
 
-        context_store.update(cx, |context_store, cx| {
-            context_store.add_thread(thread, cx);
-        });
+        let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&thread.id, cx));
+        cx.spawn(|this, mut cx| async move {
+            let thread = open_thread_task.await?;
+            context_store.update(&mut cx, |context_store, cx| {
+                context_store.add_thread(thread, cx);
+            })?;
 
-        cx.notify();
+            this.update(&mut cx, |_this, cx| cx.notify())
+        })
     }
 
     fn recent_entries(&self, cx: &mut AppContext) -> Vec<RecentEntry> {
@@ -323,19 +395,17 @@ impl ContextPicker {
             return recent;
         };
 
-        thread_store.update(cx, |thread_store, cx| {
+        thread_store.update(cx, |thread_store, _cx| {
             recent.extend(
                 thread_store
-                    .threads(cx)
+                    .threads()
                     .into_iter()
-                    .filter(|thread| !current_threads.contains(thread.read(cx).id()))
+                    .filter(|thread| !current_threads.contains(&thread.id))
                     .take(2)
                     .map(|thread| {
-                        let thread = thread.read(cx);
-
                         RecentEntry::Thread(ThreadContextEntry {
-                            id: thread.id().clone(),
-                            summary: thread.summary_or_default(),
+                            id: thread.id,
+                            summary: thread.summary,
                         })
                     }),
             )

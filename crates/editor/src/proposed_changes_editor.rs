@@ -60,10 +60,16 @@ impl ProposedChangesEditor {
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
+<<<<<<< HEAD
             editor: cx.new_model(|cx| {
                 let mut editor =
                     Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
                 editor.set_expand_all_diff_hunks();
+=======
+            editor: cx.new_view(|cx| {
+                let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, true, cx);
+                editor.set_expand_all_diff_hunks(cx);
+>>>>>>> main
                 editor.set_completion_provider(None);
                 editor.clear_code_action_providers();
                 editor.set_semantics_provider(
@@ -106,16 +112,10 @@ impl ProposedChangesEditor {
                                     let buffer = buffer.read(cx);
                                     let base_buffer = buffer.base_buffer()?;
                                     let buffer = buffer.text_snapshot();
-                                    let change_set = this.editor.update(cx, |editor, _| {
-                                        Some(
-                                            editor
-                                                .diff_map
-                                                .diff_bases
-                                                .get(&buffer.remote_id())?
-                                                .change_set
-                                                .clone(),
-                                        )
-                                    })?;
+                                    let change_set = this
+                                        .multibuffer
+                                        .read(cx)
+                                        .change_set_for(buffer.remote_id())?;
                                     Some(change_set.update(cx, |change_set, cx| {
                                         change_set.set_base_text(
                                             base_buffer.read(cx).text(),
@@ -196,7 +196,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_change_sets.push(cx.new_model(|cx| {
-                    let mut change_set = BufferChangeSet::new(branch_buffer.read(cx));
+                    let mut change_set = BufferChangeSet::new(&branch_buffer, cx);
                     let _ = change_set.set_base_text(
                         location.buffer.read(cx).text(),
                         branch_buffer.read(cx).text_snapshot(),
@@ -225,10 +225,19 @@ impl ProposedChangesEditor {
 
         self.buffer_entries = buffer_entries;
         self.editor.update(cx, |editor, cx| {
+<<<<<<< HEAD
             editor.change_selections(None, window, cx, |selections| selections.refresh());
             for change_set in new_change_sets {
                 editor.diff_map.add_change_set(change_set, window, cx)
             }
+=======
+            editor.change_selections(None, cx, |selections| selections.refresh());
+            editor.buffer.update(cx, |buffer, cx| {
+                for change_set in new_change_sets {
+                    buffer.add_change_set(change_set, cx)
+                }
+            })
+>>>>>>> main
         });
     }
 

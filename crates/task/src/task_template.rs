@@ -154,12 +154,26 @@ impl TaskTemplate {
             None => None,
         }
         .or(cx.cwd.clone());
-        let human_readable_label = substitute_all_template_variables_in_str(
+        let full_label = substitute_all_template_variables_in_str(
             &self.label,
-            &truncated_variables,
+            &task_variables,
             &variable_names,
             &mut substituted_variables,
-        )?
+        )?;
+
+        // Arbitrarily picked threshold below which we don't truncate any variables.
+        const TRUNCATION_THRESHOLD: usize = 64;
+
+        let human_readable_label = if full_label.len() > TRUNCATION_THRESHOLD {
+            substitute_all_template_variables_in_str(
+                &self.label,
+                &truncated_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?
+        } else {
+            full_label.clone()
+        }
         .lines()
         .fold(String::new(), |mut string, line| {
             if string.is_empty() {
@@ -170,12 +184,7 @@ impl TaskTemplate {
             }
             string
         });
-        let full_label = substitute_all_template_variables_in_str(
-            &self.label,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
+
         let command = substitute_all_template_variables_in_str(
             &self.command,
             &task_variables,

@@ -28,7 +28,7 @@ use anyhow::{bail, Result};
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    FutureExt,
+    FutureExt, SinkExt,
 };
 
 use mappings::mouse::{
@@ -53,7 +53,7 @@ use std::{
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use thiserror::Error;
 
@@ -482,66 +482,141 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &ModelContext<Terminal>) -> Terminal {
-        //Event loop
-        cx.spawn(|terminal, mut cx| async move {
-            while let Some(event) = self.events_rx.next().await {
-                terminal.update(&mut cx, |terminal, cx| {
-                    //Process the first event immediately for lowered latency
-                    terminal.process_event(&event, cx);
-                })?;
-
-                'outer: loop {
-                    let mut events = Vec::new();
-                    let mut timer = cx
-                        .background_executor()
-                        .timer(Duration::from_millis(4))
-                        .fuse();
-                    let mut wakeup = false;
-                    loop {
-                        futures::select_biased! {
-                            _ = timer => break,
-                            event = self.events_rx.next() => {
-                                if let Some(event) = event {
-                                    if matches!(event, AlacTermEvent::Wakeup) {
-                                        wakeup = true;
-                                    } else {
-                                        events.push(event);
-                                    }
-
-                                    if events.len() > 100 {
+    pub fn subscribe(self, cx: &ModelContext<Terminal>) -> Terminal {
+        // Accumulate the effects of events on a background thread in order to keep up with the
+        // events from alacritty even when it is emitting events rapidly.
+        let (mut accumulated_events_tx, mut accumulated_events_rx) = unbounded();
+        let mut events_rx = self.events_rx;
+        let background_executor = cx.background_executor().clone();
+        cx.background_executor()
+            .spawn(async move {
+                while let Some(event) = events_rx.next().await {
+                    // Process the first event immediately to reduce latency
+                    accumulated_events_tx
+                        .feed(EventOrAccumulator::Event(event))
+                        .await?;
+                    'outer: loop {
+                        let start_time = Instant::now();
+                        let mut timer = background_executor.timer(Duration::from_millis(4)).fuse();
+                        let mut event_accumulator = EventAccumulator::new();
+                        loop {
+                            futures::select_biased! {
+                                // Events are no longer coming in at a high rate, so go back to just
+                                // awaiting the next event.
+                                _ = timer => break 'outer,
+                                event = events_rx.next() => {
+                                    let Some(event) = event else {
+                                        break;
+                                    };
+                                    event_accumulator.add(event);
+                                    if event_accumulator.events.len() > 100 {
                                         break;
                                     }
-                                } else {
-                                    break;
-                                }
-                            },
+                                    let elapsed = Instant::now().duration_since(start_time);
+                                    if elapsed > Duration::from_millis(20) {
+                                        break;
+                                    }
+                                },
+                            }
                         }
+                        accumulated_events_tx
+                            .feed(EventOrAccumulator::Accumulator(event_accumulator))
+                            .await?;
                     }
-
-                    if events.is_empty() && !wakeup {
-                        smol::future::yield_now().await;
-                        break 'outer;
-                    }
-
-                    terminal.update(&mut cx, |this, cx| {
-                        if wakeup {
-                            this.process_event(&AlacTermEvent::Wakeup, cx);
-                        }
-
-                        for event in events {
-                            this.process_event(&event, cx);
-                        }
-                    })?;
-                    smol::future::yield_now().await;
                 }
-            }
+                anyhow::Ok(())
+            })
+            .detach();
 
+        // On the foreground thread, process the accumulated effects of events.
+        cx.spawn(|terminal, mut cx| async move {
+            while let Some(event_or_accumulator) = accumulated_events_rx.next().await {
+                terminal.update(&mut cx, |terminal, cx| {
+                    event_or_accumulator.process_events(terminal, cx)
+                })?;
+            }
             anyhow::Ok(())
         })
         .detach();
 
         self.terminal
+    }
+}
+
+enum EventOrAccumulator {
+    Event(AlacTermEvent),
+    Accumulator(EventAccumulator),
+}
+
+impl EventOrAccumulator {
+    fn process_events(self, terminal: &mut Terminal, cx: &mut ModelContext<Terminal>) {
+        match self {
+            EventOrAccumulator::Event(event) => terminal.process_event(event, cx),
+            EventOrAccumulator::Accumulator(accumulator) => {
+                accumulator.process_events(terminal, cx)
+            }
+        }
+    }
+}
+
+struct EventAccumulator {
+    wakeup: bool,
+    cursor_blinking_changed: bool,
+    bell: bool,
+    title: Option<String>,
+    /// Events that can't be deduplicated.
+    events: Vec<AlacTermEvent>,
+}
+
+impl EventAccumulator {
+    fn new() -> Self {
+        EventAccumulator {
+            wakeup: false,
+            cursor_blinking_changed: false,
+            bell: false,
+            title: None,
+            events: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, event: AlacTermEvent) {
+        match event {
+            // Events that can have their effects deduplicated.
+            AlacTermEvent::Title(title) => self.title = Some(title),
+            AlacTermEvent::ResetTitle => self.title = Some(String::new()),
+            AlacTermEvent::CursorBlinkingChange => self.cursor_blinking_changed = true,
+            AlacTermEvent::Wakeup => self.wakeup = true,
+            AlacTermEvent::Bell => self.bell = true,
+            // Events that have handlers involving writing text to the terminal or interacting with
+            // clipboard, and so must be kept in order.
+            AlacTermEvent::ClipboardStore(_, _) => self.events.push(event),
+            AlacTermEvent::ClipboardLoad(_, _) => self.events.push(event),
+            AlacTermEvent::PtyWrite(_) => self.events.push(event),
+            AlacTermEvent::TextAreaSizeRequest(_) => self.events.push(event),
+            AlacTermEvent::ColorRequest(_, _) => self.events.push(event),
+            AlacTermEvent::Exit => self.events.push(event),
+            AlacTermEvent::ChildExit(_) => self.events.push(event),
+            // Handled in render so no need to handle here.
+            AlacTermEvent::MouseCursorDirty => {}
+        }
+    }
+
+    fn process_events(self, terminal: &mut Terminal, cx: &mut ModelContext<Terminal>) {
+        if self.wakeup {
+            terminal.process_event(AlacTermEvent::Wakeup, cx);
+        }
+        if self.cursor_blinking_changed {
+            terminal.process_event(AlacTermEvent::CursorBlinkingChange, cx);
+        }
+        if self.bell {
+            terminal.process_event(AlacTermEvent::Bell, cx);
+        }
+        if let Some(title) = self.title {
+            terminal.process_event(AlacTermEvent::Title(title), cx);
+        }
+        for event in self.events {
+            terminal.process_event(event, cx);
+        }
     }
 }
 
@@ -674,7 +749,7 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
+    fn process_event(&mut self, event: AlacTermEvent, cx: &mut ModelContext<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
@@ -728,13 +803,12 @@ impl Terminal {
                 // Instead of locking, we could store the colors in `self.last_content`. But then
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
-                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
+                let color = self.term.lock().colors()[index]
+                    .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
                 self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(*error_code), cx);
+                self.register_task_finished(Some(error_code), cx);
             }
         }
     }

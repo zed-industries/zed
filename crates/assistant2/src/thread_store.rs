@@ -1,16 +1,23 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_tool::{ToolId, ToolWorkingSet};
+use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use gpui::{prelude::*, AppContext, Model, ModelContext, Task};
+use futures::future::{self, BoxFuture, Shared};
+use futures::FutureExt as _;
+use gpui::{prelude::*, AppContext, BackgroundExecutor, Model, ModelContext, SharedString, Task};
+use heed::types::SerdeBincode;
+use heed::Database;
+use language_model::Role;
 use project::Project;
-use unindent::Unindent;
+use serde::{Deserialize, Serialize};
 use util::ResultExt as _;
 
-use crate::thread::{Thread, ThreadId};
+use crate::thread::{MessageId, Thread, ThreadId};
 
 pub struct ThreadStore {
     #[allow(unused)]
@@ -18,7 +25,8 @@ pub struct ThreadStore {
     tools: Arc<ToolWorkingSet>,
     context_server_manager: Model<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
-    threads: Vec<Model<Thread>>,
+    threads: Vec<SavedThreadMetadata>,
+    database_future: Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
 }
 
 impl ThreadStore {
@@ -35,61 +43,138 @@ impl ThreadStore {
                     ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
                 });
 
-                let mut this = Self {
+                let executor = cx.background_executor().clone();
+                let database_future = executor
+                    .spawn({
+                        let executor = executor.clone();
+                        let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                        async move { ThreadsDatabase::new(database_path, executor) }
+                    })
+                    .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
+                    .boxed()
+                    .shared();
+
+                let this = Self {
                     project,
                     tools,
                     context_server_manager,
                     context_server_tool_ids: HashMap::default(),
                     threads: Vec::new(),
+                    database_future,
                 };
-                this.mock_recent_threads(cx);
                 this.register_context_server_handlers(cx);
 
                 this
             })?;
 
+            this.update(&mut cx, |this, cx| this.reload(cx))?.await?;
+
             Ok(this)
         })
     }
 
-    /// Returns the number of non-empty threads.
-    pub fn non_empty_len(&self, cx: &AppContext) -> usize {
-        self.threads
-            .iter()
-            .filter(|thread| !thread.read(cx).is_empty())
-            .count()
+    /// Returns the number of threads.
+    pub fn thread_count(&self) -> usize {
+        self.threads.len()
     }
 
-    pub fn threads(&self, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
-        let mut threads = self
-            .threads
-            .iter()
-            .filter(|thread| !thread.read(cx).is_empty())
-            .cloned()
-            .collect::<Vec<_>>();
-        threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.read(cx).updated_at()));
+    pub fn threads(&self) -> Vec<SavedThreadMetadata> {
+        let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
+        threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
     }
 
-    pub fn recent_threads(&self, limit: usize, cx: &ModelContext<Self>) -> Vec<Model<Thread>> {
-        self.threads(cx).into_iter().take(limit).collect()
+    pub fn recent_threads(&self, limit: usize) -> Vec<SavedThreadMetadata> {
+        self.threads().into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
-        let thread = cx.new_model(|cx| Thread::new(self.tools.clone(), cx));
-        self.threads.push(thread.clone());
-        thread
+        cx.new_model(|cx| Thread::new(self.tools.clone(), cx))
     }
 
-    pub fn open_thread(&self, id: &ThreadId, cx: &mut ModelContext<Self>) -> Option<Model<Thread>> {
-        self.threads
-            .iter()
-            .find(|thread| thread.read(cx).id() == id)
-            .cloned()
+    pub fn open_thread(
+        &self,
+        id: &ThreadId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Thread>>> {
+        let id = id.clone();
+        let database_future = self.database_future.clone();
+        cx.spawn(|this, mut cx| async move {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            let thread = database
+                .try_find_thread(id.clone())
+                .await?
+                .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
+
+            this.update(&mut cx, |this, cx| {
+                cx.new_model(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
+            })
+        })
     }
 
-    pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut ModelContext<Self>) {
-        self.threads.retain(|thread| thread.read(cx).id() != id);
+    pub fn save_thread(
+        &self,
+        thread: &Model<Thread>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let (metadata, thread) = thread.update(cx, |thread, _cx| {
+            let id = thread.id().clone();
+            let thread = SavedThread {
+                summary: thread.summary_or_default(),
+                updated_at: thread.updated_at(),
+                messages: thread
+                    .messages()
+                    .map(|message| SavedMessage {
+                        id: message.id,
+                        role: message.role,
+                        text: message.text.clone(),
+                    })
+                    .collect(),
+            };
+
+            (id, thread)
+        });
+
+        let database_future = self.database_future.clone();
+        cx.spawn(|this, mut cx| async move {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.save_thread(metadata, thread).await?;
+
+            this.update(&mut cx, |this, cx| this.reload(cx))?.await
+        })
+    }
+
+    pub fn delete_thread(
+        &mut self,
+        id: &ThreadId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let id = id.clone();
+        let database_future = self.database_future.clone();
+        cx.spawn(|this, mut cx| async move {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.delete_thread(id.clone()).await?;
+
+            this.update(&mut cx, |this, _cx| {
+                this.threads.retain(|thread| thread.id != id)
+            })
+        })
+    }
+
+    fn reload(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let database_future = self.database_future.clone();
+        cx.spawn(|this, mut cx| async move {
+            let threads = database_future
+                .await
+                .map_err(|err| anyhow!(err))?
+                .list_threads()
+                .await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.threads = threads;
+                cx.notify();
+            })
+        })
     }
 
     fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
@@ -159,133 +244,108 @@ impl ThreadStore {
     }
 }
 
-impl ThreadStore {
-    /// Creates some mocked recent threads for testing purposes.
-    fn mock_recent_threads(&mut self, cx: &mut ModelContext<Self>) {
-        use language_model::Role;
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedThreadMetadata {
+    pub id: ThreadId,
+    pub summary: SharedString,
+    pub updated_at: DateTime<Utc>,
+}
 
-        self.threads.push(cx.new_model(|cx| {
-            let mut thread = Thread::new(self.tools.clone(), cx);
-            thread.set_summary("Introduction to quantum computing", cx);
-            thread.insert_user_message("Hello! Can you help me understand quantum computing?", Vec::new(), cx);
-            thread.insert_message(Role::Assistant, "Of course! I'd be happy to help you understand quantum computing. Quantum computing is a fascinating field that uses the principles of quantum mechanics to process information. Unlike classical computers that use bits (0s and 1s), quantum computers use quantum bits or 'qubits'. These qubits can exist in multiple states simultaneously, a property called superposition. This allows quantum computers to perform certain calculations much faster than classical computers. What specific aspect of quantum computing would you like to know more about?", cx);
-            thread.insert_user_message("That's interesting! Can you explain how quantum entanglement is used in quantum computing?", Vec::new(), cx);
-            thread.insert_message(Role::Assistant, "Certainly! Quantum entanglement is a key principle used in quantum computing. When two qubits become entangled, the state of one qubit is directly related to the state of the other, regardless of the distance between them. This property is used in quantum computing to create complex quantum states and to perform operations on multiple qubits simultaneously. Entanglement allows quantum computers to process information in ways that classical computers cannot, potentially solving certain problems much more efficiently. For example, it's crucial in quantum error correction and in algorithms like quantum teleportation, which is important for quantum communication.", cx);
-            thread
-        }));
+#[derive(Serialize, Deserialize)]
+pub struct SavedThread {
+    pub summary: SharedString,
+    pub updated_at: DateTime<Utc>,
+    pub messages: Vec<SavedMessage>,
+}
 
-        self.threads.push(cx.new_model(|cx| {
-            let mut thread = Thread::new(self.tools.clone(), cx);
-            thread.set_summary("Rust web development and async programming", cx);
-            thread.insert_user_message("Can you show me an example of Rust code for a simple web server?", Vec::new(), cx);
-            thread.insert_message(Role::Assistant, "Certainly! Here's an example of a simple web server in Rust using the `actix-web` framework:
+#[derive(Serialize, Deserialize)]
+pub struct SavedMessage {
+    pub id: MessageId,
+    pub role: Role,
+    pub text: String,
+}
 
-        ```rust
-        use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+struct ThreadsDatabase {
+    executor: BackgroundExecutor,
+    env: heed::Env,
+    threads: Database<SerdeBincode<ThreadId>, SerdeBincode<SavedThread>>,
+}
 
-        async fn hello() -> impl Responder {
-            HttpResponse::Ok().body(\"Hello, World!\")
-        }
+impl ThreadsDatabase {
+    pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
+        std::fs::create_dir_all(&path)?;
 
-        #[actix_web::main]
-        async fn main() -> std::io::Result<()> {
-            HttpServer::new(|| {
-                App::new()
-                    .route(\"/\", web::get().to(hello))
-            })
-            .bind(\"127.0.0.1:8080\")?
-            .run()
-            .await
-        }
-        ```
+        const ONE_GB_IN_BYTES: usize = 1024 * 1024 * 1024;
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(ONE_GB_IN_BYTES)
+                .max_dbs(1)
+                .open(path)?
+        };
 
-        This code creates a basic web server that responds with 'Hello, World!' when you access the root URL. Here's a breakdown of what's happening:
+        let mut txn = env.write_txn()?;
+        let threads = env.create_database(&mut txn, Some("threads"))?;
+        txn.commit()?;
 
-        1. We import necessary items from the `actix-web` crate.
-        2. We define an async `hello` function that returns a simple HTTP response.
-        3. In the `main` function, we set up the server to listen on `127.0.0.1:8080`.
-        4. We configure the app to respond to GET requests on the root path with our `hello` function.
+        Ok(Self {
+            executor,
+            env,
+            threads,
+        })
+    }
 
-        To run this, you'd need to add `actix-web` to your `Cargo.toml` dependencies:
+    pub fn list_threads(&self) -> Task<Result<Vec<SavedThreadMetadata>>> {
+        let env = self.env.clone();
+        let threads = self.threads;
 
-        ```toml
-        [dependencies]
-        actix-web = \"4.0\"
-        ```
-
-        Then you can run the server with `cargo run` and access it at `http://localhost:8080`.".unindent(), cx);
-            thread.insert_user_message("That's great! Can you explain more about async functions in Rust?", Vec::new(), cx);
-            thread.insert_message(Role::Assistant, "Certainly! Async functions are a key feature in Rust for writing efficient, non-blocking code, especially for I/O-bound operations. Here's an overview:
-
-        1. **Syntax**: Async functions are declared using the `async` keyword:
-
-           ```rust
-           async fn my_async_function() -> Result<(), Error> {
-               // Asynchronous code here
-           }
-           ```
-
-        2. **Futures**: Async functions return a `Future`. A `Future` represents a value that may not be available yet but will be at some point.
-
-        3. **Await**: Inside an async function, you can use the `.await` syntax to wait for other async operations to complete:
-
-           ```rust
-           async fn fetch_data() -> Result<String, Error> {
-               let response = make_http_request().await?;
-               let data = process_response(response).await?;
-               Ok(data)
-           }
-           ```
-
-        4. **Non-blocking**: Async functions allow the runtime to work on other tasks while waiting for I/O or other operations to complete, making efficient use of system resources.
-
-        5. **Runtime**: To execute async code, you need a runtime like `tokio` or `async-std`. Actix-web, which we used in the previous example, includes its own runtime.
-
-        6. **Error Handling**: Async functions work well with Rust's `?` operator for error handling.
-
-        Async programming in Rust provides a powerful way to write concurrent code that's both safe and efficient. It's particularly useful for servers, network programming, and any application that deals with many concurrent operations.".unindent(), cx);
-            thread
-        }));
-
-        self.threads.push(cx.new_model(|cx| {
-            let mut thread = Thread::new(self.tools.clone(), cx);
-            thread.set_summary("Rust code with long lines", cx);
-            thread.insert_user_message("Could you write me some Rust code with long lines?", Vec::new(), cx);
-            thread.insert_message(Role::Assistant, r#"Here's some Rust code with some intentionally long lines:
-            ```rust
-            use std::collections::{HashMap, HashSet};
-            use std::sync::{Arc, Mutex};
-            use std::thread;
-
-            fn main() {
-                let very_long_vector = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
-
-                let complicated_hashmap: HashMap<String, Vec<(i32, f64, String)>> = [("key1".to_string(), vec![(1, 1.1, "value1".to_string()), (2, 2.2, "value2".to_string())]), ("key2".to_string(), vec![(3, 3.3, "value3".to_string()), (4, 4.4, "value4".to_string())])].iter().cloned().collect();
-
-                let nested_structure = Arc::new(Mutex::new(HashMap::new()));
-
-                let long_closure = |x: i32, y: i32, z: i32| -> i32 { let result = x * y + z; println!("The result of the long closure calculation is: {}", result); result };
-
-                let thread_handles: Vec<_> = (0..10).map(|i| {
-                    let nested_structure_clone = Arc::clone(&nested_structure);
-                    thread::spawn(move || {
-                        let mut lock = nested_structure_clone.lock().unwrap();
-                        lock.entry(format!("thread_{}", i)).or_insert_with(|| HashSet::new()).insert(i * i);
-                    })
-                }).collect();
-
-                for handle in thread_handles {
-                    handle.join().unwrap();
-                }
-
-                println!("The final state of the nested structure is: {:?}", nested_structure.lock().unwrap());
-
-                let complex_expression = very_long_vector.iter().filter(|&&x| x % 2 == 0).map(|&x| x * x).fold(0, |acc, x| acc + x) + long_closure(5, 10, 15);
-
-                println!("The result of the complex expression is: {}", complex_expression);
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let mut iter = threads.iter(&txn)?;
+            let mut threads = Vec::new();
+            while let Some((key, value)) = iter.next().transpose()? {
+                threads.push(SavedThreadMetadata {
+                    id: key,
+                    summary: value.summary,
+                    updated_at: value.updated_at,
+                });
             }
-            ```"#.unindent(), cx);
-            thread
-        }));
+
+            Ok(threads)
+        })
+    }
+
+    pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SavedThread>>> {
+        let env = self.env.clone();
+        let threads = self.threads;
+
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let thread = threads.get(&txn, &id)?;
+            Ok(thread)
+        })
+    }
+
+    pub fn save_thread(&self, id: ThreadId, thread: SavedThread) -> Task<Result<()>> {
+        let env = self.env.clone();
+        let threads = self.threads;
+
+        self.executor.spawn(async move {
+            let mut txn = env.write_txn()?;
+            threads.put(&mut txn, &id, &thread)?;
+            txn.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_thread(&self, id: ThreadId) -> Task<Result<()>> {
+        let env = self.env.clone();
+        let threads = self.threads;
+
+        self.executor.spawn(async move {
+            let mut txn = env.write_txn()?;
+            threads.delete(&mut txn, &id)?;
+            txn.commit()?;
+            Ok(())
+        })
     }
 }

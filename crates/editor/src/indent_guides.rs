@@ -1,17 +1,24 @@
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
+<<<<<<< HEAD
 use gpui::{AppContext, ModelContext, Task, Window};
 use language::{language_settings::language_settings, BufferRow};
 use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
 use text::{BufferId, LineIndent, Point};
+=======
+use gpui::{AppContext, Task};
+use language::language_settings::language_settings;
+use multi_buffer::{IndentGuide, MultiBufferRow};
+use text::{LineIndent, Point};
+use ui::ViewContext;
+>>>>>>> main
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
 
 struct ActiveIndentedRange {
-    buffer_id: BufferId,
-    row_range: Range<BufferRow>,
+    row_range: Range<MultiBufferRow>,
     indent: LineIndent,
 }
 
@@ -34,8 +41,13 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
+<<<<<<< HEAD
         cx: &mut ModelContext<Editor>,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
+=======
+        cx: &mut ViewContext<Editor>,
+    ) -> Option<Vec<IndentGuide>> {
+>>>>>>> main
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
                 language_settings(
@@ -65,7 +77,7 @@ impl Editor {
 
     pub fn find_active_indent_guide_indices(
         &mut self,
-        indent_guides: &[MultiBufferIndentGuide],
+        indent_guides: &[IndentGuide],
         snapshot: &DisplaySnapshot,
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
@@ -135,9 +147,7 @@ impl Editor {
             .iter()
             .enumerate()
             .filter(|(_, indent_guide)| {
-                indent_guide.buffer_id == active_indent_range.buffer_id
-                    && indent_guide.indent_level()
-                        == active_indent_range.indent.len(indent_guide.tab_size)
+                indent_guide.indent_level() == active_indent_range.indent.len(indent_guide.tab_size)
             });
 
         let mut matches = HashSet::default();
@@ -159,7 +169,7 @@ pub fn indent_guides_in_range(
     ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
     cx: &AppContext,
-) -> Vec<MultiBufferIndentGuide> {
+) -> Vec<IndentGuide> {
     let start_anchor = snapshot
         .buffer_snapshot
         .anchor_before(Point::new(visible_buffer_range.start.0, 0));
@@ -170,14 +180,12 @@ pub fn indent_guides_in_range(
     snapshot
         .buffer_snapshot
         .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
-        .into_iter()
         .filter(|indent_guide| {
-            if editor.buffer_folded(indent_guide.buffer_id, cx) {
+            if editor.is_buffer_folded(indent_guide.buffer_id, cx) {
                 return false;
             }
 
-            let start =
-                MultiBufferRow(indent_guide.multibuffer_row_range.start.0.saturating_sub(1));
+            let start = MultiBufferRow(indent_guide.start_row.0.saturating_sub(1));
             // Filter out indent guides that are inside a fold
             // All indent guides that are starting "offscreen" have a start value of the first visible row minus one
             // Therefore checking if a line is folded at first visible row minus one causes the other indent guides that are not related to the fold to disappear as well
@@ -194,24 +202,11 @@ async fn resolve_indented_range(
     snapshot: DisplaySnapshot,
     buffer_row: MultiBufferRow,
 ) -> Option<ActiveIndentedRange> {
-    let (buffer_row, buffer_snapshot, buffer_id) =
-        if let Some((_, buffer_id, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
-            (buffer_row.0, snapshot, buffer_id)
-        } else {
-            let (snapshot, point) = snapshot.buffer_snapshot.buffer_line_for_row(buffer_row)?;
-
-            let buffer_id = snapshot.remote_id();
-            (point.start.row, snapshot, buffer_id)
-        };
-
-    buffer_snapshot
+    snapshot
+        .buffer_snapshot
         .enclosing_indent(buffer_row)
         .await
-        .map(|(row_range, indent)| ActiveIndentedRange {
-            row_range,
-            indent,
-            buffer_id,
-        })
+        .map(|(row_range, indent)| ActiveIndentedRange { row_range, indent })
 }
 
 fn should_recalculate_indented_range(
@@ -223,23 +218,23 @@ fn should_recalculate_indented_range(
     if prev_row.0 == new_row.0 {
         return false;
     }
-    if let Some((_, _, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
-        if !current_indent_range.row_range.contains(&new_row.0) {
+    if snapshot.buffer_snapshot.is_singleton() {
+        if !current_indent_range.row_range.contains(&new_row) {
             return true;
         }
 
-        let old_line_indent = snapshot.line_indent_for_row(prev_row.0);
-        let new_line_indent = snapshot.line_indent_for_row(new_row.0);
+        let old_line_indent = snapshot.buffer_snapshot.line_indent_for_row(prev_row);
+        let new_line_indent = snapshot.buffer_snapshot.line_indent_for_row(new_row);
 
         if old_line_indent.is_line_empty()
             || new_line_indent.is_line_empty()
             || old_line_indent != new_line_indent
-            || snapshot.max_point().row == new_row.0
+            || snapshot.buffer_snapshot.max_point().row == new_row.0
         {
             return true;
         }
 
-        let next_line_indent = snapshot.line_indent_for_row(new_row.0 + 1);
+        let next_line_indent = snapshot.buffer_snapshot.line_indent_for_row(new_row + 1);
         next_line_indent.is_line_empty() || next_line_indent != old_line_indent
     } else {
         true

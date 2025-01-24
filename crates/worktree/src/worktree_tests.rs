@@ -2640,6 +2640,62 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = temp_tree(json!({
+        "project": {
+            "sub": {},
+            "a.txt": "",
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let repo = git_init(work_dir.as_path());
+    // a.txt exists in HEAD and the working copy but is deleted in the index.
+    git_add("a.txt", &repo);
+    git_commit("Initial commit", &repo);
+    git_remove_index("a.txt".as_ref(), &repo);
+    // `sub` is a nested git repository.
+    let _sub = git_init(&work_dir.join("sub"));
+
+    let tree = Worktree::local(
+        root.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let repo = snapshot.repositories().iter().next().unwrap();
+        let entries = repo.status().collect::<Vec<_>>();
+
+        // `sub` doesn't appear in our computed statuses.
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
+        // a.txt appears with a combined `DA` status.
+        assert_eq!(
+            entries[0].status,
+            TrackedStatus {
+                index_status: StatusCode::Deleted,
+                worktree_status: StatusCode::Added
+            }
+            .into()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();

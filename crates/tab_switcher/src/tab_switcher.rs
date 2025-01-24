@@ -215,11 +215,15 @@ impl TabSwitcherDelegate {
                 PaneEvent::AddItem { .. }
                 | PaneEvent::RemovedItem { .. }
                 | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
+<<<<<<< HEAD
                     let selected_item_id = picker.delegate.selected_item_id();
                     picker.delegate.update_matches(window, cx);
                     if let Some(item_id) = selected_item_id {
                         picker.delegate.select_item(item_id, window, cx);
                     }
+=======
+                    picker.delegate.update_matches(cx);
+>>>>>>> main
                     cx.notify();
                 }),
                 _ => {}
@@ -228,7 +232,12 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
+<<<<<<< HEAD
     fn update_matches(&mut self, _: &mut Window, cx: &mut AppContext) {
+=======
+    fn update_matches(&mut self, cx: &mut WindowContext) {
+        let selected_item_id = self.selected_item_id();
+>>>>>>> main
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {
             return;
@@ -266,13 +275,7 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        if self.matches.len() > 1 {
-            if self.select_last {
-                self.selected_index = self.matches.len() - 1;
-            } else {
-                self.selected_index = 1;
-            }
-        }
+        self.selected_index = self.compute_selected_index(selected_item_id);
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -281,6 +284,7 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
+<<<<<<< HEAD
     fn select_item(
         &mut self,
         item_id: EntityId,
@@ -293,6 +297,36 @@ impl TabSwitcherDelegate {
             .position(|tab_match| tab_match.item.item_id() == item_id)
             .unwrap_or(0);
         self.set_selected_index(selected_idx, window, cx);
+=======
+    fn compute_selected_index(&mut self, prev_selected_item_id: Option<EntityId>) -> usize {
+        if self.matches.is_empty() {
+            return 0;
+        }
+
+        if let Some(selected_item_id) = prev_selected_item_id {
+            // If the previously selected item is still in the list, select its new position.
+            if let Some(item_index) = self
+                .matches
+                .iter()
+                .position(|tab_match| tab_match.item.item_id() == selected_item_id)
+            {
+                return item_index;
+            }
+            // Otherwise, try to preserve the previously selected index.
+            return self.selected_index.min(self.matches.len() - 1);
+        }
+
+        if self.select_last {
+            return self.matches.len() - 1;
+        }
+
+        if self.matches.len() > 1 {
+            // Index 0 is active, so don't preselect it for switching.
+            return 1;
+        }
+
+        0
+>>>>>>> main
     }
 
     fn close_item_at(

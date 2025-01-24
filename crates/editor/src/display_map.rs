@@ -30,8 +30,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
-    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
@@ -40,7 +40,8 @@ pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
-    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+    AnyElement, AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels,
+    UnderlineStyle,
 };
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
@@ -53,7 +54,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -67,8 +68,13 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
+<<<<<<< HEAD
 use text::LineIndent;
 use ui::{px, AppContext, SharedString, Window};
+=======
+use text::{BufferId, LineIndent};
+use ui::{px, SharedString, WindowContext};
+>>>>>>> main
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -366,8 +372,12 @@ impl DisplayMap {
         block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
     }
 
-    pub(crate) fn buffer_folded(&self, buffer_id: language::BufferId) -> bool {
+    pub(crate) fn is_buffer_folded(&self, buffer_id: language::BufferId) -> bool {
         self.block_map.folded_buffers.contains(&buffer_id)
+    }
+
+    pub(crate) fn folded_buffers(&self) -> &HashSet<BufferId> {
+        &self.block_map.folded_buffers
     }
 
     pub fn insert_creases(
@@ -543,7 +553,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+    fn tab_size(buffer: &Model<MultiBuffer>, cx: &AppContext) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
             .and_then(|buffer| buffer.language())
@@ -715,13 +725,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(
-        &self,
-        start_row: DisplayRow,
-    ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
-        self.block_snapshot
-            .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(MultiBufferRow))
+    pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
+        self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
 
     pub fn widest_line_number(&self) -> u32 {

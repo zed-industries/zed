@@ -270,7 +270,7 @@ fn get_item_color(cx: &AppContext) -> ItemColors {
         default: colors.panel_background,
         hover: colors.ghost_element_hover,
         drag_over: colors.drop_target_background,
-        marked_active: colors.ghost_element_selected,
+        marked_active: colors.element_selected,
         focused: colors.panel_focused_border,
     }
 }
@@ -3410,13 +3410,13 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let default_color = if is_marked {
+        let bg_color = if is_marked || is_active {
             item_colors.marked_active
         } else {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down || is_marked {
+        let bg_hover_color = if self.mouse_down || is_marked || is_active {
             item_colors.marked_active
         } else if !is_active {
             item_colors.hover
@@ -3427,10 +3427,15 @@ impl ProjectPanel {
         let border_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
                 item_colors.focused
-            } else if self.mouse_down && is_marked || is_active {
-                item_colors.marked_active
             } else {
-                item_colors.default
+                bg_color
+            };
+
+        let border_hover_color =
+            if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
+                item_colors.focused
+            } else {
+                bg_hover_color
             };
 
         div()
@@ -3438,11 +3443,11 @@ impl ProjectPanel {
             .group(GROUP_NAME)
             .cursor_pointer()
             .rounded_none()
-            .bg(default_color)
+            .bg(bg_color)
             .border_1()
             .border_r_2()
             .border_color(border_color)
-            .hover(|style| style.bg(bg_hover_color))
+            .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
@@ -3688,7 +3693,7 @@ impl ProjectPanel {
                                             } else {
                                                 IconDecorationKind::Dot
                                             },
-                                            default_color,
+                                            bg_color,
                                             cx,
                                         )
                                         .group_name(Some(GROUP_NAME.into()))

@@ -4,16 +4,17 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
-use chunk::{Chunk, ChunkSlice};
+use chunk::Chunk;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
-    ops::{AddAssign, Range},
+    ops::{self, AddAssign, Range},
     str,
 };
 use sum_tree::{Bias, Dimension, SumTree};
 
+pub use chunk::ChunkSlice;
 pub use offset_utf16::OffsetUtf16;
 pub use point::Point;
 pub use point_utf16::PointUtf16;
@@ -221,7 +222,7 @@ impl Rope {
     }
 
     pub fn summary(&self) -> TextSummary {
-        self.chunks.summary().text.clone()
+        self.chunks.summary().text
     }
 
     pub fn len(&self) -> usize {
@@ -962,7 +963,7 @@ impl sum_tree::Summary for ChunkSummary {
 }
 
 /// Summary of a string of text.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
     /// Length in UTF-8
     pub len: usize,
@@ -988,6 +989,27 @@ impl TextSummary {
             row: self.lines.row,
             column: self.last_line_len_utf16,
         }
+    }
+
+    pub fn newline() -> Self {
+        Self {
+            len: 1,
+            len_utf16: OffsetUtf16(1),
+            first_line_chars: 0,
+            last_line_chars: 0,
+            last_line_len_utf16: 0,
+            lines: Point::new(1, 0),
+            longest_row: 0,
+            longest_row_chars: 0,
+        }
+    }
+
+    pub fn add_newline(&mut self) {
+        self.len += 1;
+        self.len_utf16 += OffsetUtf16(self.len_utf16.0 + 1);
+        self.last_line_chars = 0;
+        self.last_line_len_utf16 = 0;
+        self.lines += Point::new(1, 0);
     }
 }
 
@@ -1048,7 +1070,7 @@ impl sum_tree::Summary for TextSummary {
     }
 }
 
-impl std::ops::Add<Self> for TextSummary {
+impl ops::Add<Self> for TextSummary {
     type Output = Self;
 
     fn add(mut self, rhs: Self) -> Self::Output {
@@ -1057,7 +1079,7 @@ impl std::ops::Add<Self> for TextSummary {
     }
 }
 
-impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
+impl<'a> ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
         let joined_chars = self.last_line_chars + other.first_line_chars;
         if joined_chars > self.longest_row_chars {
@@ -1087,13 +1109,15 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     }
 }
 
-impl std::ops::AddAssign<Self> for TextSummary {
+impl ops::AddAssign<Self> for TextSummary {
     fn add_assign(&mut self, other: Self) {
         *self += &other;
     }
 }
 
-pub trait TextDimension: 'static + for<'a> Dimension<'a, ChunkSummary> {
+pub trait TextDimension:
+    'static + Clone + Copy + Default + for<'a> Dimension<'a, ChunkSummary> + std::fmt::Debug
+{
     fn from_text_summary(summary: &TextSummary) -> Self;
     fn from_chunk(chunk: ChunkSlice) -> Self;
     fn add_assign(&mut self, other: &Self);
@@ -1129,7 +1153,7 @@ impl<'a> sum_tree::Dimension<'a, ChunkSummary> for TextSummary {
 
 impl TextDimension for TextSummary {
     fn from_text_summary(summary: &TextSummary) -> Self {
-        summary.clone()
+        *summary
     }
 
     fn from_chunk(chunk: ChunkSlice) -> Self {
@@ -1237,6 +1261,118 @@ impl TextDimension for PointUtf16 {
 
     fn add_assign(&mut self, other: &Self) {
         *self += other;
+    }
+}
+
+/// A pair of text dimensions in which only the first dimension is used for comparison,
+/// but both dimensions are updated during addition and subtraction.
+#[derive(Clone, Copy, Debug)]
+pub struct DimensionPair<K, V> {
+    pub key: K,
+    pub value: Option<V>,
+}
+
+impl<K: Default, V: Default> Default for DimensionPair<K, V> {
+    fn default() -> Self {
+        Self {
+            key: Default::default(),
+            value: Some(Default::default()),
+        }
+    }
+}
+
+impl<K, V> cmp::Ord for DimensionPair<K, V>
+where
+    K: cmp::Ord,
+{
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.key.cmp(&other.key)
+    }
+}
+
+impl<K, V> cmp::PartialOrd for DimensionPair<K, V>
+where
+    K: cmp::PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        self.key.partial_cmp(&other.key)
+    }
+}
+
+impl<K, V> cmp::PartialEq for DimensionPair<K, V>
+where
+    K: cmp::PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.key.eq(&other.key)
+    }
+}
+
+impl<K, V> ops::Sub for DimensionPair<K, V>
+where
+    K: ops::Sub<K, Output = K>,
+    V: ops::Sub<V, Output = V>,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self {
+            key: self.key - rhs.key,
+            value: self.value.zip(rhs.value).map(|(a, b)| a - b),
+        }
+    }
+}
+
+impl<K, V> cmp::Eq for DimensionPair<K, V> where K: cmp::Eq {}
+
+impl<'a, K, V> sum_tree::Dimension<'a, ChunkSummary> for DimensionPair<K, V>
+where
+    K: sum_tree::Dimension<'a, ChunkSummary>,
+    V: sum_tree::Dimension<'a, ChunkSummary>,
+{
+    fn zero(_cx: &()) -> Self {
+        Self {
+            key: K::zero(_cx),
+            value: Some(V::zero(_cx)),
+        }
+    }
+
+    fn add_summary(&mut self, summary: &'a ChunkSummary, _cx: &()) {
+        self.key.add_summary(summary, _cx);
+        if let Some(value) = &mut self.value {
+            value.add_summary(summary, _cx);
+        }
+    }
+}
+
+impl<K, V> TextDimension for DimensionPair<K, V>
+where
+    K: TextDimension,
+    V: TextDimension,
+{
+    fn add_assign(&mut self, other: &Self) {
+        self.key.add_assign(&other.key);
+        if let Some(value) = &mut self.value {
+            if let Some(other_value) = other.value.as_ref() {
+                value.add_assign(other_value);
+            } else {
+                self.value.take();
+            }
+        }
+    }
+
+    fn from_chunk(chunk: ChunkSlice) -> Self {
+        Self {
+            key: K::from_chunk(chunk),
+            value: Some(V::from_chunk(chunk)),
+        }
+    }
+
+    fn from_text_summary(summary: &TextSummary) -> Self {
+        Self {
+            key: K::from_text_summary(summary),
+            value: Some(V::from_text_summary(summary)),
+        }
     }
 }
 

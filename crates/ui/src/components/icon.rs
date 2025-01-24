@@ -68,6 +68,8 @@ pub enum IconSize {
     #[default]
     /// 16px
     Medium,
+    /// 48px
+    XLarge,
 }
 
 impl IconSize {
@@ -77,6 +79,7 @@ impl IconSize {
             IconSize::XSmall => rems_from_px(12.),
             IconSize::Small => rems_from_px(14.),
             IconSize::Medium => rems_from_px(16.),
+            IconSize::XLarge => rems_from_px(48.),
         }
     }
 
@@ -92,6 +95,7 @@ impl IconSize {
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
             IconSize::Small => DynamicSpacing::Base02.px(cx),
             IconSize::Medium => DynamicSpacing::Base02.px(cx),
+            IconSize::XLarge => DynamicSpacing::Base02.px(cx),
         };
 
         (icon_size, padding)

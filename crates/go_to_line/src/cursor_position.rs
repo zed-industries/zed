@@ -20,7 +20,7 @@ pub(crate) struct SelectionStats {
 }
 
 pub struct CursorPosition {
-    position: Option<Point>,
+    position: Option<(Point, bool)>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
     workspace: WeakModel<Workspace>,
@@ -98,8 +98,11 @@ impl CursorPosition {
                                         }
                                     }
                                 }
-                                cursor_position.position =
-                                    last_selection.map(|s| s.head().to_point(&buffer));
+                                cursor_position.position = last_selection.and_then(|s| {
+                                    buffer
+                                        .point_to_buffer_point(s.head().to_point(&buffer))
+                                        .map(|(_, point, is_main_buffer)| (point, is_main_buffer))
+                                });
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }
@@ -163,10 +166,16 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
+<<<<<<< HEAD
     fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().when_some(self.position, |el, position| {
+=======
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div().when_some(self.position, |el, (position, is_main_buffer)| {
+>>>>>>> main
             let mut text = format!(
-                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                "{}{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                if is_main_buffer { "" } else { "(deleted) " },
                 position.row + 1,
                 position.column + 1
             );
@@ -184,9 +193,18 @@ impl Render for CursorPosition {
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
                                 {
+<<<<<<< HEAD
                                     workspace.toggle_modal(window, cx, |window, cx| {
                                         crate::GoToLine::new(editor, window, cx)
                                     })
+=======
+                                    if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
+                                    {
+                                        workspace.toggle_modal(cx, |cx| {
+                                            crate::GoToLine::new(editor, buffer, cx)
+                                        })
+                                    }
+>>>>>>> main
                                 }
                             });
                         }

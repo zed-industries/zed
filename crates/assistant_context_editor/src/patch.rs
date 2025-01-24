@@ -9,7 +9,7 @@ use std::{cmp, ops::Range, path::Path, sync::Arc};
 use text::{AnchorRangeExt as _, Bias, OffsetRangeExt as _, Point};
 
 #[derive(Clone, Debug)]
-pub(crate) struct AssistantPatch {
+pub struct AssistantPatch {
     pub range: Range<language::Anchor>,
     pub title: SharedString,
     pub edits: Arc<[Result<AssistantEdit>]>,
@@ -17,13 +17,13 @@ pub(crate) struct AssistantPatch {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum AssistantPatchStatus {
+pub enum AssistantPatchStatus {
     Pending,
     Ready,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AssistantEdit {
+pub struct AssistantEdit {
     pub path: String,
     pub kind: AssistantEditKind,
 }
@@ -55,7 +55,7 @@ pub enum AssistantEditKind {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ResolvedPatch {
+pub struct ResolvedPatch {
     pub edit_groups: HashMap<Model<Buffer>, Vec<ResolvedEditGroup>>,
     pub errors: Vec<AssistantPatchResolutionError>,
 }
@@ -74,7 +74,7 @@ pub struct ResolvedEdit {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct AssistantPatchResolutionError {
+pub struct AssistantPatchResolutionError {
     pub edit_ix: usize,
     pub message: String,
 }
@@ -425,7 +425,7 @@ impl AssistantEditKind {
 }
 
 impl AssistantPatch {
-    pub(crate) async fn resolve(
+    pub async fn resolve(
         &self,
         project: Model<Project>,
         cx: &mut AsyncAppContext,

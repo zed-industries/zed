@@ -1077,7 +1077,7 @@ impl OutlinePanel {
                         .show_excerpt_controls();
                     let expand_excerpt_control_height = 1.0;
                     if let Some(buffer_id) = scroll_to_buffer {
-                        let current_folded = active_editor.read(cx).buffer_folded(buffer_id, cx);
+                        let current_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
                         if current_folded {
                             if show_excerpt_controls {
                                 let previous_buffer_id = self
@@ -1094,7 +1094,9 @@ impl OutlinePanel {
                                     .skip_while(|id| *id != buffer_id)
                                     .nth(1);
                                 if let Some(previous_buffer_id) = previous_buffer_id {
-                                    if !active_editor.read(cx).buffer_folded(previous_buffer_id, cx)
+                                    if !active_editor
+                                        .read(cx)
+                                        .is_buffer_folded(previous_buffer_id, cx)
                                     {
                                         offset.y += expand_excerpt_control_height;
                                     }
@@ -1464,7 +1466,7 @@ impl OutlinePanel {
             };
 
             active_editor.update(cx, |editor, cx| {
-                buffers_to_unfold.retain(|buffer_id| editor.buffer_folded(*buffer_id, cx));
+                buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
             });
             self.select_entry(selected_entry, true, window, cx);
             if buffers_to_unfold.is_empty() {
@@ -1555,7 +1557,7 @@ impl OutlinePanel {
 
         if collapsed {
             active_editor.update(cx, |editor, cx| {
-                buffers_to_fold.retain(|buffer_id| !editor.buffer_folded(*buffer_id, cx));
+                buffers_to_fold.retain(|buffer_id| !editor.is_buffer_folded(*buffer_id, cx));
             });
             self.select_entry(selected_entry, true, window, cx);
             if buffers_to_fold.is_empty() {
@@ -1626,7 +1628,7 @@ impl OutlinePanel {
         self.collapsed_entries
             .retain(|entry| !expanded_entries.contains(entry));
         active_editor.update(cx, |editor, cx| {
-            buffers_to_unfold.retain(|buffer_id| editor.buffer_folded(*buffer_id, cx));
+            buffers_to_unfold.retain(|buffer_id| editor.is_buffer_folded(*buffer_id, cx));
         });
         if buffers_to_unfold.is_empty() {
             self.update_cached_entries(None, window, cx);
@@ -1679,7 +1681,7 @@ impl OutlinePanel {
         self.collapsed_entries.extend(new_entries);
 
         active_editor.update(cx, |editor, cx| {
-            buffers_to_fold.retain(|buffer_id| !editor.buffer_folded(*buffer_id, cx));
+            buffers_to_fold.retain(|buffer_id| !editor.is_buffer_folded(*buffer_id, cx));
         });
         if buffers_to_fold.is_empty() {
             self.update_cached_entries(None, window, cx);
@@ -1775,7 +1777,7 @@ impl OutlinePanel {
 
         active_editor.update(cx, |editor, cx| {
             buffers_to_toggle.retain(|buffer_id| {
-                let folded = editor.buffer_folded(*buffer_id, cx);
+                let folded = editor.is_buffer_folded(*buffer_id, cx);
                 if fold {
                     !folded
                 } else {
@@ -2584,7 +2586,7 @@ impl OutlinePanel {
                         let worktree = file.map(|file| file.worktree.read(cx).snapshot());
                         let is_new = new_entries.contains(&excerpt_id)
                             || !outline_panel.excerpts.contains_key(&buffer_id);
-                        let is_folded = active_editor.read(cx).buffer_folded(buffer_id, cx);
+                        let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
                         buffer_excerpts
                             .entry(buffer_id)
                             .or_insert_with(|| (is_new, is_folded, Vec::new(), entry_id, worktree))
@@ -2996,7 +2998,7 @@ impl OutlinePanel {
             .excerpt_containing(selection, cx)?;
         let buffer_id = buffer.read(cx).remote_id();
 
-        if editor.read(cx).buffer_folded(buffer_id, cx) {
+        if editor.read(cx).is_buffer_folded(buffer_id, cx) {
             return self
                 .fs_entries
                 .iter()
@@ -3724,7 +3726,7 @@ impl OutlinePanel {
                                     None
                                 };
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
-                                if !active_editor.read(cx).buffer_folded(buffer_id, cx) {
+                                if !active_editor.read(cx).is_buffer_folded(buffer_id, cx) {
                                     outline_panel.add_excerpt_entries(
                                         &mut generation_state,
                                         buffer_id,
@@ -4138,12 +4140,12 @@ impl OutlinePanel {
             .filter(|(match_range, _)| {
                 let editor = active_editor.read(cx);
                 if let Some(buffer_id) = match_range.start.buffer_id {
-                    if editor.buffer_folded(buffer_id, cx) {
+                    if editor.is_buffer_folded(buffer_id, cx) {
                         return false;
                     }
                 }
                 if let Some(buffer_id) = match_range.start.buffer_id {
-                    if editor.buffer_folded(buffer_id, cx) {
+                    if editor.is_buffer_folded(buffer_id, cx) {
                         return false;
                     }
                 }
@@ -5009,6 +5011,7 @@ fn subscribe_for_editor_events(
                     outline_panel.reveal_entry_for_selection(editor.clone(), window, cx);
                     cx.notify();
                 }
+<<<<<<< HEAD
                 EditorEvent::ExcerptsAdded { excerpts, .. } => {
                     outline_panel
                         .new_entries_for_fs_update
@@ -5050,6 +5053,63 @@ fn subscribe_for_editor_events(
                                                 .preserve_selection_on_buffer_fold_toggles
                                                 .remove(buffer_id);
                                             Some(buffer_id)
+=======
+                outline_panel.update_fs_entries(editor, debounce, cx);
+            }
+            EditorEvent::ExcerptsExpanded { ids } => {
+                outline_panel.invalidate_outlines(ids);
+                outline_panel.update_non_fs_items(cx);
+            }
+            EditorEvent::ExcerptsEdited { ids } => {
+                outline_panel.invalidate_outlines(ids);
+                outline_panel.update_non_fs_items(cx);
+            }
+            EditorEvent::BufferFoldToggled { ids, .. } => {
+                outline_panel.invalidate_outlines(ids);
+                let mut latest_unfolded_buffer_id = None;
+                let mut latest_folded_buffer_id = None;
+                let mut ignore_selections_change = false;
+                outline_panel.new_entries_for_fs_update.extend(
+                    ids.iter()
+                        .filter(|id| {
+                            outline_panel
+                                .excerpts
+                                .iter()
+                                .find_map(|(buffer_id, excerpts)| {
+                                    if excerpts.contains_key(id) {
+                                        ignore_selections_change |= outline_panel
+                                            .preserve_selection_on_buffer_fold_toggles
+                                            .remove(buffer_id);
+                                        Some(buffer_id)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .map(|buffer_id| {
+                                    if editor.read(cx).is_buffer_folded(*buffer_id, cx) {
+                                        latest_folded_buffer_id = Some(*buffer_id);
+                                        false
+                                    } else {
+                                        latest_unfolded_buffer_id = Some(*buffer_id);
+                                        true
+                                    }
+                                })
+                                .unwrap_or(true)
+                        })
+                        .copied(),
+                );
+                if !ignore_selections_change {
+                    if let Some(entry_to_select) = latest_unfolded_buffer_id
+                        .or(latest_folded_buffer_id)
+                        .and_then(|toggled_buffer_id| {
+                            outline_panel
+                                .fs_entries
+                                .iter()
+                                .find_map(|fs_entry| match fs_entry {
+                                    FsEntry::ExternalFile(external) => {
+                                        if external.buffer_id == toggled_buffer_id {
+                                            Some(fs_entry.clone())
+>>>>>>> main
                                         } else {
                                             None
                                         }
