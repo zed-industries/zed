@@ -2146,17 +2146,11 @@ impl EditorElement {
                 .into_iter()
                 .enumerate()
                 .map(|(ix, info)| {
-                    let row = info.buffer_row?;
+                    let row = info.multibuffer_row?;
                     let display_row = DisplayRow(rows.start.0 + ix as u32);
                     let active = active_rows.contains_key(&display_row);
 
-                    // todo(max): Retrieve the multibuffer row correctly
-                    snapshot.render_crease_toggle(
-                        MultiBufferRow(row),
-                        active,
-                        self.editor.clone(),
-                        cx,
-                    )
+                    snapshot.render_crease_toggle(row, active, self.editor.clone(), cx)
                 })
                 .collect()
         } else {
@@ -2173,9 +2167,9 @@ impl EditorElement {
         buffer_rows
             .into_iter()
             .map(|row_info| {
-                if let Some(row) = row_info.buffer_row {
+                if let Some(row) = row_info.multibuffer_row {
                     // todo!
-                    snapshot.render_crease_trailer(MultiBufferRow(row), cx)
+                    snapshot.render_crease_trailer(row, cx)
                 } else {
                     None
                 }

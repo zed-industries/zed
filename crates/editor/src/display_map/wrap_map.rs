@@ -984,6 +984,7 @@ impl<'a> Iterator for WrapRows<'a> {
         Some(if soft_wrapped {
             RowInfo {
                 buffer_row: None,
+                multibuffer_row: None,
                 diff_status,
             }
         } else {
