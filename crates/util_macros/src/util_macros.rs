@@ -20,6 +20,21 @@ impl Parse for ReplacePathInput {
     }
 }
 
+/// This macro replaces the path separator `/` with `\` at the specified location for Windows.
+/// The location is specified by the index of the separator to replace. The index is 0-based.
+/// If the index is not specified, all separators are replaced.
+/// But if the target OS is not Windows, the path is returned as is.
+///
+/// # Example
+/// ```rust
+/// use util_macros::separator;
+///
+/// let path = separator!("path/to/file");
+/// assert_eq!(path, "path\\to\\file");
+///
+/// let path = separator!("path/to/file", 1);
+/// assert_eq!(path, "path/to\\file");
+/// ```
 #[proc_macro]
 #[cfg(target_os = "windows")]
 pub fn separator(input: TokenStream) -> TokenStream {
@@ -54,6 +69,21 @@ pub fn separator(input: TokenStream) -> TokenStream {
     })
 }
 
+/// This macro replaces the path separator `/` with `\` at the specified location for Windows.
+/// The location is specified by the index of the separator to replace. The index is 0-based.
+/// If the index is not specified, all separators are replaced.
+/// But if the target OS is not Windows, the path is returned as is.
+///
+/// # Example
+/// ```rust
+/// use util_macros::separator;
+///
+/// let path = separator!("path/to/file");
+/// assert_eq!(path, "path\\to\\file");
+///
+/// let path = separator!("path/to/file", 1);
+/// assert_eq!(path, "path/to\\file");
+/// ```
 #[proc_macro]
 #[cfg(not(target_os = "windows"))]
 pub fn separator(input: TokenStream) -> TokenStream {
@@ -75,6 +105,16 @@ impl Parse for UriInput {
     }
 }
 
+/// This macro replaces the path prefix `file:///` with `file:///C:/` for Windows.
+/// But if the target OS is not Windows, the URI is returned as is.
+///
+/// # Example
+/// ```rust
+/// use util_macros::uri;
+///
+/// let uri = uri!("file:///path/to/file");
+/// assert_eq!(uri, "file:///C:/path/to/file");
+/// ```
 #[proc_macro]
 #[cfg(target_os = "windows")]
 pub fn uri(input: TokenStream) -> TokenStream {
@@ -87,6 +127,16 @@ pub fn uri(input: TokenStream) -> TokenStream {
     })
 }
 
+/// This macro replaces the path prefix `file:///` with `file:///C:/` for Windows.
+/// But if the target OS is not Windows, the URI is returned as is.
+///
+/// # Example
+/// ```rust
+/// use util_macros::uri;
+///
+/// let uri = uri!("file:///path/to/file");
+/// assert_eq!(uri, "file:///C:/path/to/file");
+/// ```
 #[proc_macro]
 #[cfg(not(target_os = "windows"))]
 pub fn uri(input: TokenStream) -> TokenStream {

@@ -43,25 +43,57 @@ macro_rules! debug_panic {
     };
 }
 
+/// A macro to add "C:" to the beginning of a path literal on Windows, and if a index
+/// is provided, it will add "C:" to the beginning of the path literal and replace the
+/// separator at the given index with `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::{path, separator};
+///
+/// let path = path!("/Users/user/file.txt");
+/// assert_eq!(path, "C:/Users/user/file.txt");
+/// let path = path!("/Users/user/file.txt", 1);
+/// assert_eq!(path, "C:/Users\\user/file.txt");
+/// let path = path!("/Users/user/file.txt", 2);
+/// assert_eq!(path, "C:/Users/user\\file.txt");
+/// ```
 #[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
 #[macro_export]
 macro_rules! path {
     ($path:literal) => {
         concat!("C:", $path)
     };
-    ($path:literal, $depth:expr) => {
-        concat!("C:", separator!($path, $depth))
+    ($path:literal, $index:expr) => {
+        concat!("C:", separator!($path, $index))
     };
 }
 
+/// A macro to add "C:" to the beginning of a path literal on Windows, and if a index
+/// is provided, it will add "C:" to the beginning of the path literal and replace the
+/// separator at the given index with `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::{path, separator};
+///
+/// let path = path!("/Users/user/file.txt");
+/// assert_eq!(path, "C:/Users/user/file.txt");
+/// let path = path!("/Users/user/file.txt", 1);
+/// assert_eq!(path, "C:/Users\\user/file.txt");
+/// let path = path!("/Users/user/file.txt", 2);
+/// assert_eq!(path, "C:/Users/user\\file.txt");
+/// ```
 #[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
 #[macro_export]
 macro_rules! path {
     ($path:literal) => {
         $path
     };
-    ($path:literal, $depth:expr) => {
-        separator!($path, $depth)
+    ($path:literal, $index:expr) => {
+        separator!($path, $index)
     };
 }
 
