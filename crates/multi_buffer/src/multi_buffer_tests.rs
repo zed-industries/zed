@@ -26,6 +26,7 @@ fn test_empty_singleton(cx: &mut AppContext) {
         snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>(),
         [RowInfo {
             buffer_row: Some(0),
+            multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None
         }]
     );
@@ -2016,6 +2017,9 @@ impl ReferenceMultibuffer {
                         RowInfo {
                             diff_status: region.status,
                             buffer_row,
+                            multibuffer_row: Some(MultiBufferRow(
+                                text[..ix].matches('\n').count() as u32
+                            )),
                         }
                     });
                 ix += line.len() + 1;
