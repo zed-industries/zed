@@ -701,7 +701,9 @@ impl WorktreeStore {
                     for _ in 0..MAX_CONCURRENT_FILE_SCANS {
                         let filter_rx = filter_rx.clone();
                         scope.spawn(async move {
-                            Self::filter_paths(fs, filter_rx, query).await.log_err();
+                            Self::filter_paths(fs, filter_rx, query)
+                                .await
+                                .log_with_level(log::Level::Debug);
                         })
                     }
                 })
@@ -1030,7 +1032,7 @@ impl WorktreeStore {
                 // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
                 // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
                 return Err(anyhow!(
-                    "Invalid UTF-8 sequence at position {starting_position}"
+                    "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
                 ));
             }
 
