@@ -33,5 +33,5 @@
 "{" @punctuation.bracket
 "}" @punctuation.bracket
 "=" @operator
-"@" @label
-"@@" @label
+"@" @operator
+"@@" @operator
