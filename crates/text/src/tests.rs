@@ -262,6 +262,20 @@ fn test_text_summary_for_range() {
         "ab\nefg\nhklm\nnopqrs\ntuvwxyz".into(),
     );
     assert_eq!(
+        buffer.text_summary_for_range::<TextSummary, _>(0..2),
+        TextSummary {
+            len: 2,
+            chars: 2,
+            len_utf16: OffsetUtf16(2),
+            lines: Point::new(0, 2),
+            first_line_chars: 2,
+            last_line_chars: 2,
+            last_line_len_utf16: 2,
+            longest_row: 0,
+            longest_row_chars: 2,
+        }
+    );
+    assert_eq!(
         buffer.text_summary_for_range::<TextSummary, _>(1..3),
         TextSummary {
             len: 2,

@@ -254,6 +254,7 @@ impl<'a> ChunkSlice<'a> {
             chars >>= newline_ix;
             chars >>= 1;
             row += 1;
+            *total_chars += 1;
         }
 
         let row_chars = chars.count_ones() as u8;
