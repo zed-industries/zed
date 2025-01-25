@@ -318,6 +318,7 @@ gpui::actions!(
         OpenProposedChangesEditor,
         OpenDocs,
         OpenPermalinkToLine,
+        OpenSelectionsInMultibuffer,
         OpenUrl,
         Outdent,
         AutoIndent,

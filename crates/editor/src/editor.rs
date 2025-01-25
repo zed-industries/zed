@@ -1031,6 +1031,11 @@ enum JumpData {
     },
 }
 
+pub enum MultibufferSelectionMode {
+    First,
+    All,
+}
+
 impl Editor {
     pub fn single_line(cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.new_model(|cx| Buffer::local("", cx));
@@ -9836,7 +9841,14 @@ impl Editor {
                 };
                 let opened = workspace
                     .update(&mut cx, |workspace, cx| {
-                        Self::open_locations_in_multibuffer(workspace, locations, title, split, cx)
+                        Self::open_locations_in_multibuffer(
+                            workspace,
+                            locations,
+                            title,
+                            split,
+                            MultibufferSelectionMode::First,
+                            cx,
+                        )
                     })
                     .ok();
 
@@ -9971,7 +9983,14 @@ impl Editor {
                         )
                     })
                     .unwrap();
-                Self::open_locations_in_multibuffer(workspace, locations, title, false, cx);
+                Self::open_locations_in_multibuffer(
+                    workspace,
+                    locations,
+                    title,
+                    false,
+                    MultibufferSelectionMode::First,
+                    cx,
+                );
                 Navigated::Yes
             })
         }))
@@ -9983,12 +10002,13 @@ impl Editor {
         mut locations: Vec<Location>,
         title: String,
         split: bool,
+        multibuffer_selection_mode: MultibufferSelectionMode,
         cx: &mut ViewContext<Workspace>,
     ) {
         // If there are multiple definitions, open them in a multibuffer
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
         let mut locations = locations.into_iter().peekable();
-        let mut ranges_to_highlight = Vec::new();
+        let mut ranges = Vec::new();
         let capability = workspace.project().read(cx).capability();
 
         let excerpt_buffer = cx.new_model(|cx| {
@@ -10009,7 +10029,7 @@ impl Editor {
                 }
 
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-                ranges_to_highlight.extend(multibuffer.push_excerpts_with_context_lines(
+                ranges.extend(multibuffer.push_excerpts_with_context_lines(
                     location.buffer.clone(),
                     ranges_for_buffer,
                     DEFAULT_MULTIBUFFER_CONTEXT,
@@ -10024,17 +10044,27 @@ impl Editor {
             Editor::for_multibuffer(excerpt_buffer, Some(workspace.project().clone()), true, cx)
         });
         editor.update(cx, |editor, cx| {
-            if let Some(first_range) = ranges_to_highlight.first() {
-                editor.change_selections(None, cx, |selections| {
-                    selections.clear_disjoint();
-                    selections.select_anchor_ranges(std::iter::once(first_range.clone()));
-                });
+            match multibuffer_selection_mode {
+                MultibufferSelectionMode::First => {
+                    if let Some(first_range) = ranges.first() {
+                        editor.change_selections(None, cx, |selections| {
+                            selections.clear_disjoint();
+                            selections.select_anchor_ranges(std::iter::once(first_range.clone()));
+                        });
+                    }
+                    editor.highlight_background::<Self>(
+                        &ranges,
+                        |theme| theme.editor_highlighted_line_background,
+                        cx,
+                    );
+                }
+                MultibufferSelectionMode::All => {
+                    editor.change_selections(None, cx, |selections| {
+                        selections.clear_disjoint();
+                        selections.select_anchor_ranges(ranges);
+                    });
+                }
             }
-            editor.highlight_background::<Self>(
-                &ranges_to_highlight,
-                |theme| theme.editor_highlighted_line_background,
-                cx,
-            );
             editor.register_buffers_with_language_servers(cx);
         });
 
@@ -11965,6 +11995,48 @@ impl Editor {
             this.edit(edits, cx);
             this.refresh_inline_completion(true, false, cx);
         });
+    }
+
+    pub fn open_selections_in_multibuffer(
+        &mut self,
+        _: &OpenSelectionsInMultibuffer,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let multibuffer = self.buffer.read(cx);
+
+        let Some(buffer) = multibuffer.as_singleton() else {
+            return;
+        };
+
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+
+        let locations = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|range| Location {
+                buffer: buffer.clone(),
+                range: range.start.text_anchor..range.end.text_anchor,
+            })
+            .collect::<Vec<_>>();
+
+        let title = multibuffer.title(cx).to_string();
+
+        cx.spawn(|_, mut cx| async move {
+            workspace.update(&mut cx, |workspace, cx| {
+                Self::open_locations_in_multibuffer(
+                    workspace,
+                    locations,
+                    format!("Selections for '{title}'"),
+                    false,
+                    MultibufferSelectionMode::All,
+                    cx,
+                );
+            })
+        })
+        .detach();
     }
 
     /// Adds a row highlight for the given range. If a row has multiple highlights, the

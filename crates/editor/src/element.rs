@@ -477,6 +477,7 @@ impl EditorElement {
         register_action(view, cx, Editor::spawn_nearest_task);
         register_action(view, cx, Editor::insert_uuid_v4);
         register_action(view, cx, Editor::insert_uuid_v7);
+        register_action(view, cx, Editor::open_selections_in_multibuffer);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
