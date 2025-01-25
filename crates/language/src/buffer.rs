@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, SharedString, Task, TaskLabel, WindowContext,
+    Pixels, Task, TaskLabel, WindowContext,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -65,7 +65,7 @@ pub use text::{
     Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
     Transaction, TransactionId, Unclipped,
 };
-use theme::{ActiveTheme as _, SyntaxTheme};
+use theme::SyntaxTheme;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, maybe, RangeExt};
@@ -587,6 +587,7 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
+<<<<<<< HEAD
 #[derive(Clone)]
 pub struct EditPreview {
     applied_edits_snapshot: text::BufferSnapshot,
@@ -740,6 +741,21 @@ impl EditPreview {
         let range = Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row));
 
         Some(range.to_offset(&snapshot))
+=======
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndentGuide {
+    pub buffer_id: BufferId,
+    pub start_row: BufferRow,
+    pub end_row: BufferRow,
+    pub depth: u32,
+    pub tab_size: u32,
+    pub settings: IndentGuideSettings,
+}
+
+impl IndentGuide {
+    pub fn indent_level(&self) -> u32 {
+        self.depth * self.tab_size
+>>>>>>> parent of 3dee32c43d (inline completion: Add syntax highlighting for edit prediction (#23361))
     }
 }
 
@@ -992,33 +1008,6 @@ impl Buffer {
             branch.reparse(cx);
 
             branch
-        })
-    }
-
-    pub fn preview_edits(
-        &self,
-        edits: Arc<[(Range<Anchor>, String)]>,
-        cx: &AppContext,
-    ) -> Task<EditPreview> {
-        let registry = self.language_registry();
-        let language = self.language().cloned();
-
-        let mut branch_buffer = self.text.branch();
-        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
-        cx.background_executor().spawn(async move {
-            if !edits.is_empty() {
-                branch_buffer.edit(edits.iter().cloned());
-                let snapshot = branch_buffer.snapshot();
-                syntax_snapshot.interpolate(&snapshot);
-
-                if let Some(language) = language {
-                    syntax_snapshot.reparse(&snapshot, registry, language);
-                }
-            }
-            EditPreview {
-                applied_edits_snapshot: branch_buffer.snapshot(),
-                syntax_snapshot,
-            }
         })
     }
 

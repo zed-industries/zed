@@ -256,7 +256,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 let position = cursor_position.bias_right(buffer);
                 Some(InlineCompletion {
                     edits: vec![(position..position, completion_text.into())],
-                    edit_preview: None,
                 })
             }
         } else {
