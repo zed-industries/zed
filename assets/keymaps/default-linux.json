@@ -122,7 +122,8 @@
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
-      "shift-f10": "editor::OpenContextMenu"
+      "shift-f10": "editor::OpenContextMenu",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
