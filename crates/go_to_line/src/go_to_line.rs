@@ -1,7 +1,9 @@
 pub mod cursor_position;
 
-use cursor_position::LineIndicatorFormat;
-use editor::{scroll::Autoscroll, Anchor, Editor, MultiBuffer, ToPoint};
+use cursor_position::{LineIndicatorFormat, UserCaretPosition};
+use editor::{
+    actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
+};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Model, Render, SharedString, Styled, Subscription, View, ViewContext,
@@ -9,7 +11,7 @@ use gpui::{
 };
 use language::Buffer;
 use settings::Settings;
-use text::Point;
+use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
@@ -23,7 +25,6 @@ pub fn init(cx: &mut AppContext) {
 pub struct GoToLine {
     line_editor: View<Editor>,
     active_editor: View<Editor>,
-    active_buffer: Model<Buffer>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<f32>>,
     _subscriptions: Vec<Subscription>,
@@ -67,10 +68,13 @@ impl GoToLine {
         active_buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let (cursor, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
-            let cursor = editor.selections.last::<Point>(cx).head();
-            let snapshot = active_buffer.read(cx).snapshot();
+        let (user_caret, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
+            let user_caret = UserCaretPosition::at_selection_end(
+                &editor.selections.last::<Point>(cx),
+                &editor.buffer().read(cx).snapshot(cx),
+            );
 
+            let snapshot = active_buffer.read(cx).snapshot();
             let last_line = editor
                 .buffer()
                 .read(cx)
@@ -80,14 +84,32 @@ impl GoToLine {
                 .max()
                 .unwrap_or(0);
 
-            (cursor, last_line, editor.scroll_position(cx))
+            (user_caret, last_line, editor.scroll_position(cx))
         });
 
-        let line = cursor.row + 1;
-        let column = cursor.column + 1;
+        let line = user_caret.line.get();
+        let column = user_caret.character.get();
 
         let line_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
+            let editor_handle = cx.view().downgrade();
+            editor
+                .register_action::<Tab>({
+                    move |_, cx| {
+                        let Some(editor) = editor_handle.upgrade() else {
+                            return;
+                        };
+                        editor.update(cx, |editor, cx| {
+                            if let Some(placeholder_text) = editor.placeholder_text(cx) {
+                                if editor.text(cx).is_empty() {
+                                    let placeholder_text = placeholder_text.to_string();
+                                    editor.set_text(placeholder_text, cx);
+                                }
+                            }
+                        });
+                    }
+                })
+                .detach();
             editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
         });
@@ -103,7 +125,6 @@ impl GoToLine {
         Self {
             line_editor,
             active_editor,
-            active_buffer,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
             _subscriptions: vec![line_editor_change, cx.on_release(Self::release)],
@@ -141,13 +162,18 @@ impl GoToLine {
     fn highlight_current_line(&mut self, cx: &mut ViewContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
-            let multibuffer = editor.buffer().read(cx);
-            let snapshot = multibuffer.snapshot(cx);
-            let Some(start) = self.anchor_from_query(&multibuffer, cx) else {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
-            let start_point = start.to_point(&snapshot);
-            let end_point = start_point + Point::new(1, 0);
+            let mut start_point = start.to_point(&snapshot);
+            start_point.column = 0;
+            // Force non-empty range to ensure the line is highlighted.
+            let mut end_point = snapshot.clip_point(start_point + Point::new(0, 1), Bias::Left);
+            if start_point == end_point {
+                end_point = snapshot.clip_point(start_point + Point::new(1, 0), Bias::Left);
+            }
+
             let end = snapshot.anchor_after(end_point);
             editor.highlight_rows::<GoToLineRowHighlights>(
                 start..end,
@@ -162,25 +188,49 @@ impl GoToLine {
 
     fn anchor_from_query(
         &self,
-        multibuffer: &MultiBuffer,
+        snapshot: &MultiBufferSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Option<Anchor> {
-        let (Some(row), column) = self.line_column_from_query(cx) else {
-            return None;
-        };
-        let point = Point::new(row.saturating_sub(1), column.unwrap_or(0).saturating_sub(1));
-        multibuffer.buffer_point_to_anchor(&self.active_buffer, point, cx)
+        let (query_row, query_char) = self.line_and_char_from_query(cx)?;
+        let row = query_row.saturating_sub(1);
+        let character = query_char.unwrap_or(0).saturating_sub(1);
+
+        let start_offset = Point::new(row, 0).to_offset(snapshot);
+        const MAX_BYTES_IN_UTF_8: u32 = 4;
+        let max_end_offset = snapshot
+            .clip_point(
+                Point::new(row, character * MAX_BYTES_IN_UTF_8 + 1),
+                Bias::Right,
+            )
+            .to_offset(snapshot);
+
+        let mut chars_to_iterate = character;
+        let mut end_offset = start_offset;
+        'outer: for text_chunk in snapshot.text_for_range(start_offset..max_end_offset) {
+            let mut offset_increment = 0;
+            for c in text_chunk.chars() {
+                if chars_to_iterate == 0 {
+                    end_offset += offset_increment;
+                    break 'outer;
+                } else {
+                    chars_to_iterate -= 1;
+                    offset_increment += c.len_utf8();
+                }
+            }
+            end_offset += offset_increment;
+        }
+        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
     }
 
-    fn line_column_from_query(&self, cx: &AppContext) -> (Option<u32>, Option<u32>) {
+    fn line_and_char_from_query(&self, cx: &AppContext) -> Option<(u32, Option<u32>)> {
         let input = self.line_editor.read(cx).text(cx);
         let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
             .map(str::trim)
             .fuse();
-        let row = components.next().and_then(|row| row.parse::<u32>().ok());
+        let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
         let column = components.next().and_then(|col| col.parse::<u32>().ok());
-        (row, column)
+        Some((row, column))
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -189,8 +239,8 @@ impl GoToLine {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            let Some(start) = self.anchor_from_query(&multibuffer, cx) else {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
@@ -207,15 +257,13 @@ impl GoToLine {
 
 impl Render for GoToLine {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut help_text = self.current_text.clone();
-        let query = self.line_column_from_query(cx);
-        if let Some(line) = query.0 {
-            if let Some(column) = query.1 {
-                help_text = format!("Go to line {line}, column {column}").into();
-            } else {
-                help_text = format!("Go to line {line}").into();
+        let help_text = match self.line_and_char_from_query(cx) {
+            Some((line, Some(character))) => {
+                format!("Go to line {line}, character {character}").into()
             }
-        }
+            Some((line, None)) => format!("Go to line {line}").into(),
+            None => self.current_text.clone(),
+        };
 
         v_flex()
             .w(rems(24.))
@@ -244,13 +292,13 @@ impl Render for GoToLine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cursor_position::{CursorPosition, SelectionStats};
-    use editor::actions::SelectAll;
+    use cursor_position::{CursorPosition, SelectionStats, UserCaretPosition};
+    use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::{sync::Arc, time::Duration};
+    use std::{num::NonZeroU32, sync::Arc, time::Duration};
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -437,6 +485,197 @@ mod tests {
                 "After selecting a text with multibyte unicode characters, the character count should be correct"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_unicode_line_numbers(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let text = "ēlo你好";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            editor.move_to_beginning(&MoveToBeginning, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(
+            user_caret_position(1, 1),
+            current_position(&workspace, cx),
+            "Beginning of the line should be at first line, before any characters"
+        );
+
+        for (i, c) in text.chars().enumerate() {
+            let i = i as u32 + 1;
+            editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+            cx.executor().advance_clock(Duration::from_millis(200));
+            assert_eq!(
+                user_caret_position(1, i + 1),
+                current_position(&workspace, cx),
+                "Wrong position for char '{c}' in string '{text}'",
+            );
+        }
+
+        editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(
+            user_caret_position(1, text.chars().count() as u32 + 1),
+            current_position(&workspace, cx),
+            "After reaching the end of the text, position should not change when moving right"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_go_into_unicode(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let text = "ēlo你好";
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": text
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            editor.move_to_beginning(&MoveToBeginning, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(user_caret_position(1, 1), current_position(&workspace, cx));
+
+        for (i, c) in text.chars().enumerate() {
+            let i = i as u32 + 1;
+            let point = user_caret_position(1, i + 1);
+            go_to_point(point, user_caret_position(1, i), &workspace, cx);
+            cx.executor().advance_clock(Duration::from_millis(200));
+            assert_eq!(
+                point,
+                current_position(&workspace, cx),
+                "When going to {point:?}, expecting the cursor to be at char '{c}' in string '{text}'",
+            );
+        }
+
+        go_to_point(
+            user_caret_position(111, 222),
+            user_caret_position(1, text.chars().count() as u32 + 1),
+            &workspace,
+            cx,
+        );
+        cx.executor().advance_clock(Duration::from_millis(200));
+        assert_eq!(
+            user_caret_position(1, text.chars().count() as u32 + 1),
+            current_position(&workspace, cx),
+            "When going into too large point, should go to the end of the text"
+        );
+    }
+
+    fn current_position(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> UserCaretPosition {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .status_bar()
+                .read(cx)
+                .item_of_type::<CursorPosition>()
+                .expect("missing cursor position item")
+                .read(cx)
+                .position()
+                .expect("No position found")
+        })
+    }
+
+    fn user_caret_position(line: u32, character: u32) -> UserCaretPosition {
+        UserCaretPosition {
+            line: NonZeroU32::new(line).unwrap(),
+            character: NonZeroU32::new(character).unwrap(),
+        }
+    }
+
+    fn go_to_point(
+        new_point: UserCaretPosition,
+        expected_placeholder: UserCaretPosition,
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
+        let go_to_line_view = open_go_to_line_view(workspace, cx);
+        go_to_line_view.update(cx, |go_to_line_view, cx| {
+            assert_eq!(
+                go_to_line_view
+                    .line_editor
+                    .read(cx)
+                    .placeholder_text(cx)
+                    .expect("No placeholder text"),
+                format!(
+                    "{}:{}",
+                    expected_placeholder.line, expected_placeholder.character
+                )
+            );
+        });
+        cx.simulate_input(&format!("{}:{}", new_point.line, new_point.character));
+        cx.dispatch_action(menu::Confirm);
     }
 
     fn open_go_to_line_view(

@@ -1,9 +1,9 @@
-use editor::{Editor, ToPoint};
+use editor::{Editor, MultiBufferSnapshot};
 use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::{fmt::Write, time::Duration};
+use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
@@ -20,12 +20,36 @@ pub(crate) struct SelectionStats {
 }
 
 pub struct CursorPosition {
-    position: Option<(Point, bool)>,
+    position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
     workspace: WeakView<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
+}
+
+/// A position in the editor, where user's caret is located at.
+/// Lines are never zero as there is always at least one line in the editor.
+/// Characters may start with zero as the caret may be at the beginning of a line, but all editors start counting characters from 1,
+/// where "1" will mean "before the first character".
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct UserCaretPosition {
+    pub line: NonZeroU32,
+    pub character: NonZeroU32,
+}
+
+impl UserCaretPosition {
+    pub fn at_selection_end(selection: &Selection<Point>, snapshot: &MultiBufferSnapshot) -> Self {
+        let selection_end = selection.head();
+        let line_start = Point::new(selection_end.row, 0);
+        let chars_to_last_position = snapshot
+            .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
+            .chars as u32;
+        Self {
+            line: NonZeroU32::new(selection_end.row + 1).expect("added 1"),
+            character: NonZeroU32::new(chars_to_last_position + 1).expect("added 1"),
+        }
+    }
 }
 
 impl CursorPosition {
@@ -73,21 +97,16 @@ impl CursorPosition {
                                 cursor_position.context = None;
                             }
                             editor::EditorMode::Full => {
-                                let mut last_selection = None::<Selection<usize>>;
-                                let buffer = editor.buffer().read(cx).snapshot(cx);
-                                if buffer.excerpts().count() > 0 {
-                                    for selection in editor.selections.all::<usize>(cx) {
-                                        cursor_position.selected_count.characters += buffer
-                                            .text_for_range(selection.start..selection.end)
-                                            .map(|t| t.chars().count())
-                                            .sum::<usize>();
-                                        if last_selection.as_ref().map_or(true, |last_selection| {
-                                            selection.id > last_selection.id
-                                        }) {
-                                            last_selection = Some(selection);
-                                        }
-                                    }
+                                let mut last_selection = None::<Selection<Point>>;
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                if snapshot.excerpts().count() > 0 {
                                     for selection in editor.selections.all::<Point>(cx) {
+                                        let selection_summary = snapshot
+                                            .text_summary_for_range::<text::TextSummary, _>(
+                                                selection.start..selection.end,
+                                            );
+                                        cursor_position.selected_count.characters +=
+                                            selection_summary.chars;
                                         if selection.end != selection.start {
                                             cursor_position.selected_count.lines +=
                                                 (selection.end.row - selection.start.row) as usize;
@@ -95,13 +114,15 @@ impl CursorPosition {
                                                 cursor_position.selected_count.lines += 1;
                                             }
                                         }
+                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                            selection.id > last_selection.id
+                                        }) {
+                                            last_selection = Some(selection);
+                                        }
                                     }
                                 }
-                                cursor_position.position = last_selection.and_then(|s| {
-                                    buffer
-                                        .point_to_buffer_point(s.head().to_point(&buffer))
-                                        .map(|(_, point, is_main_buffer)| (point, is_main_buffer))
-                                });
+                                cursor_position.position = last_selection
+                                    .map(|s| UserCaretPosition::at_selection_end(&s, &snapshot));
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }
@@ -162,16 +183,19 @@ impl CursorPosition {
     pub(crate) fn selection_stats(&self) -> &SelectionStats {
         &self.selected_count
     }
+
+    #[cfg(test)]
+    pub(crate) fn position(&self) -> Option<UserCaretPosition> {
+        self.position
+    }
 }
 
 impl Render for CursorPosition {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().when_some(self.position, |el, (position, is_main_buffer)| {
+        div().when_some(self.position, |el, position| {
             let mut text = format!(
-                "{}{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                if is_main_buffer { "" } else { "(deleted) " },
-                position.row + 1,
-                position.column + 1
+                "{}{FILE_ROW_COLUMN_DELIMITER}{}",
+                position.line, position.character,
             );
             self.write_position(&mut text, cx);
 

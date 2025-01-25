@@ -965,8 +965,10 @@ impl sum_tree::Summary for ChunkSummary {
 /// Summary of a string of text.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
-    /// Length in UTF-8
+    /// Length in bytes.
     pub len: usize,
+    /// Length in UTF-8.
+    pub chars: usize,
     /// Length in UTF-16 code units
     pub len_utf16: OffsetUtf16,
     /// A point representing the number of lines and the length of the last line
@@ -994,6 +996,7 @@ impl TextSummary {
     pub fn newline() -> Self {
         Self {
             len: 1,
+            chars: 1,
             len_utf16: OffsetUtf16(1),
             first_line_chars: 0,
             last_line_chars: 0,
@@ -1022,7 +1025,9 @@ impl<'a> From<&'a str> for TextSummary {
         let mut last_line_len_utf16 = 0;
         let mut longest_row = 0;
         let mut longest_row_chars = 0;
+        let mut chars = 0;
         for c in text.chars() {
+            chars += 1;
             len_utf16.0 += c.len_utf16();
 
             if c == '\n' {
@@ -1047,6 +1052,7 @@ impl<'a> From<&'a str> for TextSummary {
 
         TextSummary {
             len: text.len(),
+            chars,
             len_utf16,
             lines,
             first_line_chars,
@@ -1103,6 +1109,7 @@ impl<'a> ops::AddAssign<&'a Self> for TextSummary {
             self.last_line_len_utf16 = other.last_line_len_utf16;
         }
 
+        self.chars += other.chars;
         self.len += other.len;
         self.len_utf16 += other.len_utf16;
         self.lines += other.lines;
