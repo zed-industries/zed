@@ -4994,121 +4994,125 @@ fn find_active_indent_guide_ix(
 }
 
 fn subscribe_for_editor_events(
-    editor: &View<Editor>,
-    cx: &mut ViewContext<OutlinePanel>,
+    editor: &Model<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<OutlinePanel>,
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
-    cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
-        if !outline_panel.active {
-            return;
-        }
-        match e {
-            EditorEvent::SelectionsChanged { local: true } => {
-                outline_panel.reveal_entry_for_selection(editor, cx);
-                cx.notify();
+    cx.subscribe_in(
+        editor,
+        window,
+        move |outline_panel, editor, e: &EditorEvent, window, cx| {
+            if !outline_panel.active {
+                return;
             }
-            EditorEvent::ExcerptsAdded { excerpts, .. } => {
-                outline_panel
-                    .new_entries_for_fs_update
-                    .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
-                outline_panel.update_fs_entries(editor, debounce, cx);
-            }
-            EditorEvent::ExcerptsRemoved { ids } => {
-                let mut ids = ids.iter().collect::<HashSet<_>>();
-                for excerpts in outline_panel.excerpts.values_mut() {
-                    excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
-                    if ids.is_empty() {
-                        break;
-                    }
+            match e {
+                EditorEvent::SelectionsChanged { local: true } => {
+                    outline_panel.reveal_entry_for_selection(editor.clone(), window, cx);
+                    cx.notify();
                 }
-                outline_panel.update_fs_entries(editor, debounce, cx);
-            }
-            EditorEvent::ExcerptsExpanded { ids } => {
-                outline_panel.invalidate_outlines(ids);
-                outline_panel.update_non_fs_items(cx);
-            }
-            EditorEvent::ExcerptsEdited { ids } => {
-                outline_panel.invalidate_outlines(ids);
-                outline_panel.update_non_fs_items(cx);
-            }
-            EditorEvent::BufferFoldToggled { ids, .. } => {
-                outline_panel.invalidate_outlines(ids);
-                let mut latest_unfolded_buffer_id = None;
-                let mut latest_folded_buffer_id = None;
-                let mut ignore_selections_change = false;
-                outline_panel.new_entries_for_fs_update.extend(
-                    ids.iter()
-                        .filter(|id| {
-                            outline_panel
-                                .excerpts
-                                .iter()
-                                .find_map(|(buffer_id, excerpts)| {
-                                    if excerpts.contains_key(id) {
-                                        ignore_selections_change |= outline_panel
-                                            .preserve_selection_on_buffer_fold_toggles
-                                            .remove(buffer_id);
-                                        Some(buffer_id)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .map(|buffer_id| {
-                                    if editor.read(cx).is_buffer_folded(*buffer_id, cx) {
-                                        latest_folded_buffer_id = Some(*buffer_id);
-                                        false
-                                    } else {
-                                        latest_unfolded_buffer_id = Some(*buffer_id);
-                                        true
-                                    }
-                                })
-                                .unwrap_or(true)
-                        })
-                        .copied(),
-                );
-                if !ignore_selections_change {
-                    if let Some(entry_to_select) = latest_unfolded_buffer_id
-                        .or(latest_folded_buffer_id)
-                        .and_then(|toggled_buffer_id| {
-                            outline_panel
-                                .fs_entries
-                                .iter()
-                                .find_map(|fs_entry| match fs_entry {
-                                    FsEntry::ExternalFile(external) => {
-                                        if external.buffer_id == toggled_buffer_id {
-                                            Some(fs_entry.clone())
+                EditorEvent::ExcerptsAdded { excerpts, .. } => {
+                    outline_panel
+                        .new_entries_for_fs_update
+                        .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
+                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
+                }
+                EditorEvent::ExcerptsRemoved { ids } => {
+                    let mut ids = ids.iter().collect::<HashSet<_>>();
+                    for excerpts in outline_panel.excerpts.values_mut() {
+                        excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
+                        if ids.is_empty() {
+                            break;
+                        }
+                    }
+                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
+                }
+                EditorEvent::ExcerptsExpanded { ids } => {
+                    outline_panel.invalidate_outlines(ids);
+                    outline_panel.update_non_fs_items(window, cx);
+                }
+                EditorEvent::ExcerptsEdited { ids } => {
+                    outline_panel.invalidate_outlines(ids);
+                    outline_panel.update_non_fs_items(window, cx);
+                }
+                EditorEvent::BufferFoldToggled { ids, .. } => {
+                    outline_panel.invalidate_outlines(ids);
+                    let mut latest_unfolded_buffer_id = None;
+                    let mut latest_folded_buffer_id = None;
+                    let mut ignore_selections_change = false;
+                    outline_panel.new_entries_for_fs_update.extend(
+                        ids.iter()
+                            .filter(|id| {
+                                outline_panel
+                                    .excerpts
+                                    .iter()
+                                    .find_map(|(buffer_id, excerpts)| {
+                                        if excerpts.contains_key(id) {
+                                            ignore_selections_change |= outline_panel
+                                                .preserve_selection_on_buffer_fold_toggles
+                                                .remove(buffer_id);
+                                            Some(buffer_id)
                                         } else {
                                             None
                                         }
-                                    }
-                                    FsEntry::File(FsEntryFile { buffer_id, .. }) => {
-                                        if *buffer_id == toggled_buffer_id {
-                                            Some(fs_entry.clone())
+                                    })
+                                    .map(|buffer_id| {
+                                        if editor.read(cx).is_buffer_folded(*buffer_id, cx) {
+                                            latest_folded_buffer_id = Some(*buffer_id);
+                                            false
                                         } else {
-                                            None
+                                            latest_unfolded_buffer_id = Some(*buffer_id);
+                                            true
                                         }
-                                    }
-                                    FsEntry::Directory(..) => None,
-                                })
-                        })
-                        .map(PanelEntry::Fs)
-                    {
-                        outline_panel.select_entry(entry_to_select, true, cx);
+                                    })
+                                    .unwrap_or(true)
+                            })
+                            .copied(),
+                    );
+                    if !ignore_selections_change {
+                        if let Some(entry_to_select) = latest_unfolded_buffer_id
+                            .or(latest_folded_buffer_id)
+                            .and_then(|toggled_buffer_id| {
+                                outline_panel.fs_entries.iter().find_map(
+                                    |fs_entry| match fs_entry {
+                                        FsEntry::ExternalFile(external) => {
+                                            if external.buffer_id == toggled_buffer_id {
+                                                Some(fs_entry.clone())
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        FsEntry::File(FsEntryFile { buffer_id, .. }) => {
+                                            if *buffer_id == toggled_buffer_id {
+                                                Some(fs_entry.clone())
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        FsEntry::Directory(..) => None,
+                                    },
+                                )
+                            })
+                            .map(PanelEntry::Fs)
+                        {
+                            outline_panel.select_entry(entry_to_select, true, window, cx);
+                        }
                     }
-                }
 
-                outline_panel.update_fs_entries(editor, debounce, cx);
-            }
-            EditorEvent::Reparsed(buffer_id) => {
-                if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                    for (_, excerpt) in excerpts {
-                        excerpt.invalidate_outlines();
-                    }
+                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
                 }
-                outline_panel.update_non_fs_items(cx);
+                EditorEvent::Reparsed(buffer_id) => {
+                    if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
+                        for (_, excerpt) in excerpts {
+                            excerpt.invalidate_outlines();
+                        }
+                    }
+                    outline_panel.update_non_fs_items(window, cx);
+                }
+                _ => {}
             }
-            _ => {}
-        }
-    })
+        },
+    )
 }
 
 fn empty_icon() -> AnyElement {
