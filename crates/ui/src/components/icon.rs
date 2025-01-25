@@ -163,6 +163,7 @@ pub enum IconName {
     ChevronRight,
     ChevronUp,
     ChevronUpDown,
+    ChevronsLeftRight,
     Close,
     Code,
     Command,
