@@ -1,6 +1,6 @@
 use std::{
     any::{type_name, TypeId},
-    cell::{Cell, Ref, RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     marker::PhantomData,
     mem,
     ops::{Deref, DerefMut},
@@ -25,7 +25,6 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
 pub use model_context::*;
-use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -33,12 +32,12 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, DisplayId, DrawPhase, Entity, EventEmitter, FocusHandle, FocusMap,
-    ForegroundExecutor, Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle,
-    PromptLevel, Render, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId,
+    DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor,
+    Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
+    Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
 };
 
 mod async_context;
@@ -223,12 +222,6 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewModelListener =
     Box<dyn FnMut(AnyModel, &mut Option<&mut Window>, &mut AppContext) + 'static>;
 
-#[derive(Debug, Clone)]
-pub(crate) struct EntityWindow {
-    pub dirty: Rc<Cell<bool>>,
-    pub draw_phase: Rc<Cell<DrawPhase>>,
-}
-
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
 /// You need a reference to an `AppContext` to access the state of a [Model].
@@ -271,8 +264,8 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) entity_windows: FxHashMap<EntityId, FxHashMap<WindowId, EntityWindow>>,
-    pub(crate) entities_to_invalidate: FxHashMap<WindowId, FxHashSet<EntityId>>,
+    pub(crate) window_invalidators_by_entity:
+        FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
@@ -326,8 +319,7 @@ impl AppContext {
                 pending_global_notifications: FxHashSet::default(),
                 observers: SubscriberSet::new(),
                 tracked_entities: FxHashMap::default(),
-                entity_windows: FxHashMap::default(),
-                entities_to_invalidate: FxHashMap::default(),
+                window_invalidators_by_entity: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
@@ -468,21 +460,23 @@ impl AppContext {
     pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,
-        window: EntityWindow,
+        invalidator: WindowInvalidator,
         entities: &FxHashSet<EntityId>,
     ) {
         let mut tracked_entities =
             std::mem::take(self.tracked_entities.entry(window_handle.id).or_default());
         for entity in tracked_entities.iter() {
-            self.entity_windows.entry(*entity).and_modify(|windows| {
-                windows.remove(&window_handle.id);
-            });
+            self.window_invalidators_by_entity
+                .entry(*entity)
+                .and_modify(|windows| {
+                    windows.remove(&window_handle.id);
+                });
         }
         for entity in entities.iter() {
-            self.entity_windows
+            self.window_invalidators_by_entity
                 .entry(*entity)
                 .or_default()
-                .insert(window_handle.id, window.clone());
+                .insert(window_handle.id, invalidator.clone());
         }
         tracked_entities.clear();
         tracked_entities.extend(entities.iter().copied());
@@ -880,7 +874,7 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
-                        window.dirty.get().then_some(window.handle)
+                        window.invalidator.is_dirty().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
                 {
@@ -962,7 +956,7 @@ impl AppContext {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
                 window.refreshing = true;
-                window.dirty.set(true);
+                window.invalidator.set_dirty(true);
             }
         }
     }
@@ -1557,31 +1551,25 @@ impl AppContext {
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     pub fn notify(&mut self, entity_id: EntityId) {
-        let entity_windows = mem::take(self.entity_windows.entry(entity_id).or_default());
+        let window_invalidators = mem::take(
+            self.window_invalidators_by_entity
+                .entry(entity_id)
+                .or_default(),
+        );
 
-        if entity_windows.is_empty() {
+        if window_invalidators.is_empty() {
             if self.pending_notifications.insert(entity_id) {
                 self.pending_effects
                     .push_back(Effect::Notify { emitter: entity_id });
             }
         } else {
-            let mut windows = SmallVec::<[WindowId; 1]>::new();
-            for (window_id, window) in entity_windows.iter() {
-                if window.draw_phase.get() == DrawPhase::None {
-                    window.dirty.set(true);
-                    windows.push(*window_id);
-                    self.push_effect(Effect::Notify { emitter: entity_id });
-                }
-            }
-            for window in windows {
-                self.entities_to_invalidate
-                    .entry(window)
-                    .or_default()
-                    .insert(entity_id);
+            for invalidator in window_invalidators.values() {
+                invalidator.invalidate_view(entity_id, self);
             }
         }
 
-        self.entity_windows.insert(entity_id, entity_windows);
+        self.window_invalidators_by_entity
+            .insert(entity_id, window_invalidators);
     }
 
     /// Get the name for this App.
