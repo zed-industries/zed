@@ -247,12 +247,24 @@ pub trait LanguageModelProvider: 'static {
     }
     fn render_accept_terms(
         &self,
+<<<<<<< HEAD
         _window: &mut Window,
         _cx: &mut AppContext,
+=======
+        _view: LanguageModelProviderTosView,
+        _cx: &mut WindowContext,
+>>>>>>> main
     ) -> Option<AnyElement> {
         None
     }
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
+}
+
+#[derive(PartialEq, Eq)]
+pub enum LanguageModelProviderTosView {
+    ThreadEmptyState,
+    PromptEditorPopup,
+    Configuration,
 }
 
 pub trait LanguageModelProviderState: 'static {

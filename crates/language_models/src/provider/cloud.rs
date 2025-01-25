@@ -12,14 +12,14 @@ use futures::{
     TryStreamExt as _,
 };
 use gpui::{
-    AnyElement, AnyView, AppContext, AsyncAppContext, EventEmitter, FontWeight, Global, Model,
-    ModelContext, ReadGlobal, Subscription, Task,
+    AnyElement, AnyView, AppContext, AsyncAppContext, EventEmitter, Global, Model, ModelContext,
+    ReadGlobal, Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{
     CloudModel, LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderTosView, LanguageModelRequest, RateLimiter, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider,
@@ -378,6 +378,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         !self.state.read(cx).has_accepted_terms_of_service(cx)
     }
 
+<<<<<<< HEAD
     fn render_accept_terms(&self, _: &mut Window, cx: &mut AppContext) -> Option<AnyElement> {
         let state = self.state.read(cx);
 
@@ -432,11 +433,81 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     .into_any(),
             )
         }
+=======
+    fn render_accept_terms(
+        &self,
+        view: LanguageModelProviderTosView,
+        cx: &mut WindowContext,
+    ) -> Option<AnyElement> {
+        render_accept_terms(self.state.clone(), view, cx)
+>>>>>>> main
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
+}
+
+fn render_accept_terms(
+    state: Model<State>,
+    view_kind: LanguageModelProviderTosView,
+    cx: &mut WindowContext,
+) -> Option<AnyElement> {
+    if state.read(cx).has_accepted_terms_of_service(cx) {
+        return None;
+    }
+
+    let accept_terms_disabled = state.read(cx).accept_terms.is_some();
+
+    let terms_button = Button::new("terms_of_service", "Terms of Service")
+        .style(ButtonStyle::Subtle)
+        .icon(IconName::ArrowUpRight)
+        .icon_color(Color::Muted)
+        .icon_size(IconSize::XSmall)
+        .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
+
+    let text = "To start using Zed AI, please read and accept the";
+
+    let form = v_flex()
+        .w_full()
+        .gap_2()
+        .when(
+            view_kind == LanguageModelProviderTosView::ThreadEmptyState,
+            |form| form.items_center(),
+        )
+        .child(
+            h_flex()
+                .flex_wrap()
+                .when(
+                    view_kind == LanguageModelProviderTosView::ThreadEmptyState,
+                    |form| form.justify_center(),
+                )
+                .child(Label::new(text))
+                .child(terms_button),
+        )
+        .child({
+            let button_container = h_flex().w_full().child(
+                Button::new("accept_terms", "I accept the Terms of Service")
+                    .style(ButtonStyle::Tinted(TintColor::Accent))
+                    .disabled(accept_terms_disabled)
+                    .on_click({
+                        let state = state.downgrade();
+                        move |_, cx| {
+                            state
+                                .update(cx, |state, cx| state.accept_terms_of_service(cx))
+                                .ok();
+                        }
+                    }),
+            );
+
+            match view_kind {
+                LanguageModelProviderTosView::ThreadEmptyState => button_container.justify_center(),
+                LanguageModelProviderTosView::PromptEditorPopup => button_container.justify_end(),
+                LanguageModelProviderTosView::Configuration => button_container.justify_start(),
+            }
+        });
+
+    Some(form.into_any())
 }
 
 pub struct CloudLanguageModel {
@@ -852,6 +923,7 @@ impl ConfigurationView {
         });
         cx.notify();
     }
+<<<<<<< HEAD
 
     fn render_accept_terms(&mut self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         if self.state.read(cx).has_accepted_terms_of_service(cx) {
@@ -890,6 +962,8 @@ impl ConfigurationView {
 
         Some(form.into_any())
     }
+=======
+>>>>>>> main
 }
 
 impl Render for ConfigurationView {
@@ -941,8 +1015,12 @@ impl Render for ConfigurationView {
         if is_connected {
             v_flex()
                 .gap_3()
-                .max_w_4_5()
-                .children(self.render_accept_terms(cx))
+                .w_full()
+                .children(render_accept_terms(
+                    self.state.clone(),
+                    LanguageModelProviderTosView::Configuration,
+                    cx,
+                ))
                 .when(has_accepted_terms, |this| {
                     this.child(subscription_text)
                         .children(manage_subscription_button)

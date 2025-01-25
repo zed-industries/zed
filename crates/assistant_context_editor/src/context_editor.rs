@@ -31,7 +31,10 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
-use language_model::{LanguageModelImage, LanguageModelRegistry, LanguageModelToolUse, Role};
+use language_model::{
+    LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
+    LanguageModelToolUse, Role,
+};
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
@@ -2355,6 +2358,9 @@ impl ContextEditor {
             let label = match configuration_error {
                 ConfigurationError::NoProvider => "No LLM provider selected.",
                 ConfigurationError::ProviderNotAuthenticated => "LLM provider is not configured.",
+                ConfigurationError::ProviderPendingTermsAcceptance(_) => {
+                    "LLM provider requires accepting the Terms of Service."
+                }
             };
             Some(
                 h_flex()
@@ -2965,9 +2971,15 @@ impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         let accept_terms = if self.show_accept_terms {
+<<<<<<< HEAD
             provider
                 .as_ref()
                 .and_then(|provider| provider.render_accept_terms(window, cx))
+=======
+            provider.as_ref().and_then(|provider| {
+                provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
+            })
+>>>>>>> main
         } else {
             None
         };
@@ -3652,6 +3664,7 @@ fn size_for_image(data: &RenderImage, max_size: Size<Pixels>) -> Size<Pixels> {
 pub enum ConfigurationError {
     NoProvider,
     ProviderNotAuthenticated,
+    ProviderPendingTermsAcceptance(Arc<dyn LanguageModelProvider>),
 }
 
 fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {

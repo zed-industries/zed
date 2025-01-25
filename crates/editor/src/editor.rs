@@ -3829,6 +3829,9 @@ impl Editor {
         }
 
         let position = self.selections.newest_anchor().head();
+        if position.diff_base_anchor.is_some() {
+            return;
+        }
         let (buffer, buffer_position) =
             if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
                 output
@@ -4519,6 +4522,9 @@ impl Editor {
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
+        if newest_selection.head().diff_base_anchor.is_some() {
+            return None;
+        }
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
         let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
         if start_buffer != end_buffer {
