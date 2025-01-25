@@ -247,13 +247,8 @@ pub trait LanguageModelProvider: 'static {
     }
     fn render_accept_terms(
         &self,
-<<<<<<< HEAD
-        _window: &mut Window,
-        _cx: &mut AppContext,
-=======
         _view: LanguageModelProviderTosView,
-        _cx: &mut WindowContext,
->>>>>>> main
+        _cx: &mut AppContext,
     ) -> Option<AnyElement> {
         None
     }

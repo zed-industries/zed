@@ -13469,8 +13469,8 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         five
     "});
     cx.run_until_parked();
-    cx.update_editor(|editor, cx| {
-        editor.toggle_selected_diff_hunks(&Default::default(), cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
     });
 
     cx.assert_state_with_diff(
@@ -13484,10 +13484,10 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         "}
         .to_string(),
     );
-    cx.update_editor(|editor, cx| {
-        editor.move_up(&Default::default(), cx);
-        editor.move_up(&Default::default(), cx);
-        editor.toggle_selected_diff_hunks(&Default::default(), cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.move_up(&Default::default(), window, cx);
+        editor.move_up(&Default::default(), window, cx);
+        editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
     });
     cx.assert_state_with_diff(
         indoc! { "

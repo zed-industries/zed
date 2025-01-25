@@ -2971,15 +2971,9 @@ impl Render for ContextEditor {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         let accept_terms = if self.show_accept_terms {
-<<<<<<< HEAD
-            provider
-                .as_ref()
-                .and_then(|provider| provider.render_accept_terms(window, cx))
-=======
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
             })
->>>>>>> main
         } else {
             None
         };

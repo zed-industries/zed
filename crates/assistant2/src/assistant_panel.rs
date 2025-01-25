@@ -772,29 +772,11 @@ impl AssistantPanel {
                                             .icon(Some(IconName::Sliders))
                                             .icon_size(IconSize::Small)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
-                                                this.open_configuration(cx);
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.open_configuration(window, cx);
                                             })),
                                     ),
                                 ),
-<<<<<<< HEAD
-                            )
-                            .child(
-                                h_flex().w_full().justify_center().child(
-                                    Button::new("open-configuration", "Configure a Provider")
-                                        .size(ButtonSize::Compact)
-                                        .icon(Some(IconName::Sliders))
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.open_configuration(window, cx);
-                                        })),
-                                ),
-                            ),
-                    )
-                },
-            )
-=======
                         )
                     }
                     Some(ConfigurationError::ProviderPendingTermsAcceptance(provider)) => {
@@ -811,7 +793,6 @@ impl AssistantPanel {
                     None => parent,
                 }
             })
->>>>>>> main
             .when(
                 recent_threads.is_empty() && no_error,
                 |parent| {

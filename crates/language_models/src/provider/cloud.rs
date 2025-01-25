@@ -378,69 +378,12 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         !self.state.read(cx).has_accepted_terms_of_service(cx)
     }
 
-<<<<<<< HEAD
-    fn render_accept_terms(&self, _: &mut Window, cx: &mut AppContext) -> Option<AnyElement> {
-        let state = self.state.read(cx);
-
-        let terms = [(
-            "terms_of_service",
-            "Terms of Service",
-            "https://zed.dev/terms-of-service",
-        )]
-        .map(|(id, label, url)| {
-            Button::new(id, label)
-                .style(ButtonStyle::Subtle)
-                .icon(IconName::ExternalLink)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
-                .on_click(move |_, _, cx| cx.open_url(url))
-        });
-
-        if state.has_accepted_terms_of_service(cx) {
-            None
-        } else {
-            let disabled = state.accept_terms.is_some();
-            Some(
-                v_flex()
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .child(Label::new("Terms and Conditions").weight(FontWeight::MEDIUM))
-                            .child(
-                                Label::new(
-                                    "Please read and accept our terms and conditions to continue.",
-                                )
-                                .size(LabelSize::Small),
-                            ),
-                    )
-                    .child(v_flex().gap_1().children(terms))
-                    .child(
-                        h_flex().justify_end().child(
-                            Button::new("accept_terms", "I've read it and accept it")
-                                .disabled(disabled)
-                                .on_click({
-                                    let state = self.state.downgrade();
-                                    move |_, _, cx| {
-                                        state
-                                            .update(cx, |state, cx| {
-                                                state.accept_terms_of_service(cx)
-                                            })
-                                            .ok();
-                                    }
-                                }),
-                        ),
-                    )
-                    .into_any(),
-            )
-        }
-=======
     fn render_accept_terms(
         &self,
         view: LanguageModelProviderTosView,
-        cx: &mut WindowContext,
+        cx: &mut AppContext,
     ) -> Option<AnyElement> {
         render_accept_terms(self.state.clone(), view, cx)
->>>>>>> main
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -451,7 +394,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 fn render_accept_terms(
     state: Model<State>,
     view_kind: LanguageModelProviderTosView,
-    cx: &mut WindowContext,
+    cx: &mut AppContext,
 ) -> Option<AnyElement> {
     if state.read(cx).has_accepted_terms_of_service(cx) {
         return None;
@@ -464,7 +407,7 @@ fn render_accept_terms(
         .icon(IconName::ArrowUpRight)
         .icon_color(Color::Muted)
         .icon_size(IconSize::XSmall)
-        .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
+        .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
     let text = "To start using Zed AI, please read and accept the";
 
@@ -492,7 +435,7 @@ fn render_accept_terms(
                     .disabled(accept_terms_disabled)
                     .on_click({
                         let state = state.downgrade();
-                        move |_, cx| {
+                        move |_, _window, cx| {
                             state
                                 .update(cx, |state, cx| state.accept_terms_of_service(cx))
                                 .ok();
@@ -923,47 +866,6 @@ impl ConfigurationView {
         });
         cx.notify();
     }
-<<<<<<< HEAD
-
-    fn render_accept_terms(&mut self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
-        if self.state.read(cx).has_accepted_terms_of_service(cx) {
-            return None;
-        }
-
-        let accept_terms_disabled = self.state.read(cx).accept_terms.is_some();
-
-        let terms_button = Button::new("terms_of_service", "Terms of Service")
-            .style(ButtonStyle::Subtle)
-            .icon(IconName::ArrowUpRight)
-            .icon_color(Color::Muted)
-            .icon_size(IconSize::XSmall)
-            .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
-
-        let text = "To start using Zed AI, please read and accept the";
-
-        let form = v_flex()
-            .gap_1()
-            .child(h_flex().child(Label::new(text)).child(terms_button))
-            .child(
-                h_flex().child(
-                    Button::new("accept_terms", "I've read and accept the Terms of Service")
-                        .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .disabled(accept_terms_disabled)
-                        .on_click({
-                            let state = self.state.downgrade();
-                            move |_, _, cx| {
-                                state
-                                    .update(cx, |state, cx| state.accept_terms_of_service(cx))
-                                    .ok();
-                            }
-                        }),
-                ),
-            );
-
-        Some(form.into_any())
-    }
-=======
->>>>>>> main
 }
 
 impl Render for ConfigurationView {
