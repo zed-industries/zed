@@ -3811,6 +3811,9 @@ pub mod tests {
             .downcast::<Editor>()
             .unwrap();
 
+        // Wait for the unstaged changes to be loaded
+        cx.run_until_parked();
+
         let buffer_search_bar = cx.new_window_model(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
