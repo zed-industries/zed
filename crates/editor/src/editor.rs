@@ -12001,13 +12001,13 @@ impl Editor {
         &mut self,
         _: &OpenSelectionsInMultibuffer,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) {
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
-            return None;
+            return;
         };
 
         let Some(workspace) = self.workspace() else {
-            return None;
+            return;
         };
 
         let locations = self
@@ -12033,8 +12033,6 @@ impl Editor {
             })
         })
         .detach();
-
-        Some(Task::ready(Ok(())))
     }
 
     /// Adds a row highlight for the given range. If a row has multiple highlights, the
