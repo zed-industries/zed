@@ -16,6 +16,7 @@
 //!
 
 use alacritty_terminal::{
+    event::VoidListener,
     grid::Dimensions as _,
     index::{Column, Line, Point},
     term::Config,
@@ -24,8 +25,6 @@ use alacritty_terminal::{
 use gpui::{canvas, size, ClipboardItem, FontStyle, Model, TextStyle, WhiteSpace};
 use language::Buffer;
 use settings::Settings as _;
-use std::mem;
-use terminal::ZedListener;
 use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement};
@@ -50,7 +49,7 @@ pub struct TerminalOutput {
     /// ANSI escape sequence processor for parsing input text.
     parser: Processor,
     /// Alacritty terminal instance that manages the terminal state and content.
-    handler: alacritty_terminal::Term<ZedListener>,
+    handler: alacritty_terminal::Term<VoidListener>,
 }
 
 const DEFAULT_NUM_LINES: usize = 32;
@@ -124,14 +123,9 @@ impl TerminalOutput {
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
     pub fn new(cx: &mut WindowContext) -> Self {
-        let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
-        let term = alacritty_terminal::Term::new(
-            Config::default(),
-            &terminal_size(cx),
-            terminal::ZedListener(events_tx.clone()),
-        );
+        let term =
+            alacritty_terminal::Term::new(Config::default(), &terminal_size(cx), VoidListener);
 
-        mem::forget(events_rx);
         Self {
             parser: Processor::new(),
             handler: term,
