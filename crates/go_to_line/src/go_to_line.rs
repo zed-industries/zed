@@ -257,14 +257,13 @@ impl GoToLine {
 
 impl Render for GoToLine {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut help_text = self.current_text.clone();
-        if let Some((line, character)) = self.line_and_char_from_query(cx) {
-            help_text = match character {
-                Some(column) => format!("Go to line {line}, character {column}"),
-                None => format!("Go to line {line}"),
+        let help_text = match self.line_and_char_from_query(cx) {
+            Some((line, Some(character))) => {
+                format!("Go to line {line}, character {character}").into()
             }
-            .into();
-        }
+            Some((line, None)) => format!("Go to line {line}").into(),
+            None => self.current_text.clone(),
+        };
 
         v_flex()
             .w(rems(24.))
