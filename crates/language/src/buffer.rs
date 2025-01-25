@@ -6,7 +6,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
+    language_settings::{language_settings, LanguageSettings},
     markdown::parse_markdown,
     outline::OutlineItem,
     syntax_map::{
@@ -585,22 +585,6 @@ pub struct Runnable {
     pub tags: SmallVec<[RunnableTag; 1]>,
     pub language: Arc<Language>,
     pub buffer: BufferId,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct IndentGuide {
-    pub buffer_id: BufferId,
-    pub start_row: BufferRow,
-    pub end_row: BufferRow,
-    pub depth: u32,
-    pub tab_size: u32,
-    pub settings: IndentGuideSettings,
-}
-
-impl IndentGuide {
-    pub fn indent_level(&self) -> u32 {
-        self.depth * self.tab_size
-    }
 }
 
 impl Buffer {
