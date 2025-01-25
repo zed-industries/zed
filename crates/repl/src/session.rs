@@ -393,7 +393,7 @@ impl Session {
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 
         self.blocks.retain(|_key, block| {
-            if anchor_range.overlaps(&block.code_range, &buffer) {
+            if anchor_range.includes(&block.code_range, &buffer) {
                 blocks_to_remove.insert(block.block_id);
                 false
             } else {
