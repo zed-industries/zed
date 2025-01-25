@@ -703,7 +703,7 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
-    use gpui::{font, px, AppContext as _, Context as _};
+    use gpui::{font, px, AppContext as _};
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;

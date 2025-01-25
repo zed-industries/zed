@@ -4,7 +4,7 @@ use crate::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
 use lsp::LanguageServerName;
 use lsp_log::LogKind;

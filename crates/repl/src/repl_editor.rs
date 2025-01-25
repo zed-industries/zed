@@ -474,7 +474,7 @@ fn get_language(editor: WeakEntity<Editor>, cx: &mut App) -> Option<Arc<Language
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{App, Context};
+    use gpui::App;
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
 

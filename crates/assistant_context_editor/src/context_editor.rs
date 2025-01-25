@@ -3712,7 +3712,7 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{App, Context};
+    use gpui::App;
     use language::Buffer;
     use unindent::Unindent;
 

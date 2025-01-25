@@ -280,7 +280,7 @@ mod tests {
     };
     use fs::FakeFs;
     use futures::StreamExt;
-    use gpui::{AppContext as _, BackgroundExecutor, Context, TestAppContext, UpdateGlobal};
+    use gpui::{AppContext as _, BackgroundExecutor, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},

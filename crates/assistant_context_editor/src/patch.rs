@@ -551,7 +551,7 @@ impl Eq for AssistantPatch {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{App, AppContext as _, Context};
+    use gpui::{App, AppContext as _};
     use language::{
         language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
     };

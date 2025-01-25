@@ -5,8 +5,7 @@ use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs as _};
 use futures::StreamExt as _;
 use gpui::{
-    AppContext as _, BackgroundExecutor, Context as _, SemanticVersion, TestAppContext,
-    UpdateGlobal as _,
+    AppContext as _, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal as _,
 };
 use http_client::BlockedHttpClient;
 use language::{

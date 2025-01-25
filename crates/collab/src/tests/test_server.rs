@@ -17,9 +17,7 @@ use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    AppContext as _, BackgroundExecutor, Context, Entity, Task, TestAppContext, VisualTestContext,
-};
+use gpui::{AppContext as _, BackgroundExecutor, Entity, Task, TestAppContext, VisualTestContext};
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;

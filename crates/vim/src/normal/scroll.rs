@@ -163,7 +163,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::{EditorSettings, ScrollBeyondLastLine};
-    use gpui::{point, px, size, AppContext as _, Context};
+    use gpui::{point, px, size, AppContext as _};
     use indoc::indoc;
     use language::Point;
     use settings::SettingsStore;

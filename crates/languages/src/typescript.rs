@@ -593,7 +593,7 @@ async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, Context, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
     use unindent::Unindent;
 
     #[gpui::test]

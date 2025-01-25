@@ -3705,7 +3705,7 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 mod tests {
     use super::*;
     use futures::stream::{self};
-    use gpui::{Context, TestAppContext};
+    use gpui::TestAppContext;
     use indoc::indoc;
     use language::{
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,

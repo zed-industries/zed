@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Context, Entity, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},

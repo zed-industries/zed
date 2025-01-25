@@ -8,7 +8,7 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
 use lsp::LanguageServerName;

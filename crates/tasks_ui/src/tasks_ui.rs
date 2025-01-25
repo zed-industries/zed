@@ -256,7 +256,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use editor::Editor;
-    use gpui::{Entity, TestAppContext};
+    use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{task_store::TaskStore, BasicContextProvider, FakeFs, Project};
     use serde_json::json;

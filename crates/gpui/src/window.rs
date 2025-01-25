@@ -1255,7 +1255,7 @@ impl Window {
     }
 
     /// Register a callback to be invoked when the given Model or View is released.
-    pub fn observe_release<E, T>(
+    pub fn observe_release<T>(
         &self,
         entity: &Entity<T>,
         cx: &mut App,

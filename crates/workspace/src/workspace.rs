@@ -8540,7 +8540,6 @@ mod tests {
     }
 
     mod register_project_item_tests {
-        use gpui::Context as _;
 
         use super::*;
 

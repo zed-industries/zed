@@ -1992,7 +1992,7 @@ mod tests {
     use crate::display_map::{
         fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
     };
-    use gpui::{div, font, px, App, AppContext as _, Context as _, Element};
+    use gpui::{div, font, px, App, AppContext as _, Element};
     use itertools::Itertools;
     use language::{Buffer, Capability};
     use multi_buffer::{ExcerptRange, MultiBuffer};

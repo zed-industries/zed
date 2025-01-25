@@ -151,7 +151,7 @@ async fn get_cached_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{AppContext as _, Context, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
     use unindent::Unindent;
 
     #[gpui::test]

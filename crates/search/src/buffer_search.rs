@@ -1389,7 +1389,7 @@ mod tests {
 
     use super::*;
     use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
-    use gpui::{Context, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
     use settings::SettingsStore;

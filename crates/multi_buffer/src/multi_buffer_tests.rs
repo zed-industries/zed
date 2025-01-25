@@ -1,6 +1,6 @@
 use super::*;
 use git::diff::DiffHunkStatus;
-use gpui::{App, Context, TestAppContext};
+use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;

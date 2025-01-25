@@ -1439,8 +1439,7 @@ pub mod tests {
     use crate::{movement, test::marked_display_snapshot};
     use block_map::BlockPlacement;
     use gpui::{
-        div, font, observe, px, App, AppContext as _, BorrowAppContext, Context, Element, Hsla,
-        Rgba,
+        div, font, observe, px, App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba,
     };
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
