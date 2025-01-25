@@ -1,7 +1,9 @@
 pub mod cursor_position;
 
 use cursor_position::{LineIndicatorFormat, UserCaretPosition};
-use editor::{scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
+use editor::{
+    actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
+};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Model, Render, SharedString, Styled, Subscription, View, ViewContext,
@@ -90,6 +92,24 @@ impl GoToLine {
 
         let line_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
+            let editor_handle = cx.view().downgrade();
+            editor
+                .register_action::<Tab>({
+                    move |_, cx| {
+                        let Some(editor) = editor_handle.upgrade() else {
+                            return;
+                        };
+                        editor.update(cx, |editor, cx| {
+                            if let Some(placeholder_text) = editor.placeholder_text(cx) {
+                                if editor.text(cx).is_empty() {
+                                    let placeholder_text = placeholder_text.to_string();
+                                    editor.set_text(placeholder_text, cx);
+                                }
+                            }
+                        });
+                    }
+                })
+                .detach();
             editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
         });
