@@ -25,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{test::temp_tree, ResultExt};
+use util::{test::TempTree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
@@ -352,7 +352,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     const NEW_NAME: &str = "AAA.rs";
 
     let fs = Arc::new(RealFs::default());
-    let temp_root = temp_tree(json!({
+    let temp_root = TempTree::new(json!({
         OLD_NAME: "",
     }));
 
@@ -846,7 +846,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".git": {},
         ".gitignore": "ignored-dir\n",
         "tracked-dir": {},
@@ -903,7 +903,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
 async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules\ntop_level.txt\n",
         "target": {
             "index": "blah2"
@@ -973,7 +973,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
 async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules\n",
         "target": {
             "index": "blah2"
@@ -1031,7 +1031,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
 async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules/\n",
         "target": {
             "index": "blah2"
@@ -1108,7 +1108,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
 async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules\n",
         "target": {
             "index": "blah2"
@@ -1206,7 +1206,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".git": {
             "HEAD": "ref: refs/heads/main\n",
             "foo": "bar",
@@ -1349,7 +1349,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
 async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".git": {
             "HEAD": "ref: refs/heads/main\n",
             "foo": "foo contents",
@@ -1562,7 +1562,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     });
 
     let fs_real = Arc::new(RealFs::default());
-    let temp_root = temp_tree(json!({
+    let temp_root = TempTree::new(json!({
         "a": {}
     }));
 
@@ -2160,7 +2160,7 @@ const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "projects": {
             "project1": {
                 "a": "",
@@ -2231,7 +2231,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "c.txt": "",
         "dir1": {
             ".git": {},
@@ -2341,7 +2341,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     const IGNORE_RULE: &str = "**/target";
 
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "project": {
             "a.txt": "a",
             "b.txt": "bb",
@@ -2530,7 +2530,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "project": {
             "a.txt": "a",    // Modified
             "b.txt": "bb",   // Added
@@ -2644,7 +2644,7 @@ async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "project": {
             "sub": {},
             "a.txt": "",
@@ -2700,7 +2700,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "my-repo": {
             // .git folder will go here
             "a.txt": "a",
