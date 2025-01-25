@@ -1,7 +1,7 @@
 pub mod cursor_position;
 
 use cursor_position::LineIndicatorFormat;
-use editor::{scroll::Autoscroll, Anchor, Editor, MultiBuffer, ToPoint};
+use editor::{scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Model, Render, SharedString, Styled, Subscription, View, ViewContext,
@@ -9,7 +9,7 @@ use gpui::{
 };
 use language::Buffer;
 use settings::Settings;
-use text::Point;
+use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
@@ -23,7 +23,6 @@ pub fn init(cx: &mut AppContext) {
 pub struct GoToLine {
     line_editor: View<Editor>,
     active_editor: View<Editor>,
-    active_buffer: Model<Buffer>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<f32>>,
     _subscriptions: Vec<Subscription>,
@@ -103,7 +102,6 @@ impl GoToLine {
         Self {
             line_editor,
             active_editor,
-            active_buffer,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
             _subscriptions: vec![line_editor_change, cx.on_release(Self::release)],
@@ -141,12 +139,12 @@ impl GoToLine {
     fn highlight_current_line(&mut self, cx: &mut ViewContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
-            let multibuffer = editor.buffer().read(cx);
-            let snapshot = multibuffer.snapshot(cx);
-            let Some(start) = self.anchor_from_query(&multibuffer, cx) else {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
-            let start_point = start.to_point(&snapshot);
+            let mut start_point = start.to_point(&snapshot);
+            start_point.column = 0;
             let end_point = start_point + Point::new(1, 0);
             let end = snapshot.anchor_after(end_point);
             editor.highlight_rows::<GoToLineRowHighlights>(
@@ -162,25 +160,49 @@ impl GoToLine {
 
     fn anchor_from_query(
         &self,
-        multibuffer: &MultiBuffer,
+        snapshot: &MultiBufferSnapshot,
         cx: &ViewContext<Editor>,
     ) -> Option<Anchor> {
-        let (Some(row), column) = self.line_column_from_query(cx) else {
-            return None;
-        };
-        let point = Point::new(row.saturating_sub(1), column.unwrap_or(0).saturating_sub(1));
-        multibuffer.buffer_point_to_anchor(&self.active_buffer, point, cx)
+        let (query_row, query_char) = self.line_and_char_from_query(cx)?;
+        let row = query_row.saturating_sub(1);
+        let character = query_char.unwrap_or(0);
+
+        let start_offset = Point::new(row, 0).to_offset(snapshot);
+        const MAX_BYTES_IN_UTF_8: u32 = 4;
+        let max_end_offset = snapshot
+            .clip_point(
+                Point::new(row, character * MAX_BYTES_IN_UTF_8 + 1),
+                Bias::Right,
+            )
+            .to_offset(snapshot);
+
+        let mut chars_to_iterate = character;
+        let mut end_offset = start_offset;
+        'outer: for text_chunk in snapshot.text_for_range(start_offset..max_end_offset) {
+            let mut offset_increment = 0;
+            for c in text_chunk.chars() {
+                if chars_to_iterate == 0 {
+                    end_offset += offset_increment;
+                    break 'outer;
+                } else {
+                    chars_to_iterate -= 1;
+                    offset_increment += c.len_utf8();
+                }
+            }
+            end_offset += offset_increment;
+        }
+        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Right)))
     }
 
-    fn line_column_from_query(&self, cx: &AppContext) -> (Option<u32>, Option<u32>) {
+    fn line_and_char_from_query(&self, cx: &AppContext) -> Option<(u32, Option<u32>)> {
         let input = self.line_editor.read(cx).text(cx);
         let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
             .map(str::trim)
             .fuse();
-        let row = components.next().and_then(|row| row.parse::<u32>().ok());
+        let row = components.next().and_then(|row| row.parse::<u32>().ok())?;
         let column = components.next().and_then(|col| col.parse::<u32>().ok());
-        (row, column)
+        Some((row, column))
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
@@ -189,13 +211,12 @@ impl GoToLine {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
-            let multibuffer = editor.buffer().read(cx);
-            let Some(start) = self.anchor_from_query(&multibuffer, cx) else {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
             editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                // TODO kb change here, navigate to the beginning of the line, then iterate over chars to get it.
-                    s.select_anchor_ranges([start..start])
+                s.select_anchor_ranges([start..start])
             });
             editor.focus(cx);
             cx.notify()
@@ -209,13 +230,12 @@ impl GoToLine {
 impl Render for GoToLine {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut help_text = self.current_text.clone();
-        let query = self.line_column_from_query(cx);
-        if let Some(line) = query.0 {
-            if let Some(column) = query.1 {
-                help_text = format!("Go to line {line}, column {column}").into();
-            } else {
-                help_text = format!("Go to line {line}").into();
+        if let Some((line, column)) = self.line_and_char_from_query(cx) {
+            help_text = match column {
+                Some(column) => format!("Go to line {line}, character {column}"),
+                None => format!("Go to line {line}"),
             }
+            .into();
         }
 
         v_flex()
