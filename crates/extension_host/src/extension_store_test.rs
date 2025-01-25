@@ -25,7 +25,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::test::temp_tree;
+use util::test::TempTree;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -470,11 +470,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
     let fs = Arc::new(RealFs::default());
-    let extensions_dir = temp_tree(json!({
+    let extensions_dir = TempTree::new(json!({
         "installed": {},
         "work": {}
     }));
-    let project_dir = temp_tree(json!({
+    let project_dir = TempTree::new(json!({
         "test.gleam": ""
     }));
 
