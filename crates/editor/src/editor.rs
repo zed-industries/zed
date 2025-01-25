@@ -11967,6 +11967,45 @@ impl Editor {
         });
     }
 
+    pub fn open_selections_in_multibuffer(
+        &mut self,
+        _: &OpenSelectionsInMultiBuffer,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+            return None;
+        };
+
+        let Some(workspace) = self.workspace() else {
+            return None;
+        };
+
+        let locations = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|range| Location {
+                buffer: buffer.clone(),
+                range: range.start.text_anchor..range.end.text_anchor,
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(|_, mut cx| async move {
+            workspace.update(&mut cx, |workspace, cx| {
+                Self::open_locations_in_multibuffer(
+                    workspace,
+                    locations,
+                    "Selections".into(),
+                    false,
+                    cx,
+                );
+            })
+        })
+        .detach();
+
+        Some(Task::ready(Ok(())))
+    }
+
     /// Adds a row highlight for the given range. If a row has multiple highlights, the
     /// last highlight added will be used.
     ///

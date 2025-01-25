@@ -455,6 +455,13 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.open_selections_in_multibuffer(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
         register_action(view, cx, Editor::show_signature_help);
         register_action(view, cx, Editor::next_inline_completion);
         register_action(view, cx, Editor::previous_inline_completion);
