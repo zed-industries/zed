@@ -272,8 +272,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                         .collect::<Vec<_>>()
                 };
 
-                editor.insert("\n", cx); // Needed to end the fold
-
                 let placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(IconName::File, file_name.into()),
                     ..Default::default()
@@ -283,7 +281,7 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let mut rows_to_fold = BTreeSet::new();
-                let crease_iter = start_anchors
+                let creases = start_anchors
                     .into_iter()
                     .zip(end_anchors)
                     .map(|(start, end)| {
@@ -295,13 +293,11 @@ impl PickerDelegate for FileContextPickerDelegate {
                             fold_toggle("tool-use"),
                             render_trailer,
                         )
-                    });
+                    })
+                    .collect::<Vec<_>>();
 
-                editor.insert_creases(crease_iter, cx);
-
-                for buffer_row in rows_to_fold {
-                    editor.fold_at(&FoldAt { buffer_row }, cx);
-                }
+                editor.insert_creases(creases.iter().cloned(), cx);
+                editor.fold_creases(creases, false, cx);
             });
         });
 
