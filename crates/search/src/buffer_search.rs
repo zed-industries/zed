@@ -158,8 +158,8 @@ impl Render for BufferSearchBar {
 
         let supported_options = self.supported_options();
 
-        if self.query_editor.update(cx, |query_editor, cx| {
-            query_editor.placeholder_text(window, cx).is_none()
+        if self.query_editor.update(cx, |query_editor, _cx| {
+            query_editor.placeholder_text().is_none()
         }) {
             self.query_editor.update(cx, |editor, cx| {
                 editor.set_placeholder_text("Search…", cx);

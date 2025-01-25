@@ -1750,7 +1750,7 @@ impl Editor {
         self.refresh_inline_completion(false, false, window, cx);
     }
 
-    pub fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Option<&str> {
+    pub fn placeholder_text(&self) -> Option<&str> {
         self.placeholder_text.as_deref()
     }
 
@@ -10424,7 +10424,7 @@ impl Editor {
                     return Ok(Navigated::No);
                 };
                 let opened = workspace
-                    .update(&mut cx, |workspace, window, cx| {
+                    .update_in(&mut cx, |workspace, window, cx| {
                         Self::open_locations_in_multibuffer(
                             workspace,
                             locations,
@@ -12798,7 +12798,8 @@ impl Editor {
     pub fn open_selections_in_multibuffer(
         &mut self,
         _: &OpenSelectionsInMultibuffer,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let multibuffer = self.buffer.read(cx);
 
@@ -12822,14 +12823,15 @@ impl Editor {
 
         let title = multibuffer.title(cx).to_string();
 
-        cx.spawn(|_, mut cx| async move {
-            workspace.update(&mut cx, |workspace, cx| {
+        cx.spawn_in(window, |_, mut cx| async move {
+            workspace.update_in(&mut cx, |workspace, window, cx| {
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
                     format!("Selections for '{title}'"),
                     false,
                     MultibufferSelectionMode::All,
+                    window,
                     cx,
                 );
             })

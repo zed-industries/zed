@@ -94,18 +94,18 @@ impl GoToLine {
 
         let line_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            let editor_handle = cx.view().downgrade();
+            let editor_handle = cx.model().downgrade();
             editor
                 .register_action::<Tab>({
-                    move |_, cx| {
+                    move |_, window, cx| {
                         let Some(editor) = editor_handle.upgrade() else {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            if let Some(placeholder_text) = editor.placeholder_text(cx) {
+                            if let Some(placeholder_text) = editor.placeholder_text() {
                                 if editor.text(cx).is_empty() {
                                     let placeholder_text = placeholder_text.to_string();
-                                    editor.set_text(placeholder_text, cx);
+                                    editor.set_text(placeholder_text, window, cx);
                                 }
                             }
                         });
@@ -509,11 +509,12 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        workspace.update(cx, |workspace, cx| {
-            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new_model(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
-                status_bar.add_right_item(cursor_position, cx);
+                status_bar.add_right_item(cursor_position, window, cx);
             });
         });
 
@@ -527,16 +528,16 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
 
-        editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&MoveToBeginning, cx)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx)
         });
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
@@ -547,7 +548,9 @@ mod tests {
 
         for (i, c) in text.chars().enumerate() {
             let i = i as u32 + 1;
-            editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+            editor.update_in(cx, |editor, window, cx| {
+                editor.move_right(&MoveRight, window, cx)
+            });
             cx.executor().advance_clock(Duration::from_millis(200));
             assert_eq!(
                 user_caret_position(1, i + 1),
@@ -556,7 +559,9 @@ mod tests {
             );
         }
 
-        editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_right(&MoveRight, window, cx)
+        });
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
             user_caret_position(1, text.chars().count() as u32 + 1),
@@ -580,11 +585,12 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        workspace.update(cx, |workspace, cx| {
-            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new_model(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
-                status_bar.add_right_item(cursor_position, cx);
+                status_bar.add_right_item(cursor_position, window, cx);
             });
         });
 
@@ -598,16 +604,16 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
 
-        editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&MoveToBeginning, cx)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx)
         });
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(user_caret_position(1, 1), current_position(&workspace, cx));
@@ -639,7 +645,7 @@ mod tests {
     }
 
     fn current_position(
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         cx: &mut VisualTestContext,
     ) -> UserCaretPosition {
         workspace.update(cx, |workspace, cx| {
@@ -664,7 +670,7 @@ mod tests {
     fn go_to_point(
         new_point: UserCaretPosition,
         expected_placeholder: UserCaretPosition,
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         cx: &mut VisualTestContext,
     ) {
         let go_to_line_view = open_go_to_line_view(workspace, cx);
@@ -673,7 +679,7 @@ mod tests {
                 go_to_line_view
                     .line_editor
                     .read(cx)
-                    .placeholder_text(cx)
+                    .placeholder_text()
                     .expect("No placeholder text"),
                 format!(
                     "{}:{}",
