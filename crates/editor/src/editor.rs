@@ -10423,17 +10423,19 @@ impl Editor {
                 let Some(workspace) = workspace else {
                     return Ok(Navigated::No);
                 };
-                let opened = workspace
-                    .update(&mut cx, |workspace, window, cx| {
-                        Self::open_locations_in_multibuffer(
-                            workspace,
-                            locations,
-                            title,
-                            split,
-                            MultibufferSelectionMode::First,
-                            window,
-                            cx,
-                        )
+                let opened = cx
+                    .update(|window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            Self::open_locations_in_multibuffer(
+                                workspace,
+                                locations,
+                                title,
+                                split,
+                                MultibufferSelectionMode::First,
+                                window,
+                                cx,
+                            )
+                        })
                     })
                     .ok();
 
@@ -12798,7 +12800,8 @@ impl Editor {
     pub fn open_selections_in_multibuffer(
         &mut self,
         _: &OpenSelectionsInMultibuffer,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let multibuffer = self.buffer.read(cx);
 
@@ -12822,19 +12825,23 @@ impl Editor {
 
         let title = multibuffer.title(cx).to_string();
 
-        cx.spawn(|_, mut cx| async move {
-            workspace.update(&mut cx, |workspace, cx| {
-                Self::open_locations_in_multibuffer(
-                    workspace,
-                    locations,
-                    format!("Selections for '{title}'"),
-                    false,
-                    MultibufferSelectionMode::All,
-                    cx,
-                );
+        window
+            .spawn(cx, |mut cx| async move {
+                cx.update(|window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        Self::open_locations_in_multibuffer(
+                            workspace,
+                            locations,
+                            format!("Selections for '{title}'"),
+                            false,
+                            MultibufferSelectionMode::All,
+                            window,
+                            cx,
+                        );
+                    })
+                })
             })
-        })
-        .detach();
+            .detach();
     }
 
     /// Adds a row highlight for the given range. If a row has multiple highlights, the
