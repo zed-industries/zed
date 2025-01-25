@@ -12002,7 +12002,9 @@ impl Editor {
         _: &OpenSelectionsInMultibuffer,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
+        let multibuffer = self.buffer.read(cx);
+
+        let Some(buffer) = multibuffer.as_singleton() else {
             return;
         };
 
@@ -12020,12 +12022,14 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
+        let title = multibuffer.title(cx).to_string();
+
         cx.spawn(|_, mut cx| async move {
             workspace.update(&mut cx, |workspace, cx| {
                 Self::open_locations_in_multibuffer(
                     workspace,
                     locations,
-                    "Selections".into(),
+                    format!("Selections for '{title}'"),
                     false,
                     MultibufferSelectionMode::All,
                     cx,
