@@ -5705,7 +5705,7 @@ impl Editor {
             if use_tab_out && cursor.column != snapshot.line_len(MultiBufferRow(cursor.row)) {
                 if let Some(next_char) = snapshot.chars_at(cursor).next() {
                     let is_before_closing_delimiter =
-                        matches!(next_char, ')' | '}' | ']' | '\'' | '\"' | ';');
+                        matches!(next_char, ')' | '}' | ']' | '\'' | '\"' | ';' | ':');
                     if is_before_closing_delimiter {
                         let old_cursor = selection.end;
                         let new_cursor = Point::new(old_cursor.row, old_cursor.column + 1);
