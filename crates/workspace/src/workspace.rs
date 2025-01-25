@@ -4830,9 +4830,11 @@ impl Workspace {
                     .save_active_item(SaveIntent::SaveAs, window, cx)
                     .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
-            .on_action(cx.listener(|workspace, _: &ActivatePreviousPane, cx| {
-                workspace.activate_previous_pane(cx)
-            }))
+            .on_action(
+                cx.listener(|workspace, _: &ActivatePreviousPane, window, cx| {
+                    workspace.activate_previous_pane(window, cx)
+                }),
+            )
             .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
                 workspace.activate_next_pane(window, cx)
             }))
