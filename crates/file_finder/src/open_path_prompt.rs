@@ -10,7 +10,7 @@ use std::{
     },
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
-use ui::{ListItem, Context, Window};
+use ui::{Context, ListItem, Window};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
@@ -88,12 +88,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         cx.notify();
     }

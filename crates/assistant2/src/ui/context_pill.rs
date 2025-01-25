@@ -54,10 +54,7 @@ impl ContextPill {
         }
     }
 
-    pub fn on_click(
-        mut self,
-        listener: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
-    ) -> Self {
+    pub fn on_click(mut self, listener: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>) -> Self {
         match &mut self {
             ContextPill::Added { on_click, .. } => {
                 *on_click = Some(listener);

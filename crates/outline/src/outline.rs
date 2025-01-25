@@ -7,8 +7,8 @@ use std::{
 use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
-    div, rems, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    Context, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity,
+    div, rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity,
     Window,
 };
 use language::{Outline, OutlineItem};
@@ -294,11 +294,7 @@ impl PickerDelegate for OutlineViewDelegate {
         self.dismissed(window, cx);
     }
 
-    fn dismissed(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Picker<OutlineViewDelegate>>,
-    ) {
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<OutlineViewDelegate>>) {
         self.outline_view
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();

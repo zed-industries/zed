@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, Application, App, Bounds, Context, SharedString, Window,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Window,
     WindowBounds, WindowOptions,
 };
 

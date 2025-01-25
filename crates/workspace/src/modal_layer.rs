@@ -1,4 +1,4 @@
-use gpui::{AnyView, DismissEvent, FocusHandle, Focusable as _, ManagedView, Entity, Subscription};
+use gpui::{AnyView, DismissEvent, Entity, FocusHandle, Focusable as _, ManagedView, Subscription};
 use ui::prelude::*;
 
 pub enum DismissDecision {
@@ -66,12 +66,8 @@ impl ModalLayer {
         }
     }
 
-    pub fn toggle_modal<V, B>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        build_view: B,
-    ) where
+    pub fn toggle_modal<V, B>(&mut self, window: &mut Window, cx: &mut Context<Self>, build_view: B)
+    where
         V: ModalView,
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
@@ -86,12 +82,8 @@ impl ModalLayer {
         self.show_modal(new_modal, window, cx);
     }
 
-    fn show_modal<V>(
-        &mut self,
-        new_modal: Entity<V>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) where
+    fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
+    where
         V: ModalView,
     {
         let focus_handle = cx.focus_handle();

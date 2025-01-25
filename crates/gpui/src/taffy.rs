@@ -1,6 +1,5 @@
 use crate::{
-    AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
-    Window,
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style, Window,
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -13,12 +12,7 @@ use taffy::{
 };
 
 type NodeMeasureFn = Box<
-    dyn FnMut(
-        Size<Option<Pixels>>,
-        Size<AvailableSpace>,
-        &mut Window,
-        &mut App,
-    ) -> Size<Pixels>,
+    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
 >;
 
 struct NodeContext {
@@ -77,12 +71,7 @@ impl TaffyLayoutEngine {
         &mut self,
         style: Style,
         rem_size: Pixels,
-        measure: impl FnMut(
-                Size<Option<Pixels>>,
-                Size<AvailableSpace>,
-                &mut Window,
-                &mut App,
-            ) -> Size<Pixels>
+        measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);

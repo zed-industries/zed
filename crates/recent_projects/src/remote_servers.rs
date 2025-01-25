@@ -12,7 +12,7 @@ use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakEntity;
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Context,
+    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     PromptLevel, ScrollHandle, Window,
 };
 use picker::Picker;
@@ -865,12 +865,7 @@ impl RemoteServerProjects {
         });
     }
 
-    fn delete_ssh_project(
-        &mut self,
-        server: usize,
-        project: &SshProject,
-        cx: &mut Context<Self>,
-    ) {
+    fn delete_ssh_project(&mut self, server: usize, project: &SshProject, cx: &mut Context<Self>) {
         let project = project.clone();
         self.update_settings_file(cx, move |setting, _| {
             if let Some(server) = setting

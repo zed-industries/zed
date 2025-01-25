@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{App, Entity, Context, Window};
+use gpui::{App, Context, Entity, Window};
 use language::Language;
 use url::Url;
 

@@ -9,7 +9,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{BackgroundExecutor, Entity, Context, TestAppContext, Window};
+use gpui::{BackgroundExecutor, Context, Entity, TestAppContext, Window};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;

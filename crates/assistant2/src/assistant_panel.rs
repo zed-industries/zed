@@ -14,8 +14,8 @@ use client::zed_urls;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, App, AsyncWindowContext, Corner, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Entity, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
+    prelude::*, px, svg, Action, AnyElement, App, AsyncWindowContext, Corner, Entity, EventEmitter,
+    FocusHandle, Focusable, FontWeight, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -140,9 +140,7 @@ impl AssistantPanel {
                 .await?;
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                cx.new(|cx| {
-                    Self::new(workspace, thread_store, context_store, tools, window, cx)
-                })
+                cx.new(|cx| Self::new(workspace, thread_store, context_store, tools, window, cx))
             })
         })
     }
@@ -529,12 +527,7 @@ impl Panel for AssistantPanel {
         true
     }
 
-    fn set_position(
-        &mut self,
-        position: DockPosition,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
             cx,

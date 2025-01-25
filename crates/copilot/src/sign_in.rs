@@ -1,8 +1,8 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
-    div, App, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Entity, Context, MouseDownEvent, ParentElement, Render,
-    Styled, Subscription, Window,
+    div, App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
+    Subscription, Window,
 };
 use ui::{prelude::*, Button, Label, Vector, VectorName};
 use util::ResultExt as _;
@@ -120,10 +120,7 @@ impl CopilotCodeVerification {
         cx.notify();
     }
 
-    fn render_device_code(
-        data: &PromptUserDeviceFlow,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_device_code(data: &PromptUserDeviceFlow, cx: &mut Context<Self>) -> impl IntoElement {
         let copied = cx
             .read_from_clipboard()
             .map(|item| item.text().as_ref() == Some(&data.user_code))

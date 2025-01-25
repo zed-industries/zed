@@ -42,7 +42,7 @@ use gpui::{
 };
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{div, prelude::*, v_flex, IntoElement, Context, Styled, Tooltip, Window};
+use ui::{div, prelude::*, v_flex, Context, IntoElement, Styled, Tooltip, Window};
 
 mod image;
 use image::ImageView;
@@ -372,8 +372,8 @@ impl ExecutionView {
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let terminal = cx
-                    .new(|cx| TerminalOutput::from(&result.traceback.join("\n"), window, cx));
+                let terminal =
+                    cx.new(|cx| TerminalOutput::from(&result.traceback.join("\n"), window, cx));
 
                 Output::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),

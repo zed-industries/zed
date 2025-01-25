@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use fs::Fs;
-use gpui::{App, Entity, Context};
+use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 
 mod logging;
@@ -21,12 +21,7 @@ use crate::provider::open_ai::OpenAiLanguageModelProvider;
 pub use crate::settings::*;
 pub use logging::report_assistant_event;
 
-pub fn init(
-    user_store: Entity<UserStore>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
-    cx: &mut App,
-) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut App) {
     crate::settings::init(fs, cx);
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {

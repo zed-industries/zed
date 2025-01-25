@@ -238,12 +238,7 @@ impl Vim {
         }
     }
 
-    pub fn helix_delete(
-        &mut self,
-        _: &HelixDelete,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn helix_delete(&mut self, _: &HelixDelete, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             // Fixup selections so they have helix's semantics.

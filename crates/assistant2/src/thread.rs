@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{App, EventEmitter, Context, SharedString, Task};
+use gpui::{App, Context, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,

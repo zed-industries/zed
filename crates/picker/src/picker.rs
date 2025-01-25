@@ -2,8 +2,8 @@ use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, App, ClickEvent,
-    DismissEvent, EventEmitter, FocusHandle, Focusable, Length, ListSizingBehavior, ListState,
-    Entity, Context, MouseButton, MouseUpEvent, Render, ScrollStrategy, Task,
+    Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Length,
+    ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render, ScrollStrategy, Task,
     UniformListScrollHandle, Window,
 };
 use head::Head;
@@ -117,12 +117,7 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> Option<String> {
         None
     }
-    fn confirm(
-        &mut self,
-        secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    );
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
     fn confirm_input(
@@ -365,12 +360,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_prev(
-        &mut self,
-        _: &menu::SelectPrev,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             let index = self.delegate.selected_index();
@@ -380,12 +370,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(0, true, window, cx);
@@ -393,12 +378,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_last(
-        &mut self,
-        _: &menu::SelectLast,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(count - 1, true, window, cx);
@@ -457,12 +437,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn confirm_input(
-        &mut self,
-        input: &ConfirmInput,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn confirm_input(&mut self, input: &ConfirmInput, window: &mut Window, cx: &mut Context<Self>) {
         self.delegate.confirm_input(input.secondary, window, cx);
     }
 
@@ -548,12 +523,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.update_matches(query, window, cx);
     }
 
-    pub fn update_matches(
-        &mut self,
-        query: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
         self.matches_updated(window, cx);

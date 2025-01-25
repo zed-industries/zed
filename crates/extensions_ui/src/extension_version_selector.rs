@@ -5,7 +5,7 @@ use client::ExtensionMetadata;
 use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{prelude::*, App, DismissEvent, EventEmitter, Focusable, Entity, Task, WeakEntity};
+use gpui::{prelude::*, App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -164,12 +164,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;

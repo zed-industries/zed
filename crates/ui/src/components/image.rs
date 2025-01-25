@@ -97,11 +97,7 @@ pub mod story {
     pub struct VectorStory;
 
     impl Render for VectorStory {
-        fn render(
-            &mut self,
-            _window: &mut Window,
-            _cx: &mut Context<Self>,
-        ) -> impl IntoElement {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             Story::container().child(StorySection::new().children(VectorName::iter().map(
                 |vector| StoryItem::new(format!("{:?}", vector), Vector::square(vector, rems(8.))),
             )))

@@ -1,6 +1,6 @@
 use gpui::{
-    div, point, prelude::*, px, rgb, Application, App, Bounds, DisplayId, Hsla, Context,
-    Pixels, SharedString, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
+    div, point, prelude::*, px, rgb, App, Application, Bounds, Context, DisplayId, Hsla, Pixels,
+    SharedString, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowKind,
     WindowOptions,
 };
 

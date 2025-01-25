@@ -12,8 +12,8 @@ use futures::{
     TryStreamExt as _,
 };
 use gpui::{
-    AnyElement, AnyView, App, AsyncAppContext, EventEmitter, Global, Entity, Context,
-    ReadGlobal, Subscription, Task,
+    AnyElement, AnyView, App, AsyncAppContext, Context, Entity, EventEmitter, Global, ReadGlobal,
+    Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
 use language_model::{

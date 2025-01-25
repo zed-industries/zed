@@ -539,12 +539,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    pub(crate) fn search_motion(
-        &mut self,
-        m: Motion,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn search_motion(&mut self, m: Motion, window: &mut Window, cx: &mut Context<Self>) {
         if let Motion::ZedSearchResult {
             prior_selections, ..
         } = &m
@@ -572,12 +567,7 @@ impl Vim {
         self.motion(m, window, cx)
     }
 
-    pub(crate) fn motion(
-        &mut self,
-        motion: Motion,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(Operator::FindForward { .. })
         | Some(Operator::Sneak { .. })
         | Some(Operator::SneakBackward { .. })

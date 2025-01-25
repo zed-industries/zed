@@ -2643,10 +2643,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
     });
 
-    fn list_worktrees<'a>(
-        project: &'a Entity<Project>,
-        cx: &'a App,
-    ) -> Vec<(&'a Path, bool)> {
+    fn list_worktrees<'a>(project: &'a Entity<Project>, cx: &'a App) -> Vec<(&'a Path, bool)> {
         project
             .read(cx)
             .worktrees(cx)

@@ -1,4 +1,4 @@
-use gpui::{AnyElement, App, FontWeight, Entity, Window};
+use gpui::{AnyElement, App, Entity, FontWeight, Window};
 use ui::{h_flex, prelude::*, v_flex, Label};
 
 use crate::outputs::plain::TerminalOutput;

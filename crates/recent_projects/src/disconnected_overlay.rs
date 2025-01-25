@@ -5,9 +5,9 @@ use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use ui::{
-    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder,
-    Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
-    ModalFooter, ModalHeader, Context, ParentElement, Section, Styled, StyledExt, Window,
+    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex,
+    FluentBuilder, Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement,
+    Label, Modal, ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window,
 };
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
@@ -84,12 +84,7 @@ impl DisconnectedOverlay {
         .detach();
     }
 
-    fn handle_reconnect(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_reconnect(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.finished = true;
         cx.emit(DismissEvent);
 

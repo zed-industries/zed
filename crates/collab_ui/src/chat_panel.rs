@@ -7,10 +7,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions, Editor};
 use gpui::{
-    actions, div, list, prelude::*, px, Action, App, AsyncWindowContext, ClipboardItem,
+    actions, div, list, prelude::*, px, Action, App, AsyncWindowContext, ClipboardItem, Context,
     CursorStyle, DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HighlightStyle, ListOffset, ListScrollEvent, ListState, Context, Render, Stateful,
-    Subscription, Task, WeakEntity, Window,
+    HighlightStyle, ListOffset, ListScrollEvent, ListState, Render, Stateful, Subscription, Task,
+    WeakEntity, Window,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -1125,12 +1125,7 @@ impl Panel for ChatPanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(
-        &mut self,
-        position: DockPosition,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<ChatPanelSettings>(
             self.fs.clone(),
             cx,

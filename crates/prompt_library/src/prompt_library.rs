@@ -6,8 +6,8 @@ use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
-    actions, point, size, transparent_black, Action, App, Bounds, EventEmitter, Focusable,
-    Entity, PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
+    actions, point, size, transparent_black, Action, App, Bounds, Entity, EventEmitter, Focusable,
+    PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{
-    div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, Context,
+    div, prelude::*, Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing,
     ParentElement, Render, SharedString, Styled, Tooltip, Window,
 };
 use util::{ResultExt, TryFutureExt};
@@ -182,12 +182,7 @@ impl PickerDelegate for PromptPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         if let Some(prompt) = self.matches.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Selected {
@@ -874,12 +869,7 @@ impl PromptLibrary {
         }
     }
 
-    fn count_tokens(
-        &mut self,
-        prompt_id: PromptId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn count_tokens(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -952,10 +942,7 @@ impl PromptLibrary {
             .child(div().flex_grow().child(self.picker.clone()))
     }
 
-    fn render_active_prompt(
-        &mut self,
-        cx: &mut Context<PromptLibrary>,
-    ) -> gpui::Stateful<Div> {
+    fn render_active_prompt(&mut self, cx: &mut Context<PromptLibrary>) -> gpui::Stateful<Div> {
         div()
             .w_2_3()
             .h_full()

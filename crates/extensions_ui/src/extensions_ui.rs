@@ -12,9 +12,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, App, ClipboardItem, EventEmitter, Flatten, Focusable,
-    InteractiveElement, KeyContext, Entity, Context, ParentElement, Render, Styled, Task,
-    TextStyle, UniformListScrollHandle, WeakEntity, Window,
+    actions, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten,
+    Focusable, InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
+    UniformListScrollHandle, WeakEntity, Window,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;

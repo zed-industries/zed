@@ -19,8 +19,8 @@ use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
 use git_ui::repository_selector::RepositorySelector;
 use git_ui::repository_selector::RepositorySelectorPopoverMenu;
 use gpui::{
-    actions, div, px, Action, AnyElement, App, Decorations, Element, Entity, InteractiveElement,
-    Interactivity, IntoElement, Context, MouseButton, ParentElement, Render, Stateful,
+    actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
+    InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
 use project::Project;
@@ -501,10 +501,7 @@ impl TitleBar {
     }
 
     // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
-    pub fn render_current_repository(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    pub fn render_current_repository(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if !self.git_ui_enabled.load(Ordering::SeqCst) {
             return None;
         }

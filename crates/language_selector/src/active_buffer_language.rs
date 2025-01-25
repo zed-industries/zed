@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, IntoElement, Entity, Context, ParentElement, Render, Subscription, WeakEntity, Window,
+    div, Context, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity, Window,
 };
 use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
@@ -23,12 +23,7 @@ impl ActiveBufferLanguage {
         }
     }
 
-    fn update_language(
-        &mut self,
-        editor: Entity<Editor>,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn update_language(&mut self, editor: Entity<Editor>, _: &mut Window, cx: &mut Context<Self>) {
         self.active_language = Some(None);
 
         let editor = editor.read(cx);

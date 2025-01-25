@@ -6,8 +6,8 @@ use anyhow::Result;
 use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    list, App, ClickEvent, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListState, Entity, Context, ParentElement, Render, Styled, Subscription, Task,
+    list, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ListState, ParentElement, Render, Styled, Subscription, Task,
     WeakEntity, Window,
 };
 use language::LanguageRegistry;
@@ -53,11 +53,7 @@ struct EditorState {
 }
 
 impl MarkdownPreviewView {
-    pub fn register(
-        workspace: &mut Workspace,
-        _window: &mut Window,
-        _cx: &mut Context<Workspace>,
-    ) {
+    pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
                 let view = Self::create_markdown_view(workspace, editor, window, cx);
@@ -309,12 +305,7 @@ impl MarkdownPreviewView {
         false
     }
 
-    fn set_editor(
-        &mut self,
-        editor: Entity<Editor>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_editor(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active) = &self.active_editor {
             if active.editor == editor {
                 return;

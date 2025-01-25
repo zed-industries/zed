@@ -274,11 +274,7 @@ impl RunningKernel for RemoteRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
+    fn force_shutdown(&mut self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>> {
         let url = self
             .remote_server
             .api_url(&format!("/kernels/{}", self.kernel_id));

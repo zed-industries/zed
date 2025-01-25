@@ -3,8 +3,8 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, FutureExt, StreamExt};
 use gpui::{
-    AnyView, App, AsyncAppContext, FontStyle, Entity, Context, Subscription, Task,
-    TextStyle, WhiteSpace,
+    AnyView, App, AsyncAppContext, Context, Entity, FontStyle, Subscription, Task, TextStyle,
+    WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -416,12 +416,7 @@ impl ConfigurationView {
         }
     }
 
-    fn save_api_key(
-        &mut self,
-        _: &menu::Confirm,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;

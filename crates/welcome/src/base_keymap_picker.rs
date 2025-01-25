@@ -1,8 +1,8 @@
 use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, App, DismissEvent, EventEmitter, Focusable, Entity, Context, Render, Task,
-    WeakEntity, Window,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity,
+    Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
@@ -192,11 +192,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(
-        &mut self,
-        _: &mut Window,
-        cx: &mut Context<Picker<BaseKeymapSelectorDelegate>>,
-    ) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<BaseKeymapSelectorDelegate>>) {
         self.selector
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);

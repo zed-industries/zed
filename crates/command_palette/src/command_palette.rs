@@ -11,7 +11,7 @@ use command_palette_hooks::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global, Context,
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global,
     ParentElement, Render, Styled, Task, UpdateGlobal, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};

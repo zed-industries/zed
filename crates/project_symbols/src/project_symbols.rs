@@ -1,7 +1,7 @@
 use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, App, DismissEvent, Entity, FontWeight, Context, ParentElement, StyledText, Task,
+    rems, App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task,
     WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
@@ -107,12 +107,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         "Search project symbols...".into()
     }
 
-    fn confirm(
-        &mut self,
-        secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(symbol) = self
             .matches
             .get(self.selected_match_index)

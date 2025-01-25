@@ -2,11 +2,11 @@ use std::ops::Range;
 
 use gpui::{
     actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative, rgb, rgba, size,
-    white, yellow, Application, App, Bounds, ClipboardItem, CursorStyle, ElementId,
-    ElementInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke, LayoutId,
-    Entity, Context, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
-    ViewInputHandler, Window, WindowBounds, WindowOptions,
+    white, yellow, App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId,
+    ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
+    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, ViewInputHandler,
+    Window, WindowBounds, WindowOptions,
 };
 use unicode_segmentation::*;
 
@@ -112,12 +112,7 @@ impl TextInput {
         self.is_selecting = false;
     }
 
-    fn on_mouse_move(
-        &mut self,
-        event: &MouseMoveEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position), cx);
         }
@@ -602,12 +597,7 @@ impl Focusable for InputExample {
 }
 
 impl InputExample {
-    fn on_reset_click(
-        &mut self,
-        _: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_reset_click(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.recent_keystrokes.clear();
         self.text_input
             .update(cx, |text_input, _cx| text_input.reset());

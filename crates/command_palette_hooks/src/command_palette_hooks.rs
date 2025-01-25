@@ -146,10 +146,7 @@ impl CommandPaletteInterceptor {
     /// Sets the global interceptor.
     ///
     /// This will override the previous interceptor, if it exists.
-    pub fn set(
-        &mut self,
-        handler: Box<dyn Fn(&str, &App) -> Option<CommandInterceptResult>>,
-    ) {
+    pub fn set(&mut self, handler: Box<dyn Fn(&str, &App) -> Option<CommandInterceptResult>>) {
         self.0 = Some(handler);
     }
 }

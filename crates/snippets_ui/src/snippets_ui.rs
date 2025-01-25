@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, App, DismissEvent, Entity, EventEmitter, Focusable, Context, ParentElement,
-    Render, Styled, WeakEntity, Window,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, ParentElement, Render,
+    Styled, WeakEntity, Window,
 };
 use language::LanguageRegistry;
 use paths::config_dir;
@@ -17,11 +17,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
 }
 
-fn register(
-    workspace: &mut Workspace,
-    _window: Option<&mut Window>,
-    _: &mut Context<Workspace>,
-) {
+fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>) {
     workspace.register_action(configure_snippets);
     workspace.register_action(open_folder);
 }

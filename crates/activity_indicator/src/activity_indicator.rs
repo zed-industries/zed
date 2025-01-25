@@ -3,8 +3,8 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
 use gpui::{
-    actions, percentage, Animation, AnimationExt as _, App, CursorStyle, Entity, EventEmitter,
-    InteractiveElement as _, Context, ParentElement as _, Render, SharedString,
+    actions, percentage, Animation, AnimationExt as _, App, Context, CursorStyle, Entity,
+    EventEmitter, InteractiveElement as _, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement, Styled, Transformation, Window,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
@@ -46,9 +46,8 @@ struct PendingWork<'a> {
 struct Content {
     icon: Option<gpui::AnyElement>,
     message: String,
-    on_click: Option<
-        Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut Context<ActivityIndicator>)>,
-    >,
+    on_click:
+        Option<Arc<dyn Fn(&mut ActivityIndicator, &mut Window, &mut Context<ActivityIndicator>)>>,
 }
 
 impl ActivityIndicator {
@@ -128,12 +127,7 @@ impl ActivityIndicator {
         this
     }
 
-    fn show_error_message(
-        &mut self,
-        _: &ShowErrorMessage,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn show_error_message(&mut self, _: &ShowErrorMessage, _: &mut Window, cx: &mut Context<Self>) {
         self.statuses.retain(|status| {
             if let LanguageServerBinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {

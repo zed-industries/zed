@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, Focusable, IntoElement, Context, ParentElement, Render, StyledText,
+    Context, Element, EventEmitter, Focusable, IntoElement, ParentElement, Render, StyledText,
     Subscription, Window,
 };
 use itertools::Itertools;

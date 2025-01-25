@@ -1,6 +1,4 @@
-use crate::{
-    App, Bounds, InputHandler, Entity, Context, Pixels, UTF16Selection, Window,
-};
+use crate::{App, Bounds, Context, Entity, InputHandler, Pixels, UTF16Selection, Window};
 use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
@@ -98,11 +96,7 @@ impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
         })
     }
 
-    fn marked_text_range(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Range<usize>> {
+    fn marked_text_range(&mut self, window: &mut Window, cx: &mut App) -> Option<Range<usize>> {
         self.view
             .update(cx, |view, cx| view.marked_text_range(window, cx))
     }

@@ -6,8 +6,8 @@ use crate::{
     Hover,
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, Focusable as _, FontWeight, Hsla, InteractiveElement,
-    IntoElement, Entity, Context, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    div, px, AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement,
     Window,
 };
@@ -747,12 +747,7 @@ impl InfoPopover {
         d.into_any_element()
     }
 
-    pub fn scroll(
-        &self,
-        amount: &ScrollAmount,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
+    pub fn scroll(&self, amount: &ScrollAmount, window: &mut Window, cx: &mut Context<Editor>) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
             window.line_height(),

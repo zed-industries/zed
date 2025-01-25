@@ -13,8 +13,8 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, App, ClickEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, Context,
+    actions, div, impl_actions, Action, App, ClickEvent, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext,
     ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
 };
 use project::{
@@ -671,12 +671,7 @@ impl BufferSearchBar {
         cx.notify();
     }
 
-    pub fn deploy(
-        &mut self,
-        deploy: &Deploy,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    pub fn deploy(&mut self, deploy: &Deploy, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.show(window, cx) {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
                 active_item.toggle_filtered_search_ranges(
@@ -851,12 +846,7 @@ impl BufferSearchBar {
         option.as_button(is_active, focus_handle, action)
     }
 
-    pub fn focus_editor(
-        &mut self,
-        _: &FocusEditor,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             let handle = active_editor.item_focus_handle(cx);
             window.focus(&handle);
@@ -890,12 +880,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn set_search_options(
-        &mut self,
-        search_options: SearchOptions,
-
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
         cx.notify();
     }
@@ -1312,12 +1297,7 @@ impl BufferSearchBar {
         window.focus(handle);
     }
 
-    fn toggle_replace(
-        &mut self,
-        _: &ToggleReplace,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_replace(&mut self, _: &ToggleReplace, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
             let handle = if self.replace_enabled {
@@ -1358,12 +1338,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn replace_all(
-        &mut self,
-        _: &ReplaceAll,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(query) = self.active_search.as_ref() {

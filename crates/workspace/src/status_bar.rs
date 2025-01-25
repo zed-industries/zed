@@ -1,7 +1,7 @@
 use crate::{ItemHandle, Pane};
 use gpui::{
-    AnyView, App, Decorations, IntoElement, Entity, Context, ParentElement, Render,
-    Styled, Subscription, Window,
+    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    Subscription, Window,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
@@ -79,11 +79,7 @@ impl StatusBar {
 }
 
 impl StatusBar {
-    pub fn new(
-        active_pane: &Entity<Pane>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(active_pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
@@ -96,12 +92,8 @@ impl StatusBar {
         this
     }
 
-    pub fn add_left_item<T>(
-        &mut self,
-        item: Entity<T>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) where
+    pub fn add_left_item<T>(&mut self, item: Entity<T>, window: &mut Window, cx: &mut Context<Self>)
+    where
         T: 'static + StatusItemView,
     {
         let active_pane_item = self.active_pane.read(cx).active_item();

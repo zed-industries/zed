@@ -1,8 +1,6 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
-use gpui::{
-    actions, prelude::*, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Entity,
-};
+use gpui::{actions, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable};
 use language::language_settings;
 use std::time::Duration;
 use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
@@ -60,11 +58,7 @@ impl RateCompletionView {
 }
 
 impl RateCompletionModal {
-    pub fn toggle(
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
+    pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         if let Some(zeta) = Zeta::global(cx) {
             workspace.toggle_modal(window, cx, |_window, cx| RateCompletionModal::new(zeta, cx));
         }
@@ -145,12 +139,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_last(
-        &mut self,
-        _: &menu::SelectLast,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.zeta.read(cx).shown_completions_len() - 1;
         cx.notify();
     }

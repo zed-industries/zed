@@ -12,9 +12,9 @@ use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement, App,
-    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div, Entity, EventEmitter,
-    FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset, ListState,
-    Context, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
+    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent, Div, Entity,
+    EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset,
+    ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
     Styled, Subscription, Task, TextStyle, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
@@ -1393,11 +1393,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn reset_filter_editor_text(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.filter_editor.update(cx, |editor, cx| {
             if editor.buffer().read(cx).len(cx) > 0 {
                 editor.set_text("", window, cx);
@@ -1556,11 +1552,7 @@ impl CollabPanel {
         }
     }
 
-    fn confirm_channel_edit(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<CollabPanel>,
-    ) -> bool {
+    fn confirm_channel_edit(&mut self, window: &mut Window, cx: &mut Context<CollabPanel>) -> bool {
         if let Some(editing_state) = &mut self.channel_editing_state {
             match editing_state {
                 ChannelEditingState::Create {
@@ -1761,12 +1753,7 @@ impl CollabPanel {
         self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, window, cx);
     }
 
-    fn remove_selected_channel(
-        &mut self,
-        _: &Remove,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn remove_selected_channel(&mut self, _: &Remove, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(channel) = self.selected_channel() {
             self.remove_channel(channel.id, window, cx)
         }
@@ -1976,12 +1963,7 @@ impl CollabPanel {
         .detach();
     }
 
-    fn leave_channel(
-        &self,
-        channel_id: ChannelId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn leave_channel(&self, channel_id: ChannelId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.id) else {
             return;
         };
@@ -2115,12 +2097,7 @@ impl CollabPanel {
             .detach_and_prompt_err("Call failed", window, cx, |_, _, _| None);
     }
 
-    fn join_channel(
-        &self,
-        channel_id: ChannelId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn join_channel(&self, channel_id: ChannelId, window: &mut Window, cx: &mut Context<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -2614,11 +2591,7 @@ impl CollabPanel {
             )
     }
 
-    fn render_contact_placeholder(
-        &self,
-        is_selected: bool,
-        cx: &mut Context<Self>,
-    ) -> ListItem {
+    fn render_contact_placeholder(&self, is_selected: bool, cx: &mut Context<Self>) -> ListItem {
         ListItem::new("contact-placeholder")
             .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))

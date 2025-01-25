@@ -4,8 +4,8 @@ use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::anyhow;
 use collections::{HashMap, IndexMap};
 use gpui::{
-    Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding,
-    KeyBindingContextPredicate, NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
+    NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},

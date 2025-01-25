@@ -14,9 +14,9 @@ use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Context, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled,
-    Task, WeakEntity, Window,
+    actions, Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task,
+    WeakEntity, Window,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -197,22 +197,12 @@ impl FileFinder {
         }
     }
 
-    fn handle_select_prev(
-        &mut self,
-        _: &SelectPrev,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         self.init_modifiers = Some(window.modifiers());
         window.dispatch_action(Box::new(menu::SelectPrev), cx);
     }
 
-    fn handle_toggle_menu(
-        &mut self,
-        _: &ToggleMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut Context<Self>) {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
             if menu_handle.is_deployed() {
@@ -1029,12 +1019,7 @@ impl PickerDelegate for FileFinderDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.has_changed_selected_index = true;
         self.selected_index = ix;
         cx.notify();

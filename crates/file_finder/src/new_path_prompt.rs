@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
-use gpui::{HighlightStyle, Entity, StyledText};
+use gpui::{Entity, HighlightStyle, StyledText};
 use picker::{Picker, PickerDelegate};
 use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
@@ -11,7 +11,7 @@ use std::{
     },
 };
 use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
-use ui::{ListItem, Context, Window};
+use ui::{Context, ListItem, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -361,12 +361,7 @@ impl PickerDelegate for NewPathDelegate {
         }
     }
 
-    fn confirm(
-        &mut self,
-        _: bool,
-        window: &mut Window,
-        cx: &mut Context<picker::Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         let Some(m) = self.matches.get(self.selected_index) else {
             return;
         };

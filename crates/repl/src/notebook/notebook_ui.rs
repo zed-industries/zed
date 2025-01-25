@@ -9,8 +9,8 @@ use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
-    actions, list, prelude::*, AnyElement, App, EventEmitter, FocusHandle, Focusable,
-    ListScrollEvent, ListState, Entity, Point, Task,
+    actions, list, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
+    ListScrollEvent, ListState, Point, Task,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -178,12 +178,7 @@ impl NotebookEditor {
         println!("Cells would all run here, if that was implemented!");
     }
 
-    fn open_notebook(
-        &mut self,
-        _: &OpenNotebook,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
+    fn open_notebook(&mut self, _: &OpenNotebook, _window: &mut Window, _cx: &mut Context<Self>) {
         println!("Open notebook triggered");
     }
 
@@ -718,9 +713,7 @@ impl Item for NotebookEditor {
     where
         Self: Sized,
     {
-        Some(cx.new(|cx| {
-            Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)
-        }))
+        Some(cx.new(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)))
     }
 
     fn for_each_project_item(
@@ -735,12 +728,7 @@ impl Item for NotebookEditor {
         true
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &Window,
-        cx: &App,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         let path = &self.notebook_item.read(cx).path;
         let title = path
             .file_name()

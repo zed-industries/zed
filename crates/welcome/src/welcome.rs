@@ -5,8 +5,8 @@ mod multibuffer_hint;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, Action, App, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    Context, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
+    actions, svg, Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;

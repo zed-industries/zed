@@ -15,10 +15,10 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, App,
-    AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, Entity, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext, Context,
+    AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div, DragMoveEvent, Entity,
+    EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, WeakFocusHandle, WeakEntity, Window,
+    ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -292,14 +292,7 @@ pub struct Pane {
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
     custom_drop_handle: Option<
-        Arc<
-            dyn Fn(
-                &mut Pane,
-                &dyn Any,
-                &mut Window,
-                &mut Context<Pane>,
-            ) -> ControlFlow<(), ()>,
-        >,
+        Arc<dyn Fn(&mut Pane, &dyn Any, &mut Window, &mut Context<Pane>) -> ControlFlow<(), ()>>,
     >,
     can_split_predicate:
         Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
@@ -613,12 +606,7 @@ impl Pane {
             || self.split_item_context_menu_handle.is_focused(window, cx)
     }
 
-    fn focus_out(
-        &mut self,
-        _event: FocusOutEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn focus_out(&mut self, _event: FocusOutEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.was_focused = false;
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.focus_changed(false, window, cx);
@@ -699,9 +687,7 @@ impl Pane {
     pub fn set_can_split(
         &mut self,
         can_split_predicate: Option<
-            Arc<
-                dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool + 'static,
-            >,
+            Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool + 'static>,
         >,
     ) {
         self.can_split_predicate = can_split_predicate;
@@ -1098,12 +1084,7 @@ impl Pane {
         self.items.get(ix).map(|i| i.as_ref())
     }
 
-    pub fn toggle_zoom(
-        &mut self,
-        _: &ToggleZoom,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
         if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {
@@ -2049,12 +2030,7 @@ impl Pane {
         }
     }
 
-    fn toggle_pin_tab(
-        &mut self,
-        _: &TogglePinTab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_pin_tab(&mut self, _: &TogglePinTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.items.is_empty() {
             return;
         }
@@ -2553,11 +2529,7 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Pane>,
-    ) -> impl IntoElement {
+    fn render_tab_bar(&mut self, window: &mut Window, cx: &mut Context<Pane>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -4362,9 +4334,8 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Box<Entity<TestItem>> {
         pane.update_in(cx, |pane, window, cx| {
-            let labeled_item = Box::new(
-                cx.new(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
-            );
+            let labeled_item =
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)));
             pane.add_item(labeled_item.clone(), false, false, None, window, cx);
             labeled_item
         })

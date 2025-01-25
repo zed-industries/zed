@@ -5,10 +5,10 @@
 //! elements with uniform height.
 
 use crate::{
-    point, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId,
-    GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Entity, Context, Pixels, Render, ScrollHandle, Size, StyleRefinement,
-    Styled, Window,
+    point, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, Element, ElementId,
+    Entity, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero,
+    LayoutId, ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled,
+    Window,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
@@ -69,11 +69,7 @@ pub struct UniformList {
     item_count: usize,
     item_to_measure_index: usize,
     render_items: Box<
-        dyn for<'a> Fn(
-            Range<usize>,
-            &'a mut Window,
-            &'a mut App,
-        ) -> SmallVec<[AnyElement; 64]>,
+        dyn for<'a> Fn(Range<usize>, &'a mut Window, &'a mut App) -> SmallVec<[AnyElement; 64]>,
     >,
     decorations: Vec<Box<dyn UniformListDecoration>>,
     interactivity: Interactivity,

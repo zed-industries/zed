@@ -33,11 +33,7 @@ enum Row {
 }
 
 impl ProjectIndexDebugView {
-    pub fn new(
-        index: Entity<ProjectIndex>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(index: Entity<ProjectIndex>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
             rows: Vec::new(),
             list_scroll_handle: UniformListScrollHandle::new(),

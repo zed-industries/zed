@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{AsyncAppContext, EventEmitter, Entity, Context, Subscription, Task, WeakEntity};
+use gpui::{AsyncAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use log;
 use parking_lot::RwLock;
 use project::Project;

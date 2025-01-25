@@ -6,8 +6,8 @@ use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
 use gpui::{
-    prelude::*, AnyWindowHandle, App, Focusable as _, Keystroke, Entity, Context,
-    Pixels, Point, VisualTestContext, Window, WindowHandle,
+    prelude::*, AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
+    VisualTestContext, Window, WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};

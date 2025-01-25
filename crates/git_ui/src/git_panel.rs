@@ -482,12 +482,7 @@ impl GitPanel {
             .and_then(|i| self.visible_entries.get(i))
     }
 
-    fn open_selected(
-        &mut self,
-        _: &menu::Confirm,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn open_selected(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry) = self
             .selected_entry
             .and_then(|i| self.visible_entries.get(i))
@@ -559,12 +554,7 @@ impl GitPanel {
         };
     }
 
-    fn unstage_all(
-        &mut self,
-        _: &git::UnstageAll,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn unstage_all(&mut self, _: &git::UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
@@ -577,12 +567,7 @@ impl GitPanel {
         };
     }
 
-    fn discard_all(
-        &mut self,
-        _: &git::RevertAll,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
+    fn discard_all(&mut self, _: &git::RevertAll, _window: &mut Window, _cx: &mut Context<Self>) {
         // TODO: Implement discard all
         println!("Discard all triggered");
     }
@@ -619,12 +604,7 @@ impl GitPanel {
         active_repository.commit_all(self.err_sender.clone(), cx);
     }
 
-    fn fill_co_authors(
-        &mut self,
-        _: &FillCoAuthors,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
         let Some(room) = self
@@ -1421,12 +1401,7 @@ impl Panel for GitPanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(
-        &mut self,
-        position: DockPosition,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<GitPanelSettings>(
             self.fs.clone(),
             cx,

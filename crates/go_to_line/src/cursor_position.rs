@@ -1,12 +1,12 @@
 use editor::{Editor, MultiBufferSnapshot};
-use gpui::{App, FocusHandle, Focusable, Entity, Subscription, Task, WeakEntity};
+use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
-    div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, Context,
+    div, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize,
     ParentElement, Render, Tooltip, Window,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
@@ -295,10 +295,7 @@ impl Settings for LineIndicatorFormat {
 
     type FileContent = Option<LineIndicatorFormatContent>;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut App,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let format = [sources.release_channel, sources.user]
             .into_iter()
             .find_map(|value| value.copied().flatten())

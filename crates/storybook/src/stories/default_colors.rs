@@ -1,5 +1,5 @@
 use gpui::{
-    colors, div, prelude::*, App, DefaultColor, DefaultThemeAppearance, Entity, Hsla, Context,
+    colors, div, prelude::*, App, Context, DefaultColor, DefaultThemeAppearance, Entity, Hsla,
     Render, Window,
 };
 use story::Story;

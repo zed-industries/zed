@@ -42,10 +42,7 @@ impl Toggleable for Disclosure {
 }
 
 impl Clickable for Disclosure {
-    fn on_click(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_toggle = Some(Arc::new(handler));
         self
     }

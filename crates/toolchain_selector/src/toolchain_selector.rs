@@ -4,7 +4,7 @@ pub use active_toolchain::ActiveToolchain;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Context,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use language::{LanguageName, Toolchain, ToolchainList};

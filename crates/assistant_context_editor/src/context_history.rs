@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{
-    App, EventEmitter, FocusHandle, Focusable, Entity, Subscription, Task, WeakEntity,
-};
+use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use ui::utils::{format_distance_from_now, DateTimeType};
@@ -183,12 +181,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
             cx.emit(SavedContextPickerEvent::Confirmed(metadata.clone()));
         }

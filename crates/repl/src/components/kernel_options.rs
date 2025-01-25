@@ -84,12 +84,7 @@ impl PickerDelegate for KernelPickerDelegate {
         }
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_kernelspec = self.filtered_kernels.get(ix).cloned();
         cx.notify();
     }
@@ -123,12 +118,7 @@ impl PickerDelegate for KernelPickerDelegate {
         return Task::ready(());
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(kernelspec) = &self.selected_kernelspec {
             (self.on_select)(kernelspec.clone(), window, cx);
             cx.emit(DismissEvent);

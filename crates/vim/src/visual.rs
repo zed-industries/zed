@@ -335,12 +335,7 @@ impl Vim {
         })
     }
 
-    pub fn visual_object(
-        &mut self,
-        object: Object,
-        window: &mut Window,
-        cx: &mut Context<Vim>,
-    ) {
+    pub fn visual_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Vim>) {
         if let Some(Operator::Object { around }) = self.active_operator() {
             self.pop_operator(window, cx);
             let current_mode = self.mode;
@@ -466,12 +461,7 @@ impl Vim {
         });
     }
 
-    pub fn visual_delete(
-        &mut self,
-        line_mode: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn visual_delete(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let mut original_columns: HashMap<_, _> = Default::default();
@@ -533,12 +523,7 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, window, cx);
     }
 
-    pub fn visual_yank(
-        &mut self,
-        line_mode: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let line_mode = line_mode || editor.selections.line_mode;
@@ -603,12 +588,7 @@ impl Vim {
         self.switch_mode(Mode::Normal, false, window, cx);
     }
 
-    pub fn select_next(
-        &mut self,
-        _: &SelectNext,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         let count =
             Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
         self.update_editor(window, cx, |_, editor, window, cx| {

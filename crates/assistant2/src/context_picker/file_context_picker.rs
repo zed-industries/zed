@@ -11,7 +11,7 @@ use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AnyElement, App, DismissEvent, Empty, FocusHandle, Focusable, Entity, Stateful, Task,
+    AnyElement, App, DismissEvent, Empty, Entity, FocusHandle, Focusable, Stateful, Task,
     WeakEntity,
 };
 use multi_buffer::{MultiBufferPoint, MultiBufferRow};
@@ -218,12 +218,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -299,9 +294,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 };
 
                 let render_trailer =
-                    move |_row, _unfold, _window: &mut Window, _cx: &mut App| {
-                        Empty.into_any()
-                    };
+                    move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let mut rows_to_fold = BTreeSet::new();

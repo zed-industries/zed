@@ -9,9 +9,7 @@ use client::{proto, Client};
 use collections::BTreeMap;
 
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{
-    actions, App, AsyncAppContext, Entity, EntityId, Global, Context, Task, WeakEntity,
-};
+use gpui::{actions, App, AsyncAppContext, Context, Entity, EntityId, Global, Task, WeakEntity};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };

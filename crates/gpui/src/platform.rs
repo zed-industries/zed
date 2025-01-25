@@ -777,11 +777,7 @@ impl PlatformInputHandler {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 
-    pub fn selected_bounds(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Bounds<Pixels>> {
+    pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
         let selection = self.handler.selected_text_range(true, window, cx)?;
         self.handler.bounds_for_range(
             if selection.reversed {
@@ -827,11 +823,7 @@ pub trait InputHandler: 'static {
     /// Corresponds to [markedRange()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438250-markedrange)
     ///
     /// Return value is in terms of UTF-16 characters, from 0 to the length of the document
-    fn marked_text_range(
-        &mut self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Range<usize>>;
+    fn marked_text_range(&mut self, window: &mut Window, cx: &mut App) -> Option<Range<usize>>;
 
     /// Get the text for the given document range in UTF-16 characters
     /// Corresponds to [attributedSubstring(forProposedRange: actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438238-attributedsubstring)

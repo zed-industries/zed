@@ -20,7 +20,7 @@ use editor::{
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    point, App, Entity, Focusable, Global, HighlightStyle, Context, Subscription, Task,
+    point, App, Context, Entity, Focusable, Global, HighlightStyle, Subscription, Task,
     UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};

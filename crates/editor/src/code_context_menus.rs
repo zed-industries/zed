@@ -1,7 +1,7 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
-    BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Entity, ScrollStrategy, SharedString,
+    BackgroundExecutor, Div, Entity, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
     Size, StrikethroughStyle, StyledText, UniformListScrollHandle, WeakEntity,
 };
 use language::Buffer;
@@ -282,11 +282,7 @@ impl CompletionsMenu {
         self.update_selection_index(index, provider, cx);
     }
 
-    fn select_last(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut Context<Editor>,
-    ) {
+    fn select_last(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
         let index = if self.scroll_handle.y_flipped() {
             0
         } else {
@@ -295,11 +291,7 @@ impl CompletionsMenu {
         self.update_selection_index(index, provider, cx);
     }
 
-    fn select_prev(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut Context<Editor>,
-    ) {
+    fn select_prev(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
         let index = if self.scroll_handle.y_flipped() {
             self.next_match_index()
         } else {
@@ -308,11 +300,7 @@ impl CompletionsMenu {
         self.update_selection_index(index, provider, cx);
     }
 
-    fn select_next(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut Context<Editor>,
-    ) {
+    fn select_next(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
         let index = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
         } else {

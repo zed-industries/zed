@@ -9,7 +9,7 @@ use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
-use gpui::{prelude::*, App, BackgroundExecutor, Entity, Context, SharedString, Task};
+use gpui::{prelude::*, App, BackgroundExecutor, Context, Entity, SharedString, Task};
 use heed::types::SerdeBincode;
 use heed::Database;
 use language_model::Role;
@@ -112,11 +112,7 @@ impl ThreadStore {
         })
     }
 
-    pub fn save_thread(
-        &self,
-        thread: &Entity<Thread>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
             let thread = SavedThread {
@@ -144,11 +140,7 @@ impl ThreadStore {
         })
     }
 
-    pub fn delete_thread(
-        &mut self,
-        id: &ThreadId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut Context<Self>) -> Task<Result<()>> {
         let id = id.clone();
         let database_future = self.database_future.clone();
         cx.spawn(|this, mut cx| async move {

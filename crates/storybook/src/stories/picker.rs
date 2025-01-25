@@ -1,7 +1,5 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{
-    div, prelude::*, App, KeyBinding, Entity, Render, SharedString, Styled, Task, Window,
-};
+use gpui::{div, prelude::*, App, Entity, KeyBinding, Render, SharedString, Styled, Task, Window};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
@@ -67,22 +65,12 @@ impl PickerDelegate for Delegate {
         self.selected_ix
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_ix = ix;
         cx.notify();
     }
 
-    fn confirm(
-        &mut self,
-        secondary: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, secondary: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
         let candidate_ix = self.matches[self.selected_ix];
         let candidate = self.candidates[candidate_ix].string.clone();
 

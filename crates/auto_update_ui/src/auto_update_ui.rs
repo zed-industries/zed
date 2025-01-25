@@ -2,7 +2,7 @@ mod update_notification;
 
 use auto_update::AutoUpdater;
 use editor::{Editor, MultiBuffer};
-use gpui::{actions, prelude::*, App, Entity, Context, SharedString, Window};
+use gpui::{actions, prelude::*, App, Context, Entity, SharedString, Window};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -124,10 +124,7 @@ fn view_release_notes_locally(
         .detach();
 }
 
-pub fn notify_of_any_new_update(
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) -> Option<()> {
+pub fn notify_of_any_new_update(window: &mut Window, cx: &mut Context<Workspace>) -> Option<()> {
     let updater = AutoUpdater::get(cx)?;
     let version = updater.read(cx).current_version();
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);

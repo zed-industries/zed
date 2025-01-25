@@ -1,7 +1,7 @@
 use crate::inline_prompt_editor::CodegenStatus;
 use client::telemetry::Telemetry;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use gpui::{App, EventEmitter, Entity, Context, Task};
+use gpui::{App, Context, Entity, EventEmitter, Task};
 use language_model::{LanguageModelRegistry, LanguageModelRequest};
 use language_models::report_assistant_event;
 use std::{sync::Arc, time::Instant};

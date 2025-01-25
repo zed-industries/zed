@@ -6,8 +6,7 @@ use crate::{
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Window,
+    px, App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels, Window,
 };
 use refineable::Refineable;
 use schemars::{

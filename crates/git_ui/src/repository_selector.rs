@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Entity,
-    Subscription, Task, WeakEntity,
+    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription,
+    Task, WeakEntity,
 };
 use picker::{Picker, PickerDelegate};
 use project::{
@@ -194,12 +194,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
             return;
         };

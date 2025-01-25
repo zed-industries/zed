@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, IntoElement, Entity, Context, ParentElement, Render, Subscription,
+    div, AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription,
     Task, WeakEntity, Window,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};

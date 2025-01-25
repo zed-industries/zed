@@ -1060,11 +1060,7 @@ fn check_interpolation(
     }
 }
 
-fn test_edit_sequence(
-    language_name: &str,
-    steps: &[&str],
-    cx: &mut App,
-) -> (Buffer, SyntaxMap) {
+fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buffer, SyntaxMap) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     registry.add(Arc::new(elixir_lang()));
     registry.add(Arc::new(heex_lang()));

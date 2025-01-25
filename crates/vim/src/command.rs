@@ -7,7 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, Global, Context, Window};
+use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;

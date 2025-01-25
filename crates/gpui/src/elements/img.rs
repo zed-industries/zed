@@ -45,14 +45,7 @@ pub enum ImageSource {
     /// Cached image data
     Image(Arc<Image>),
     /// A custom loading function to use
-    Custom(
-        Arc<
-            dyn Fn(
-                &mut Window,
-                &mut App,
-            ) -> Option<Result<Arc<RenderImage>, ImageCacheError>>,
-        >,
-    ),
+    Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -122,8 +115,7 @@ impl From<Arc<Image>> for ImageSource {
 }
 
 impl<
-        F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>
-            + 'static,
+        F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static,
     > From<F> for ImageSource
 {
     fn from(value: F) -> Self {

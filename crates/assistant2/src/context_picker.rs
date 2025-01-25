@@ -77,11 +77,7 @@ impl ContextPicker {
         cx.notify();
     }
 
-    fn build_menu(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<ContextMenu> {
+    fn build_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
         let context_picker = cx.model().clone();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {

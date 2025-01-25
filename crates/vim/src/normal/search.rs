@@ -81,12 +81,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    fn move_to_next(
-        &mut self,
-        action: &MoveToNext,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn move_to_next(&mut self, action: &MoveToNext, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to_internal(
             Direction::Next,
             action.case_sensitive,
@@ -97,12 +92,7 @@ impl Vim {
         )
     }
 
-    fn move_to_prev(
-        &mut self,
-        action: &MoveToPrev,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn move_to_prev(&mut self, action: &MoveToPrev, window: &mut Window, cx: &mut Context<Self>) {
         self.move_to_internal(
             Direction::Prev,
             action.case_sensitive,
@@ -179,12 +169,7 @@ impl Vim {
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
-    fn search_deploy(
-        &mut self,
-        _: &buffer_search::Deploy,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn search_deploy(&mut self, _: &buffer_search::Deploy, _: &mut Window, cx: &mut Context<Self>) {
         self.search = Default::default();
         cx.propagate();
     }
@@ -369,12 +354,7 @@ impl Vim {
         }
     }
 
-    fn find_command(
-        &mut self,
-        action: &FindCommand,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn find_command(&mut self, action: &FindCommand, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.pane(window, cx) else {
             return;
         };

@@ -1,5 +1,5 @@
 use gpui::{
-    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, Context, ParentElement,
+    div, Context, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement,
     Render, SemanticVersion, StatefulInteractiveElement, Styled, WeakEntity, Window,
 };
 use menu::Cancel;

@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ActiveTheme, Color, Icon, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, Context, Styled, Window,
+    prelude::*, ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, Styled, Window,
 };
 use workspace::{AppState, ModalView, Workspace};
 

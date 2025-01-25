@@ -2,7 +2,7 @@
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
 use gpui::{
-    fill, point, size, AnyElement, App, Bounds, Hsla, Entity, Point, UniformListDecoration,
+    fill, point, size, AnyElement, App, Bounds, Entity, Hsla, Point, UniformListDecoration,
 };
 use smallvec::SmallVec;
 
@@ -33,8 +33,7 @@ impl IndentGuideColors {
 pub struct IndentGuides {
     colors: IndentGuideColors,
     indent_size: Pixels,
-    compute_indents_fn:
-        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[usize; 64]>>,
+    compute_indents_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[usize; 64]>>,
     render_fn: Option<
         Box<
             dyn Fn(
@@ -212,8 +211,7 @@ mod uniform_list {
         Static,
         Interactive {
             hitboxes: Rc<SmallVec<[Hitbox; 12]>>,
-            on_hovered_indent_guide_click:
-                Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut App)>,
+            on_hovered_indent_guide_click: Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut App)>,
         },
     }
 

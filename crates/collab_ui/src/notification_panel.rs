@@ -6,9 +6,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, list, px, AnyElement, App, AsyncWindowContext, CursorStyle, DismissEvent,
-    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ListAlignment, ListScrollEvent, ListState, Context, ParentElement, Render,
+    actions, div, img, list, px, AnyElement, App, AsyncWindowContext, Context, CursorStyle,
+    DismissEvent, Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ListAlignment, ListScrollEvent, ListState, ParentElement, Render,
     StatefulInteractiveElement, Styled, Task, WeakEntity, Window,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
@@ -488,11 +488,7 @@ impl NotificationPanel {
         }
     }
 
-    fn is_showing_notification(
-        &self,
-        notification: &Notification,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    fn is_showing_notification(&self, notification: &Notification, cx: &mut Context<Self>) -> bool {
         if !self.active {
             return false;
         }
@@ -704,12 +700,7 @@ impl Panel for NotificationPanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(
-        &mut self,
-        position: DockPosition,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<NotificationPanelSettings>(
             self.fs.clone(),
             cx,

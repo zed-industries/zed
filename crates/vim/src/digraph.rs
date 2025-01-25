@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
-use gpui::{impl_actions, App, Keystroke, KeystrokeEvent, Context, Window};
+use gpui::{impl_actions, App, Context, Keystroke, KeystrokeEvent, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;

@@ -1,7 +1,7 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    App, DismissEvent, EventEmitter, FocusHandle, Focusable, Entity, Context,
-    ParentElement as _, Render, Styled, Task, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement as _,
+    Render, Styled, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -14,11 +14,7 @@ pub struct ContactFinder {
 }
 
 impl ContactFinder {
-    pub fn new(
-        user_store: Entity<UserStore>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(user_store: Entity<UserStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let delegate = ContactFinderDelegate {
             parent: cx.model().downgrade(),
             user_store,

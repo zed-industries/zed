@@ -1,6 +1,6 @@
 use gpui::{
-    uniform_list, App, FocusHandle, Focusable, Entity, ScrollStrategy,
-    UniformListScrollHandle, WeakEntity,
+    uniform_list, App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle,
+    WeakEntity,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -64,36 +64,21 @@ impl ThreadHistory {
         }
     }
 
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             self.set_selected_index(0, window, cx);
         }
     }
 
-    fn select_last(
-        &mut self,
-        _: &menu::SelectLast,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             self.set_selected_index(count - 1, window, cx);
         }
     }
 
-    fn set_selected_index(
-        &mut self,
-        index: usize,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_selected_index(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = index;
         self.scroll_handle
             .scroll_to_item(index, ScrollStrategy::Top);

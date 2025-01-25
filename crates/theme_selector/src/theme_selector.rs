@@ -1,8 +1,8 @@
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, App, DismissEvent, EventEmitter, Focusable, Entity, Context, Render,
-    UpdateGlobal, WeakEntity, Window,
+    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal,
+    WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{update_settings_file, SettingsStore};

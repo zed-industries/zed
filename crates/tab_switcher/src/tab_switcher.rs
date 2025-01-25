@@ -4,9 +4,9 @@ mod tab_switcher_tests;
 use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
 use gpui::{
-    actions, impl_actions, rems, Action, AnyElement, App, DismissEvent, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Context, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task, WeakEntity, Window,
+    actions, impl_actions, rems, Action, AnyElement, App, Context, DismissEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseUpEvent, ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -103,11 +103,7 @@ impl TabSwitcher {
         });
     }
 
-    fn new(
-        delegate: TabSwitcherDelegate,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(delegate: TabSwitcherDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             picker: cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx)),
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
@@ -340,12 +336,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         cx.notify();
     }

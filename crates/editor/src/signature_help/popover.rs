@@ -1,7 +1,7 @@
 use crate::{Editor, EditorStyle};
 use gpui::{
-    div, AnyElement, InteractiveElement, IntoElement, Context, MouseButton, ParentElement,
-    Pixels, Size, StatefulInteractiveElement, Styled, WeakEntity,
+    div, AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
+    Size, StatefulInteractiveElement, Styled, WeakEntity,
 };
 use language::ParsedMarkdown;
 use ui::StyledExt;

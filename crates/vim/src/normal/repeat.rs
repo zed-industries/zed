@@ -89,12 +89,7 @@ impl Replayer {
         })))
     }
 
-    pub fn replay(
-        &mut self,
-        actions: Vec<ReplayableAction>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    pub fn replay(&mut self, actions: Vec<ReplayableAction>, window: &mut Window, cx: &mut App) {
         let mut lock = self.0.borrow_mut();
         let range = lock.ix..lock.ix;
         lock.actions.splice(range, actions);

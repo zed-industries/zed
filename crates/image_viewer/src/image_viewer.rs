@@ -4,8 +4,8 @@ use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
 use gpui::{
-    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, Entity, Context, ObjectFit,
+    canvas, div, fill, img, opaque_grey, point, size, AnyElement, App, Bounds, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
 use persistence::IMAGE_VIEWER;

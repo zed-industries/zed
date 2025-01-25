@@ -1,7 +1,7 @@
 use gpui::{
-    div, AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId,
-    Hitbox, InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement,
-    Styled, Window,
+    div, AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
+    InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled,
+    Window,
 };
 
 /// An element that sets a particular rem size for its children.

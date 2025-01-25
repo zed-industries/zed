@@ -17,8 +17,7 @@ use editor::{
 };
 use futures::FutureExt as _;
 use gpui::{
-    div, prelude::*, EventEmitter, Entity, Context, Render, Subscription, Task, WeakEntity,
-    Window,
+    div, prelude::*, Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::Point;
 use project::Fs;
@@ -66,8 +65,7 @@ impl EditorBlock {
             .workspace()
             .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
 
-        let execution_view =
-            cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
+        let execution_view = cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();
@@ -345,11 +343,7 @@ impl Session {
         }
     }
 
-    fn send(
-        &mut self,
-        message: JupyterMessage,
-        _cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
+    fn send(&mut self, message: JupyterMessage, _cx: &mut Context<Self>) -> anyhow::Result<()> {
         if let Kernel::RunningKernel(kernel) = &mut self.kernel {
             kernel.request_tx().try_send(message).ok();
         }
@@ -495,12 +489,7 @@ impl Session {
         }
     }
 
-    pub fn route(
-        &mut self,
-        message: &JupyterMessage,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
         let parent_message_id = match message.parent_header.as_ref() {
             Some(header) => &header.msg_id,
             None => return,

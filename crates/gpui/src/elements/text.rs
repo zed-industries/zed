@@ -1,9 +1,8 @@
 use crate::{
-    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App,
-    Bounds, DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox,
-    IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, Size, TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout,
+    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App, Bounds,
+    DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
+    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -514,11 +513,9 @@ impl TextLayout {
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
-    click_listener: Option<
-        Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut App)>,
-    >,
-    hover_listener:
-        Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App)>>,
+    click_listener:
+        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut App)>>,
+    hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,

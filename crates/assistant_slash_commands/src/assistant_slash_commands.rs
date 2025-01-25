@@ -40,11 +40,7 @@ pub use crate::symbols_command::*;
 pub use crate::tab_command::*;
 pub use crate::terminal_command::*;
 
-pub fn create_label_for_command(
-    command_name: &str,
-    arguments: &[&str],
-    cx: &App,
-) -> CodeLabel {
+pub fn create_label_for_command(command_name: &str, arguments: &[&str], cx: &App) -> CodeLabel {
     let mut label = CodeLabel::default();
     label.push_str(command_name, None);
     label.push_str(" ", None);

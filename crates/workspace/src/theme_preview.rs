@@ -413,11 +413,7 @@ impl ThemePreview {
             .child(Table::render_component_previews(window, cx))
     }
 
-    fn render_page_nav(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_page_nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .id("theme-preview-nav")
             .items_center()

@@ -26,8 +26,8 @@ use ::settings::Settings;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{
-    px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString,
-    WindowAppearance, WindowBackgroundAppearance,
+    px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
+    WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 use uuid::Uuid;

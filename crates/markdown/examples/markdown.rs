@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, Application, KeyBinding, Entity, StyleRefinement, WindowOptions};
+use gpui::{prelude::*, rgb, Application, Entity, KeyBinding, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -185,8 +185,8 @@ impl MarkdownExample {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let markdown = cx
-            .new(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
+        let markdown =
+            cx.new(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
         Self { markdown }
     }
 }

@@ -5,7 +5,7 @@ use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
-use gpui::{px, App, AsyncWindowContext, Entity, Context, Modifiers, Task, Window};
+use gpui::{px, App, AsyncWindowContext, Context, Entity, Modifiers, Task, Window};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;

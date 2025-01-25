@@ -2,8 +2,8 @@
 
 use client::UserStore;
 use gpui::{
-    App, ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Entity,
-    MouseDownEvent, Render,
+    App, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
+    Render,
 };
 use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};

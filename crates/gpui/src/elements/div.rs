@@ -16,9 +16,9 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Entity,
+    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
+    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
@@ -314,10 +314,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::on_action`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    pub fn on_action<A: Action>(
-        &mut self,
-        listener: impl Fn(&A, &mut Window, &mut App) + 'static,
-    ) {
+    pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Window, &mut App) + 'static) {
         self.action_listeners.push((
             TypeId::of::<A>(),
             Box::new(move |action, phase, window, cx| {
@@ -387,10 +384,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::on_key_up`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    pub fn on_key_up(
-        &mut self,
-        listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static,
-    ) {
+    pub fn on_key_up(&mut self, listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static) {
         self.key_up_listeners
             .push(Box::new(move |event, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -433,10 +427,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::on_drop`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    pub fn on_drop<T: 'static>(
-        &mut self,
-        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
-    ) {
+    pub fn on_drop<T: 'static>(&mut self, listener: impl Fn(&T, &mut Window, &mut App) + 'static) {
         self.drop_listeners.push((
             TypeId::of::<T>(),
             Box::new(move |dragged_value, window, cx| {
@@ -458,10 +449,8 @@ impl Interactivity {
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_click`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    pub fn on_click(
-        &mut self,
-        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) where
+    pub fn on_click(&mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)
+    where
         Self: Sized,
     {
         self.click_listeners
@@ -515,10 +504,8 @@ impl Interactivity {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The imperative API equivalent to [`InteractiveElement::tooltip`]
-    pub fn tooltip(
-        &mut self,
-        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-    ) where
+    pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static)
+    where
         Self: Sized,
     {
         debug_assert!(
@@ -1006,10 +993,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// The fluent API equivalent to [`Interactivity::on_click`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    fn on_click(
-        mut self,
-        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self
+    fn on_click(mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self
     where
         Self: Sized,
     {
@@ -1053,10 +1037,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
 
     /// Use the given callback to construct a new tooltip view when the mouse hovers over this element.
     /// The fluent API equivalent to [`Interactivity::tooltip`]
-    fn tooltip(
-        mut self,
-        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
-    ) -> Self
+    fn tooltip(mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self
     where
         Self: Sized,
     {
@@ -1160,8 +1141,7 @@ pub fn div() -> Div {
 pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
-    prepaint_listener:
-        Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
+    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
 }
 
 impl Div {
@@ -1623,53 +1603,48 @@ impl Interactivity {
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
-                    style.paint(
-                        bounds,
-                        window,
-                        cx,
-                        |window: &mut Window, cx: &mut App| {
-                            window.with_text_style(style.text_style().cloned(), |window| {
-                                window.with_content_mask(
-                                    style.overflow_mask(bounds, window.rem_size()),
-                                    |window| {
-                                        if let Some(hitbox) = hitbox {
-                                            #[cfg(debug_assertions)]
-                                            self.paint_debug_info(
-                                                global_id, hitbox, &style, window, cx,
-                                            );
+                    style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
+                        window.with_text_style(style.text_style().cloned(), |window| {
+                            window.with_content_mask(
+                                style.overflow_mask(bounds, window.rem_size()),
+                                |window| {
+                                    if let Some(hitbox) = hitbox {
+                                        #[cfg(debug_assertions)]
+                                        self.paint_debug_info(
+                                            global_id, hitbox, &style, window, cx,
+                                        );
 
-                                            if !cx.has_active_drag() {
-                                                if let Some(mouse_cursor) = style.mouse_cursor {
-                                                    window.set_cursor_style(mouse_cursor, hitbox);
-                                                }
-                                            }
-
-                                            if let Some(group) = self.group.clone() {
-                                                GroupHitboxes::push(group, hitbox.id, cx);
-                                            }
-
-                                            self.paint_mouse_listeners(
-                                                hitbox,
-                                                element_state.as_mut(),
-                                                window,
-                                                cx,
-                                            );
-                                            self.paint_scroll_listener(hitbox, &style, window, cx);
-                                        }
-
-                                        self.paint_keyboard_listeners(window, cx);
-                                        f(&style, window, cx);
-
-                                        if hitbox.is_some() {
-                                            if let Some(group) = self.group.as_ref() {
-                                                GroupHitboxes::pop(group, cx);
+                                        if !cx.has_active_drag() {
+                                            if let Some(mouse_cursor) = style.mouse_cursor {
+                                                window.set_cursor_style(mouse_cursor, hitbox);
                                             }
                                         }
-                                    },
-                                );
-                            });
-                        },
-                    );
+
+                                        if let Some(group) = self.group.clone() {
+                                            GroupHitboxes::push(group, hitbox.id, cx);
+                                        }
+
+                                        self.paint_mouse_listeners(
+                                            hitbox,
+                                            element_state.as_mut(),
+                                            window,
+                                            cx,
+                                        );
+                                        self.paint_scroll_listener(hitbox, &style, window, cx);
+                                    }
+
+                                    self.paint_keyboard_listeners(window, cx);
+                                    f(&style, window, cx);
+
+                                    if hitbox.is_some() {
+                                        if let Some(group) = self.group.as_ref() {
+                                            GroupHitboxes::pop(group, cx);
+                                        }
+                                    }
+                                },
+                            );
+                        });
+                    });
                 });
 
                 ((), element_state)

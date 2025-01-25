@@ -191,12 +191,7 @@ impl Vim {
         self.exit_temporary_normal(window, cx);
     }
 
-    pub fn normal_object(
-        &mut self,
-        object: Object,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn normal_object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
             Some(Operator::Object { around }) => match self.maybe_pop_operator() {
@@ -286,12 +281,7 @@ impl Vim {
         });
     }
 
-    fn insert_before(
-        &mut self,
-        _: &InsertBefore,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn insert_before(&mut self, _: &InsertBefore, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
     }
@@ -469,12 +459,7 @@ impl Vim {
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }
 
-    fn show_location(
-        &mut self,
-        _: &ShowLocation,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn show_location(&mut self, _: &ShowLocation, window: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         self.update_editor(window, cx, |vim, editor, _window, cx| {
             let selection = editor.selections.newest_anchor();
@@ -513,12 +498,7 @@ impl Vim {
         });
     }
 
-    fn toggle_comments(
-        &mut self,
-        _: &ToggleComments,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_comments(&mut self, _: &ToggleComments, window: &mut Window, cx: &mut Context<Self>) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

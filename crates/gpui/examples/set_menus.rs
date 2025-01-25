@@ -1,6 +1,5 @@
 use gpui::{
-    actions, div, prelude::*, rgb, App, Application, Menu, MenuItem, Context, Window,
-    WindowOptions,
+    actions, div, prelude::*, rgb, App, Application, Context, Menu, MenuItem, Window, WindowOptions,
 };
 
 struct SetMenus;
@@ -30,10 +29,8 @@ fn main() {
             name: "set_menus".into(),
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
-        cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|_| SetMenus {})
-        })
-        .unwrap();
+        cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| SetMenus {}))
+            .unwrap();
     });
 }
 

@@ -10,9 +10,8 @@ use editor::actions::{
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, Entity, Context, ParentElement, Render, Styled, Subscription,
-    WeakEntity, Window,
+    Action, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};

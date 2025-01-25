@@ -27,12 +27,7 @@ struct ContextServerFactoryRegistryProxy {
 }
 
 impl ExtensionContextServerProxy for ContextServerFactoryRegistryProxy {
-    fn register_context_server(
-        &self,
-        extension: Arc<dyn Extension>,
-        id: Arc<str>,
-        cx: &mut App,
-    ) {
+    fn register_context_server(&self, extension: Arc<dyn Extension>, id: Arc<str>, cx: &mut App) {
         self.context_server_factory_registry
             .update(cx, |registry, _| {
                 registry.register_server_factory(

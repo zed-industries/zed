@@ -195,11 +195,7 @@ impl SelectionsCollection {
         }
     }
 
-    pub fn disjoint_in_range<'a, D>(
-        &self,
-        range: Range<Anchor>,
-        cx: &mut App,
-    ) -> Vec<Selection<D>>
+    pub fn disjoint_in_range<'a, D>(&self, range: Range<Anchor>, cx: &mut App) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     {
@@ -220,10 +216,7 @@ impl SelectionsCollection {
         resolve_selections(&self.disjoint[start_ix..end_ix], &map).collect()
     }
 
-    pub fn all_display(
-        &self,
-        cx: &mut App,
-    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
+    pub fn all_display(&self, cx: &mut App) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
         let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &map).peekable();
@@ -309,17 +302,11 @@ impl SelectionsCollection {
             .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
-    pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        cx: &mut App,
-    ) -> Selection<D> {
+    pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(&self, cx: &mut App) -> Selection<D> {
         self.all(cx).first().unwrap().clone()
     }
 
-    pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
-        &self,
-        cx: &mut App,
-    ) -> Selection<D> {
+    pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(&self, cx: &mut App) -> Selection<D> {
         self.all(cx).last().unwrap().clone()
     }
 

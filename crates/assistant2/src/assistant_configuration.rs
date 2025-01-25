@@ -42,11 +42,7 @@ impl AssistantConfiguration {
         this
     }
 
-    fn build_provider_configuration_views(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         for provider in providers {
             self.add_provider_configuration_view(&provider, window, cx);

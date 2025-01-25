@@ -7,12 +7,7 @@ use crate::{
 use gpui::{Context, Point, Window};
 
 impl Editor {
-    pub fn next_screen(
-        &mut self,
-        _: &NextScreen,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
+    pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut Context<Editor>) {
         if self.take_rename(true, window, cx).is_some() {
             return;
         }

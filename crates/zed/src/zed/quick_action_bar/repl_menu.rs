@@ -350,12 +350,7 @@ impl QuickActionBar {
         .into_any_element()
     }
 
-    pub fn render_repl_setup(
-        &self,
-        language: &str,
-
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    pub fn render_repl_setup(&self, language: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
             h_flex()

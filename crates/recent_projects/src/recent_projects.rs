@@ -6,8 +6,8 @@ pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Context, Subscription, Task, WeakEntity, Window,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{
@@ -32,10 +32,8 @@ use zed_actions::{OpenRecent, OpenRemote};
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
     cx.observe_new(RecentProjects::register).detach();
-    cx.observe_new(RemoteServerProjects::register)
-        .detach();
-    cx.observe_new(DisconnectedOverlay::register)
-        .detach();
+    cx.observe_new(RemoteServerProjects::register).detach();
+    cx.observe_new(DisconnectedOverlay::register).detach();
 }
 
 pub struct RecentProjects {
@@ -261,12 +259,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         Task::ready(())
     }
 
-    fn confirm(
-        &mut self,
-        secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some((selected_match, workspace)) = self
             .matches
             .get(self.selected_index())

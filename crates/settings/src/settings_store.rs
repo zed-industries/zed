@@ -544,11 +544,7 @@ impl SettingsStore {
     }
 
     /// Sets the user settings via a JSON string.
-    pub fn set_user_settings(
-        &mut self,
-        user_settings_content: &str,
-        cx: &mut App,
-    ) -> Result<()> {
+    pub fn set_user_settings(&mut self, user_settings_content: &str, cx: &mut App) -> Result<()> {
         let settings: serde_json::Value = if user_settings_content.is_empty() {
             parse_json_with_comments("{}")?
         } else {
@@ -683,11 +679,7 @@ impl SettingsStore {
         Ok(())
     }
 
-    pub fn set_extension_settings<T: Serialize>(
-        &mut self,
-        content: T,
-        cx: &mut App,
-    ) -> Result<()> {
+    pub fn set_extension_settings<T: Serialize>(&mut self, content: T, cx: &mut App) -> Result<()> {
         let settings: serde_json::Value = serde_json::to_value(content)?;
         anyhow::ensure!(settings.is_object(), "settings must be an object");
         self.raw_extension_settings = settings;

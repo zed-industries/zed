@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use editor::Editor;
 use gpui::{
-    EventEmitter, IntoElement, Entity, Context, ParentElement, Render, Styled, Subscription,
-    Task, WeakEntity, Window,
+    Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task,
+    WeakEntity, Window,
 };
 use language::Diagnostic;
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};

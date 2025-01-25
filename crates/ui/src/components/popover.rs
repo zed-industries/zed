@@ -3,8 +3,7 @@
 use crate::prelude::*;
 use crate::v_flex;
 use gpui::{
-    div, AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled,
-    Window,
+    div, AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window,
 };
 use smallvec::SmallVec;
 

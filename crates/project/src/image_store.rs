@@ -6,8 +6,7 @@ use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, App, EventEmitter, Img, Entity, Context, Subscription, Task,
-    WeakEntity,
+    hash, prelude::*, App, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity,
 };
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
@@ -343,11 +342,7 @@ impl ImageStore {
         self.state.reload_images(images, cx)
     }
 
-    fn add_image(
-        &mut self,
-        image: Entity<ImageItem>,
-        cx: &mut Context<ImageStore>,
-    ) -> Result<()> {
+    fn add_image(&mut self, image: Entity<ImageItem>, cx: &mut Context<ImageStore>) -> Result<()> {
         let image_id = image.read(cx).id;
 
         self.opened_images.insert(image_id, image.downgrade());

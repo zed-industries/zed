@@ -15,9 +15,7 @@ pub use modal::{Rerun, Spawn};
 pub fn init(cx: &mut App) {
     settings::TaskSettings::register(cx);
     cx.observe_new(
-        |workspace: &mut Workspace,
-         _window: Option<&mut Window>,
-         _: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, _window: Option<&mut Window>, _: &mut Context<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {

@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AsyncAppContext, EventEmitter, Entity, Context, Task, WeakEntity};
+use gpui::{App, AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
@@ -234,12 +234,7 @@ impl TaskStore {
         }
     }
 
-    pub fn shared(
-        &mut self,
-        remote_id: u64,
-        new_downstream_client: AnyProtoClient,
-        _cx: &mut App,
-    ) {
+    pub fn shared(&mut self, remote_id: u64, new_downstream_client: AnyProtoClient, _cx: &mut App) {
         if let Self::Functional(StoreState {
             mode: StoreMode::Local {
                 downstream_client, ..

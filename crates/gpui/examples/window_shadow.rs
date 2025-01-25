@@ -1,6 +1,6 @@
 use gpui::{
     black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black, white, App,
-    Application, Bounds, CursorStyle, Decorations, Hsla, Context, MouseButton, Pixels, Point,
+    Application, Bounds, Context, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point,
     ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
     WindowOptions,
 };

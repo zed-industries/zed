@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{App, DismissEvent, FocusHandle, Focusable, Entity, Task, WeakEntity};
+use gpui::{App, DismissEvent, Entity, FocusHandle, Focusable, Task, WeakEntity};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, Context, Window};
+use ui::{prelude::*, Context, ListItem, Window};
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -198,12 +198,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         Task::ready(())
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };

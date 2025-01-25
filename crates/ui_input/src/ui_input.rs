@@ -6,7 +6,7 @@
 //!
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{App, FocusHandle, Focusable, FontStyle, Hsla, Entity, TextStyle};
+use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;

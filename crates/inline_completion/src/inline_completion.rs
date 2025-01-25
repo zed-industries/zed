@@ -1,4 +1,4 @@
-use gpui::{App, Entity, Context};
+use gpui::{App, Context, Entity};
 use language::Buffer;
 use std::ops::Range;
 

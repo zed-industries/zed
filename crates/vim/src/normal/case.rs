@@ -104,12 +104,7 @@ impl Vim {
         });
     }
 
-    pub fn change_case(
-        &mut self,
-        _: &ChangeCase,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn change_case(&mut self, _: &ChangeCase, window: &mut Window, cx: &mut Context<Self>) {
         self.manipulate_text(window, cx, |c| {
             if c.is_lowercase() {
                 c.to_uppercase().collect::<Vec<char>>()

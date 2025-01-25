@@ -5,8 +5,8 @@ use editor::{
     actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use gpui::{
-    div, prelude::*, AnyWindowHandle, App, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Entity, Render, SharedString, Styled, Subscription,
+    div, prelude::*, AnyWindowHandle, App, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Render, SharedString, Styled, Subscription,
 };
 use language::Buffer;
 use settings::Settings;

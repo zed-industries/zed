@@ -4,8 +4,8 @@ use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    pulsating_between, Animation, AnimationExt, App, DismissEvent, Focusable, Entity,
-    Subscription, TextStyle, WeakEntity,
+    pulsating_between, Animation, AnimationExt, App, DismissEvent, Entity, Focusable, Subscription,
+    TextStyle, WeakEntity,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
@@ -129,12 +129,7 @@ impl MessageEditor {
         self.model_selector_menu_handle.toggle(window, cx)
     }
 
-    fn toggle_chat_mode(
-        &mut self,
-        _: &ChatMode,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn toggle_chat_mode(&mut self, _: &ChatMode, _window: &mut Window, cx: &mut Context<Self>) {
         self.use_tools = !self.use_tools;
         cx.notify();
     }

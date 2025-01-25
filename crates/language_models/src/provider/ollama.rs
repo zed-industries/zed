@@ -413,11 +413,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(
-        state: gpui::Entity<State>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let loading_models_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             |this, mut cx| async move {
