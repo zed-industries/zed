@@ -5245,6 +5245,7 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "gpui",
+ "language",
  "menu",
  "picker",
  "project",

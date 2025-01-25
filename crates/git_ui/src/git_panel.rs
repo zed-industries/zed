@@ -11,6 +11,7 @@ use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll};
 use gpui::*;
+use language::{Anchor, Capability};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::git::RepositoryHandle;
 use project::{Fs, Project, ProjectPath};
@@ -760,6 +761,83 @@ impl GitPanel {
             workspace.show_toast(toast, cx);
         });
     }
+
+    fn open_diff(
+        &mut self,
+        ix: usize,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<Task<Result<View<Editor>>>> {
+        let Some(repository) = &self.active_repository else {
+            anyhow::bail!("No active repository");
+        };
+        let Some(entry) = self.visible_entries.get(ix) else {
+            anyhow::bail!("Entry {} is not visible", ix);
+        };
+
+        let Some(project_path) = repository.unrelativize(&entry.repo_path) else {
+            anyhow::bail!(
+                "Unable to make a project path from external path {}",
+                entry.repo_path
+            );
+        };
+
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+        let buffer = self
+            .project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx));
+        let status = entry.status;
+
+        Ok(cx.spawn(|_, mut cx| async move {
+            let buffer = buffer.await?;
+
+            let change_set = project
+                .update(&mut cx, |project, cx| {
+                    project.open_unstaged_changes(buffer.clone(), cx)
+                })?
+                .await?;
+
+            let diff_hunks = if status.is_created() {
+                vec![Anchor::MIN..Anchor::MAX]
+            } else {
+                cx.update(|cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    change_set
+                        .read(cx)
+                        .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+                        .map(|diff_hunk| diff_hunk.buffer_range)
+                        .collect::<Vec<_>>()
+                })?
+            };
+
+            let multibuffer = cx.new_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+                multibuffer.push_excerpts(
+                    buffer,
+                    diff_hunks
+                        .into_iter()
+                        .map(|buffer_range| editor::ExcerptRange {
+                            // TODO: Expand this range by some contextual amount
+                            context: buffer_range.clone(),
+                            primary: Some(buffer_range),
+                        }),
+                    cx,
+                );
+                multibuffer.add_change_set(change_set, cx);
+                multibuffer.set_all_diff_hunks_expanded(cx);
+                multibuffer
+            })?;
+
+            let editor =
+                cx.new_view(|cx| Editor::for_multibuffer(multibuffer, Some(project), true, cx))?;
+
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, cx);
+            })?;
+
+            anyhow::Ok(editor)
+        }))
+    }
 }
 
 // GitPanel –– Render
@@ -1216,7 +1294,14 @@ impl GitPanel {
                             this
                         }
                     })
-                    .child(div().child(entry_details.display_name.clone())),
+                    .child(div().child(entry_details.display_name.clone()))
+                    .id(ix)
+                    .hover(|style| style.cursor_pointer())
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.open_diff(ix, cx)
+                            .log_err()
+                            .map(|task| task.detach_and_log_err(cx));
+                    })),
             )
             .child(div().flex_1())
             .child(end_slot)

@@ -32,6 +32,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 picker.workspace = true
+language.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
