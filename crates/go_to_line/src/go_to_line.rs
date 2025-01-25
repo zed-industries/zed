@@ -1,6 +1,6 @@
 pub mod cursor_position;
 
-use cursor_position::LineIndicatorFormat;
+use cursor_position::{LineIndicatorFormat, UserCaretPosition};
 use editor::{scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
@@ -66,10 +66,13 @@ impl GoToLine {
         active_buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let (cursor, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
-            let cursor = editor.selections.last::<Point>(cx).head();
-            let snapshot = active_buffer.read(cx).snapshot();
+        let (user_caret, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
+            let user_caret = UserCaretPosition::at_selection_end(
+                &editor.selections.last::<Point>(cx),
+                &editor.buffer().read(cx).snapshot(cx),
+            );
 
+            let snapshot = active_buffer.read(cx).snapshot();
             let last_line = editor
                 .buffer()
                 .read(cx)
@@ -79,15 +82,14 @@ impl GoToLine {
                 .max()
                 .unwrap_or(0);
 
-            (cursor, last_line, editor.scroll_position(cx))
+            (user_caret, last_line, editor.scroll_position(cx))
         });
 
-        let line = cursor.row + 1;
-        let column = cursor.column + 1;
+        let line = user_caret.line.get();
+        let column = user_caret.character.get();
 
         let line_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
-            // TODO kb wrong column number here
             editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
         });
@@ -518,10 +520,11 @@ mod tests {
         );
 
         for (i, c) in text.chars().enumerate() {
+            let i = i as u32 + 1;
             editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
             cx.executor().advance_clock(Duration::from_millis(200));
             assert_eq!(
-                user_caret_position(1, i as u32 + 1 + 1),
+                user_caret_position(1, i + 1),
                 current_position(&workspace, cx),
                 "Wrong position for char '{c}' in string '{text}'",
             );
@@ -584,9 +587,9 @@ mod tests {
         assert_eq!(user_caret_position(1, 1), current_position(&workspace, cx));
 
         for (i, c) in text.chars().enumerate() {
-            let i = i as u32;
-            let point = user_caret_position(1, i + 1 + 1);
-            go_to_point(point, &workspace, cx);
+            let i = i as u32 + 1;
+            let point = user_caret_position(1, i + 1);
+            go_to_point(point, user_caret_position(1, i), &workspace, cx);
             cx.executor().advance_clock(Duration::from_millis(200));
             assert_eq!(
                 point,
@@ -595,7 +598,12 @@ mod tests {
             );
         }
 
-        go_to_point(user_caret_position(111, 222), &workspace, cx);
+        go_to_point(
+            user_caret_position(111, 222),
+            user_caret_position(1, text.chars().count() as u32 + 1),
+            &workspace,
+            cx,
+        );
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
             user_caret_position(1, text.chars().count() as u32 + 1),
@@ -628,12 +636,26 @@ mod tests {
     }
 
     fn go_to_point(
-        point: UserCaretPosition,
+        new_point: UserCaretPosition,
+        expected_placeholder: UserCaretPosition,
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) {
-        let _go_to_line_view = open_go_to_line_view(workspace, cx);
-        cx.simulate_input(&format!("{}:{}", point.line, point.character));
+        let go_to_line_view = open_go_to_line_view(workspace, cx);
+        go_to_line_view.update(cx, |go_to_line_view, cx| {
+            assert_eq!(
+                go_to_line_view
+                    .line_editor
+                    .read(cx)
+                    .placeholder_text(cx)
+                    .expect("No placeholder text"),
+                format!(
+                    "{}:{}",
+                    expected_placeholder.line, expected_placeholder.character
+                )
+            );
+        });
+        cx.simulate_input(&format!("{}:{}", new_point.line, new_point.character));
         cx.dispatch_action(menu::Confirm);
     }
 

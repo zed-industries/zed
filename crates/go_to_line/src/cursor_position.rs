@@ -1,4 +1,4 @@
-use editor::Editor;
+use editor::{Editor, MultiBufferSnapshot};
 use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,20 @@ pub struct CursorPosition {
 pub struct UserCaretPosition {
     pub line: NonZeroU32,
     pub character: NonZeroU32,
+}
+
+impl UserCaretPosition {
+    pub fn at_selection_end(selection: &Selection<Point>, snapshot: &MultiBufferSnapshot) -> Self {
+        let selection_end = selection.head();
+        let line_start = Point::new(selection_end.row, 0);
+        let chars_to_last_position = snapshot
+            .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
+            .chars as u32;
+        Self {
+            line: NonZeroU32::new(selection_end.row + 1).expect("added 1"),
+            character: NonZeroU32::new(chars_to_last_position + 1).expect("added 1"),
+        }
+    }
 }
 
 impl CursorPosition {
@@ -84,13 +98,13 @@ impl CursorPosition {
                             }
                             editor::EditorMode::Full => {
                                 let mut last_selection = None::<Selection<Point>>;
-                                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                                if multi_buffer_snapshot.excerpts().count() > 0 {
+                                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                if snapshot.excerpts().count() > 0 {
                                     for selection in editor.selections.all::<Point>(cx) {
-                                        let selection_summary = multi_buffer_snapshot
+                                        let selection_summary = snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
-                                            selection.start..selection.end,
-                                        );
+                                                selection.start..selection.end,
+                                            );
                                         cursor_position.selected_count.characters +=
                                             selection_summary.chars;
                                         if selection.end != selection.start {
@@ -107,22 +121,8 @@ impl CursorPosition {
                                         }
                                     }
                                 }
-                                cursor_position.position = last_selection.map(|s| {
-                                    let last_position = s.head();
-                                    let line_start = Point::new(last_position.row, 0);
-                                    let chars_to_last_position = multi_buffer_snapshot
-                                        .text_summary_for_range::<text::TextSummary, _>(
-                                            line_start..last_position,
-                                        )
-                                        .chars
-                                        as u32;
-                                    UserCaretPosition {
-                                        line: NonZeroU32::new(last_position.row + 1)
-                                            .expect("added 1"),
-                                        character: NonZeroU32::new(chars_to_last_position + 1)
-                                            .expect("added 1"),
-                                    }
-                                });
+                                cursor_position.position = last_selection
+                                    .map(|s| UserCaretPosition::at_selection_end(&s, &snapshot));
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }
