@@ -3,7 +3,7 @@ use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, Wea
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::{fmt::Write, time::Duration};
+use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
     div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
@@ -20,12 +20,22 @@ pub(crate) struct SelectionStats {
 }
 
 pub struct CursorPosition {
-    position: Option<Point>,
+    position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
     workspace: WeakView<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
+}
+
+/// A position in the editor, where user's caret is located at.
+/// Lines are never zero as there is always at least one line in the editor.
+/// Characters may start with zero as the caret may be at the beginning of a line, but all editors start counting characters from 1,
+/// where "1" will mean "before the first character".
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct UserCaretPosition {
+    pub line: NonZeroU32,
+    pub character: NonZeroU32,
 }
 
 impl CursorPosition {
@@ -104,8 +114,14 @@ impl CursorPosition {
                                         .text_summary_for_range::<text::TextSummary, _>(
                                             line_start..last_position,
                                         )
-                                        .chars;
-                                    Point::new(last_position.row, chars_to_last_position as u32)
+                                        .chars
+                                        as u32;
+                                    UserCaretPosition {
+                                        line: NonZeroU32::new(last_position.row + 1)
+                                            .expect("added 1"),
+                                        character: NonZeroU32::new(chars_to_last_position + 1)
+                                            .expect("added 1"),
+                                    }
                                 });
                                 cursor_position.context = Some(editor.focus_handle(cx));
                             }
@@ -169,7 +185,7 @@ impl CursorPosition {
     }
 
     #[cfg(test)]
-    pub(crate) fn position(&self) -> Option<Point> {
+    pub(crate) fn position(&self) -> Option<UserCaretPosition> {
         self.position
     }
 }
@@ -179,8 +195,7 @@ impl Render for CursorPosition {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
-                position.row + 1,
-                position.column + 1
+                position.line, position.character,
             );
             self.write_position(&mut text, cx);
 

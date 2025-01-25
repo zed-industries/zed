@@ -87,6 +87,7 @@ impl GoToLine {
 
         let line_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
+            // TODO kb wrong column number here
             editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
         });
@@ -145,7 +146,12 @@ impl GoToLine {
             };
             let mut start_point = start.to_point(&snapshot);
             start_point.column = 0;
-            let end_point = start_point + Point::new(1, 0);
+            // Force non-empty range to ensure the line is highlighted.
+            let mut end_point = snapshot.clip_point(start_point + Point::new(0, 1), Bias::Left);
+            if start_point == end_point {
+                end_point = snapshot.clip_point(start_point + Point::new(1, 0), Bias::Left);
+            }
+
             let end = snapshot.anchor_after(end_point);
             editor.highlight_rows::<GoToLineRowHighlights>(
                 start..end,
@@ -165,7 +171,7 @@ impl GoToLine {
     ) -> Option<Anchor> {
         let (query_row, query_char) = self.line_and_char_from_query(cx)?;
         let row = query_row.saturating_sub(1);
-        let character = query_char.unwrap_or(0);
+        let character = query_char.unwrap_or(0).saturating_sub(1);
 
         let start_offset = Point::new(row, 0).to_offset(snapshot);
         const MAX_BYTES_IN_UTF_8: u32 = 4;
@@ -191,7 +197,7 @@ impl GoToLine {
             }
             end_offset += offset_increment;
         }
-        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Right)))
+        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
     }
 
     fn line_and_char_from_query(&self, cx: &AppContext) -> Option<(u32, Option<u32>)> {
@@ -230,8 +236,8 @@ impl GoToLine {
 impl Render for GoToLine {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut help_text = self.current_text.clone();
-        if let Some((line, column)) = self.line_and_char_from_query(cx) {
-            help_text = match column {
+        if let Some((line, character)) = self.line_and_char_from_query(cx) {
+            help_text = match character {
                 Some(column) => format!("Go to line {line}, character {column}"),
                 None => format!("Go to line {line}"),
             }
@@ -265,13 +271,13 @@ impl Render for GoToLine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cursor_position::{CursorPosition, SelectionStats};
+    use cursor_position::{CursorPosition, SelectionStats, UserCaretPosition};
     use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::{sync::Arc, time::Duration};
+    use std::{num::NonZeroU32, sync::Arc, time::Duration};
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -505,13 +511,17 @@ mod tests {
             editor.move_to_beginning(&MoveToBeginning, cx)
         });
         cx.executor().advance_clock(Duration::from_millis(200));
-        assert_eq!(Point::new(0, 0), current_position(&workspace, cx));
+        assert_eq!(
+            user_caret_position(1, 1),
+            current_position(&workspace, cx),
+            "Beginning of the line should be at first line, before any characters"
+        );
 
         for (i, c) in text.chars().enumerate() {
             editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
             cx.executor().advance_clock(Duration::from_millis(200));
             assert_eq!(
-                Point::new(0, i as u32 + 1),
+                user_caret_position(1, i as u32 + 1 + 1),
                 current_position(&workspace, cx),
                 "Wrong position for char '{c}' in string '{text}'",
             );
@@ -520,7 +530,7 @@ mod tests {
         editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
-            Point::new(0, text.chars().count() as u32),
+            user_caret_position(1, text.chars().count() as u32 + 1),
             current_position(&workspace, cx),
             "After reaching the end of the text, position should not change when moving right"
         );
@@ -571,11 +581,11 @@ mod tests {
             editor.move_to_beginning(&MoveToBeginning, cx)
         });
         cx.executor().advance_clock(Duration::from_millis(200));
-        assert_eq!(Point::new(0, 0), current_position(&workspace, cx));
+        assert_eq!(user_caret_position(1, 1), current_position(&workspace, cx));
 
         for (i, c) in text.chars().enumerate() {
             let i = i as u32;
-            let point = Point::new(0, i + 1);
+            let point = user_caret_position(1, i + 1 + 1);
             go_to_point(point, &workspace, cx);
             cx.executor().advance_clock(Duration::from_millis(200));
             assert_eq!(
@@ -585,16 +595,19 @@ mod tests {
             );
         }
 
-        go_to_point(Point::new(111, 222), &workspace, cx);
+        go_to_point(user_caret_position(111, 222), &workspace, cx);
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
-            Point::new(0, text.chars().count() as u32),
+            user_caret_position(1, text.chars().count() as u32 + 1),
             current_position(&workspace, cx),
             "When going into too large point, should go to the end of the text"
         );
     }
 
-    fn current_position(workspace: &View<Workspace>, cx: &mut VisualTestContext) -> Point {
+    fn current_position(
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> UserCaretPosition {
         workspace.update(cx, |workspace, cx| {
             workspace
                 .status_bar()
@@ -607,9 +620,20 @@ mod tests {
         })
     }
 
-    fn go_to_point(point: Point, workspace: &View<Workspace>, cx: &mut VisualTestContext) {
+    fn user_caret_position(line: u32, character: u32) -> UserCaretPosition {
+        UserCaretPosition {
+            line: NonZeroU32::new(line).unwrap(),
+            character: NonZeroU32::new(character).unwrap(),
+        }
+    }
+
+    fn go_to_point(
+        point: UserCaretPosition,
+        workspace: &View<Workspace>,
+        cx: &mut VisualTestContext,
+    ) {
         let _go_to_line_view = open_go_to_line_view(workspace, cx);
-        cx.simulate_input(&format!("{}:{}", point.row, point.column));
+        cx.simulate_input(&format!("{}:{}", point.line, point.character));
         cx.dispatch_action(menu::Confirm);
     }
 
