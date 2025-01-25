@@ -5,8 +5,8 @@ mod multibuffer_hint;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, Action, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    Model, ModelContext, ParentElement, Render, Styled, Subscription, Task, WeakModel, Window,
+    actions, svg, Action, App, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    Context, ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
@@ -27,10 +27,10 @@ pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
 const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     BaseKeymap::register(cx);
 
-    cx.observe_new_models(|workspace: &mut Workspace, _, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &Welcome, window, cx| {
             let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
@@ -43,10 +43,7 @@ pub fn init(cx: &mut AppContext) {
     base_keymap_picker::init(cx);
 }
 
-pub fn show_welcome_view(
-    app_state: Arc<AppState>,
-    cx: &mut AppContext,
-) -> Task<anyhow::Result<()>> {
+pub fn show_welcome_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
     open_new(
         Default::default(),
         app_state,
@@ -68,14 +65,14 @@ pub fn show_welcome_view(
 }
 
 pub struct WelcomePage {
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
     _settings_subscription: Subscription,
 }
 
 impl Render for WelcomePage {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -369,8 +366,8 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(workspace: &Workspace, cx: &mut ModelContext<Workspace>) -> Model<Self> {
-        let this = cx.new_model(|cx| {
+    pub fn new(workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+        let this = cx.new(|cx| {
             cx.on_release(|this: &mut Self, _| {
                 this.telemetry
                     .report_app_event("welcome page: close".to_string());
@@ -389,7 +386,7 @@ impl WelcomePage {
         this
     }
 
-    fn section_label(&self, cx: &mut AppContext) -> Div {
+    fn section_label(&self, cx: &mut App) -> Div {
         div()
             .pl_1()
             .font_buffer(cx)
@@ -399,7 +396,7 @@ impl WelcomePage {
     fn update_settings<T: Settings>(
         &mut self,
         selection: &ToggleState,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
@@ -421,7 +418,7 @@ impl WelcomePage {
 impl EventEmitter<ItemEvent> for WelcomePage {}
 
 impl Focusable for WelcomePage {
-    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -429,7 +426,7 @@ impl Focusable for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("Welcome".into())
     }
 
@@ -445,9 +442,9 @@ impl Item for WelcomePage {
         &self,
         _workspace_id: Option<WorkspaceId>,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>> {
-        Some(cx.new_model(|cx| WelcomePage {
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
+        Some(cx.new(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),

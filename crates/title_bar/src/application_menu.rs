@@ -1,4 +1,4 @@
-use gpui::{impl_actions, Model, OwnedMenu, OwnedMenuItem};
+use gpui::{impl_actions, Entity, OwnedMenu, OwnedMenuItem};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
@@ -27,7 +27,7 @@ pub struct ApplicationMenu {
 }
 
 impl ApplicationMenu {
-    pub fn new(_: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
         Self {
             entries: menus
@@ -78,8 +78,8 @@ impl ApplicationMenu {
     fn build_menu_from_items(
         entry: MenuEntry,
         window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Model<ContextMenu> {
+        cx: &mut App,
+    ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |menu, window, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
             let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
@@ -182,7 +182,7 @@ impl ApplicationMenu {
         &mut self,
         action: &OpenApplicationMenu,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         self.pending_menu_open = Some(action.0.clone());
     }
@@ -192,7 +192,7 @@ impl ApplicationMenu {
         &mut self,
         action: &NavigateApplicationMenuInDirection,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let current_index = self
             .entries
@@ -234,7 +234,7 @@ impl ApplicationMenu {
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_menus_shown = self.all_menus_shown();
 
         if let Some(pending_menu_open) = self.pending_menu_open.take() {

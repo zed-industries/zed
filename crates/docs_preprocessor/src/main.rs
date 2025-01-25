@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use clap::{Arg, ArgMatches, Command};
 use docs_preprocessor::ZedDocsPreprocessor;
 use mdbook::preprocess::{CmdPreprocessor, Preprocessor};

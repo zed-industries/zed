@@ -1,4 +1,4 @@
-use gpui::{prelude::*, Model};
+use gpui::{prelude::*, Entity};
 use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
 use language::{Language, LanguageConfig};
@@ -15,7 +15,7 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
@@ -37,7 +37,7 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
     cx.set_state("let pi = ˇ\"foo\";");
 
@@ -59,7 +59,7 @@ async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     // Cursor is 2+ lines above the proposed edit
@@ -140,7 +140,7 @@ async fn test_indentation(cx: &mut gpui::TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     cx.set_state(indoc! {"
@@ -176,7 +176,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new_model(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     // Cursor is 3+ lines above the proposed edit
@@ -319,7 +319,7 @@ fn accept_completion(cx: &mut EditorTestContext) {
 }
 
 fn propose_edits<T: ToOffset>(
-    provider: &Model<FakeInlineCompletionProvider>,
+    provider: &Entity<FakeInlineCompletionProvider>,
     edits: Vec<(Range<T>, &str)>,
     cx: &mut EditorTestContext,
 ) {
@@ -340,7 +340,7 @@ fn propose_edits<T: ToOffset>(
 }
 
 fn assign_editor_completion_provider(
-    provider: Model<FakeInlineCompletionProvider>,
+    provider: Entity<FakeInlineCompletionProvider>,
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
@@ -381,9 +381,9 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
 
     fn is_enabled(
         &self,
-        _buffer: &gpui::Model<language::Buffer>,
+        _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _cx: &gpui::AppContext,
+        _cx: &gpui::App,
     ) -> bool {
         true
     }
@@ -394,31 +394,31 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
 
     fn refresh(
         &mut self,
-        _buffer: gpui::Model<language::Buffer>,
+        _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
-        _cx: &mut gpui::ModelContext<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) {
     }
 
     fn cycle(
         &mut self,
-        _buffer: gpui::Model<language::Buffer>,
+        _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _direction: inline_completion::Direction,
-        _cx: &mut gpui::ModelContext<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) {
     }
 
-    fn accept(&mut self, _cx: &mut gpui::ModelContext<Self>) {}
+    fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
 
-    fn discard(&mut self, _cx: &mut gpui::ModelContext<Self>) {}
+    fn discard(&mut self, _cx: &mut gpui::Context<Self>) {}
 
     fn suggest<'a>(
         &mut self,
-        _buffer: &gpui::Model<language::Buffer>,
+        _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _cx: &mut gpui::ModelContext<Self>,
+        _cx: &mut gpui::Context<Self>,
     ) -> Option<inline_completion::InlineCompletion> {
         self.completion.clone()
     }

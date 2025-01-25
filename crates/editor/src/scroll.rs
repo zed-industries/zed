@@ -12,9 +12,7 @@ use crate::{
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{
-    point, px, Along, AppContext, Axis, Entity, Global, ModelContext, Pixels, Task, Window,
-};
+use gpui::{point, px, Along, App, Axis, Context, Global, Pixels, Task, Window};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
 use settings::Settings;
@@ -188,7 +186,7 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new(cx: &mut AppContext) -> Self {
+    pub fn new(cx: &mut App) -> Self {
         ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
@@ -234,7 +232,7 @@ impl ScrollManager {
         autoscroll: bool,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if self.forbid_vertical_scroll {
             return;
@@ -309,7 +307,7 @@ impl ScrollManager {
         autoscroll: bool,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if self.forbid_vertical_scroll {
             return;
@@ -338,7 +336,7 @@ impl ScrollManager {
         cx.notify();
     }
 
-    pub fn show_scrollbar(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    pub fn show_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         if !self.show_scrollbars {
             self.show_scrollbars = true;
             cx.notify();
@@ -377,7 +375,7 @@ impl ScrollManager {
         &mut self,
         axis: Axis,
         dragging: bool,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
         cx.notify();
@@ -406,7 +404,7 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
-    pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ModelContext<Self>) {
+    pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut Context<Self>) {
         self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
         cx.notify();
     }
@@ -424,7 +422,7 @@ impl Editor {
         &mut self,
         lines: f32,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
@@ -444,7 +442,7 @@ impl Editor {
         &mut self,
         scroll_delta: gpui::Point<f32>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.scroll_manager.forbid_vertical_scroll {
             return;
@@ -458,7 +456,7 @@ impl Editor {
         &mut self,
         scroll_position: gpui::Point<f32>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.scroll_manager.forbid_vertical_scroll {
             return;
@@ -472,7 +470,7 @@ impl Editor {
         local: bool,
         autoscroll: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.set_scroll_position_taking_display_map(
@@ -492,7 +490,7 @@ impl Editor {
         autoscroll: bool,
         display_map: DisplaySnapshot,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
@@ -510,7 +508,7 @@ impl Editor {
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
-    pub fn scroll_position(&self, cx: &mut ModelContext<Self>) -> gpui::Point<f32> {
+    pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.scroll_manager.anchor.scroll_position(&display_map)
     }
@@ -519,7 +517,7 @@ impl Editor {
         &mut self,
         scroll_anchor: ScrollAnchor,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
@@ -542,7 +540,7 @@ impl Editor {
         &mut self,
         scroll_anchor: ScrollAnchor,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
@@ -567,7 +565,7 @@ impl Editor {
         &mut self,
         amount: &ScrollAmount,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if matches!(self.mode, EditorMode::SingleLine { .. }) {
             cx.propagate();
@@ -590,7 +588,7 @@ impl Editor {
     ///     Ordering::Equal => on screen
     ///     Ordering::Less => above the screen
     ///     Ordering::Greater => below the screen
-    pub fn newest_selection_on_screen(&self, cx: &mut AppContext) -> Ordering {
+    pub fn newest_selection_on_screen(&self, cx: &mut App) -> Ordering {
         let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let newest_head = self
             .selections
@@ -621,7 +619,7 @@ impl Editor {
         item_id: u64,
         workspace_id: WorkspaceId,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let scroll_position = DB.get_scroll_position(item_id, workspace_id);
         if let Ok(Some((top_row, x, y))) = scroll_position {

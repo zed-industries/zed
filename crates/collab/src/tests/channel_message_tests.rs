@@ -1,7 +1,7 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId, MessageParams};
 use collab_ui::chat_panel::ChatPanel;
-use gpui::{BackgroundExecutor, Model, TestAppContext};
+use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use rpc::Notification;
 use workspace::dock::Panel;
 
@@ -295,7 +295,7 @@ async fn test_remove_channel_message(
 }
 
 #[track_caller]
-fn assert_messages(chat: &Model<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
+fn assert_messages(chat: &Entity<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
     assert_eq!(
         chat.read_with(cx, |chat, _| {
             chat.messages()

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use assistant_slash_command::SlashCommandWorkingSet;
-use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakModel};
+use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakEntity};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 
@@ -10,7 +10,7 @@ use crate::context_editor::ContextEditor;
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
     working_set: Arc<SlashCommandWorkingSet>,
-    active_context_editor: WeakModel<ContextEditor>,
+    active_context_editor: WeakEntity<ContextEditor>,
     trigger: T,
 }
 
@@ -27,8 +27,8 @@ enum SlashCommandEntry {
     Info(SlashCommandInfo),
     Advert {
         name: SharedString,
-        renderer: fn(&mut Window, &mut AppContext) -> AnyElement,
-        on_confirm: fn(&mut Window, &mut AppContext),
+        renderer: fn(&mut Window, &mut App) -> AnyElement,
+        on_confirm: fn(&mut Window, &mut App),
     },
 }
 
@@ -44,14 +44,14 @@ impl AsRef<str> for SlashCommandEntry {
 pub(crate) struct SlashCommandDelegate {
     all_commands: Vec<SlashCommandEntry>,
     filtered_commands: Vec<SlashCommandEntry>,
-    active_context_editor: WeakModel<ContextEditor>,
+    active_context_editor: WeakEntity<ContextEditor>,
     selected_index: usize,
 }
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
     pub(crate) fn new(
         working_set: Arc<SlashCommandWorkingSet>,
-        active_context_editor: WeakModel<ContextEditor>,
+        active_context_editor: WeakEntity<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {
@@ -77,13 +77,13 @@ impl PickerDelegate for SlashCommandDelegate {
         &mut self,
         ix: usize,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix.min(self.filtered_commands.len().saturating_sub(1));
         cx.notify();
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a command...".into()
     }
 
@@ -91,7 +91,7 @@ impl PickerDelegate for SlashCommandDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_commands = self.all_commands.clone();
         cx.spawn_in(window, |this, mut cx| async move {
@@ -153,7 +153,7 @@ impl PickerDelegate for SlashCommandDelegate {
         &mut self,
         _secondary: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
             match command {
@@ -172,7 +172,7 @@ impl PickerDelegate for SlashCommandDelegate {
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn editor_position(&self) -> PickerEditorPosition {
         PickerEditorPosition::End
@@ -183,7 +183,7 @@ impl PickerDelegate for SlashCommandDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let command_info = self.filtered_commands.get(ix)?;
 
@@ -195,7 +195,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
-                        move |_, cx| cx.new_model(|_| Tooltip::new(description.clone())).into()
+                        move |_, cx| cx.new(|_| Tooltip::new(description.clone())).into()
                     })
                     .child(
                         v_flex()
@@ -252,7 +252,7 @@ impl PickerDelegate for SlashCommandDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let all_models = self
             .working_set
             .featured_command_names(cx)
@@ -320,7 +320,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             selected_index: 0,
         };
 
-        let picker_view = cx.new_model(|cx| {
+        let picker_view = cx.new(|cx| {
             let picker =
                 Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
             picker

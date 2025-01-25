@@ -27,7 +27,7 @@ mod test;
 mod windows;
 
 use crate::{
-    point, Action, AnyWindowHandle, AppContext, AsyncWindowContext, BackgroundExecutor, Bounds,
+    point, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
     GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
@@ -773,14 +773,14 @@ impl PlatformInputHandler {
         self.handler.apple_press_and_hold_enabled()
     }
 
-    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut AppContext) {
+    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 
     pub fn selected_bounds(
         &mut self,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
         let selection = self.handler.selected_text_range(true, window, cx)?;
         self.handler.bounds_for_range(
@@ -820,7 +820,7 @@ pub trait InputHandler: 'static {
         &mut self,
         ignore_disabled_input: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<UTF16Selection>;
 
     /// Get the range of the currently marked text, if any
@@ -830,7 +830,7 @@ pub trait InputHandler: 'static {
     fn marked_text_range(
         &mut self,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Range<usize>>;
 
     /// Get the text for the given document range in UTF-16 characters
@@ -842,7 +842,7 @@ pub trait InputHandler: 'static {
         range_utf16: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<String>;
 
     /// Replace the text in the given document range with the given text
@@ -854,7 +854,7 @@ pub trait InputHandler: 'static {
         replacement_range: Option<Range<usize>>,
         text: &str,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
 
     /// Replace the text in the given document range with the given text,
@@ -869,12 +869,12 @@ pub trait InputHandler: 'static {
         new_text: &str,
         new_selected_range: Option<Range<usize>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
 
     /// Remove the IME 'composing' state from the document
     /// Corresponds to [unmarkText()](https://developer.apple.com/documentation/appkit/nstextinputclient/1438239-unmarktext)
-    fn unmark_text(&mut self, window: &mut Window, cx: &mut AppContext);
+    fn unmark_text(&mut self, window: &mut Window, cx: &mut App);
 
     /// Get the bounds of the given document range in screen coordinates
     /// Corresponds to [firstRect(forCharacterRange:actualRange:)](https://developer.apple.com/documentation/appkit/nstextinputclient/1438240-firstrect)
@@ -884,7 +884,7 @@ pub trait InputHandler: 'static {
         &mut self,
         range_utf16: Range<usize>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
 
     /// Allows a given input context to opt into getting raw key repeats instead of
@@ -1362,7 +1362,7 @@ impl Image {
     pub fn use_render_image(
         self: Arc<Self>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
             .use_data(window, cx)

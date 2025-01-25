@@ -1,6 +1,6 @@
 use gpui::{
-    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
-    Bounds, ColorSpace, Half, ModelContext, Render, Window, WindowOptions,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, Application,
+    Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions,
 };
 
 struct GradientViewer {
@@ -16,7 +16,7 @@ impl GradientViewer {
 }
 
 impl Render for GradientViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let color_space = self.color_space;
 
         div()
@@ -240,13 +240,13 @@ impl Render for GradientViewer {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            |_, cx| cx.new_model(|_| GradientViewer::new()),
+            |_, cx| cx.new(|_| GradientViewer::new()),
         )
         .unwrap();
         cx.activate(true);

@@ -8,7 +8,7 @@ use crate::{
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor};
-use gpui::ModelContext;
+use gpui::Context;
 use gpui::Window;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -22,7 +22,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -53,7 +53,7 @@ impl Vim {
         object: Object,
         around: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -82,7 +82,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         self.copy_ranges(
             editor,
@@ -102,7 +102,7 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         self.copy_ranges(
             editor,
@@ -124,7 +124,7 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let mut text = String::new();

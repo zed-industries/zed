@@ -1,5 +1,5 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, ModelContext, Window};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -22,7 +22,7 @@ pub struct Paste {
 impl_actions!(vim, [Paste]);
 
 impl Vim {
-    pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);

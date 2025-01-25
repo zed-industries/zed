@@ -14,8 +14,8 @@ use client::zed_urls;
 use editor::Editor;
 use fs::Fs;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Corner, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Model, Pixels, Subscription, Task, UpdateGlobal, WeakModel,
+    prelude::*, px, svg, Action, AnyElement, App, AsyncWindowContext, Corner, EventEmitter,
+    FocusHandle, Focusable, FontWeight, Entity, Pixels, Subscription, Task, UpdateGlobal, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderTosView, LanguageModelRegistry};
@@ -40,9 +40,9 @@ use crate::{
     OpenPromptEditorHistory,
 };
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(
-        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(
+        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
                 .register_action(|workspace, _: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
@@ -88,22 +88,22 @@ enum ActiveView {
 }
 
 pub struct AssistantPanel {
-    workspace: WeakModel<Workspace>,
-    project: Model<Project>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
-    thread_store: Model<ThreadStore>,
-    thread: Model<ActiveThread>,
-    message_editor: Model<MessageEditor>,
-    context_store: Model<assistant_context_editor::ContextStore>,
-    context_editor: Option<Model<ContextEditor>>,
-    context_history: Option<Model<ContextHistory>>,
-    configuration: Option<Model<AssistantConfiguration>>,
+    thread_store: Entity<ThreadStore>,
+    thread: Entity<ActiveThread>,
+    message_editor: Entity<MessageEditor>,
+    context_store: Entity<assistant_context_editor::ContextStore>,
+    context_editor: Option<Entity<ContextEditor>>,
+    context_history: Option<Entity<ContextHistory>>,
+    configuration: Option<Entity<AssistantConfiguration>>,
     configuration_subscription: Option<Subscription>,
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
-    history: Model<ThreadHistory>,
+    history: Entity<ThreadHistory>,
     new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     open_history_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     width: Option<Pixels>,
@@ -112,10 +112,10 @@ pub struct AssistantPanel {
 
 impl AssistantPanel {
     pub fn load(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
-    ) -> Task<Result<Model<Self>>> {
+    ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
             let thread_store = workspace
@@ -140,7 +140,7 @@ impl AssistantPanel {
                 .await?;
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                cx.new_model(|cx| {
+                cx.new(|cx| {
                     Self::new(workspace, thread_store, context_store, tools, window, cx)
                 })
             })
@@ -149,11 +149,11 @@ impl AssistantPanel {
 
     fn new(
         workspace: &Workspace,
-        thread_store: Model<ThreadStore>,
-        context_store: Model<assistant_context_editor::ContextStore>,
+        thread_store: Entity<ThreadStore>,
+        context_store: Entity<assistant_context_editor::ContextStore>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
@@ -162,7 +162,7 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.model().downgrade();
 
-        let message_editor = cx.new_model(|cx| {
+        let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
@@ -180,7 +180,7 @@ impl AssistantPanel {
             fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
-            thread: cx.new_model(|cx| {
+            thread: cx.new(|cx| {
                 ActiveThread::new(
                     thread.clone(),
                     thread_store.clone(),
@@ -202,7 +202,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: cx.new_model(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
+            history: cx.new(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
             new_item_context_menu_handle: PopoverMenuHandle::default(),
             open_history_context_menu_handle: PopoverMenuHandle::default(),
             width: None,
@@ -214,7 +214,7 @@ impl AssistantPanel {
         workspace: &mut Workspace,
         _: &ToggleFocus,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled {
@@ -228,7 +228,7 @@ impl AssistantPanel {
         self.local_timezone
     }
 
-    pub(crate) fn thread_store(&self) -> &Model<ThreadStore> {
+    pub(crate) fn thread_store(&self) -> &Entity<ThreadStore> {
         &self.thread_store
     }
 
@@ -236,19 +236,19 @@ impl AssistantPanel {
         &mut self,
         _: &editor::actions::Cancel,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.thread
             .update(cx, |thread, cx| thread.cancel_last_completion(cx));
     }
 
-    fn new_thread(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let thread = self
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
-        self.thread = cx.new_model(|cx| {
+        self.thread = cx.new(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.thread_store.clone(),
@@ -259,7 +259,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = cx.new_model(|cx| {
+        self.message_editor = cx.new(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -272,7 +272,7 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(window);
     }
 
-    fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn new_prompt_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_view = ActiveView::PromptEditor;
 
         let context = self
@@ -282,7 +282,7 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        self.context_editor = Some(cx.new_model(|cx| {
+        self.context_editor = Some(cx.new(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
@@ -305,7 +305,7 @@ impl AssistantPanel {
         &mut self,
         _: &DeployPromptLibrary,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         open_prompt_library(
             self.language_registry.clone(),
@@ -322,15 +322,15 @@ impl AssistantPanel {
         .detach_and_log_err(cx);
     }
 
-    fn open_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_view = ActiveView::History;
         self.history.focus_handle(cx).focus(window);
         cx.notify();
     }
 
-    fn open_prompt_editor_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn open_prompt_editor_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_view = ActiveView::PromptEditorHistory;
-        self.context_history = Some(cx.new_model(|cx| {
+        self.context_history = Some(cx.new(|cx| {
             ContextHistory::new(
                 self.project.clone(),
                 self.context_store.clone(),
@@ -351,7 +351,7 @@ impl AssistantPanel {
         &mut self,
         path: PathBuf,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let context = self
             .context_store
@@ -365,7 +365,7 @@ impl AssistantPanel {
         cx.spawn_in(window, |this, mut cx| async move {
             let context = context.await?;
             this.update_in(&mut cx, |this, window, cx| {
-                let editor = cx.new_model(|cx| {
+                let editor = cx.new(|cx| {
                     ContextEditor::for_context(
                         context,
                         fs,
@@ -389,7 +389,7 @@ impl AssistantPanel {
         &mut self,
         thread_id: &ThreadId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let open_thread_task = self
             .thread_store
@@ -399,7 +399,7 @@ impl AssistantPanel {
             let thread = open_thread_task.await?;
             this.update_in(&mut cx, |this, window, cx| {
                 this.active_view = ActiveView::Thread;
-                this.thread = cx.new_model(|cx| {
+                this.thread = cx.new(|cx| {
                     ActiveThread::new(
                         thread.clone(),
                         this.thread_store.clone(),
@@ -410,7 +410,7 @@ impl AssistantPanel {
                         cx,
                     )
                 });
-                this.message_editor = cx.new_model(|cx| {
+                this.message_editor = cx.new(|cx| {
                     MessageEditor::new(
                         this.fs.clone(),
                         this.workspace.clone(),
@@ -425,9 +425,9 @@ impl AssistantPanel {
         })
     }
 
-    pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active_view = ActiveView::Configuration;
-        self.configuration = Some(cx.new_model(|cx| AssistantConfiguration::new(window, cx)));
+        self.configuration = Some(cx.new(|cx| AssistantConfiguration::new(window, cx)));
 
         if let Some(configuration) = self.configuration.as_ref() {
             self.configuration_subscription = Some(cx.subscribe_in(
@@ -442,10 +442,10 @@ impl AssistantPanel {
 
     fn handle_assistant_configuration_event(
         &mut self,
-        _model: &Model<AssistantConfiguration>,
+        _model: &Entity<AssistantConfiguration>,
         event: &AssistantConfigurationEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             AssistantConfigurationEvent::NewThread(provider) => {
@@ -469,11 +469,11 @@ impl AssistantPanel {
         }
     }
 
-    pub(crate) fn active_thread(&self, cx: &AppContext) -> Model<Thread> {
+    pub(crate) fn active_thread(&self, cx: &App) -> Entity<Thread> {
         self.thread.read(cx).thread().clone()
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ModelContext<Self>) {
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx))
             .detach_and_log_err(cx);
@@ -481,7 +481,7 @@ impl AssistantPanel {
 }
 
 impl Focusable for AssistantPanel {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.active_view {
             ActiveView::Thread => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
@@ -517,7 +517,7 @@ impl Panel for AssistantPanel {
         "AssistantPanel2"
     }
 
-    fn position(&self, _window: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         match AssistantSettings::get_global(cx).dock {
             AssistantDockPosition::Left => DockPosition::Left,
             AssistantDockPosition::Bottom => DockPosition::Bottom,
@@ -533,7 +533,7 @@ impl Panel for AssistantPanel {
         &mut self,
         position: DockPosition,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         settings::update_settings_file::<AssistantSettings>(
             self.fs.clone(),
@@ -549,7 +549,7 @@ impl Panel for AssistantPanel {
         );
     }
 
-    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, window: &Window, cx: &App) -> Pixels {
         let settings = AssistantSettings::get_global(cx);
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
@@ -559,7 +559,7 @@ impl Panel for AssistantPanel {
         }
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
@@ -567,13 +567,13 @@ impl Panel for AssistantPanel {
         cx.notify();
     }
 
-    fn set_active(&mut self, _active: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {}
+    fn set_active(&mut self, _active: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, _window: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {
             return None;
@@ -582,7 +582,7 @@ impl Panel for AssistantPanel {
         Some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Assistant Panel")
     }
 
@@ -596,7 +596,7 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = self.thread.read(cx);
 
         let title = match self.active_view {
@@ -691,7 +691,7 @@ impl AssistantPanel {
     fn render_active_thread_or_empty_state(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.thread.read(cx).is_empty() {
             return self
@@ -702,7 +702,7 @@ impl AssistantPanel {
         self.thread.clone().into_any_element()
     }
 
-    fn configuration_error(&self, cx: &AppContext) -> Option<ConfigurationError> {
+    fn configuration_error(&self, cx: &App) -> Option<ConfigurationError> {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return Some(ConfigurationError::NoProvider);
         };
@@ -721,7 +721,7 @@ impl AssistantPanel {
     fn render_thread_empty_state(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let recent_threads = self
             .thread_store
@@ -839,7 +839,7 @@ impl AssistantPanel {
             })
     }
 
-    fn render_last_error(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
         Some(
@@ -865,7 +865,7 @@ impl AssistantPanel {
         )
     }
 
-    fn render_payment_required_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_payment_required_error(&self, cx: &mut Context<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()
@@ -911,7 +911,7 @@ impl AssistantPanel {
             .into_any()
     }
 
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
 
         v_flex()
@@ -962,7 +962,7 @@ impl AssistantPanel {
     fn render_error_message(
         &self,
         error_message: &SharedString,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         v_flex()
             .gap_0p5()
@@ -1002,7 +1002,7 @@ impl AssistantPanel {
 }
 
 impl Render for AssistantPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("AssistantPanel2")
             .justify_between()
@@ -1035,11 +1035,11 @@ impl Render for AssistantPanel {
 }
 
 struct PromptLibraryInlineAssist {
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl PromptLibraryInlineAssist {
-    pub fn new(workspace: WeakModel<Workspace>) -> Self {
+    pub fn new(workspace: WeakEntity<Workspace>) -> Self {
         Self { workspace }
     }
 }
@@ -1047,10 +1047,10 @@ impl PromptLibraryInlineAssist {
 impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn assist(
         &self,
-        prompt_editor: &Model<Editor>,
+        prompt_editor: &Entity<Editor>,
         _initial_prompt: Option<String>,
         window: &mut Window,
-        cx: &mut ModelContext<PromptLibrary>,
+        cx: &mut Context<PromptLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
             assistant.assist(&prompt_editor, self.workspace.clone(), None, window, cx)
@@ -1061,7 +1061,7 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         &self,
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> bool {
         workspace
             .focus_panel::<AssistantPanel>(window, cx)
@@ -1076,8 +1076,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         &self,
         workspace: &mut Workspace,
         _window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Option<Model<ContextEditor>> {
+        cx: &mut Context<Workspace>,
+    ) -> Option<Entity<ContextEditor>> {
         let panel = workspace.panel::<AssistantPanel>(cx)?;
         panel.update(cx, |panel, _cx| panel.context_editor.clone())
     }
@@ -1087,7 +1087,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         workspace: &mut Workspace,
         path: std::path::PathBuf,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return Task::ready(Err(anyhow!("Assistant panel not found")));
@@ -1103,8 +1103,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         _workspace: &mut Workspace,
         _context_id: assistant_context_editor::ContextId,
         _window: &mut Window,
-        _cx: &mut ModelContext<Workspace>,
-    ) -> Task<Result<Model<ContextEditor>>> {
+        _cx: &mut Context<Workspace>,
+    ) -> Task<Result<Entity<ContextEditor>>> {
         Task::ready(Err(anyhow!("opening remote context not implemented")))
     }
 
@@ -1113,7 +1113,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         _workspace: &mut Workspace,
         _creases: Vec<(String, String)>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Workspace>,
+        _cx: &mut Context<Workspace>,
     ) {
     }
 }

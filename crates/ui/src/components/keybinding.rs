@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, AppContext, FocusHandle, IntoElement, Keystroke, Window};
+use gpui::{relative, Action, App, FocusHandle, IntoElement, Keystroke, Window};
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -80,7 +80,7 @@ impl KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -156,7 +156,7 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
 
         div()
@@ -191,7 +191,7 @@ pub struct KeyIcon {
 }
 
 impl RenderOnce for KeyIcon {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         Icon::new(self.icon)
             .size(IconSize::XSmall)
             .color(Color::Muted)

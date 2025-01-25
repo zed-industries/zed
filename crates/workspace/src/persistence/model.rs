@@ -2,13 +2,13 @@ use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, WeakModel};
+use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use itertools::Itertools as _;
 use project::Project;
 use remote::ssh_session::SshProjectId;
@@ -353,13 +353,13 @@ impl SerializedPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         workspace_id: WorkspaceId,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Option<(
         Member,
-        Option<Model<Pane>>,
+        Option<Entity<Pane>>,
         Vec<Option<Box<dyn ItemHandle>>>,
     )> {
         match self {
@@ -447,10 +447,10 @@ impl SerializedPane {
 
     pub async fn deserialize_to(
         &self,
-        project: &Model<Project>,
-        pane: &WeakModel<Pane>,
+        project: &Entity<Project>,
+        pane: &WeakEntity<Pane>,
         workspace_id: WorkspaceId,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();

@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task, WeakModel, Window};
+use gpui::{App, AsyncAppContext, Task, WeakEntity, Window};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -45,7 +45,7 @@ impl SlashCommand for AutoCommand {
         self.description()
     }
 
-    fn label(&self, cx: &AppContext) -> CodeLabel {
+    fn label(&self, cx: &App) -> CodeLabel {
         create_label_for_command("auto", &["--prompt"], cx)
     }
 
@@ -53,9 +53,9 @@ impl SlashCommand for AutoCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        workspace: Option<WeakModel<Workspace>>,
+        workspace: Option<WeakEntity<Workspace>>,
         _window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
         // However, we can use this opportunity to kick off a drain of the backlog.
@@ -75,7 +75,7 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("No project indexer, cannot use /auto")));
         };
 
-        let cx: &mut AppContext = cx;
+        let cx: &mut App = cx;
 
         cx.spawn(|cx: gpui::AsyncAppContext| async move {
             let task = project_index.read_with(&cx, |project_index, cx| {
@@ -97,10 +97,10 @@ impl SlashCommand for AutoCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: language::BufferSnapshot,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));

@@ -9,7 +9,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{BackgroundExecutor, Model, ModelContext, TestAppContext, Window};
+use gpui::{BackgroundExecutor, Entity, Context, TestAppContext, Window};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;
@@ -297,7 +297,7 @@ fn assert_remote_selections(
     editor: &mut Editor,
     expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     let snapshot = editor.snapshot(window, cx);
     let range = Anchor::min()..Anchor::max();
@@ -694,6 +694,6 @@ fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Op
     );
 }
 
-fn buffer_text(channel_buffer: &Model<language::Buffer>, cx: &mut TestAppContext) -> String {
+fn buffer_text(channel_buffer: &Entity<language::Buffer>, cx: &mut TestAppContext) -> String {
     channel_buffer.read_with(cx, |buffer, _| buffer.text())
 }

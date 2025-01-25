@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};

@@ -1,5 +1,5 @@
 use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, ModelContext, Window};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, Point};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -23,7 +23,7 @@ struct Decrement {
 
 impl_actions!(vim, [Increment, Decrement]);
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -44,7 +44,7 @@ impl Vim {
         mut delta: i64,
         step: i32,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

@@ -1,4 +1,4 @@
-use gpui::{div, Action, Div, InteractiveElement, Model, ModelContext, Window};
+use gpui::{div, Action, Div, InteractiveElement, Entity, Context, Window};
 use workspace::Workspace;
 
 use crate::BufferSearchBar;
@@ -9,23 +9,23 @@ pub trait SearchActionsRegistrar {
 }
 
 type SearchBarActionCallback<A> =
-    fn(&mut BufferSearchBar, &A, &mut Window, &mut ModelContext<BufferSearchBar>);
+    fn(&mut BufferSearchBar, &A, &mut Window, &mut Context<BufferSearchBar>);
 
 type GetSearchBar<T> = for<'a, 'b> fn(
     &'a T,
     &'a mut Window,
-    &mut ModelContext<'b, T>,
-) -> Option<Model<BufferSearchBar>>;
+    &mut Context<'b, T>,
+) -> Option<Entity<BufferSearchBar>>;
 
 /// Registers search actions on a div that can be taken out.
 pub struct DivRegistrar<'a, 'b, T: 'static> {
     div: Option<Div>,
-    cx: &'a mut ModelContext<'b, T>,
+    cx: &'a mut Context<'b, T>,
     search_getter: GetSearchBar<T>,
 }
 
 impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
-    pub fn new(search_getter: GetSearchBar<T>, cx: &'a mut ModelContext<'b, T>) -> Self {
+    pub fn new(search_getter: GetSearchBar<T>, cx: &'a mut Context<'b, T>) -> Self {
         Self {
             div: Some(div()),
             cx,
@@ -99,7 +99,7 @@ pub trait ActionExecutor<A: Action>: 'static + Clone {
         search_bar: &mut BufferSearchBar,
         action: &A,
         window: &mut Window,
-        cx: &mut ModelContext<BufferSearchBar>,
+        cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction;
 }
 
@@ -117,7 +117,7 @@ impl<A: Action> ActionExecutor<A> for ForDismissed<A> {
         search_bar: &mut BufferSearchBar,
         action: &A,
         window: &mut Window,
-        cx: &mut ModelContext<BufferSearchBar>,
+        cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction {
         if search_bar.is_dismissed() {
             self.0(search_bar, action, window, cx);
@@ -142,7 +142,7 @@ impl<A: Action> ActionExecutor<A> for ForDeployed<A> {
         search_bar: &mut BufferSearchBar,
         action: &A,
         window: &mut Window,
-        cx: &mut ModelContext<BufferSearchBar>,
+        cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction {
         if search_bar.is_dismissed() || search_bar.active_searchable_item.is_none() {
             false
@@ -168,7 +168,7 @@ impl<A: Action> ActionExecutor<A> for WithResults<A> {
         search_bar: &mut BufferSearchBar,
         action: &A,
         window: &mut Window,
-        cx: &mut ModelContext<BufferSearchBar>,
+        cx: &mut Context<BufferSearchBar>,
     ) -> DidHandleAction {
         if search_bar.active_match_index.is_some() {
             self.0(search_bar, action, window, cx);

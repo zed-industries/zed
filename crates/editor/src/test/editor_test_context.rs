@@ -6,7 +6,7 @@ use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
 use gpui::{
-    prelude::*, AnyWindowHandle, AppContext, Focusable as _, Keystroke, Model, ModelContext,
+    prelude::*, AnyWindowHandle, App, Focusable as _, Keystroke, Entity, Context,
     Pixels, Point, VisualTestContext, Window, WindowHandle,
 };
 use itertools::Itertools;
@@ -33,7 +33,7 @@ use super::{build_editor, build_editor_with_project};
 pub struct EditorTestContext {
     pub cx: gpui::VisualTestContext,
     pub window: AnyWindowHandle,
-    pub editor: Model<Editor>,
+    pub editor: Entity<Editor>,
     pub assertion_cx: AssertionContextManager,
 }
 
@@ -103,10 +103,10 @@ impl EditorTestContext {
         excerpts: [&str; COUNT],
     ) -> EditorTestContext {
         let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new(|cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
-                let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+                let buffer = cx.new(|cx| Buffer::local(text, cx));
                 multibuffer.push_excerpts(
                     buffer,
                     ranges.into_iter().map(|range| ExcerptRange {
@@ -137,7 +137,7 @@ impl EditorTestContext {
 
     pub fn condition(
         &self,
-        predicate: impl FnMut(&Editor, &AppContext) -> bool,
+        predicate: impl FnMut(&Editor, &App) -> bool,
     ) -> impl Future<Output = ()> {
         self.editor
             .condition::<crate::EditorEvent>(&self.cx, predicate)
@@ -146,7 +146,7 @@ impl EditorTestContext {
     #[track_caller]
     pub fn editor<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&Editor, &Window, &mut ModelContext<Editor>) -> T,
+        F: FnOnce(&Editor, &Window, &mut Context<Editor>) -> T,
     {
         self.editor
             .update_in(&mut self.cx, |this, window, cx| read(this, window, cx))
@@ -155,21 +155,21 @@ impl EditorTestContext {
     #[track_caller]
     pub fn update_editor<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Editor, &mut Window, &mut ModelContext<Editor>) -> T,
+        F: FnOnce(&mut Editor, &mut Window, &mut Context<Editor>) -> T,
     {
         self.editor.update_in(&mut self.cx, update)
     }
 
     pub fn multibuffer<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&MultiBuffer, &AppContext) -> T,
+        F: FnOnce(&MultiBuffer, &App) -> T,
     {
         self.editor(|editor, _, cx| read(editor.buffer().read(cx), cx))
     }
 
     pub fn update_multibuffer<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut MultiBuffer, &mut ModelContext<MultiBuffer>) -> T,
+        F: FnOnce(&mut MultiBuffer, &mut Context<MultiBuffer>) -> T,
     {
         self.update_editor(|editor, _, cx| editor.buffer().update(cx, update))
     }
@@ -184,7 +184,7 @@ impl EditorTestContext {
 
     pub fn buffer<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&Buffer, &AppContext) -> T,
+        F: FnOnce(&Buffer, &App) -> T,
     {
         self.multibuffer(|multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap().read(cx);
@@ -206,7 +206,7 @@ impl EditorTestContext {
 
     pub fn update_buffer<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Buffer, &mut ModelContext<Buffer>) -> T,
+        F: FnOnce(&mut Buffer, &mut Context<Buffer>) -> T,
     {
         self.update_multibuffer(|multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
@@ -437,7 +437,7 @@ impl EditorTestContext {
 
 #[track_caller]
 pub fn assert_state_with_diff(
-    editor: &Model<Editor>,
+    editor: &Entity<Editor>,
     cx: &mut VisualTestContext,
     expected_diff_text: &str,
 ) {

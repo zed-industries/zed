@@ -7,7 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, AppContext, Global, ModelContext, Window};
+use gpui::{actions, impl_internal_actions, Action, App, Global, Context, Window};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -99,7 +99,7 @@ impl Deref for WrappedAction {
     }
 }
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
             return;
@@ -304,7 +304,7 @@ impl VimCommand {
         &self,
         mut query: &str,
         range: &Option<CommandRange>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Box<dyn Action>> {
         let has_bang = query.ends_with('!');
         if has_bang {
@@ -462,7 +462,7 @@ impl Position {
         vim: &Vim,
         editor: &mut Editor,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<MultiBufferRow> {
         let snapshot = editor.snapshot(window, cx);
         let target = match self {
@@ -524,7 +524,7 @@ impl CommandRange {
         vim: &Vim,
         editor: &mut Editor,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<Range<MultiBufferRow>> {
         let start = self.start.buffer_row(vim, editor, window, cx)?;
         let end = if let Some(end) = self.end.as_ref() {
@@ -552,7 +552,7 @@ impl CommandRange {
     }
 }
 
-fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
+fn generate_commands(_: &App) -> Vec<VimCommand> {
     vec![
         VimCommand::new(
             ("w", "rite"),
@@ -758,7 +758,7 @@ struct VimCommands(Vec<VimCommand>);
 unsafe impl Sync for VimCommands {}
 impl Global for VimCommands {}
 
-fn commands(cx: &AppContext) -> &Vec<VimCommand> {
+fn commands(cx: &App) -> &Vec<VimCommand> {
     static COMMANDS: OnceLock<VimCommands> = OnceLock::new();
     &COMMANDS
         .get_or_init(|| VimCommands(generate_commands(cx)))
@@ -797,7 +797,7 @@ fn wrap_count(action: Box<dyn Action>, range: &CommandRange) -> Option<Box<dyn A
     })
 }
 
-pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandInterceptResult> {
+pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandInterceptResult> {
     // NOTE: We also need to support passing arguments to commands like :w
     // (ideally with filename autocompletion).
     while input.starts_with(':') {
@@ -939,7 +939,7 @@ impl OnMatchingLines {
         mut chars: Peekable<Chars>,
         invert: bool,
         range: CommandRange,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Self> {
         let delimiter = chars.next().filter(|c| {
             !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
@@ -981,7 +981,7 @@ impl OnMatchingLines {
         })
     }
 
-    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut ModelContext<Vim>) {
+    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
         let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
             self.range.buffer_range(vim, editor, window, cx)
         });
@@ -1118,7 +1118,7 @@ pub struct ShellExec {
 }
 
 impl Vim {
-    pub fn cancel_running_command(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn cancel_running_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.running_command.take().is_some() {
             self.update_editor(window, cx, |_, editor, window, cx| {
                 editor.transact(window, cx, |editor, _window, _cx| {
@@ -1132,7 +1132,7 @@ impl Vim {
         &mut self,
         command: &str,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> String {
         let mut ret = String::new();
         // N.B. non-standard escaping rules:
@@ -1180,7 +1180,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Vim>,
+        cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
         let Some(workspace) = self.workspace(window) else {
@@ -1221,7 +1221,7 @@ impl Vim {
         object: Object,
         around: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Vim>,
+        cx: &mut Context<Vim>,
     ) {
         self.stop_recording(cx);
         let Some(workspace) = self.workspace(window) else {
@@ -1273,7 +1273,7 @@ impl ShellExec {
         )
     }
 
-    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut ModelContext<Vim>) {
+    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
         let Some(workspace) = vim.workspace(window) else {
             return;
         };
@@ -1453,7 +1453,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Editor;
-    use gpui::{ModelContext, TestAppContext};
+    use gpui::{Context, TestAppContext};
     use indoc::indoc;
     use workspace::Workspace;
 
@@ -1648,7 +1648,7 @@ mod test {
         workspace: &mut Workspace,
         expected_path: &str,
         expected_text: &str,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 

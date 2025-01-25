@@ -1,4 +1,4 @@
-use gpui::{actions, AppContext, ClipboardItem, PromptLevel};
+use gpui::{actions, App, ClipboardItem, PromptLevel};
 use system_specs::SystemSpecs;
 use util::ResultExt;
 use workspace::Workspace;
@@ -45,8 +45,8 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
     )
 }
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };

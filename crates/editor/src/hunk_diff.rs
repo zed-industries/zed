@@ -1215,9 +1215,8 @@ fn editor_with_deleted_text(
     cx: &mut ModelContext<Editor>,
 ) -> (u32, Model<Editor>) {
     let parent_editor = cx.model().downgrade();
-    let editor = cx.new_model(|cx| {
-        let multi_buffer =
-            cx.new_model(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
+    let editor = cx.new(|cx| {
+        let multi_buffer = cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {
             multi_buffer.push_excerpts(
                 diff_base_buffer,
@@ -1444,7 +1443,7 @@ mod tests {
             project.create_local_buffer(text_2.as_str(), None, cx)
         });
 
-        let multibuffer = cx.new_model(|cx| {
+        let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -1499,7 +1498,7 @@ mod tests {
                     (buffer_1.clone(), diff_base_1),
                     (buffer_2.clone(), diff_base_2),
                 ] {
-                    let change_set = cx.new_model(|cx| {
+                    let change_set = cx.new(|cx| {
                         BufferChangeSet::new_with_base_text(
                             diff_base.to_string(),
                             buffer.read(cx).text_snapshot(),

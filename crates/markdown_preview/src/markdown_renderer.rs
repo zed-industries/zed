@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, AppContext, ClipboardItem, Context,
-    DefiniteLength, Div, Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText,
-    IntoElement, Keystroke, Length, Model, Modifiers, ParentElement, Render, Resource,
-    SharedString, Styled, StyledText, TextStyle, WeakModel, Window,
+    div, img, px, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context,
+    DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource,
+    InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource,
+    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
 };
 use settings::Settings;
 use std::{
@@ -20,16 +20,16 @@ use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
     h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
     FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
-    LabelSize, LinkPreview, ModelContext, StatefulInteractiveElement, StyledExt, StyledImage,
-    ToggleState, Tooltip, VisibleOnHover,
+    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
+    Tooltip, VisibleOnHover,
 };
 use workspace::Workspace;
 
-type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut AppContext)>>;
+type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
 
 #[derive(Clone)]
 pub struct RenderContext {
-    workspace: Option<WeakModel<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     next_id: usize,
     buffer_font_family: SharedString,
     buffer_text_style: TextStyle,
@@ -46,9 +46,9 @@ pub struct RenderContext {
 
 impl RenderContext {
     pub fn new(
-        workspace: Option<WeakModel<Workspace>>,
+        workspace: Option<WeakEntity<Workspace>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> RenderContext {
         let theme = cx.theme().clone();
 
@@ -76,7 +76,7 @@ impl RenderContext {
 
     pub fn with_checkbox_clicked_callback(
         mut self,
-        callback: impl Fn(bool, Range<usize>, &mut Window, &mut AppContext) + 'static,
+        callback: impl Fn(bool, Range<usize>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
         self
@@ -112,9 +112,9 @@ impl RenderContext {
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
-    workspace: Option<WeakModel<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Div {
     let mut cx = RenderContext::new(workspace, window, cx);
 
@@ -570,14 +570,10 @@ struct InteractiveMarkdownElementTooltip {
 }
 
 impl InteractiveMarkdownElementTooltip {
-    pub fn new(
-        tooltip_text: Option<String>,
-        action_text: &str,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
+    pub fn new(tooltip_text: Option<String>, action_text: &str, cx: &mut App) -> Entity<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
-        cx.new_model(|_cx| Self {
+        cx.new(|_cx| Self {
             tooltip_text,
             action_text: action_text.to_string(),
         })
@@ -585,7 +581,7 @@ impl InteractiveMarkdownElementTooltip {
 }
 
 impl Render for InteractiveMarkdownElementTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         tooltip_container(window, cx, |el, _, _| {
             let secondary_modifier = Keystroke {
                 modifiers: Modifiers::secondary_key(),

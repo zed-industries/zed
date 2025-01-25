@@ -5,9 +5,9 @@
 //! elements with uniform height.
 
 use crate::{
-    point, size, AnyElement, AppContext, AvailableSpace, Bounds, ContentMask, Element, ElementId,
+    point, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
-    ListSizingBehavior, Model, ModelContext, Pixels, Render, ScrollHandle, Size, StyleRefinement,
+    ListSizingBehavior, Entity, Context, Pixels, Render, ScrollHandle, Size, StyleRefinement,
     Styled, Window,
 };
 use smallvec::SmallVec;
@@ -21,10 +21,10 @@ use super::ListHorizontalSizingBehavior;
 /// uniform_list will only render the visible subset of items.
 #[track_caller]
 pub fn uniform_list<I, R, V>(
-    view: Model<V>,
+    view: Entity<V>,
     id: I,
     item_count: usize,
-    f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut ModelContext<V>) -> Vec<R>,
+    f: impl 'static + Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> Vec<R>,
 ) -> UniformList
 where
     I: Into<ElementId>,
@@ -35,7 +35,7 @@ where
     let mut base_style = StyleRefinement::default();
     base_style.overflow.y = Some(Overflow::Scroll);
 
-    let render_range = move |range, window: &mut Window, cx: &mut AppContext| {
+    let render_range = move |range, window: &mut Window, cx: &mut App| {
         view.update(cx, |this, cx| {
             f(this, range, window, cx)
                 .into_iter()
@@ -72,7 +72,7 @@ pub struct UniformList {
         dyn for<'a> Fn(
             Range<usize>,
             &'a mut Window,
-            &'a mut AppContext,
+            &'a mut App,
         ) -> SmallVec<[AnyElement; 64]>,
     >,
     decorations: Vec<Box<dyn UniformListDecoration>>,
@@ -174,7 +174,7 @@ impl Element for UniformList {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let max_items = self.item_count;
         let item_size = self.measure_item(None, window, cx);
@@ -230,7 +230,7 @@ impl Element for UniformList {
         bounds: Bounds<Pixels>,
         frame_state: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Hitbox> {
         let style = self
             .interactivity
@@ -443,7 +443,7 @@ impl Element for UniformList {
         request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.interactivity.paint(
             global_id,
@@ -483,7 +483,7 @@ pub trait UniformListDecoration {
         item_height: Pixels,
         item_count: usize,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> AnyElement;
 }
 
@@ -529,7 +529,7 @@ impl UniformList {
         &self,
         list_width: Option<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Size<Pixels> {
         if self.item_count == 0 {
             return Size::default();

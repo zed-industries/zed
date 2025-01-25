@@ -1,12 +1,12 @@
 use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll, Bias, Editor, IsVimMode};
-use gpui::{actions, ModelContext, Window};
+use gpui::{actions, Context, Window};
 use language::SelectionGoal;
 
 actions!(vim, [Rewrap]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Rewrap, window, cx| {
         vim.record_current_action(cx);
         Vim::take_count(cx);
@@ -38,7 +38,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -70,7 +70,7 @@ impl Vim {
         object: Object,
         around: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {

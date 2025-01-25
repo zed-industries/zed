@@ -4,7 +4,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use feature_flags::FeatureFlag;
-use gpui::{AppContext, Task, WeakModel};
+use gpui::{App, Task, WeakEntity};
 use language::{CodeLabel, LspAdapterDelegate};
 use semantic_index::{LoadedSearchResult, SemanticDb};
 use std::{
@@ -34,7 +34,7 @@ impl SlashCommand for SearchSlashCommand {
         "search".into()
     }
 
-    fn label(&self, cx: &AppContext) -> CodeLabel {
+    fn label(&self, cx: &App) -> CodeLabel {
         create_label_for_command("search", &["--n"], cx)
     }
 
@@ -58,9 +58,9 @@ impl SlashCommand for SearchSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakModel<Workspace>>,
+        _workspace: Option<WeakEntity<Workspace>>,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -70,10 +70,10 @@ impl SlashCommand for SearchSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: language::BufferSnapshot,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));

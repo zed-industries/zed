@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
-    Subscription, Task, WeakModel,
+    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Subscription, Task, WeakEntity,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
@@ -13,10 +13,10 @@ use workspace::ShowConfiguration;
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
-type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
+type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &App) + 'static>;
 
 pub struct LanguageModelSelector {
-    picker: Model<Picker<LanguageModelPickerDelegate>>,
+    picker: Entity<Picker<LanguageModelPickerDelegate>>,
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
@@ -25,9 +25,9 @@ pub struct LanguageModelSelector {
 
 impl LanguageModelSelector {
     pub fn new(
-        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
+        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &App) + 'static,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let on_model_changed = Arc::new(on_model_changed);
 
@@ -40,7 +40,7 @@ impl LanguageModelSelector {
             selected_index: 0,
         };
 
-        let picker = cx.new_model(|cx| {
+        let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
         });
 
@@ -57,10 +57,10 @@ impl LanguageModelSelector {
 
     fn handle_language_model_registry_event(
         &mut self,
-        _registry: &Model<LanguageModelRegistry>,
+        _registry: &Entity<LanguageModelRegistry>,
         event: &language_model::Event,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             language_model::Event::ProviderStateChanged
@@ -77,7 +77,7 @@ impl LanguageModelSelector {
         }
     }
 
-    fn all_models(cx: &AppContext) -> Vec<ModelInfo> {
+    fn all_models(cx: &App) -> Vec<ModelInfo> {
         LanguageModelRegistry::global(cx)
             .read(cx)
             .providers()
@@ -103,13 +103,13 @@ impl LanguageModelSelector {
 impl EventEmitter<DismissEvent> for LanguageModelSelector {}
 
 impl Focusable for LanguageModelSelector {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for LanguageModelSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
@@ -119,13 +119,13 @@ pub struct LanguageModelSelectorPopoverMenu<T>
 where
     T: PopoverTrigger,
 {
-    language_model_selector: Model<LanguageModelSelector>,
+    language_model_selector: Entity<LanguageModelSelector>,
     trigger: T,
     handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
 }
 
 impl<T: PopoverTrigger> LanguageModelSelectorPopoverMenu<T> {
-    pub fn new(language_model_selector: Model<LanguageModelSelector>, trigger: T) -> Self {
+    pub fn new(language_model_selector: Entity<LanguageModelSelector>, trigger: T) -> Self {
         Self {
             language_model_selector,
             trigger,
@@ -140,7 +140,7 @@ impl<T: PopoverTrigger> LanguageModelSelectorPopoverMenu<T> {
 }
 
 impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let language_model_selector = self.language_model_selector.clone();
 
         PopoverMenu::new("model-switcher")
@@ -159,7 +159,7 @@ struct ModelInfo {
 }
 
 pub struct LanguageModelPickerDelegate {
-    language_model_selector: WeakModel<LanguageModelSelector>,
+    language_model_selector: WeakEntity<LanguageModelSelector>,
     on_model_changed: OnModelChanged,
     all_models: Vec<ModelInfo>,
     filtered_models: Vec<ModelInfo>,
@@ -181,13 +181,13 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &mut self,
         ix: usize,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
         cx.notify();
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a model...".into()
     }
 
@@ -195,7 +195,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_models = self.all_models.clone();
 
@@ -251,7 +251,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
@@ -260,7 +260,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.language_model_selector
             .update(cx, |_this, cx| cx.emit(DismissEvent))
             .ok();
@@ -269,7 +269,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     fn render_header(
         &self,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
             .read(cx)
@@ -298,7 +298,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         ix: usize,
         selected: bool,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
         let show_badges = cx.has_flag::<ZedPro>();
@@ -370,7 +370,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     fn render_footer(
         &self,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 

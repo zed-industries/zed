@@ -1,15 +1,15 @@
 use refineable::Refineable as _;
 
 use crate::{
-    AppContext, Bounds, Element, ElementId, GlobalElementId, IntoElement, Pixels, Style,
+    App, Bounds, Element, ElementId, GlobalElementId, IntoElement, Pixels, Style,
     StyleRefinement, Styled, Window,
 };
 
 /// Construct a canvas element with the given paint callback.
 /// Useful for adding short term custom drawing to a view.
 pub fn canvas<T>(
-    prepaint: impl 'static + FnOnce(Bounds<Pixels>, &mut Window, &mut AppContext) -> T,
-    paint: impl 'static + FnOnce(Bounds<Pixels>, T, &mut Window, &mut AppContext),
+    prepaint: impl 'static + FnOnce(Bounds<Pixels>, &mut Window, &mut App) -> T,
+    paint: impl 'static + FnOnce(Bounds<Pixels>, T, &mut Window, &mut App),
 ) -> Canvas<T> {
     Canvas {
         prepaint: Some(Box::new(prepaint)),
@@ -21,8 +21,8 @@ pub fn canvas<T>(
 /// A canvas element, meant for accessing the low level paint API without defining a whole
 /// custom element
 pub struct Canvas<T> {
-    prepaint: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut Window, &mut AppContext) -> T>>,
-    paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut Window, &mut AppContext)>>,
+    prepaint: Option<Box<dyn FnOnce(Bounds<Pixels>, &mut Window, &mut App) -> T>>,
+    paint: Option<Box<dyn FnOnce(Bounds<Pixels>, T, &mut Window, &mut App)>>,
     style: StyleRefinement,
 }
 
@@ -46,7 +46,7 @@ impl<T: 'static> Element for Canvas<T> {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -60,7 +60,7 @@ impl<T: 'static> Element for Canvas<T> {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Style,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<T> {
         Some(self.prepaint.take().unwrap()(bounds, window, cx))
     }
@@ -72,7 +72,7 @@ impl<T: 'static> Element for Canvas<T> {
         style: &mut Style,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let prepaint = prepaint.take().unwrap();
         style.paint(bounds, window, cx, |window, cx| {

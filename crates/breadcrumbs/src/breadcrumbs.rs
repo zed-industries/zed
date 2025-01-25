@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, Focusable, IntoElement, ModelContext, ParentElement, Render, StyledText,
+    Element, EventEmitter, Focusable, IntoElement, Context, ParentElement, Render, StyledText,
     Subscription, Window,
 };
 use itertools::Itertools;
@@ -37,7 +37,7 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
 
         let element = h_flex()
@@ -143,7 +143,7 @@ impl ToolbarItemView for Breadcrumbs {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
@@ -178,7 +178,7 @@ impl ToolbarItemView for Breadcrumbs {
         &mut self,
         pane_focused: bool,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) {
         self.pane_focused = pane_focused;
     }

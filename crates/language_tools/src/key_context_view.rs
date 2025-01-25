@@ -1,14 +1,14 @@
 use gpui::{
-    actions, Action, AppContext, Context as _, EventEmitter, FocusHandle, Focusable,
-    KeyBindingContextPredicate, KeyContext, Keystroke, Model, MouseButton, Render, Subscription,
+    actions, Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription,
 };
 use itertools::Itertools;
 use serde_json::json;
 use settings::get_key_equivalents;
 use ui::{
-    div, h_flex, px, v_flex, ButtonCommon, Clickable, FluentBuilder, InteractiveElement, Label,
-    LabelCommon, LabelSize, ModelContext, ParentElement, SharedString, StatefulInteractiveElement,
-    Styled, Window,
+    div, h_flex, px, v_flex, ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement,
+    Label, LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    Window,
 };
 use ui::{Button, ButtonStyle};
 use workspace::Item;
@@ -16,10 +16,10 @@ use workspace::Workspace;
 
 actions!(debug, [OpenKeyContextView]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
-            let key_context_view = cx.new_model(|cx| KeyContextView::new(window, cx));
+            let key_context_view = cx.new(|cx| KeyContextView::new(window, cx));
             workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, window, cx)
         });
     })
@@ -36,7 +36,7 @@ struct KeyContextView {
 }
 
 impl KeyContextView {
-    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sub1 = cx.observe_keystrokes(|this, e, window, cx| {
             let mut pending = this.pending_keystrokes.take().unwrap_or_default();
             pending.push(e.keystroke.clone());
@@ -110,12 +110,12 @@ impl KeyContextView {
 impl EventEmitter<()> for KeyContextView {}
 
 impl Focusable for KeyContextView {
-    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 impl KeyContextView {
-    fn set_context_stack(&mut self, stack: Vec<KeyContext>, cx: &mut ModelContext<Self>) {
+    fn set_context_stack(&mut self, stack: Vec<KeyContext>, cx: &mut Context<Self>) {
         self.context_stack = stack;
         cx.notify()
     }
@@ -145,7 +145,7 @@ impl Item for KeyContextView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("Keyboard Context".into())
     }
 
@@ -157,17 +157,17 @@ impl Item for KeyContextView {
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_model(|cx| KeyContextView::new(window, cx)))
+        Some(cx.new(|cx| KeyContextView::new(window, cx)))
     }
 }
 
 impl Render for KeyContextView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
         let key_equivalents = get_key_equivalents(cx.keyboard_layout());
         v_flex()

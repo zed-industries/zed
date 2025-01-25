@@ -10,7 +10,7 @@ use std::{
     u32,
 };
 
-use anyhow::Context;
+use anyhow::Context as _;
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -23,13 +23,13 @@ use editor::{
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context as _, DismissEvent,
-    Div, ElementId, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, ModelContext,
+    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement, App,
+    AppContext as _, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
+    Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, WeakModel, Window,
+    UniformListScrollHandle, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -86,12 +86,12 @@ type HighlightStyleData = Arc<OnceLock<Vec<(Range<usize>, HighlightStyle)>>>;
 pub struct OutlinePanel {
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
-    project: Model<Project>,
-    workspace: WeakModel<Workspace>,
+    project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     active: bool,
     pinned: bool,
     scroll_handle: UniformListScrollHandle,
-    context_menu: Option<(Model<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     focus_handle: FocusHandle,
     pending_serialization: Task<Option<()>>,
     fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), usize>,
@@ -110,7 +110,7 @@ pub struct OutlinePanel {
     outline_fetch_tasks: HashMap<(BufferId, ExcerptId), Task<()>>,
     excerpts: HashMap<BufferId, HashMap<ExcerptId, Excerpt>>,
     cached_entries: Vec<CachedEntry>,
-    filter_editor: Model<Editor>,
+    filter_editor: Entity<Editor>,
     mode: ItemsDisplayMode,
     show_scrollbar: bool,
     vertical_scrollbar_state: ScrollbarState,
@@ -150,7 +150,7 @@ impl SearchState {
         new_matches: Vec<Range<editor::Anchor>>,
         theme: Arc<SyntaxTheme>,
         window: &mut Window,
-        cx: &mut ModelContext<OutlinePanel>,
+        cx: &mut Context<OutlinePanel>,
     ) -> Self {
         let (highlight_search_match_tx, highlight_search_match_rx) = channel::unbounded();
         let (notify_tx, notify_rx) = channel::unbounded::<()>();
@@ -641,7 +641,7 @@ enum FsEntry {
 
 struct ActiveItem {
     item_handle: Box<dyn WeakItemHandle>,
-    active_editor: WeakModel<Editor>,
+    active_editor: WeakEntity<Editor>,
     _buffer_search_subscription: Subscription,
     _editor_subscrpiption: Subscription,
 }
@@ -657,15 +657,15 @@ struct SerializedOutlinePanel {
     active: Option<bool>,
 }
 
-pub fn init_settings(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut App) {
     OutlinePanelSettings::register(cx);
 }
 
-pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
+pub fn init(assets: impl AssetSource, cx: &mut App) {
     init_settings(cx);
     file_icons::init(assets, cx);
 
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
@@ -675,9 +675,9 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
 
 impl OutlinePanel {
     pub async fn load(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
-    ) -> anyhow::Result<Model<Self>> {
+    ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = cx
             .background_executor()
             .spawn(async move { KEY_VALUE_STORE.read_kvp(OUTLINE_PANEL_KEY) })
@@ -706,12 +706,12 @@ impl OutlinePanel {
     fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Model<Self> {
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.model().downgrade();
-        let outline_panel = cx.new_model(|cx| {
-            let filter_editor = cx.new_model(|cx| {
+        let outline_panel = cx.new(|cx| {
+            let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
@@ -840,7 +840,7 @@ impl OutlinePanel {
         outline_panel
     }
 
-    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let active = Some(self.active);
         self.pending_serialization = cx.background_executor().spawn(
@@ -857,7 +857,7 @@ impl OutlinePanel {
         );
     }
 
-    fn dispatch_context(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> KeyContext {
+    fn dispatch_context(&self, window: &mut Window, cx: &mut Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("OutlinePanel");
         dispatch_context.add("menu");
@@ -874,7 +874,7 @@ impl OutlinePanel {
         &mut self,
         _: &UnfoldDirectory,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(PanelEntry::FoldedDirs(FoldedDirsEntry {
             worktree_id,
@@ -890,12 +890,7 @@ impl OutlinePanel {
         }
     }
 
-    fn fold_directory(
-        &mut self,
-        _: &FoldDirectory,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn fold_directory(&mut self, _: &FoldDirectory, window: &mut Window, cx: &mut Context<Self>) {
         let (worktree_id, entry) = match self.selected_entry().cloned() {
             Some(PanelEntry::Fs(FsEntry::Directory(directory))) => {
                 (directory.worktree_id, Some(directory.entry))
@@ -922,7 +917,7 @@ impl OutlinePanel {
         self.update_cached_entries(None, window, cx);
     }
 
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
@@ -931,7 +926,7 @@ impl OutlinePanel {
         }
     }
 
-    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             self.focus_handle.focus(window);
         } else {
@@ -948,7 +943,7 @@ impl OutlinePanel {
         &mut self,
         action: &editor::OpenExcerpts,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
@@ -964,7 +959,7 @@ impl OutlinePanel {
         &mut self,
         action: &editor::OpenExcerptsSplit,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
@@ -984,7 +979,7 @@ impl OutlinePanel {
         prefer_selection_change: bool,
         change_focus: bool,
         window: &mut Window,
-        cx: &mut ModelContext<OutlinePanel>,
+        cx: &mut Context<OutlinePanel>,
     ) {
         let Some(active_editor) = self.active_editor() else {
             return;
@@ -1125,7 +1120,7 @@ impl OutlinePanel {
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             self.cached_entries
                 .iter()
@@ -1143,7 +1138,7 @@ impl OutlinePanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             self.cached_entries
                 .iter()
@@ -1162,12 +1157,7 @@ impl OutlinePanel {
         }
     }
 
-    fn select_parent(
-        &mut self,
-        _: &SelectParent,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_parent(&mut self, _: &SelectParent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(entry_to_select) = self.selected_entry().and_then(|selected_entry| {
             let mut previous_entries = self
                 .cached_entries
@@ -1252,13 +1242,13 @@ impl OutlinePanel {
         }
     }
 
-    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(first_entry) = self.cached_entries.first() {
             self.select_entry(first_entry.entry.clone(), true, window, cx);
         }
     }
 
-    fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(new_selection) = self
             .cached_entries
             .iter()
@@ -1270,7 +1260,7 @@ impl OutlinePanel {
         }
     }
 
-    fn autoscroll(&mut self, cx: &mut ModelContext<Self>) {
+    fn autoscroll(&mut self, cx: &mut Context<Self>) {
         if let Some(selected_entry) = self.selected_entry() {
             let index = self
                 .cached_entries
@@ -1284,7 +1274,7 @@ impl OutlinePanel {
         }
     }
 
-    fn focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
         }
@@ -1295,7 +1285,7 @@ impl OutlinePanel {
         position: Point<Pixels>,
         entry: PanelEntry,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.select_entry(entry.clone(), true, window, cx);
         let is_root = match &entry {
@@ -1410,7 +1400,7 @@ impl OutlinePanel {
         &mut self,
         _: &ExpandSelectedEntry,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(active_editor) = self.active_editor() else {
             return;
@@ -1484,7 +1474,7 @@ impl OutlinePanel {
         &mut self,
         _: &CollapseSelectedEntry,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(active_editor) = self.active_editor() else {
             return;
@@ -1575,7 +1565,7 @@ impl OutlinePanel {
         &mut self,
         _: &ExpandAllEntries,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(active_editor) = self.active_editor() else {
             return;
@@ -1642,7 +1632,7 @@ impl OutlinePanel {
         &mut self,
         _: &CollapseAllEntries,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(active_editor) = self.active_editor() else {
             return;
@@ -1691,12 +1681,7 @@ impl OutlinePanel {
         }
     }
 
-    fn toggle_expanded(
-        &mut self,
-        entry: &PanelEntry,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn toggle_expanded(&mut self, entry: &PanelEntry, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_editor) = self.active_editor() else {
             return;
         };
@@ -1800,7 +1785,7 @@ impl OutlinePanel {
         buffers: HashSet<BufferId>,
         fold: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<()> {
         let Some(active_editor) = self.active_editor() else {
             return Task::ready(());
@@ -1828,7 +1813,7 @@ impl OutlinePanel {
         })
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| self.abs_path(entry, cx))
@@ -1838,12 +1823,7 @@ impl OutlinePanel {
         }
     }
 
-    fn copy_relative_path(
-        &mut self,
-        _: &CopyRelativePath,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| match entry {
@@ -1863,7 +1843,7 @@ impl OutlinePanel {
         &mut self,
         _: &RevealInFileManager,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(abs_path) = self
             .selected_entry()
@@ -1877,7 +1857,7 @@ impl OutlinePanel {
         &mut self,
         _: &OpenInTerminal,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selected_entry = self.selected_entry();
         let abs_path = selected_entry.and_then(|entry| self.abs_path(entry, cx));
@@ -1901,9 +1881,9 @@ impl OutlinePanel {
 
     fn reveal_entry_for_selection(
         &mut self,
-        editor: Model<Editor>,
+        editor: Entity<Editor>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if !self.active
             || !OutlinePanelSettings::get_global(cx).auto_reveal_entries
@@ -2059,7 +2039,7 @@ impl OutlinePanel {
         excerpt: &OutlineEntryExcerpt,
         depth: usize,
         window: &mut Window,
-        cx: &mut ModelContext<OutlinePanel>,
+        cx: &mut Context<OutlinePanel>,
     ) -> Option<Stateful<Div>> {
         let item_id = ElementId::from(excerpt.id.to_proto() as usize);
         let is_active = match self.selected_entry() {
@@ -2111,7 +2091,7 @@ impl OutlinePanel {
         &self,
         buffer_id: BufferId,
         range: &ExcerptRange<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<String> {
         let buffer_snapshot = self.buffer_snapshot_for_id(buffer_id, cx)?;
         let excerpt_range = range.context.to_point(&buffer_snapshot);
@@ -2128,7 +2108,7 @@ impl OutlinePanel {
         depth: usize,
         string_match: Option<&StringMatch>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let item_id = ElementId::from(SharedString::from(format!(
             "{:?}|{:?}{:?}|{:?}",
@@ -2175,7 +2155,7 @@ impl OutlinePanel {
         depth: usize,
         string_match: Option<&StringMatch>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_active = match self.selected_entry() {
@@ -2292,7 +2272,7 @@ impl OutlinePanel {
         depth: usize,
         string_match: Option<&StringMatch>,
         window: &mut Window,
-        cx: &mut ModelContext<OutlinePanel>,
+        cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
         let is_active = match self.selected_entry() {
@@ -2367,7 +2347,7 @@ impl OutlinePanel {
         depth: usize,
         string_match: Option<&StringMatch>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         let search_data = match render_data.get() {
             Some(search_data) => search_data,
@@ -2459,7 +2439,7 @@ impl OutlinePanel {
         is_active: bool,
         label_element: gpui::AnyElement,
         window: &mut Window,
-        cx: &mut ModelContext<OutlinePanel>,
+        cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
         div()
@@ -2523,7 +2503,7 @@ impl OutlinePanel {
             )
     }
 
-    fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &AppContext) -> String {
+    fn entry_name(&self, worktree_id: &WorktreeId, entry: &Entry, cx: &App) -> String {
         let name = match self.project.read(cx).worktree_for_id(*worktree_id, cx) {
             Some(worktree) => {
                 let worktree = worktree.read(cx);
@@ -2551,10 +2531,10 @@ impl OutlinePanel {
 
     fn update_fs_entries(
         &mut self,
-        active_editor: Model<Editor>,
+        active_editor: Entity<Editor>,
         debounce: Option<Duration>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if !self.active {
             return;
@@ -2928,9 +2908,9 @@ impl OutlinePanel {
     fn replace_active_editor(
         &mut self,
         new_active_item: Box<dyn ItemHandle>,
-        new_active_editor: Model<Editor>,
+        new_active_editor: Entity<Editor>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.clear_previous(window, cx);
         let buffer_search_subscription = cx.subscribe_in(
@@ -2940,7 +2920,7 @@ impl OutlinePanel {
              _,
              e: &SearchEvent,
              window: &mut Window,
-             cx: &mut ModelContext<Self>| {
+             cx: &mut Context<Self>| {
                 if matches!(e, SearchEvent::MatchesInvalidated) {
                     outline_panel.update_search_matches(window, cx);
                 };
@@ -2959,7 +2939,7 @@ impl OutlinePanel {
         self.update_fs_entries(new_active_editor, None, window, cx);
     }
 
-    fn clear_previous(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn clear_previous(&mut self, window: &mut Window, cx: &mut App) {
         self.fs_entries_update_task = Task::ready(());
         self.outline_fetch_tasks.clear();
         self.cached_entries_update_task = Task::ready(());
@@ -2981,9 +2961,9 @@ impl OutlinePanel {
 
     fn location_for_editor_selection(
         &self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<PanelEntry> {
         let selection = editor.update(cx, |editor, cx| {
             editor.selections.newest::<language::Point>(cx).head()
@@ -3201,7 +3181,7 @@ impl OutlinePanel {
         Some(closest_container)
     }
 
-    fn fetch_outdated_outlines(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn fetch_outdated_outlines(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let excerpt_fetch_ranges = self.excerpt_fetch_ranges(cx);
         if excerpt_fetch_ranges.is_empty() {
             return;
@@ -3250,7 +3230,7 @@ impl OutlinePanel {
         }
     }
 
-    fn is_singleton_active(&self, cx: &AppContext) -> bool {
+    fn is_singleton_active(&self, cx: &App) -> bool {
         self.active_editor().map_or(false, |active_editor| {
             active_editor.read(cx).buffer().read(cx).is_singleton()
         })
@@ -3276,7 +3256,7 @@ impl OutlinePanel {
 
     fn excerpt_fetch_ranges(
         &self,
-        cx: &AppContext,
+        cx: &App,
     ) -> HashMap<
         BufferId,
         (
@@ -3326,11 +3306,7 @@ impl OutlinePanel {
             })
     }
 
-    fn buffer_snapshot_for_id(
-        &self,
-        buffer_id: BufferId,
-        cx: &AppContext,
-    ) -> Option<BufferSnapshot> {
+    fn buffer_snapshot_for_id(&self, buffer_id: BufferId, cx: &App) -> Option<BufferSnapshot> {
         let editor = self.active_editor()?;
         Some(
             editor
@@ -3343,7 +3319,7 @@ impl OutlinePanel {
         )
     }
 
-    fn abs_path(&self, entry: &PanelEntry, cx: &AppContext) -> Option<PathBuf> {
+    fn abs_path(&self, entry: &PanelEntry, cx: &App) -> Option<PathBuf> {
         match entry {
             PanelEntry::Fs(
                 FsEntry::File(FsEntryFile { buffer_id, .. })
@@ -3377,7 +3353,7 @@ impl OutlinePanel {
         }
     }
 
-    fn relative_path(&self, entry: &FsEntry, cx: &AppContext) -> Option<Arc<Path>> {
+    fn relative_path(&self, entry: &FsEntry, cx: &App) -> Option<Arc<Path>> {
         match entry {
             FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
                 let buffer_snapshot = self.buffer_snapshot_for_id(*buffer_id, cx)?;
@@ -3392,7 +3368,7 @@ impl OutlinePanel {
         &mut self,
         debounce: Option<Duration>,
         window: &mut Window,
-        cx: &mut ModelContext<OutlinePanel>,
+        cx: &mut Context<OutlinePanel>,
     ) {
         if !self.active {
             return;
@@ -3445,7 +3421,7 @@ impl OutlinePanel {
         is_singleton: bool,
         query: Option<String>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
         let project = self.project.clone();
         let Some(active_editor) = self.active_editor() else {
@@ -3834,7 +3810,7 @@ impl OutlinePanel {
         track_matches: bool,
         entry: PanelEntry,
         depth: usize,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let entry = if let PanelEntry::FoldedDirs(folded_dirs_entry) = &entry {
             match folded_dirs_entry.entries.len() {
@@ -3905,12 +3881,7 @@ impl OutlinePanel {
         });
     }
 
-    fn dir_names_string(
-        &self,
-        entries: &[GitEntry],
-        worktree_id: WorktreeId,
-        cx: &AppContext,
-    ) -> String {
+    fn dir_names_string(&self, entries: &[GitEntry], worktree_id: WorktreeId, cx: &App) -> String {
         let dir_names_segment = entries
             .iter()
             .map(|entry| self.entry_name(&worktree_id, entry, cx))
@@ -3918,7 +3889,7 @@ impl OutlinePanel {
         dir_names_segment.to_string_lossy().to_string()
     }
 
-    fn query(&self, cx: &AppContext) -> Option<String> {
+    fn query(&self, cx: &App) -> Option<String> {
         let query = self.filter_editor.read(cx).text(cx);
         if query.trim().is_empty() {
             None
@@ -3944,7 +3915,7 @@ impl OutlinePanel {
         !self.collapsed_entries.contains(&entry_to_check)
     }
 
-    fn update_non_fs_items(&mut self, window: &mut Window, cx: &mut ModelContext<OutlinePanel>) {
+    fn update_non_fs_items(&mut self, window: &mut Window, cx: &mut Context<OutlinePanel>) {
         if !self.active {
             return;
         }
@@ -3954,7 +3925,7 @@ impl OutlinePanel {
         self.autoscroll(cx);
     }
 
-    fn update_search_matches(&mut self, window: &mut Window, cx: &mut ModelContext<OutlinePanel>) {
+    fn update_search_matches(&mut self, window: &mut Window, cx: &mut Context<OutlinePanel>) {
         if !self.active {
             return;
         }
@@ -4055,7 +4026,7 @@ impl OutlinePanel {
         track_matches: bool,
         is_singleton: bool,
         query: Option<&str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(excerpts) = self.excerpts.get(&buffer_id) {
             for &excerpt_id in entries_to_add {
@@ -4108,12 +4079,12 @@ impl OutlinePanel {
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
-        active_editor: &Model<Editor>,
+        active_editor: &Entity<Editor>,
         parent_entry: FsEntry,
         parent_depth: usize,
         filter_query: Option<String>,
         is_singleton: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let ItemsDisplayMode::Search(search_state) = &mut self.mode else {
             return;
@@ -4170,7 +4141,7 @@ impl OutlinePanel {
         }
     }
 
-    fn active_editor(&self) -> Option<Model<Editor>> {
+    fn active_editor(&self) -> Option<Entity<Editor>> {
         self.active_item.as_ref()?.active_editor.upgrade()
     }
 
@@ -4188,7 +4159,7 @@ impl OutlinePanel {
         &mut self,
         _: &ToggleActiveEditorPin,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.pinned = !self.pinned;
         if !self.pinned {
@@ -4219,7 +4190,7 @@ impl OutlinePanel {
         entry: PanelEntry,
         focus: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if focus {
             self.focus_handle.focus(window);
@@ -4238,7 +4209,7 @@ impl OutlinePanel {
         cx.notify();
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
         {
@@ -4288,7 +4259,7 @@ impl OutlinePanel {
     fn render_horizontal_scrollbar(
         &self,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
@@ -4352,7 +4323,7 @@ impl OutlinePanel {
         )
     }
 
-    fn should_show_scrollbar(cx: &AppContext) -> bool {
+    fn should_show_scrollbar(cx: &App) -> bool {
         let show = OutlinePanelSettings::get_global(cx)
             .scrollbar
             .show
@@ -4365,7 +4336,7 @@ impl OutlinePanel {
         }
     }
 
-    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+    fn should_autohide_scrollbar(cx: &App) -> bool {
         let show = OutlinePanelSettings::get_global(cx)
             .scrollbar
             .show
@@ -4380,7 +4351,7 @@ impl OutlinePanel {
         }
     }
 
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         if !Self::should_autohide_scrollbar(cx) {
             return;
@@ -4398,7 +4369,7 @@ impl OutlinePanel {
         }))
     }
 
-    fn width_estimate(&self, depth: usize, entry: &PanelEntry, cx: &AppContext) -> u64 {
+    fn width_estimate(&self, depth: usize, entry: &PanelEntry, cx: &App) -> u64 {
         let item_text_chars = match entry {
             PanelEntry::Fs(FsEntry::ExternalFile(external)) => self
                 .buffer_snapshot_for_id(external.buffer_id, cx)
@@ -4452,7 +4423,7 @@ impl OutlinePanel {
         show_indent_guides: bool,
         indent_size: f32,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Div {
         let contents = if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries {
@@ -4637,7 +4608,7 @@ impl OutlinePanel {
         v_flex().w_full().flex_1().overflow_hidden().child(contents)
     }
 
-    fn render_filter_footer(&mut self, pinned: bool, cx: &mut ModelContext<Self>) -> Div {
+    fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
         v_flex().flex_none().child(horizontal_separator(cx)).child(
             h_flex()
                 .p_2()
@@ -4712,8 +4683,8 @@ impl OutlinePanel {
 
 fn workspace_active_editor(
     workspace: &Workspace,
-    cx: &AppContext,
-) -> Option<(Box<dyn ItemHandle>, Model<Editor>)> {
+    cx: &App,
+) -> Option<(Box<dyn ItemHandle>, Entity<Editor>)> {
     let active_item = workspace.active_item(cx)?;
     let active_editor = active_item
         .act_as::<Editor>(cx)
@@ -4760,7 +4731,7 @@ impl Panel for OutlinePanel {
         "Outline Panel"
     }
 
-    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match OutlinePanelSettings::get_global(cx).dock {
             OutlinePanelDockPosition::Left => DockPosition::Left,
             OutlinePanelDockPosition::Right => DockPosition::Right,
@@ -4771,12 +4742,7 @@ impl Panel for OutlinePanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(
-        &mut self,
-        position: DockPosition,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<OutlinePanelSettings>(
             self.fs.clone(),
             cx,
@@ -4790,24 +4756,24 @@ impl Panel for OutlinePanel {
         );
     }
 
-    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &App) -> Pixels {
         self.width
             .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();
     }
 
-    fn icon(&self, _: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
         OutlinePanelSettings::get_global(cx)
             .button
             .then_some(IconName::ListTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _: &App) -> Option<&'static str> {
         Some("Outline Panel")
     }
 
@@ -4815,11 +4781,11 @@ impl Panel for OutlinePanel {
         Box::new(ToggleFocus)
     }
 
-    fn starts_open(&self, _window: &Window, _: &AppContext) -> bool {
+    fn starts_open(&self, _window: &Window, _: &App) -> bool {
         self.active
     }
 
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, |outline_panel, mut cx| async move {
             outline_panel
                 .update_in(&mut cx, |outline_panel, window, cx| {
@@ -4863,7 +4829,7 @@ impl Panel for OutlinePanel {
 }
 
 impl Focusable for OutlinePanel {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.filter_editor.focus_handle(cx).clone()
     }
 }
@@ -4873,7 +4839,7 @@ impl EventEmitter<Event> for OutlinePanel {}
 impl EventEmitter<PanelEvent> for OutlinePanel {}
 
 impl Render for OutlinePanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (is_local, is_via_ssh) = self
             .project
             .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
@@ -4994,9 +4960,9 @@ fn find_active_indent_guide_ix(
 }
 
 fn subscribe_for_editor_events(
-    editor: &Model<Editor>,
+    editor: &Entity<Editor>,
     window: &mut Window,
-    cx: &mut ModelContext<OutlinePanel>,
+    cx: &mut Context<OutlinePanel>,
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
     cx.subscribe_in(
@@ -5123,7 +5089,7 @@ fn empty_icon() -> AnyElement {
         .into_any_element()
 }
 
-fn horizontal_separator(cx: &mut AppContext) -> Div {
+fn horizontal_separator(cx: &mut App) -> Div {
     div().mx_2().border_primary(cx).border_t_1()
 }
 
@@ -6256,7 +6222,7 @@ outline: struct OutlineEntryExcerpt
     }
 
     async fn add_outline_panel(
-        project: &Model<Project>,
+        project: &Entity<Project>,
         cx: &mut TestAppContext,
     ) -> WindowHandle<Workspace> {
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -6278,7 +6244,7 @@ outline: struct OutlineEntryExcerpt
     fn outline_panel(
         workspace: &WindowHandle<Workspace>,
         cx: &mut TestAppContext,
-    ) -> Model<OutlinePanel> {
+    ) -> Entity<OutlinePanel> {
         workspace
             .update(cx, |workspace, _, cx| {
                 workspace
@@ -6588,7 +6554,7 @@ outline: struct OutlineEntryExcerpt
         .unwrap()
     }
 
-    fn snapshot(outline_panel: &OutlinePanel, cx: &AppContext) -> MultiBufferSnapshot {
+    fn snapshot(outline_panel: &OutlinePanel, cx: &App) -> MultiBufferSnapshot {
         outline_panel
             .active_editor()
             .unwrap()
@@ -6598,7 +6564,7 @@ outline: struct OutlineEntryExcerpt
             .snapshot(cx)
     }
 
-    fn selected_row_text(editor: &Model<Editor>, cx: &mut AppContext) -> String {
+    fn selected_row_text(editor: &Entity<Editor>, cx: &mut App) -> String {
         editor.update(cx, |editor, cx| {
                 let selections = editor.selections.all::<language::Point>(cx);
                 assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");

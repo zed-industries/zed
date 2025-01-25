@@ -31,7 +31,7 @@ impl SharedScreen {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let view = cx.new_model(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
+        let view = cx.new(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
             call::RemoteVideoTrackViewEvent::Close => cx.emit(Event::Close),
         })
@@ -104,7 +104,7 @@ impl Item for SharedScreen {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
-        Some(cx.new_model(|cx| Self {
+        Some(cx.new(|cx| Self {
             view: self.view.update(cx, |view, cx| view.clone(window, cx)),
             peer_id: self.peer_id,
             user: self.user.clone(),

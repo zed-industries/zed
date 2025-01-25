@@ -1,8 +1,8 @@
 use editor::{scroll::Autoscroll, styled_runs_for_code_label, Bias, Editor};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, AppContext, DismissEvent, FontWeight, Model, ModelContext, ParentElement, StyledText,
-    Task, WeakModel, Window,
+    rems, App, DismissEvent, Entity, FontWeight, Context, ParentElement, StyledText, Task,
+    WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -15,9 +15,9 @@ use workspace::{
     Workspace,
 };
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(
-        |workspace: &mut Workspace, _window, _: &mut ModelContext<Workspace>| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(
+        |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
                     let project = workspace.project().clone();
@@ -33,11 +33,11 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-pub type ProjectSymbols = Model<Picker<ProjectSymbolsDelegate>>;
+pub type ProjectSymbols = Entity<Picker<ProjectSymbolsDelegate>>;
 
 pub struct ProjectSymbolsDelegate {
-    workspace: WeakModel<Workspace>,
-    project: Model<Project>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     selected_match_index: usize,
     symbols: Vec<Symbol>,
     visible_match_candidates: Vec<StringMatchCandidate>,
@@ -47,7 +47,7 @@ pub struct ProjectSymbolsDelegate {
 }
 
 impl ProjectSymbolsDelegate {
-    fn new(workspace: WeakModel<Workspace>, project: Model<Project>) -> Self {
+    fn new(workspace: WeakEntity<Workspace>, project: Entity<Project>) -> Self {
         Self {
             workspace,
             project,
@@ -60,7 +60,7 @@ impl ProjectSymbolsDelegate {
         }
     }
 
-    fn filter(&mut self, query: &str, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         const MAX_MATCHES: usize = 100;
         let mut visible_matches = cx.background_executor().block(fuzzy::match_strings(
             &self.visible_match_candidates,
@@ -103,7 +103,7 @@ impl ProjectSymbolsDelegate {
 
 impl PickerDelegate for ProjectSymbolsDelegate {
     type ListItem = ListItem;
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project symbols...".into()
     }
 
@@ -111,7 +111,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         &mut self,
         secondary: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if let Some(symbol) = self
             .matches
@@ -151,7 +151,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -165,7 +165,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_match_index = ix;
     }
@@ -174,7 +174,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         self.filter(&query, window, cx);
         self.show_worktree_root_name = self.project.read(cx).visible_worktrees(cx).count() > 1;
@@ -214,7 +214,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let string_match = &self.matches[ix];
         let symbol = &self.symbols[string_match.candidate_id];

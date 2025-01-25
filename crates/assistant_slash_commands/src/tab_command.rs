@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -6,13 +6,13 @@ use assistant_slash_command::{
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
-use gpui::{Entity, Task, WeakModel};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ActiveTheme, AppContext, Window};
+use ui::{prelude::*, ActiveTheme, App, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -51,9 +51,9 @@ impl SlashCommand for TabSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakModel<Workspace>>,
+        workspace: Option<WeakEntity<Workspace>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let mut has_all_tabs_completion_item = false;
         let argument_set = arguments
@@ -138,10 +138,10 @@ impl SlashCommand for TabSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
@@ -163,12 +163,12 @@ impl SlashCommand for TabSlashCommand {
 }
 
 fn tab_items_for_queries(
-    workspace: Option<WeakModel<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     queries: &[String],
     cancel: Arc<AtomicBool>,
     strict_match: bool,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     let empty_query = queries.is_empty() || queries.iter().all(|query| query.trim().is_empty());
     let queries = queries.to_owned();
@@ -285,7 +285,7 @@ fn tab_items_for_queries(
 
 fn active_item_buffer(
     workspace: &mut Workspace,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace
         .active_item(cx)

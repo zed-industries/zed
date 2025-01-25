@@ -1,16 +1,16 @@
 use crate::{Toast, Workspace};
-use anyhow::Context;
+use anyhow::Context as _;
 use anyhow::{anyhow, Result};
 use gpui::{
-    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, EventEmitter,
-    Global, Model, PromptLevel, Render, ScrollHandle, Task,
+    svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
+    Entity, EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task,
 };
 use std::rc::Rc;
 use std::{any::TypeId, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     cx.set_global(GlobalAppNotifications {
         app_notifications: Vec::new(),
     })
@@ -58,8 +58,8 @@ impl Workspace {
     pub fn show_notification<V: Notification>(
         &mut self,
         id: NotificationId,
-        cx: &mut ModelContext<Self>,
-        build_notification: impl FnOnce(&mut ModelContext<Self>) -> Model<V>,
+        cx: &mut Context<Self>,
+        build_notification: impl FnOnce(&mut Context<Self>) -> Entity<V>,
     ) {
         self.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
             let notification = build_notification(cx);
@@ -82,8 +82,8 @@ impl Workspace {
     pub(crate) fn show_notification_without_handling_dismiss_events(
         &mut self,
         id: &NotificationId,
-        cx: &mut ModelContext<Self>,
-        build_notification: impl FnOnce(&mut ModelContext<Self>) -> AnyView,
+        cx: &mut Context<Self>,
+        build_notification: impl FnOnce(&mut Context<Self>) -> AnyView,
     ) {
         self.dismiss_notification(id, cx);
         self.notifications
@@ -91,20 +91,20 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn show_error<E>(&mut self, err: &E, cx: &mut ModelContext<Self>)
+    pub fn show_error<E>(&mut self, err: &E, cx: &mut Context<Self>)
     where
         E: std::fmt::Debug + std::fmt::Display,
     {
         self.show_notification(workspace_error_notification_id(), cx, |cx| {
-            cx.new_model(|_| ErrorMessagePrompt::new(format!("Error: {err}")))
+            cx.new(|_| ErrorMessagePrompt::new(format!("Error: {err}")))
         });
     }
 
-    pub fn show_portal_error(&mut self, err: String, cx: &mut ModelContext<Self>) {
+    pub fn show_portal_error(&mut self, err: String, cx: &mut Context<Self>) {
         struct PortalError;
 
         self.show_notification(NotificationId::unique::<PortalError>(), cx, |cx| {
-            cx.new_model(|_| {
+            cx.new(|_| {
                 ErrorMessagePrompt::new(err.to_string()).with_link_button(
                     "See docs",
                     "https://zed.dev/docs/linux#i-cant-open-any-files",
@@ -113,7 +113,7 @@ impl Workspace {
         });
     }
 
-    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ModelContext<Self>) {
+    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut Context<Self>) {
         self.notifications.retain(|(existing_id, _)| {
             if existing_id == id {
                 cx.notify();
@@ -124,10 +124,10 @@ impl Workspace {
         });
     }
 
-    pub fn show_toast(&mut self, toast: Toast, cx: &mut ModelContext<Self>) {
+    pub fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         self.dismiss_notification(&toast.id, cx);
         self.show_notification(toast.id.clone(), cx, |cx| {
-            cx.new_model(|_| match toast.on_click.as_ref() {
+            cx.new(|_| match toast.on_click.as_ref() {
                 Some((click_msg, on_click)) => {
                     let on_click = on_click.clone();
                     simple_message_notification::MessageNotification::new(toast.msg.clone())
@@ -152,16 +152,16 @@ impl Workspace {
         }
     }
 
-    pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut ModelContext<Self>) {
+    pub fn dismiss_toast(&mut self, id: &NotificationId, cx: &mut Context<Self>) {
         self.dismiss_notification(id, cx);
     }
 
-    pub fn clear_all_notifications(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn clear_all_notifications(&mut self, cx: &mut Context<Self>) {
         self.notifications.clear();
         cx.notify();
     }
 
-    pub fn show_initial_notifications(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = cx
             .try_global::<GlobalAppNotifications>()
@@ -189,7 +189,7 @@ impl LanguageServerPrompt {
         }
     }
 
-    async fn select_option(this: Model<Self>, ix: usize, mut cx: AsyncWindowContext) {
+    async fn select_option(this: Entity<Self>, ix: usize, mut cx: AsyncWindowContext) {
         util::maybe!(async move {
             let potential_future = this.update(&mut cx, |this, _| {
                 this.request.take().map(|request| request.respond(ix))
@@ -210,7 +210,7 @@ impl LanguageServerPrompt {
 }
 
 impl Render for LanguageServerPrompt {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(request) = &self.request else {
             return div().id("language_server_prompt_notification");
         };
@@ -316,7 +316,7 @@ impl ErrorMessagePrompt {
 }
 
 impl Render for ErrorMessagePrompt {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .id("error_message_prompt_notification")
             .occlude()
@@ -381,11 +381,11 @@ pub mod simple_message_notification {
     use ui::prelude::*;
 
     pub struct MessageNotification {
-        build_content: Box<dyn Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement>,
-        on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
+        build_content: Box<dyn Fn(&mut Window, &mut Context<Self>) -> AnyElement>,
+        on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
-        secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
+        secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -401,7 +401,7 @@ pub mod simple_message_notification {
 
         pub fn new_from_builder<F>(content: F) -> MessageNotification
         where
-            F: 'static + Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement,
+            F: 'static + Fn(&mut Window, &mut Context<Self>) -> AnyElement,
         {
             Self {
                 build_content: Box::new(content),
@@ -422,7 +422,7 @@ pub mod simple_message_notification {
 
         pub fn on_click<F>(mut self, on_click: F) -> Self
         where
-            F: 'static + Fn(&mut Window, &mut ModelContext<Self>),
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
             self.on_click = Some(Arc::new(on_click));
             self
@@ -438,19 +438,19 @@ pub mod simple_message_notification {
 
         pub fn on_secondary_click<F>(mut self, on_click: F) -> Self
         where
-            F: 'static + Fn(&mut Window, &mut ModelContext<Self>),
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
             self.secondary_on_click = Some(Arc::new(on_click));
             self
         }
 
-        pub fn dismiss(&mut self, cx: &mut ModelContext<Self>) {
+        pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
         }
     }
 
     impl Render for MessageNotification {
-        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex()
                 .p_3()
                 .gap_2()
@@ -506,7 +506,7 @@ pub mod simple_message_notification {
 struct GlobalAppNotifications {
     app_notifications: Vec<(
         NotificationId,
-        Rc<dyn Fn(&mut ModelContext<Workspace>) -> AnyView>,
+        Rc<dyn Fn(&mut Context<Workspace>) -> AnyView>,
     )>,
 }
 
@@ -516,7 +516,7 @@ impl GlobalAppNotifications {
     pub fn insert(
         &mut self,
         id: NotificationId,
-        build_notification: Rc<dyn Fn(&mut ModelContext<Workspace>) -> AnyView>,
+        build_notification: Rc<dyn Fn(&mut Context<Workspace>) -> AnyView>,
     ) {
         self.remove(&id);
         self.app_notifications.push((id, build_notification))
@@ -533,11 +533,11 @@ impl GlobalAppNotifications {
 /// exist. If the notification is dismissed within any workspace, it will be removed from all.
 pub fn show_app_notification<V: Notification + 'static>(
     id: NotificationId,
-    cx: &mut AppContext,
-    build_notification: impl Fn(&mut ModelContext<Workspace>) -> Model<V> + 'static,
+    cx: &mut App,
+    build_notification: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static,
 ) -> Result<()> {
     // Handle dismiss events by removing the notification from all workspaces.
-    let build_notification: Rc<dyn Fn(&mut ModelContext<Workspace>) -> AnyView> = Rc::new({
+    let build_notification: Rc<dyn Fn(&mut Context<Workspace>) -> AnyView> = Rc::new({
         let id = id.clone();
         move |cx| {
             let notification = build_notification(cx);
@@ -586,7 +586,7 @@ pub fn show_app_notification<V: Notification + 'static>(
     }
 }
 
-pub fn dismiss_app_notification(id: &NotificationId, cx: &mut AppContext) {
+pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
     cx.global_mut::<GlobalAppNotifications>().remove(id);
     for window in cx.windows() {
         if let Some(workspace_window) = window.downcast::<Workspace>() {
@@ -606,16 +606,13 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut AppContext) {
 pub trait NotifyResultExt {
     type Ok;
 
-    fn notify_err(
-        self,
-        workspace: &mut Workspace,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Option<Self::Ok>;
+    fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>)
+        -> Option<Self::Ok>;
 
     fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
 
     /// Notifies the active workspace if there is one, otherwise notifies all workspaces.
-    fn notify_app_err(self, cx: &mut AppContext) -> Option<Self::Ok>;
+    fn notify_app_err(self, cx: &mut App) -> Option<Self::Ok>;
 }
 
 impl<T, E> NotifyResultExt for std::result::Result<T, E>
@@ -624,7 +621,7 @@ where
 {
     type Ok = T;
 
-    fn notify_err(self, workspace: &mut Workspace, cx: &mut ModelContext<Workspace>) -> Option<T> {
+    fn notify_err(self, workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
@@ -651,7 +648,7 @@ where
         }
     }
 
-    fn notify_app_err(self, cx: &mut AppContext) -> Option<T> {
+    fn notify_app_err(self, cx: &mut App) -> Option<T> {
         match self {
             Ok(value) => Some(value),
             Err(err) => {
@@ -660,7 +657,7 @@ where
                 show_app_notification(workspace_error_notification_id(), cx, {
                     let message = message.clone();
                     move |cx| {
-                        cx.new_model({
+                        cx.new({
                             let message = message.clone();
                             move |_cx| ErrorMessagePrompt::new(message)
                         })
@@ -675,7 +672,7 @@ where
 }
 
 pub trait NotifyTaskExt {
-    fn detach_and_notify_err(self, window: &mut Window, cx: &mut AppContext);
+    fn detach_and_notify_err(self, window: &mut Window, cx: &mut App);
 }
 
 impl<R, E> NotifyTaskExt for Task<std::result::Result<R, E>>
@@ -683,7 +680,7 @@ where
     E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,
 {
-    fn detach_and_notify_err(self, window: &mut Window, cx: &mut AppContext) {
+    fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
             .spawn(
                 cx,
@@ -698,16 +695,16 @@ pub trait DetachAndPromptErr<R> {
         self,
         msg: &str,
         window: &Window,
-        cx: &AppContext,
-        f: impl FnOnce(&anyhow::Error, &mut Window, &mut AppContext) -> Option<String> + 'static,
+        cx: &App,
+        f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) -> Task<Option<R>>;
 
     fn detach_and_prompt_err(
         self,
         msg: &str,
         window: &Window,
-        cx: &AppContext,
-        f: impl FnOnce(&anyhow::Error, &mut Window, &mut AppContext) -> Option<String> + 'static,
+        cx: &App,
+        f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     );
 }
 
@@ -719,8 +716,8 @@ where
         self,
         msg: &str,
         window: &Window,
-        cx: &AppContext,
-        f: impl FnOnce(&anyhow::Error, &mut Window, &mut AppContext) -> Option<String> + 'static,
+        cx: &App,
+        f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) -> Task<Option<R>> {
         let msg = msg.to_owned();
         window.spawn(cx, |mut cx| async move {
@@ -744,8 +741,8 @@ where
         self,
         msg: &str,
         window: &Window,
-        cx: &AppContext,
-        f: impl FnOnce(&anyhow::Error, &mut Window, &mut AppContext) -> Option<String> + 'static,
+        cx: &App,
+        f: impl FnOnce(&anyhow::Error, &mut Window, &mut App) -> Option<String> + 'static,
     ) {
         self.prompt_err(msg, window, cx, f).detach();
     }

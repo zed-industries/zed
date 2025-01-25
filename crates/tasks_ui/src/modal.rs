@@ -3,9 +3,9 @@ use std::sync::Arc;
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, Action, AnyElement, AppContext, Context as _, DismissEvent, EventEmitter, Focusable,
-    InteractiveElement, Model, ModelContext, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, WeakModel, Window,
+    rems, Action, AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter,
+    Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
+    WeakEntity, Window,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
@@ -21,14 +21,14 @@ pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
-    task_store: Model<TaskStore>,
+    task_store: Entity<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     task_overrides: Option<TaskOverrides>,
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
     matches: Vec<StringMatch>,
     selected_index: usize,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     prompt: String,
     task_context: TaskContext,
     placeholder_text: Arc<str>,
@@ -43,10 +43,10 @@ pub(crate) struct TaskOverrides {
 
 impl TasksModalDelegate {
     fn new(
-        task_store: Model<TaskStore>,
+        task_store: Entity<TaskStore>,
         task_context: TaskContext,
         task_overrides: Option<TaskOverrides>,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
     ) -> Self {
         let placeholder_text = if let Some(TaskOverrides {
             reveal_target: Some(RevealTarget::Center),
@@ -95,7 +95,7 @@ impl TasksModalDelegate {
         ))
     }
 
-    fn delete_previously_used(&mut self, ix: usize, cx: &mut AppContext) {
+    fn delete_previously_used(&mut self, ix: usize, cx: &mut App) {
         let Some(candidates) = self.candidates.as_mut() else {
             return;
         };
@@ -115,20 +115,20 @@ impl TasksModalDelegate {
 }
 
 pub(crate) struct TasksModal {
-    picker: Model<Picker<TasksModalDelegate>>,
+    picker: Entity<Picker<TasksModalDelegate>>,
     _subscription: Subscription,
 }
 
 impl TasksModal {
     pub(crate) fn new(
-        task_store: Model<TaskStore>,
+        task_store: Entity<TaskStore>,
         task_context: TaskContext,
         task_overrides: Option<TaskOverrides>,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new_model(|cx| {
+        let picker = cx.new(|cx| {
             Picker::uniform_list(
                 TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
                 window,
@@ -149,7 +149,7 @@ impl Render for TasksModal {
     fn render(
         &mut self,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
         v_flex()
             .key_context("TasksModal")
@@ -161,7 +161,7 @@ impl Render for TasksModal {
 impl EventEmitter<DismissEvent> for TasksModal {}
 
 impl Focusable for TasksModal {
-    fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }
 }
@@ -183,12 +183,12 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _cx: &mut ModelContext<picker::Picker<Self>>,
+        _cx: &mut Context<picker::Picker<Self>>,
     ) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _: &mut App) -> Arc<str> {
         self.placeholder_text.clone()
     }
 
@@ -196,7 +196,7 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
         cx.spawn_in(window, move |picker, mut cx| async move {
             let Some(candidates) = picker
@@ -286,7 +286,7 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         omit_history_entry: bool,
         _: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
         let task = self
@@ -318,7 +318,7 @@ impl PickerDelegate for TasksModalDelegate {
         cx.emit(DismissEvent);
     }
 
-    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         cx.emit(DismissEvent);
     }
 
@@ -327,7 +327,7 @@ impl PickerDelegate for TasksModalDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
         let hit = &self.matches[ix];
@@ -438,7 +438,7 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         _: String,
         _window: &mut Window,
-        _: &mut ModelContext<Picker<Self>>,
+        _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         let task_index = self.matches.get(self.selected_index())?.candidate_id;
         let tasks = self.candidates.as_ref()?;
@@ -450,7 +450,7 @@ impl PickerDelegate for TasksModalDelegate {
         &mut self,
         omit_history_entry: bool,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         let Some((task_source_kind, mut task)) = self.spawn_oneshot() else {
             return;
@@ -482,7 +482,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn render_footer(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = window.modifiers();
@@ -1048,8 +1048,8 @@ mod tests {
     }
 
     fn emulate_task_schedule(
-        tasks_picker: Model<Picker<TasksModalDelegate>>,
-        project: &Model<Project>,
+        tasks_picker: Entity<Picker<TasksModalDelegate>>,
+        project: &Entity<Project>,
         scheduled_task_label: &str,
         cx: &mut VisualTestContext,
     ) {
@@ -1079,9 +1079,9 @@ mod tests {
     }
 
     fn open_spawn_tasks(
-        workspace: &Model<Workspace>,
+        workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
-    ) -> Model<Picker<TasksModalDelegate>> {
+    ) -> Entity<Picker<TasksModalDelegate>> {
         cx.dispatch_action(Spawn::modal());
         workspace.update(cx, |workspace, cx| {
             workspace
@@ -1094,14 +1094,14 @@ mod tests {
     }
 
     fn query(
-        spawn_tasks: &Model<Picker<TasksModalDelegate>>,
+        spawn_tasks: &Entity<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> String {
         spawn_tasks.update(cx, |spawn_tasks, cx| spawn_tasks.query(cx))
     }
 
     fn task_names(
-        spawn_tasks: &Model<Picker<TasksModalDelegate>>,
+        spawn_tasks: &Entity<Picker<TasksModalDelegate>>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
         spawn_tasks.update(cx, |spawn_tasks, _| {

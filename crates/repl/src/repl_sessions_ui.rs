@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, Focusable, Model,
+    actions, prelude::*, AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription,
 };
 use project::ProjectItem as _;
@@ -27,9 +27,9 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(
-        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(
+        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
                     .active_pane()
@@ -61,8 +61,8 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_models(
-        move |editor: &mut Editor, window, cx: &mut ModelContext<Editor>| {
+    cx.observe_new(
+        move |editor: &mut Editor, window, cx: &mut Context<Editor>| {
             let Some(window) = window else {
                 return;
             };
@@ -148,8 +148,8 @@ pub struct ReplSessionsPage {
 }
 
 impl ReplSessionsPage {
-    pub fn new(window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
-        cx.new_model(|cx| {
+    pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<Self> {
+        cx.new(|cx| {
             let focus_handle = cx.focus_handle();
 
             let subscriptions = vec![
@@ -170,7 +170,7 @@ impl ReplSessionsPage {
 impl EventEmitter<ItemEvent> for ReplSessionsPage {}
 
 impl Focusable for ReplSessionsPage {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -178,7 +178,7 @@ impl Focusable for ReplSessionsPage {
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("REPL Sessions".into())
     }
 
@@ -194,8 +194,8 @@ impl Item for ReplSessionsPage {
         &self,
         _workspace_id: Option<WorkspaceId>,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>> {
+        _: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
         None
     }
 
@@ -205,7 +205,7 @@ impl Item for ReplSessionsPage {
 }
 
 impl Render for ReplSessionsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let store = ReplStore::global(cx);
 
         let (kernel_specifications, sessions) = store.update(cx, |store, _cx| {
@@ -279,7 +279,7 @@ impl ParentElement for ReplSessionsContainer {
 }
 
 impl RenderOnce for ReplSessionsContainer {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         v_flex()
             .p_4()
             .gap_2()

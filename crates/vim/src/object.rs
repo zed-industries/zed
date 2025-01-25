@@ -16,7 +16,7 @@ use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitte
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use ui::ModelContext;
+use ui::Context;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum Object {
@@ -85,7 +85,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(
         editor,
         cx,
@@ -161,7 +161,7 @@ pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
 }
 
 impl Vim {
-    fn object(&mut self, object: Object, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
         match self.mode {
             Mode::Normal => self.normal_object(object, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {

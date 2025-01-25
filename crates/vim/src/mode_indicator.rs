@@ -1,4 +1,4 @@
-use gpui::{div, Element, Model, ModelContext, Render, Subscription, WeakModel, Window};
+use gpui::{div, Element, Entity, Context, Render, Subscription, WeakEntity, Window};
 use itertools::Itertools;
 use workspace::{item::ItemHandle, ui::prelude::*, StatusItemView};
 
@@ -6,14 +6,14 @@ use crate::{Vim, VimEvent, VimGlobals};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
-    vim: Option<WeakModel<Vim>>,
+    vim: Option<WeakEntity<Vim>>,
     pending_keys: Option<String>,
     vim_subscription: Option<Subscription>,
 }
 
 impl ModeIndicator {
     /// Construct a new mode indicator in this window.
-    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe_pending_input(window, |this: &mut Self, window, cx| {
             this.update_pending_keys(window);
             cx.notify();
@@ -22,7 +22,7 @@ impl ModeIndicator {
 
         let handle = cx.model().clone();
         let window_handle = window.window_handle();
-        cx.observe_new_models::<Vim>(move |_, window, cx| {
+        cx.observe_new::<Vim>(move |_, window, cx| {
             let Some(window) = window else {
                 return;
             };
@@ -59,15 +59,15 @@ impl ModeIndicator {
         });
     }
 
-    fn vim(&self) -> Option<Model<Vim>> {
+    fn vim(&self) -> Option<Entity<Vim>> {
         self.vim.as_ref().and_then(|vim| vim.upgrade())
     }
 
     fn current_operators_description(
         &self,
-        vim: Model<Vim>,
+        vim: Entity<Vim>,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> String {
         let recording = Vim::globals(cx)
             .recording_register
@@ -98,7 +98,7 @@ impl ModeIndicator {
 }
 
 impl Render for ModeIndicator {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let vim = self.vim();
         let Some(vim) = vim else {
             return div().into_any();
@@ -134,7 +134,7 @@ impl StatusItemView for ModeIndicator {
         &mut self,
         _active_pane_item: Option<&dyn ItemHandle>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
     }
 }

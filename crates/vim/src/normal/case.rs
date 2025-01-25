@@ -1,6 +1,6 @@
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 
@@ -25,7 +25,7 @@ impl Vim {
         times: Option<usize>,
         mode: CaseTarget,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -68,7 +68,7 @@ impl Vim {
         around: bool,
         mode: CaseTarget,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -108,7 +108,7 @@ impl Vim {
         &mut self,
         _: &ChangeCase,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |c| {
             if c.is_lowercase() {
@@ -123,7 +123,7 @@ impl Vim {
         &mut self,
         _: &ConvertToUpperCase,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |c| c.to_uppercase().collect::<Vec<char>>())
     }
@@ -132,12 +132,12 @@ impl Vim {
         &mut self,
         _: &ConvertToLowerCase,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.manipulate_text(window, cx, |c| c.to_lowercase().collect::<Vec<char>>())
     }
 
-    fn manipulate_text<F>(&mut self, window: &mut Window, cx: &mut ModelContext<Self>, transform: F)
+    fn manipulate_text<F>(&mut self, window: &mut Window, cx: &mut Context<Self>, transform: F)
     where
         F: Fn(char) -> Vec<char> + Copy,
     {

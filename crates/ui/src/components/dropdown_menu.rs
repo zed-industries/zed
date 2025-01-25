@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{ClickEvent, Corner, CursorStyle, Model, MouseButton};
+use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};
 
@@ -7,7 +7,7 @@ use crate::{prelude::*, ContextMenu, PopoverMenu};
 pub struct DropdownMenu {
     id: ElementId,
     label: SharedString,
-    menu: Model<ContextMenu>,
+    menu: Entity<ContextMenu>,
     full_width: bool,
     disabled: bool,
 }
@@ -16,7 +16,7 @@ impl DropdownMenu {
     pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
-        menu: Model<ContextMenu>,
+        menu: Entity<ContextMenu>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -41,7 +41,7 @@ impl Disableable for DropdownMenu {
 }
 
 impl RenderOnce for DropdownMenu {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         PopoverMenu::new(self.id)
             .full_width(self.full_width)
             .menu(move |_window, _cx| Some(self.menu.clone()))
@@ -57,7 +57,7 @@ struct DropdownMenuTrigger {
     selected: bool,
     disabled: bool,
     cursor_style: CursorStyle,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl DropdownMenuTrigger {
@@ -93,10 +93,7 @@ impl Toggleable for DropdownMenuTrigger {
 }
 
 impl Clickable for DropdownMenuTrigger {
-    fn on_click(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
-    ) -> Self {
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -108,7 +105,7 @@ impl Clickable for DropdownMenuTrigger {
 }
 
 impl RenderOnce for DropdownMenuTrigger {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let disabled = self.disabled;
 
         h_flex()

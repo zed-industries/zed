@@ -33,7 +33,7 @@ impl WindowsWindowControls {
 }
 
 impl RenderOnce for WindowsWindowControls {
-    fn render(self, window: &mut Window, _: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
             g: 17.0 / 255.0,
@@ -117,7 +117,7 @@ impl WindowsCaptionButton {
 }
 
 impl RenderOnce for WindowsCaptionButton {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         // todo(windows) report this width to the Windows platform API
         // NOTE: this is intentionally hard coded. An option to use the 'native' size
         //       could be added when the width is reported to the Windows platform API

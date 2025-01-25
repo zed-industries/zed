@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, AppContext, ModelContext, Window};
+use gpui::{actions, App, Context, Window};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -50,16 +50,16 @@ impl settings::Settings for JournalSettings {
 
     type FileContent = Self;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
 
-pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
+pub fn init(_: Arc<AppState>, cx: &mut App) {
     JournalSettings::register(cx);
 
-    cx.observe_new_models(
-        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
+    cx.observe_new(
+        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {
                 new_journal_entry(workspace, window, cx);
             });
@@ -68,7 +68,7 @@ pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     .detach();
 }
 
-pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut AppContext) {
+pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut App) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,

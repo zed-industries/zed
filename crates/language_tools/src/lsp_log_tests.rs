@@ -4,7 +4,7 @@ use crate::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
 use lsp::LanguageServerName;
 use lsp_log::LogKind;
@@ -52,7 +52,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         },
     );
 
-    let log_store = cx.new_model(LogStore::new);
+    let log_store = cx.new(LogStore::new);
     log_store.update(cx, |store, cx| store.add_project(&project, cx));
 
     let _rust_buffer = project

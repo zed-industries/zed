@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, EntityId, EventEmitter, Subscription};
+use gpui::{App, EntityId, EventEmitter, Subscription};
 use ui::{prelude::*, ButtonLike, IconButtonShape, Tooltip};
 use workspace::item::{ItemEvent, ItemHandle};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
@@ -53,11 +53,11 @@ impl MultibufferHint {
         Self::counter().load(Ordering::Relaxed)
     }
 
-    fn increment_count(cx: &mut AppContext) {
+    fn increment_count(cx: &mut App) {
         Self::set_count(Self::shown_count() + 1, cx)
     }
 
-    pub(crate) fn set_count(count: usize, cx: &mut AppContext) {
+    pub(crate) fn set_count(count: usize, cx: &mut App) {
         Self::counter().store(count, Ordering::Relaxed);
 
         db::write_and_log(cx, move || {
@@ -65,12 +65,12 @@ impl MultibufferHint {
         });
     }
 
-    fn dismiss(&mut self, cx: &mut AppContext) {
+    fn dismiss(&mut self, cx: &mut App) {
         Self::set_count(NUMBER_OF_HINTS, cx)
     }
 
     /// Determines the toolbar location for this [`MultibufferHint`].
-    fn determine_toolbar_location(&mut self, cx: &mut ModelContext<Self>) -> ToolbarItemLocation {
+    fn determine_toolbar_location(&mut self, cx: &mut Context<Self>) -> ToolbarItemLocation {
         if Self::shown_count() >= NUMBER_OF_HINTS {
             return ToolbarItemLocation::Hidden;
         }
@@ -100,7 +100,7 @@ impl ToolbarItemView for MultibufferHint {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = active_pane_item.map(|item| item.boxed_clone());
@@ -130,7 +130,7 @@ impl ToolbarItemView for MultibufferHint {
 }
 
 impl Render for MultibufferHint {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .px_2()
             .justify_between()

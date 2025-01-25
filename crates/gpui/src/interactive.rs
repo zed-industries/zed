@@ -1,6 +1,6 @@
 use crate::{
-    point, seal::Sealed, Empty, IntoElement, Keystroke, ModelContext, Modifiers, Pixels, Point,
-    Render, Window,
+    point, seal::Sealed, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
+    Window,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -372,7 +372,7 @@ impl ExternalPaths {
 }
 
 impl Render for ExternalPaths {
-    fn render(&mut self, _: &mut Window, _: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // the platform will render icons for the dragged files
         Empty
     }
@@ -467,8 +467,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, Context, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
-        Keystroke, ModelContext, ParentElement, Render, TestAppContext, Window,
+        self as gpui, div, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
+        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window,
     };
 
     struct TestView {
@@ -480,7 +480,7 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")
@@ -505,7 +505,7 @@ mod test {
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |_, cx| {
-                cx.new_model(|cx| TestView {
+                cx.new(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,
                     focus_handle: cx.focus_handle(),

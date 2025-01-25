@@ -7,7 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint, Editor, ToOffset,
 };
-use gpui::{actions, ModelContext, Window};
+use gpui::{actions, Context, Window};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
@@ -44,7 +44,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &ToggleVisual, window, cx| {
         vim.toggle_mode(Mode::Visual, window, cx)
     });
@@ -150,7 +150,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -231,7 +231,7 @@ impl Vim {
         preserve_goal: bool,
         editor: &mut Editor,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
         mut move_selection: impl FnMut(
             &DisplaySnapshot,
             DisplayPoint,
@@ -339,7 +339,7 @@ impl Vim {
         &mut self,
         object: Object,
         window: &mut Window,
-        cx: &mut ModelContext<Vim>,
+        cx: &mut Context<Vim>,
     ) {
         if let Some(Operator::Object { around }) = self.active_operator() {
             self.pop_operator(window, cx);
@@ -413,7 +413,7 @@ impl Vim {
         &mut self,
         _: &VisualInsertEndOfLine,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
@@ -431,7 +431,7 @@ impl Vim {
         &mut self,
         _: &VisualInsertFirstNonWhiteSpace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.split_selection_into_lines(&Default::default(), window, cx);
@@ -448,7 +448,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
     }
 
-    fn toggle_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == mode {
             self.switch_mode(Mode::Normal, false, window, cx);
         } else {
@@ -456,7 +456,7 @@ impl Vim {
         }
     }
 
-    pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn other_end(&mut self, _: &OtherEnd, window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_with(|_, selection| {
@@ -470,7 +470,7 @@ impl Vim {
         &mut self,
         line_mode: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
@@ -537,7 +537,7 @@ impl Vim {
         &mut self,
         line_mode: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
@@ -563,7 +563,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -607,7 +607,7 @@ impl Vim {
         &mut self,
         _: &SelectNext,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count =
             Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
@@ -629,7 +629,7 @@ impl Vim {
         &mut self,
         _: &SelectPrevious,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count =
             Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
@@ -650,7 +650,7 @@ impl Vim {
         &mut self,
         direction: Direction,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         let Some(pane) = self.pane(window, cx) else {

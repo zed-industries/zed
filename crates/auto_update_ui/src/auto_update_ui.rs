@@ -2,7 +2,7 @@ mod update_notification;
 
 use auto_update::AutoUpdater;
 use editor::{Editor, MultiBuffer};
-use gpui::{actions, prelude::*, AppContext, Model, ModelContext, SharedString, Window};
+use gpui::{actions, prelude::*, App, Entity, Context, SharedString, Window};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -16,8 +16,8 @@ use crate::update_notification::UpdateNotification;
 
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
         });
@@ -34,7 +34,7 @@ struct ReleaseNotesBody {
 fn view_release_notes_locally(
     workspace: &mut Workspace,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     let release_channel = ReleaseChannel::global(cx);
 
@@ -90,14 +90,14 @@ fn view_release_notes_locally(
                             });
                             let language_registry = project.read(cx).languages().clone();
 
-                            let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+                            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
-                            let editor = cx.new_model(|cx| {
+                            let editor = cx.new(|cx| {
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx)
                             });
                             let workspace_handle = workspace.weak_handle();
-                            let markdown_preview: Model<MarkdownPreviewView> =
+                            let markdown_preview: Entity<MarkdownPreviewView> =
                                 MarkdownPreviewView::new(
                                     MarkdownPreviewMode::Default,
                                     editor,
@@ -126,7 +126,7 @@ fn view_release_notes_locally(
 
 pub fn notify_of_any_new_update(
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> Option<()> {
     let updater = AutoUpdater::get(cx)?;
     let version = updater.read(cx).current_version();
@@ -140,7 +140,7 @@ pub fn notify_of_any_new_update(
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     cx,
-                    |cx| cx.new_model(|_| UpdateNotification::new(version, workspace_handle)),
+                    |cx| cx.new(|_| UpdateNotification::new(version, workspace_handle)),
                 );
                 updater.update(cx, |updater, cx| {
                     updater

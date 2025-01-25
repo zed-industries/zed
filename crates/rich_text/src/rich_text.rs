@@ -1,6 +1,6 @@
 use futures::FutureExt;
 use gpui::{
-    AnyElement, AnyView, AppContext, ElementId, FontStyle, FontWeight, HighlightStyle,
+    AnyElement, AnyView, App, ElementId, FontStyle, FontWeight, HighlightStyle,
     InteractiveText, IntoElement, SharedString, StrikethroughStyle, StyledText, UnderlineStyle,
     Window,
 };
@@ -41,7 +41,7 @@ pub struct RichText {
 
     pub custom_ranges: Vec<Range<usize>>,
     custom_ranges_tooltip_fn:
-        Option<Arc<dyn Fn(usize, Range<usize>, &mut Window, &mut AppContext) -> Option<AnyView>>>,
+        Option<Arc<dyn Fn(usize, Range<usize>, &mut Window, &mut App) -> Option<AnyView>>>,
 }
 
 /// Allows one to specify extra links to the rendered markdown, which can be used
@@ -86,12 +86,12 @@ impl RichText {
 
     pub fn set_tooltip_builder_for_custom_ranges(
         &mut self,
-        f: impl Fn(usize, Range<usize>, &mut Window, &mut AppContext) -> Option<AnyView> + 'static,
+        f: impl Fn(usize, Range<usize>, &mut Window, &mut App) -> Option<AnyView> + 'static,
     ) {
         self.custom_ranges_tooltip_fn = Some(Arc::new(f));
     }
 
-    pub fn element(&self, id: ElementId, window: &mut Window, cx: &mut AppContext) -> AnyElement {
+    pub fn element(&self, id: ElementId, window: &mut Window, cx: &mut App) -> AnyElement {
         let theme = cx.theme();
         let code_background = theme.colors().surface_background;
 

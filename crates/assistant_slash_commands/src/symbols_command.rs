@@ -4,11 +4,11 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use editor::Editor;
-use gpui::{Task, WeakModel};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
-use ui::{AppContext, IconName, Window};
+use ui::{App, IconName, Window};
 use workspace::Workspace;
 
 pub struct OutlineSlashCommand;
@@ -34,9 +34,9 @@ impl SlashCommand for OutlineSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakModel<Workspace>>,
+        _workspace: Option<WeakEntity<Workspace>>,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
     }
@@ -50,10 +50,10 @@ impl SlashCommand for OutlineSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let Some(active_item) = workspace.active_item(cx) else {

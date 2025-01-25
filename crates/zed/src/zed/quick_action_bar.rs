@@ -11,8 +11,8 @@ use editor::actions::{
 use editor::{Editor, EditorSettings};
 use gpui::{
     Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
-    WeakModel, Window,
+    InteractiveElement, Entity, Context, ParentElement, Render, Styled, Subscription,
+    WeakEntity, Window,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
@@ -29,18 +29,18 @@ use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
     active_item: Option<Box<dyn ItemHandle>>,
-    buffer_search_bar: Model<BufferSearchBar>,
+    buffer_search_bar: Entity<BufferSearchBar>,
     show: bool,
     toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
     toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl QuickActionBar {
     pub fn new(
-        buffer_search_bar: Model<BufferSearchBar>,
+        buffer_search_bar: Entity<BufferSearchBar>,
         workspace: &Workspace,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
@@ -57,13 +57,13 @@ impl QuickActionBar {
         this
     }
 
-    fn active_editor(&self) -> Option<Model<Editor>> {
+    fn active_editor(&self) -> Option<Entity<Editor>> {
         self.active_item
             .as_ref()
             .and_then(|item| item.downcast::<Editor>())
     }
 
-    fn apply_settings(&mut self, cx: &mut ModelContext<Self>) {
+    fn apply_settings(&mut self, cx: &mut Context<Self>) {
         let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
         if new_show != self.show {
             self.show = new_show;
@@ -83,7 +83,7 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -408,7 +408,7 @@ struct QuickActionBarButton {
     action: Box<dyn Action>,
     focus_handle: FocusHandle,
     tooltip: SharedString,
-    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
 }
 
 impl QuickActionBarButton {
@@ -419,7 +419,7 @@ impl QuickActionBarButton {
         action: Box<dyn Action>,
         focus_handle: FocusHandle,
         tooltip: impl Into<SharedString>,
-        on_click: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -434,7 +434,7 @@ impl QuickActionBarButton {
 }
 
 impl RenderOnce for QuickActionBarButton {
-    fn render(self, _window: &mut Window, _: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         let tooltip = self.tooltip.clone();
         let action = self.action.boxed_clone();
 
@@ -455,7 +455,7 @@ impl ToolbarItemView for QuickActionBar {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
         if let Some(active_item) = active_pane_item {

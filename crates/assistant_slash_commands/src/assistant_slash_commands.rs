@@ -17,7 +17,7 @@ mod symbols_command;
 mod tab_command;
 mod terminal_command;
 
-use gpui::AppContext;
+use gpui::App;
 use language::{CodeLabel, HighlightId};
 use ui::ActiveTheme as _;
 
@@ -43,7 +43,7 @@ pub use crate::terminal_command::*;
 pub fn create_label_for_command(
     command_name: &str,
     arguments: &[&str],
-    cx: &AppContext,
+    cx: &App,
 ) -> CodeLabel {
     let mut label = CodeLabel::default();
     label.push_str(command_name, None);

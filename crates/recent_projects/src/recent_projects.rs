@@ -6,8 +6,8 @@ pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
-    ModelContext, Subscription, Task, WeakModel, Window,
+    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    Context, Subscription, Task, WeakEntity, Window,
 };
 use ordered_float::OrderedFloat;
 use picker::{
@@ -29,17 +29,17 @@ use workspace::{
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     SshSettings::register(cx);
-    cx.observe_new_models(RecentProjects::register).detach();
-    cx.observe_new_models(RemoteServerProjects::register)
+    cx.observe_new(RecentProjects::register).detach();
+    cx.observe_new(RemoteServerProjects::register)
         .detach();
-    cx.observe_new_models(DisconnectedOverlay::register)
+    cx.observe_new(DisconnectedOverlay::register)
         .detach();
 }
 
 pub struct RecentProjects {
-    pub picker: Model<Picker<RecentProjectsDelegate>>,
+    pub picker: Entity<Picker<RecentProjectsDelegate>>,
     rem_width: f32,
     _subscription: Subscription,
 }
@@ -51,9 +51,9 @@ impl RecentProjects {
         delegate: RecentProjectsDelegate,
         rem_width: f32,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new_model(|cx| {
+        let picker = cx.new(|cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
                 Picker::list(delegate, window, cx)
@@ -89,7 +89,7 @@ impl RecentProjects {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _cx: &mut ModelContext<Workspace>,
+        _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
@@ -109,7 +109,7 @@ impl RecentProjects {
         workspace: &mut Workspace,
         create_new_window: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let weak = cx.model().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
@@ -123,13 +123,13 @@ impl RecentProjects {
 impl EventEmitter<DismissEvent> for RecentProjects {}
 
 impl Focusable for RecentProjects {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for RecentProjects {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
@@ -142,7 +142,7 @@ impl Render for RecentProjects {
 }
 
 pub struct RecentProjectsDelegate {
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
@@ -154,7 +154,7 @@ pub struct RecentProjectsDelegate {
 }
 
 impl RecentProjectsDelegate {
-    fn new(workspace: WeakModel<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
+    fn new(workspace: WeakEntity<Workspace>, create_new_window: bool, render_paths: bool) -> Self {
         Self {
             workspace,
             workspaces: Vec::new(),
@@ -179,7 +179,7 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, window: &mut Window, _: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, window: &mut Window, _: &mut App) -> Arc<str> {
         let (create_window, reuse_window) = if self.create_new_window {
             (
                 window.keystroke_text_for(&menu::Confirm),
@@ -208,7 +208,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_match_index = ix;
     }
@@ -217,7 +217,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         &mut self,
         query: String,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query.trim_start();
         let smart_case = query.chars().any(|c| c.is_uppercase());
@@ -265,7 +265,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         &mut self,
         secondary: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if let Some((selected_match, workspace)) = self
             .matches
@@ -356,9 +356,9 @@ impl PickerDelegate for RecentProjectsDelegate {
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _: &mut ModelContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _: &mut Context<Picker<Self>>) {}
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut AppContext) -> SharedString {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
         if self.workspaces.is_empty() {
             "Recently opened projects will show up here".into()
         } else {
@@ -371,7 +371,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = self.matches.get(ix)?;
 
@@ -449,7 +449,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 })
                 .tooltip(move |_, cx| {
                     let tooltip_highlighted_location = highlighted_match.clone();
-                    cx.new_model(|_| MatchTooltip {
+                    cx.new(|_| MatchTooltip {
                         highlighted_location: tooltip_highlighted_location,
                     })
                     .into()
@@ -460,7 +460,7 @@ impl PickerDelegate for RecentProjectsDelegate {
     fn render_footer(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         Some(
             h_flex()
@@ -543,7 +543,7 @@ impl RecentProjectsDelegate {
         &self,
         ix: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if let Some(selected_match) = self.matches.get(ix) {
             let (workspace_id, _) = self.workspaces[selected_match.candidate_id];
@@ -569,7 +569,7 @@ impl RecentProjectsDelegate {
     fn is_current_workspace(
         &self,
         workspace_id: WorkspaceId,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> bool {
         if let Some(workspace) = self.workspace.upgrade() {
             let workspace = workspace.read(cx);
@@ -586,7 +586,7 @@ struct MatchTooltip {
 }
 
 impl Render for MatchTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         tooltip_container(window, cx, |div, _, _| {
             self.highlighted_location.render_paths_children(div)
         })
@@ -719,7 +719,7 @@ mod tests {
     fn open_recent_projects(
         workspace: &WindowHandle<Workspace>,
         cx: &mut TestAppContext,
-    ) -> Model<Picker<RecentProjectsDelegate>> {
+    ) -> Entity<Picker<RecentProjectsDelegate>> {
         cx.dispatch_action(
             (*workspace).into(),
             OpenRecent {

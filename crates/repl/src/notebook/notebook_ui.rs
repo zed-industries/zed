@@ -9,8 +9,8 @@ use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
-    actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, Focusable,
-    ListScrollEvent, ListState, Model, Point, Task,
+    actions, list, prelude::*, AnyElement, App, EventEmitter, FocusHandle, Focusable,
+    ListScrollEvent, ListState, Entity, Point, Task,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -46,7 +46,7 @@ pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
         workspace::register_project_item::<NotebookEditor>(cx);
     }
@@ -66,10 +66,10 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct NotebookEditor {
     languages: Arc<LanguageRegistry>,
-    project: Model<Project>,
+    project: Entity<Project>,
 
     focus_handle: FocusHandle,
-    notebook_item: Model<NotebookItem>,
+    notebook_item: Entity<NotebookItem>,
 
     remote_id: Option<ViewId>,
     cell_list: ListState,
@@ -81,10 +81,10 @@ pub struct NotebookEditor {
 
 impl NotebookEditor {
     pub fn new(
-        project: Model<Project>,
-        notebook_item: Model<NotebookItem>,
+        project: Entity<Project>,
+        notebook_item: Entity<NotebookItem>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
@@ -154,7 +154,7 @@ impl NotebookEditor {
         }
     }
 
-    fn has_outputs(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn has_outputs(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.cell_map.values().any(|cell| {
             if let Cell::Code(code_cell) = cell {
                 code_cell.read(cx).has_outputs()
@@ -164,7 +164,7 @@ impl NotebookEditor {
         })
     }
 
-    fn clear_outputs(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn clear_outputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for cell in self.cell_map.values() {
             if let Cell::Code(code_cell) = cell {
                 code_cell.update(cx, |cell, _cx| {
@@ -174,7 +174,7 @@ impl NotebookEditor {
         }
     }
 
-    fn run_cells(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn run_cells(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         println!("Cells would all run here, if that was implemented!");
     }
 
@@ -182,24 +182,24 @@ impl NotebookEditor {
         &mut self,
         _: &OpenNotebook,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         println!("Open notebook triggered");
     }
 
-    fn move_cell_up(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_cell_up(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         println!("Move cell up triggered");
     }
 
-    fn move_cell_down(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_cell_down(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         println!("Move cell down triggered");
     }
 
-    fn add_markdown_block(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn add_markdown_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         println!("Add markdown block triggered");
     }
 
-    fn add_code_block(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn add_code_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         println!("Add code block triggered");
     }
 
@@ -216,7 +216,7 @@ impl NotebookEditor {
         index: usize,
         jump_to_index: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // let previous_index = self.selected_cell_index;
         self.selected_cell_index = index;
@@ -233,7 +233,7 @@ impl NotebookEditor {
         &mut self,
         _: &menu::SelectNext,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.cell_count();
         if count > 0 {
@@ -252,7 +252,7 @@ impl NotebookEditor {
         &mut self,
         _: &menu::SelectPrev,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.cell_count();
         if count > 0 {
@@ -267,7 +267,7 @@ impl NotebookEditor {
         &mut self,
         _: &menu::SelectFirst,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.cell_count();
         if count > 0 {
@@ -280,7 +280,7 @@ impl NotebookEditor {
         &mut self,
         _: &menu::SelectLast,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.cell_count();
         if count > 0 {
@@ -289,11 +289,11 @@ impl NotebookEditor {
         }
     }
 
-    fn jump_to_cell(&mut self, index: usize, _window: &mut Window, _cx: &mut ModelContext<Self>) {
+    fn jump_to_cell(&mut self, index: usize, _window: &mut Window, _cx: &mut Context<Self>) {
         self.cell_list.scroll_to_reveal_item(index);
     }
 
-    fn button_group(window: &mut Window, cx: &mut ModelContext<Self>) -> Div {
+    fn button_group(window: &mut Window, cx: &mut Context<Self>) -> Div {
         v_flex()
             .gap(DynamicSpacing::Base04.rems(cx))
             .items_center()
@@ -310,7 +310,7 @@ impl NotebookEditor {
         id: impl Into<SharedString>,
         icon: IconName,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
         IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
@@ -319,7 +319,7 @@ impl NotebookEditor {
     fn render_notebook_controls(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_outputs = self.has_outputs(window, cx);
 
@@ -469,7 +469,7 @@ impl NotebookEditor {
         index: usize,
         cell: &Cell,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let cell_position = self.cell_position(index);
 
@@ -502,7 +502,7 @@ impl NotebookEditor {
 }
 
 impl Render for NotebookEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("notebook")
             .track_focus(&self.focus_handle)
@@ -547,7 +547,7 @@ impl Render for NotebookEditor {
 }
 
 impl Focusable for NotebookEditor {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -565,10 +565,10 @@ pub struct NotebookItem {
 
 impl project::ProjectItem for NotebookItem {
     fn try_open(
-        project: &Model<Project>,
+        project: &Entity<Project>,
         path: &ProjectPath,
-        cx: &mut AppContext,
-    ) -> Option<Task<gpui::Result<Model<Self>>>> {
+        cx: &mut App,
+    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
         let fs = project.read(cx).fs().clone();
@@ -604,7 +604,7 @@ impl project::ProjectItem for NotebookItem {
                     .context("Entry not found")?
                     .id;
 
-                cx.new_model(|_| NotebookItem {
+                cx.new(|_| NotebookItem {
                     path: abs_path,
                     project_path: path,
                     languages,
@@ -617,11 +617,11 @@ impl project::ProjectItem for NotebookItem {
         }
     }
 
-    fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+    fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
         Some(self.id)
     }
 
-    fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+    fn project_path(&self, _: &App) -> Option<ProjectPath> {
         Some(self.project_path.clone())
     }
 
@@ -713,25 +713,25 @@ impl Item for NotebookEditor {
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_model(|cx| {
+        Some(cx.new(|cx| {
             Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)
         }))
     }
 
     fn for_each_project_item(
         &self,
-        cx: &AppContext,
+        cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
     }
 
-    fn is_singleton(&self, _cx: &AppContext) -> bool {
+    fn is_singleton(&self, _cx: &App) -> bool {
         true
     }
 
@@ -739,7 +739,7 @@ impl Item for NotebookEditor {
         &self,
         params: TabContentParams,
         window: &Window,
-        cx: &AppContext,
+        cx: &App,
     ) -> AnyElement {
         let path = &self.notebook_item.read(cx).path;
         let title = path
@@ -754,7 +754,7 @@ impl Item for NotebookEditor {
             .into_any_element()
     }
 
-    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(IconName::Book.into())
     }
 
@@ -763,12 +763,12 @@ impl Item for NotebookEditor {
     }
 
     // TODO
-    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
+    fn pixel_position_of_cursor(&self, _: &App) -> Option<Point<Pixels>> {
         None
     }
 
     // TODO
-    fn as_searchable(&self, _: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
@@ -776,22 +776,22 @@ impl Item for NotebookEditor {
         &mut self,
         _: workspace::ItemNavHistory,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) {
         // TODO
     }
 
     // TODO
-    fn can_save(&self, _cx: &AppContext) -> bool {
+    fn can_save(&self, _cx: &App) -> bool {
         false
     }
     // TODO
     fn save(
         &mut self,
         _format: bool,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save() must be implemented if can_save() returns true")
     }
@@ -799,24 +799,24 @@ impl Item for NotebookEditor {
     // TODO
     fn save_as(
         &mut self,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         _path: ProjectPath,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
     }
     // TODO
     fn reload(
         &mut self,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
+    fn is_dirty(&self, cx: &App) -> bool {
         self.cell_map.values().any(|cell| {
             if let Cell::Code(code_cell) = cell {
                 code_cell.read(cx).is_dirty(cx)
@@ -834,10 +834,10 @@ impl ProjectItem for NotebookEditor {
     type Item = NotebookItem;
 
     fn for_project_item(
-        project: Model<Project>,
-        item: Model<Self::Item>,
+        project: Entity<Project>,
+        item: Entity<Self::Item>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self
     where
         Self: Sized,

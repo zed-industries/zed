@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, AppContext, Background, BackgroundTag,
+    black, phi, point, quad, rems, size, AbsoluteLength, App, Background, BackgroundTag,
     Bounds, ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels,
     Edges, EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length,
     Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
@@ -551,8 +551,8 @@ impl Style {
         &self,
         bounds: Bounds<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
-        continuation: impl FnOnce(&mut Window, &mut AppContext),
+        cx: &mut App,
+        continuation: impl FnOnce(&mut Window, &mut App),
     ) {
         #[cfg(debug_assertions)]
         if self.debug_below {

@@ -1,8 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, DispatchPhase, Effect, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver,
-    Model, Reservation, SubscriberSet, Subscription, Task, WeakFocusHandle, WeakModel, Window,
-    WindowHandle,
+    AnyView, AnyWindowHandle, App, AppContext, AsyncAppContext, DispatchPhase, Effect, EntityId,
+    EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation,
+    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -14,19 +13,19 @@ use std::{
     sync::Arc,
 };
 
-use super::{AsyncWindowContext, KeystrokeEvent};
+use super::{AsyncWindowContext, Entity, KeystrokeEvent};
 
 /// The app context, with specialized behavior for the given model.
 #[derive(Deref, DerefMut)]
-pub struct ModelContext<'a, T> {
+pub struct Context<'a, T> {
     #[deref]
     #[deref_mut]
-    app: &'a mut AppContext,
-    model_state: WeakModel<T>,
+    app: &'a mut App,
+    model_state: WeakEntity<T>,
 }
 
-impl<'a, T: 'static> ModelContext<'a, T> {
-    pub(crate) fn new(app: &'a mut AppContext, model_state: WeakModel<T>) -> Self {
+impl<'a, T: 'static> Context<'a, T> {
+    pub(crate) fn new_context(app: &'a mut App, model_state: WeakEntity<T>) -> Self {
         Self { app, model_state }
     }
 
@@ -36,28 +35,27 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Returns a handle to the model belonging to this context.
-    pub fn model(&self) -> Model<T> {
+    pub fn model(&self) -> Entity<T> {
         self.weak_model()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
     }
 
     /// Returns a weak handle to the model belonging to this context.
-    pub fn weak_model(&self) -> WeakModel<T> {
+    pub fn weak_model(&self) -> WeakEntity<T> {
         self.model_state.clone()
     }
 
     /// Arranges for the given function to be called whenever [`ModelContext::notify`] or
     /// [`ViewContext::notify`](crate::ViewContext::notify) is called with the given model or view.
-    pub fn observe<W, E>(
+    pub fn observe<W>(
         &mut self,
-        entity: &E,
-        mut on_notify: impl FnMut(&mut T, E, &mut ModelContext<'_, T>) + 'static,
+        entity: &Entity<W>,
+        mut on_notify: impl FnMut(&mut T, Entity<W>, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
         W: 'static,
-        E: Entity<W>,
     {
         let this = self.weak_model();
         self.app.observe_internal(entity, move |e, cx| {
@@ -71,15 +69,14 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Subscribe to an event type from another model or view
-    pub fn subscribe<T2, E, Evt>(
+    pub fn subscribe<T2, Evt>(
         &mut self,
-        entity: &E,
-        mut on_event: impl FnMut(&mut T, E, &Evt, &mut ModelContext<'_, T>) + 'static,
+        entity: &Entity<T2>,
+        mut on_event: impl FnMut(&mut T, Entity<T2>, &Evt, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
         T2: 'static + EventEmitter<Evt>,
-        E: Entity<T2>,
         Evt: 'static,
     {
         let this = self.weak_model();
@@ -94,10 +91,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Register a callback to be invoked when GPUI releases this model.
-    pub fn on_release(
-        &self,
-        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
-    ) -> Subscription
+    pub fn on_release(&self, on_release: impl FnOnce(&mut T, &mut App) + 'static) -> Subscription
     where
         T: 'static,
     {
@@ -113,15 +107,14 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Register a callback to be run on the release of another model or view
-    pub fn observe_release<T2, E>(
+    pub fn observe_release<T2>(
         &self,
-        entity: &E,
-        on_release: impl FnOnce(&mut T, &mut T2, &mut ModelContext<'_, T>) + 'static,
+        entity: &Entity<T2>,
+        on_release: impl FnOnce(&mut T, &mut T2, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: Any,
         T2: 'static,
-        E: Entity<T2>,
     {
         let entity_id = entity.entity_id();
         let this = self.weak_model();
@@ -141,7 +134,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// Register a callback to for updates to the given global
     pub fn observe_global<G: 'static>(
         &mut self,
-        mut f: impl FnMut(&mut T, &mut ModelContext<'_, T>) + 'static,
+        mut f: impl FnMut(&mut T, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -159,7 +152,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// The future returned from this callback will be polled for up to [crate::SHUTDOWN_TIMEOUT] until the app fully quits.
     pub fn on_app_quit<Fut>(
         &self,
-        mut on_quit: impl FnMut(&mut T, &mut ModelContext<T>) -> Fut + 'static,
+        mut on_quit: impl FnMut(&mut T, &mut Context<T>) -> Fut + 'static,
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()>,
@@ -190,7 +183,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// Spawn the future returned by the given function.
     /// The function is provided a weak handle to the model owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakModel<T>, AsyncAppContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncAppContext) -> Fut) -> Task<R>
     where
         T: 'static,
         Fut: Future<Output = R> + 'static,
@@ -207,16 +200,16 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// callbacks. This method provides a convenient way to do so.
     pub fn listener<E: ?Sized>(
         &self,
-        f: impl Fn(&mut T, &E, &mut Window, &mut ModelContext<T>) + 'static,
-    ) -> impl Fn(&E, &mut Window, &mut AppContext) + 'static {
+        f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
+    ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
         let view = self.model().downgrade();
-        move |e: &E, window: &mut Window, cx: &mut AppContext| {
+        move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
     }
 
     /// Focus the given view in the given window. View type is required to implement Focusable.
-    pub fn focus_view<W: Focusable>(&mut self, view: &Model<W>, window: &mut Window) {
+    pub fn focus_view<W: Focusable>(&mut self, view: &Entity<W>, window: &mut Window) {
         window.focus(&view.focus_handle(self));
     }
 
@@ -224,7 +217,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn on_next_frame(
         &self,
         window: &mut Window,
-        f: impl FnOnce(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        f: impl FnOnce(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) where
         T: 'static,
     {
@@ -237,7 +230,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn defer_in(
         &mut self,
         window: &Window,
-        f: impl FnOnce(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        f: impl FnOnce(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) {
         let view = self.model();
         window.defer(self, move |window, cx| {
@@ -248,9 +241,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// Observe another model or view for changes to its state, as tracked by [`ModelContext::notify`].
     pub fn observe_in<V2>(
         &mut self,
-        observed: &Model<V2>,
+        observed: &Entity<V2>,
         window: &mut Window,
-        mut on_notify: impl FnMut(&mut T, Model<V2>, &mut Window, &mut ModelContext<'_, T>) + 'static,
+        mut on_notify: impl FnMut(&mut T, Entity<V2>, &mut Window, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         V2: 'static,
@@ -286,9 +279,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
     pub fn subscribe_in<Emitter, Evt>(
         &mut self,
-        emitter: &Model<Emitter>,
+        emitter: &Entity<Emitter>,
         window: &Window,
-        mut on_event: impl FnMut(&mut T, &Model<Emitter>, &Evt, &mut Window, &mut ModelContext<'_, T>)
+        mut on_event: impl FnMut(&mut T, &Entity<Emitter>, &Evt, &mut Window, &mut Context<'_, T>)
             + 'static,
     ) -> Subscription
     where
@@ -330,7 +323,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn on_release_in(
         &mut self,
         window: &Window,
-        on_release: impl FnOnce(&mut T, AnyWindowHandle, &mut AppContext) + 'static,
+        on_release: impl FnOnce(&mut T, AnyWindowHandle, &mut App) + 'static,
     ) -> Subscription {
         let window_handle = window.handle;
         let (subscription, activate) = self.release_listeners.insert(
@@ -347,9 +340,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release_in<V2>(
         &self,
-        observed: &Model<V2>,
+        observed: &Entity<V2>,
         window: &Window,
-        mut on_release: impl FnMut(&mut T, &mut V2, &mut Window, &mut ModelContext<'_, T>) + 'static,
+        mut on_release: impl FnMut(&mut T, &mut V2, &mut Window, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
@@ -376,7 +369,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_window_bounds(
         &self,
         window: &mut Window,
-        mut callback: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let (subscription, activate) = window.bounds_observers.insert(
@@ -394,7 +387,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_window_activation(
         &self,
         window: &mut Window,
-        mut callback: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let (subscription, activate) = window.activation_observers.insert(
@@ -412,7 +405,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_window_appearance(
         &self,
         window: &mut Window,
-        mut callback: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let (subscription, activate) = window.appearance_observers.insert(
@@ -431,7 +424,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        mut f: impl FnMut(&mut T, &KeystrokeEvent, &mut Window, &mut ModelContext<T>) + 'static,
+        mut f: impl FnMut(&mut T, &KeystrokeEvent, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
@@ -460,7 +453,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_pending_input(
         &self,
         window: &mut Window,
-        mut callback: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let (subscription, activate) = window.pending_input_observers.insert(
@@ -480,7 +473,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         handle: &FocusHandle,
         window: &mut Window,
-        mut listener: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let focus_id = handle.id;
@@ -506,7 +499,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         handle: &FocusHandle,
         window: &mut Window,
-        mut listener: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let focus_id = handle.id;
@@ -529,7 +522,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         handle: &FocusHandle,
         window: &mut Window,
-        mut listener: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let focus_id = handle.id;
@@ -555,7 +548,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn on_focus_lost(
         &mut self,
         window: &mut Window,
-        mut listener: impl FnMut(&mut T, &mut Window, &mut ModelContext<T>) + 'static,
+        mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let (subscription, activate) = window.focus_lost_listeners.insert(
@@ -575,7 +568,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         handle: &FocusHandle,
         window: &mut Window,
-        mut listener: impl FnMut(&mut T, FocusOutEvent, &mut Window, &mut ModelContext<T>) + 'static,
+        mut listener: impl FnMut(&mut T, FocusOutEvent, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
         let view = self.weak_model();
         let focus_id = handle.id;
@@ -607,7 +600,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn spawn_in<Fut, R>(
         &self,
         window: &Window,
-        f: impl FnOnce(WeakModel<T>, AsyncWindowContext) -> Fut,
+        f: impl FnOnce(WeakEntity<T>, AsyncWindowContext) -> Fut,
     ) -> Task<R>
     where
         R: 'static,
@@ -621,7 +614,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     pub fn observe_global_in<G: Global>(
         &mut self,
         window: &Window,
-        mut f: impl FnMut(&mut T, &mut Window, &mut ModelContext<'_, T>) + 'static,
+        mut f: impl FnMut(&mut T, &mut Window, &mut Context<'_, T>) + 'static,
     ) -> Subscription {
         let window_handle = window.handle;
         let view = self.weak_model();
@@ -644,7 +637,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         action_type: TypeId,
         window: &mut Window,
-        listener: impl Fn(&mut T, &dyn Any, DispatchPhase, &mut Window, &mut ModelContext<T>) + 'static,
+        listener: impl Fn(&mut T, &dyn Any, DispatchPhase, &mut Window, &mut Context<T>) + 'static,
     ) {
         let handle = self.weak_model();
         window.on_action(action_type, move |action, phase, window, cx| {
@@ -668,7 +661,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 }
 
-impl<'a, T> ModelContext<'a, T> {
+impl<'a, T> Context<'a, T> {
     /// Emit an event of the specified type, which can be handled by other entities that have subscribed via `subscribe` methods on their respective contexts.
     pub fn emit<Evt>(&mut self, event: Evt)
     where
@@ -683,14 +676,11 @@ impl<'a, T> ModelContext<'a, T> {
     }
 }
 
-impl<'a, T> Context for ModelContext<'a, T> {
+impl<'a, T> AppContext for Context<'a, T> {
     type Result<U> = U;
 
-    fn new_model<U: 'static>(
-        &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, U>) -> U,
-    ) -> Model<U> {
-        self.app.new_model(build_model)
+    fn new<U: 'static>(&mut self, build_model: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U> {
+        self.app.new(build_model)
     }
 
     fn reserve_model<U: 'static>(&mut self) -> Reservation<U> {
@@ -700,23 +690,23 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn insert_model<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
-        build_model: impl FnOnce(&mut ModelContext<'_, U>) -> U,
-    ) -> Self::Result<Model<U>> {
+        build_model: impl FnOnce(&mut Context<'_, U>) -> U,
+    ) -> Self::Result<Entity<U>> {
         self.app.insert_model(reservation, build_model)
     }
 
     fn update_model<U: 'static, R>(
         &mut self,
-        handle: &Model<U>,
-        update: impl FnOnce(&mut U, &mut ModelContext<'_, U>) -> R,
+        handle: &Entity<U>,
+        update: impl FnOnce(&mut U, &mut Context<'_, U>) -> R,
     ) -> R {
         self.app.update_model(handle, update)
     }
 
     fn read_model<U, R>(
         &self,
-        handle: &Model<U>,
-        read: impl FnOnce(&U, &AppContext) -> R,
+        handle: &Entity<U>,
+        read: impl FnOnce(&U, &App) -> R,
     ) -> Self::Result<R>
     where
         U: 'static,
@@ -726,7 +716,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
 
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>
     where
-        F: FnOnce(AnyView, &mut Window, &mut AppContext) -> R,
+        F: FnOnce(AnyView, &mut Window, &mut App) -> R,
     {
         self.app.update_window(window, update)
     }
@@ -734,7 +724,7 @@ impl<'a, T> Context for ModelContext<'a, T> {
     fn read_window<U, R>(
         &self,
         window: &WindowHandle<U>,
-        read: impl FnOnce(Model<U>, &AppContext) -> R,
+        read: impl FnOnce(Entity<U>, &App) -> R,
     ) -> Result<R>
     where
         U: 'static,
@@ -743,14 +733,14 @@ impl<'a, T> Context for ModelContext<'a, T> {
     }
 }
 
-impl<T> Borrow<AppContext> for ModelContext<'_, T> {
-    fn borrow(&self) -> &AppContext {
+impl<T> Borrow<App> for Context<'_, T> {
+    fn borrow(&self) -> &App {
         self.app
     }
 }
 
-impl<T> BorrowMut<AppContext> for ModelContext<'_, T> {
-    fn borrow_mut(&mut self) -> &mut AppContext {
+impl<T> BorrowMut<App> for Context<'_, T> {
+    fn borrow_mut(&mut self) -> &mut App {
         self.app
     }
 }

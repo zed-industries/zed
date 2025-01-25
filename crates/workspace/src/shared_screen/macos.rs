@@ -7,8 +7,8 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, surface, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement, Model,
-    ModelContext, ParentElement, Render, SharedString, Styled, Task, Window,
+    div, surface, App, EventEmitter, FocusHandle, Focusable, InteractiveElement, Entity,
+    Context, ParentElement, Render, SharedString, Styled, Task, Window,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};
@@ -33,7 +33,7 @@ impl SharedScreen {
         peer_id: PeerId,
         user: Arc<User>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         cx.focus_handle();
         let mut frames = track.frames();
@@ -61,12 +61,12 @@ impl SharedScreen {
 impl EventEmitter<Event> for SharedScreen {}
 
 impl Focusable for SharedScreen {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -83,21 +83,21 @@ impl Render for SharedScreen {
 impl Item for SharedScreen {
     type Event = Event;
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }
     }
 
-    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
@@ -109,7 +109,7 @@ impl Item for SharedScreen {
         &mut self,
         history: ItemNavHistory,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) {
         self.nav_history = Some(history);
     }
@@ -118,10 +118,10 @@ impl Item for SharedScreen {
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>> {
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
         let track = self.track.upgrade()?;
-        Some(cx.new_model(|cx| Self::new(track, self.peer_id, self.user.clone(), window, cx)))
+        Some(cx.new(|cx| Self::new(track, self.peer_id, self.user.clone(), window, cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

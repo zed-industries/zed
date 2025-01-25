@@ -4,8 +4,8 @@ use crate::{
     List, ListItem, ListSeparator, ListSubHeader,
 };
 use gpui::{
-    px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Model, Render, Subscription,
+    px, Action, AnyElement, App, AppContext as _, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Subscription,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
@@ -18,16 +18,16 @@ pub enum ContextMenuItem {
     Label(SharedString),
     Entry(ContextMenuEntry),
     CustomEntry {
-        entry_render: Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
-        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
+        entry_render: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
         selectable: bool,
     },
 }
 
 impl ContextMenuItem {
     pub fn custom_entry(
-        entry_render: impl Fn(&mut Window, &mut AppContext) -> AnyElement + 'static,
-        handler: impl Fn(&mut Window, &mut AppContext) + 'static,
+        entry_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         Self::CustomEntry {
             entry_render: Box::new(entry_render),
@@ -44,7 +44,7 @@ pub struct ContextMenuEntry {
     icon_position: IconPosition,
     icon_size: IconSize,
     icon_color: Option<Color>,
-    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
+    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
 }
@@ -94,7 +94,7 @@ impl ContextMenuEntry {
         self
     }
 
-    pub fn handler(mut self, handler: impl Fn(&mut Window, &mut AppContext) + 'static) -> Self {
+    pub fn handler(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.handler = Rc::new(move |_, window, cx| handler(window, cx));
         self
     }
@@ -123,7 +123,7 @@ pub struct ContextMenu {
 }
 
 impl Focusable for ContextMenu {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -135,10 +135,10 @@ impl FluentBuilder for ContextMenu {}
 impl ContextMenu {
     pub fn build(
         window: &mut Window,
-        cx: &mut AppContext,
-        f: impl FnOnce(Self, &mut Window, &mut ModelContext<Self>) -> Self,
-    ) -> Model<Self> {
-        cx.new_model(|cx| {
+        cx: &mut App,
+        f: impl FnOnce(Self, &mut Window, &mut Context<Self>) -> Self,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             let _on_blur_subscription = cx.on_blur(
                 &focus_handle,
@@ -192,7 +192,7 @@ impl ContextMenu {
         mut self,
         label: impl Into<SharedString>,
         action: Option<Box<dyn Action>>,
-        handler: impl Fn(&mut Window, &mut AppContext) + 'static,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: None,
@@ -214,7 +214,7 @@ impl ContextMenu {
         toggled: bool,
         position: IconPosition,
         action: Option<Box<dyn Action>>,
-        handler: impl Fn(&mut Window, &mut AppContext) + 'static,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: Some((position, toggled)),
@@ -232,7 +232,7 @@ impl ContextMenu {
 
     pub fn custom_row(
         mut self,
-        entry_render: impl Fn(&mut Window, &mut AppContext) -> AnyElement + 'static,
+        entry_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
@@ -244,8 +244,8 @@ impl ContextMenu {
 
     pub fn custom_entry(
         mut self,
-        entry_render: impl Fn(&mut Window, &mut AppContext) -> AnyElement + 'static,
-        handler: impl Fn(&mut Window, &mut AppContext) + 'static,
+        entry_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
     ) -> Self {
         self.items.push(ContextMenuItem::CustomEntry {
             entry_render: Box::new(entry_render),
@@ -326,7 +326,7 @@ impl ContextMenu {
         self
     }
 
-    pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let context = self.action_context.as_ref();
         if let Some(
             ContextMenuItem::Entry(ContextMenuEntry {
@@ -345,12 +345,12 @@ impl ContextMenu {
         }
     }
 
-    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
         cx.emit(DismissEvent);
     }
 
-    fn select_first(&mut self, _: &SelectFirst, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.items.iter().position(|item| item.is_selectable());
         cx.notify();
     }
@@ -365,13 +365,13 @@ impl ContextMenu {
         None
     }
 
-    fn handle_select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
         if self.select_last().is_some() {
             cx.notify();
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.selected_index {
             let next_index = ix + 1;
             if self.items.len() <= next_index {
@@ -390,12 +390,7 @@ impl ContextMenu {
         }
     }
 
-    pub fn select_prev(
-        &mut self,
-        _: &SelectPrev,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.selected_index {
             if ix == 0 {
                 self.handle_select_last(&SelectLast, window, cx);
@@ -417,7 +412,7 @@ impl ContextMenu {
         &mut self,
         dispatched: &dyn Action,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.clicked {
             cx.propagate();
@@ -476,7 +471,7 @@ impl ContextMenuItem {
 }
 
 impl Render for ContextMenu {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
 
         WithRemSize::new(ui_font_size)

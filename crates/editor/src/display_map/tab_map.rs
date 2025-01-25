@@ -608,7 +608,7 @@ mod tests {
     use rand::{prelude::StdRng, Rng};
 
     #[gpui::test]
-    fn test_expand_tabs(cx: &mut gpui::AppContext) {
+    fn test_expand_tabs(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -621,7 +621,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines(cx: &mut gpui::AppContext) {
+    fn test_long_lines(cx: &mut gpui::App) {
         let max_expansion_column = 12;
         let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
         let output = "A   BC  DEF G   HI J K L M";
@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::AppContext) {
+    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::App) {
         let max_expansion_column = 8;
         let input = "abcdefg⋯hij";
 
@@ -684,7 +684,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_marking_tabs(cx: &mut gpui::AppContext) {
+    fn test_marking_tabs(cx: &mut gpui::App) {
         let input = "\t \thello";
 
         let buffer = MultiBuffer::build_simple(input, cx);
@@ -735,7 +735,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_tabs(cx: &mut gpui::AppContext, mut rng: StdRng) {
+    fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let len = rng.gen_range(0..30);
         let buffer = if rng.gen() {

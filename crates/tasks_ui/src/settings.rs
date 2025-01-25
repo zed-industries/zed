@@ -21,7 +21,7 @@ impl Settings for TaskSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> gpui::Result<Self> {
         sources.json_merge()
     }

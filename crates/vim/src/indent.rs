@@ -2,7 +2,7 @@ use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Bias, Editor};
 use gpui::actions;
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::SelectionGoal;
 
 #[derive(PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub(crate) enum IndentDirection {
 
 actions!(vim, [Indent, Outdent, AutoIndent]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -77,7 +77,7 @@ impl Vim {
         times: Option<usize>,
         dir: IndentDirection,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -112,7 +112,7 @@ impl Vim {
         around: bool,
         dir: IndentDirection,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {

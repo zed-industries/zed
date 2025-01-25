@@ -3,10 +3,10 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AppContext,
-    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Focusable as _,
+    anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, App, Bounds,
+    Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity, Focusable as _,
     GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
+    MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
 };
 
 use crate::prelude::*;
@@ -21,7 +21,7 @@ where
 {
     fn on_click(
         self,
-        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.map_element(|e| e.on_click(handler))
     }
@@ -55,18 +55,18 @@ impl<M> Default for PopoverMenuHandle<M> {
 }
 
 struct PopoverMenuHandleState<M> {
-    menu_builder: Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<Model<M>>>,
-    menu: Rc<RefCell<Option<Model<M>>>>,
+    menu_builder: Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>>>,
+    menu: Rc<RefCell<Option<Entity<M>>>>,
 }
 
 impl<M: ManagedView> PopoverMenuHandle<M> {
-    pub fn show(&self, window: &mut Window, cx: &mut AppContext) {
+    pub fn show(&self, window: &mut Window, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref() {
             show_menu(&state.menu_builder, &state.menu, window, cx);
         }
     }
 
-    pub fn hide(&self, cx: &mut AppContext) {
+    pub fn hide(&self, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref() {
             if let Some(menu) = state.menu.borrow().as_ref() {
                 menu.update(cx, |_, cx| cx.emit(DismissEvent));
@@ -74,7 +74,7 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         }
     }
 
-    pub fn toggle(&self, window: &mut Window, cx: &mut AppContext) {
+    pub fn toggle(&self, window: &mut Window, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref() {
             if state.menu.borrow().is_some() {
                 self.hide(cx);
@@ -91,7 +91,7 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
             .map_or(false, |state| state.menu.borrow().as_ref().is_some())
     }
 
-    pub fn is_focused(&self, window: &Window, cx: &AppContext) -> bool {
+    pub fn is_focused(&self, window: &Window, cx: &App) -> bool {
         self.0.borrow().as_ref().map_or(false, |state| {
             state
                 .menu
@@ -107,13 +107,13 @@ pub struct PopoverMenu<M: ManagedView> {
     child_builder: Option<
         Box<
             dyn FnOnce(
-                    Rc<RefCell<Option<Model<M>>>>,
-                    Option<Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<Model<M>> + 'static>>,
+                    Rc<RefCell<Option<Entity<M>>>>,
+                    Option<Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static>>,
                 ) -> AnyElement
                 + 'static,
         >,
     >,
-    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<Model<M>> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static>>,
     anchor: Corner,
     attach: Option<Corner>,
     offset: Option<Point<Pixels>>,
@@ -143,7 +143,7 @@ impl<M: ManagedView> PopoverMenu<M> {
 
     pub fn menu(
         mut self,
-        f: impl Fn(&mut Window, &mut AppContext) -> Option<Model<M>> + 'static,
+        f: impl Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static,
     ) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
@@ -207,10 +207,10 @@ impl<M: ManagedView> PopoverMenu<M> {
 }
 
 fn show_menu<M: ManagedView>(
-    builder: &Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<Model<M>>>,
-    menu: &Rc<RefCell<Option<Model<M>>>>,
+    builder: &Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>>>,
+    menu: &Rc<RefCell<Option<Entity<M>>>>,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     let Some(new_menu) = (builder)(window, cx) else {
         return;
@@ -235,7 +235,7 @@ fn show_menu<M: ManagedView>(
 }
 
 pub struct PopoverMenuElementState<M> {
-    menu: Rc<RefCell<Option<Model<M>>>>,
+    menu: Rc<RefCell<Option<Entity<M>>>>,
     child_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -261,7 +261,7 @@ pub struct PopoverMenuFrameState<M: ManagedView> {
     child_layout_id: Option<LayoutId>,
     child_element: Option<AnyElement>,
     menu_element: Option<AnyElement>,
-    menu_handle: Rc<RefCell<Option<Model<M>>>>,
+    menu_handle: Rc<RefCell<Option<Entity<M>>>>,
 }
 
 impl<M: ManagedView> Element for PopoverMenu<M> {
@@ -276,7 +276,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(
             global_id.unwrap(),
@@ -352,7 +352,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         _bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<HitboxId> {
         if let Some(child) = request_layout.child_element.as_mut() {
             child.prepaint(window, cx);
@@ -381,7 +381,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
         request_layout: &mut Self::RequestLayoutState,
         child_hitbox: &mut Option<HitboxId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if let Some(mut child) = request_layout.child_element.take() {
             child.paint(window, cx);

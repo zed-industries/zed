@@ -4,7 +4,7 @@ use base64::{
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
     Engine as _,
 };
-use gpui::{img, AppContext, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window};
+use gpui::{img, App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window};
 use std::sync::Arc;
 use ui::{div, prelude::*, IntoElement, Styled};
 
@@ -74,7 +74,7 @@ impl ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, window: &mut Window, _: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let line_height = window.line_height();
 
         let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {
@@ -92,11 +92,11 @@ impl Render for ImageView {
 }
 
 impl OutputContent for ImageView {
-    fn clipboard_content(&self, _window: &Window, _cx: &AppContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_image(self.clipboard_image.as_ref()))
     }
 
-    fn has_clipboard_content(&self, _window: &Window, _cx: &AppContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
         true
     }
 }

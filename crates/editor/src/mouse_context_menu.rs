@@ -7,7 +7,7 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    DismissEvent, Focusable as _, Model, ModelContext, Pixels, Point, Subscription, Window,
+    DismissEvent, Focusable as _, Entity, Context, Pixels, Point, Subscription, Window,
 };
 use std::ops::Range;
 use text::PointUtf16;
@@ -28,7 +28,7 @@ pub enum MenuPosition {
 
 pub struct MouseContextMenu {
     pub(crate) position: MenuPosition,
-    pub(crate) context_menu: Model<ui::ContextMenu>,
+    pub(crate) context_menu: Entity<ui::ContextMenu>,
     _subscription: Subscription,
 }
 
@@ -46,9 +46,9 @@ impl MouseContextMenu {
         editor: &mut Editor,
         source: multi_buffer::Anchor,
         position: Point<Pixels>,
-        context_menu: Model<ui::ContextMenu>,
+        context_menu: Entity<ui::ContextMenu>,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<Self> {
         let editor_snapshot = editor.snapshot(window, cx);
         let content_origin = editor.last_bounds?.origin
@@ -71,9 +71,9 @@ impl MouseContextMenu {
 
     pub(crate) fn new(
         position: MenuPosition,
-        context_menu: Model<ui::ContextMenu>,
+        context_menu: Entity<ui::ContextMenu>,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Self {
         let context_menu_focus = context_menu.focus_handle(cx);
         window.focus(&context_menu_focus);
@@ -117,7 +117,7 @@ pub fn deploy_context_menu(
     position: Option<Point<Pixels>>,
     point: DisplayPoint,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     if !editor.is_focused(window) {
         window.focus(&editor.focus_handle(cx));

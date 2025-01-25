@@ -298,18 +298,18 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
 #[track_caller]
 fn open_tab_switcher(
     select_last: bool,
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
-) -> Model<Picker<TabSwitcherDelegate>> {
+) -> Entity<Picker<TabSwitcherDelegate>> {
     cx.dispatch_action(Toggle { select_last });
     get_active_tab_switcher(workspace, cx)
 }
 
 #[track_caller]
 fn get_active_tab_switcher(
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
-) -> Model<Picker<TabSwitcherDelegate>> {
+) -> Entity<Picker<TabSwitcherDelegate>> {
     workspace.update(cx, |workspace, cx| {
         workspace
             .active_modal::<TabSwitcher>(cx)
@@ -322,7 +322,7 @@ fn get_active_tab_switcher(
 
 async fn open_buffer(
     file_path: &str,
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Box<dyn ItemHandle> {
     let project = workspace.update(cx, |workspace, _| workspace.project().clone());
@@ -371,7 +371,7 @@ fn assert_match_at_position(
 }
 
 #[track_caller]
-fn assert_tab_switcher_is_closed(workspace: Model<Workspace>, cx: &mut VisualTestContext) {
+fn assert_tab_switcher_is_closed(workspace: Entity<Workspace>, cx: &mut VisualTestContext) {
     workspace.update(cx, |workspace, cx| {
         assert!(
             workspace.active_modal::<TabSwitcher>(cx).is_none(),

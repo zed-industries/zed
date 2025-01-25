@@ -11,7 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
+    div, rems, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Entity, Context,
     PromptLevel, Render, Task, Window,
 };
 use http_client::HttpClient;
@@ -76,15 +76,15 @@ enum SubmissionState {
 
 pub struct FeedbackModal {
     system_specs: SystemSpecs,
-    feedback_editor: Model<Editor>,
-    email_address_editor: Model<Editor>,
+    feedback_editor: Entity<Editor>,
+    email_address_editor: Entity<Editor>,
     submission_state: Option<SubmissionState>,
     dismiss_modal: bool,
     character_count: i32,
 }
 
 impl Focusable for FeedbackModal {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.feedback_editor.focus_handle(cx)
     }
 }
@@ -94,7 +94,7 @@ impl ModalView for FeedbackModal {
     fn on_before_dismiss(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> DismissDecision {
         self.update_email_in_store(window, cx);
 
@@ -131,7 +131,7 @@ impl ModalView for FeedbackModal {
 }
 
 impl FeedbackModal {
-    pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut ModelContext<Workspace>) {
+    pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
         let _handle = cx.model().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, window, cx| {
             workspace
@@ -167,12 +167,12 @@ impl FeedbackModal {
 
     pub fn new(
         system_specs: SystemSpecs,
-        project: Model<Project>,
-        buffer: Model<Buffer>,
+        project: Entity<Project>,
+        buffer: Entity<Buffer>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let email_address_editor = cx.new_model(|cx| {
+        let email_address_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Email address (optional)", cx);
 
@@ -183,7 +183,7 @@ impl FeedbackModal {
             editor
         });
 
-        let feedback_editor = cx.new_model(|cx| {
+        let feedback_editor = cx.new(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), window, cx);
             editor.set_placeholder_text(
                 "You can use markdown to organize your feedback with code and links.",
@@ -225,7 +225,7 @@ impl FeedbackModal {
     pub fn submit(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let feedback_text = self.feedback_editor.read(cx).text(cx).trim().to_string();
         let email = self.email_address_editor.read(cx).text_option(cx);
@@ -334,7 +334,7 @@ impl FeedbackModal {
         Ok(())
     }
 
-    fn update_submission_state(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_submission_state(&mut self, cx: &mut Context<Self>) {
         if self.awaiting_submission() {
             return;
         }
@@ -365,7 +365,7 @@ impl FeedbackModal {
         }
     }
 
-    fn update_email_in_store(&self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_email_in_store(&self, window: &mut Window, cx: &mut Context<Self>) {
         let email = self.email_address_editor.read(cx).text_option(cx);
 
         cx.spawn_in(window, |_, _| async move {
@@ -417,13 +417,13 @@ impl FeedbackModal {
         matches!(self.submission_state, Some(SubmissionState::CanSubmit))
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent)
     }
 }
 
 impl Render for FeedbackModal {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {

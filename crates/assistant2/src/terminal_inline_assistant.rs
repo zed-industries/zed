@@ -10,7 +10,7 @@ use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{actions::SelectAll, MultiBuffer};
 use fs::Fs;
-use gpui::{AppContext, Context, Focusable, Global, Model, Subscription, UpdateGlobal, WeakModel};
+use gpui::{App, Entity, Focusable, Global, Subscription, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
@@ -28,7 +28,7 @@ pub fn init(
     fs: Arc<dyn Fs>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     cx.set_global(TerminalInlineAssistant::new(fs, prompt_builder, telemetry));
 }
@@ -65,21 +65,20 @@ impl TerminalInlineAssistant {
 
     pub fn assist(
         &mut self,
-        terminal_view: &Model<TerminalView>,
-        workspace: WeakModel<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
+        terminal_view: &Entity<TerminalView>,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| {
-            MultiBuffer::singleton(cx.new_model(|cx| Buffer::local(String::new(), cx)), cx)
-        });
-        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
-        let codegen = cx.new_model(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
+        let prompt_buffer =
+            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
+        let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
-        let prompt_editor = cx.new_model(|cx| {
+        let prompt_editor = cx.new(|cx| {
             PromptEditor::new_terminal(
                 assist_id,
                 self.prompt_history.clone(),
@@ -121,7 +120,7 @@ impl TerminalInlineAssistant {
         &mut self,
         assist_id: TerminalInlineAssistId,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let assist = &self.assists[&assist_id];
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
@@ -136,10 +135,10 @@ impl TerminalInlineAssistant {
 
     fn handle_prompt_editor_event(
         &mut self,
-        prompt_editor: Model<PromptEditor<TerminalCodegen>>,
+        prompt_editor: Entity<PromptEditor<TerminalCodegen>>,
         event: &PromptEditorEvent,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let assist_id = prompt_editor.read(cx).id();
         match event {
@@ -164,7 +163,7 @@ impl TerminalInlineAssistant {
         }
     }
 
-    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut AppContext) {
+    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -202,7 +201,7 @@ impl TerminalInlineAssistant {
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
     }
 
-    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut AppContext) {
+    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut App) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -215,7 +214,7 @@ impl TerminalInlineAssistant {
     fn request_for_inline_assist(
         &self,
         assist_id: TerminalInlineAssistId,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
 
@@ -272,7 +271,7 @@ impl TerminalInlineAssistant {
         undo: bool,
         execute: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.dismiss_assist(assist_id, window, cx);
 
@@ -325,7 +324,7 @@ impl TerminalInlineAssistant {
         &mut self,
         assist_id: TerminalInlineAssistId,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
@@ -348,7 +347,7 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         height: u8,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if let Some(assist) = self.assists.get_mut(&assist_id) {
             if let Some(prompt_editor) = assist.prompt_editor.as_ref().cloned() {
@@ -369,23 +368,23 @@ impl TerminalInlineAssistant {
 }
 
 struct TerminalInlineAssist {
-    terminal: WeakModel<TerminalView>,
-    prompt_editor: Option<Model<PromptEditor<TerminalCodegen>>>,
-    codegen: Model<TerminalCodegen>,
-    workspace: WeakModel<Workspace>,
-    context_store: Model<ContextStore>,
+    terminal: WeakEntity<TerminalView>,
+    prompt_editor: Option<Entity<PromptEditor<TerminalCodegen>>>,
+    codegen: Entity<TerminalCodegen>,
+    workspace: WeakEntity<Workspace>,
+    context_store: Entity<ContextStore>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl TerminalInlineAssist {
     pub fn new(
         assist_id: TerminalInlineAssistId,
-        terminal: &Model<TerminalView>,
-        prompt_editor: Model<PromptEditor<TerminalCodegen>>,
-        workspace: WeakModel<Workspace>,
-        context_store: Model<ContextStore>,
+        terminal: &Entity<TerminalView>,
+        prompt_editor: Entity<PromptEditor<TerminalCodegen>>,
+        workspace: WeakEntity<Workspace>,
+        context_store: Entity<ContextStore>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self {
         let codegen = prompt_editor.read(cx).codegen().clone();
         Self {

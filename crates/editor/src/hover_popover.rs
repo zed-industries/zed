@@ -7,7 +7,7 @@ use crate::{
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, Focusable as _, FontWeight, Hsla, InteractiveElement,
-    IntoElement, Model, ModelContext, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    IntoElement, Entity, Context, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
     Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement,
     Window,
 };
@@ -31,7 +31,7 @@ pub const MIN_POPOVER_LINE_HEIGHT: Pixels = px(4.);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
 
 /// Bindable action which uses the most recent selection head to trigger a hover
-pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut ModelContext<Editor>) {
+pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
     let head = editor.selections.newest_anchor().head();
     show_hover(editor, head, true, window, cx);
 }
@@ -42,7 +42,7 @@ pub fn hover_at(
     editor: &mut Editor,
     anchor: Option<Anchor>,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if show_keyboard_hover(editor, window, cx) {
@@ -59,7 +59,7 @@ pub fn hover_at(
 pub fn show_keyboard_hover(
     editor: &mut Editor,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) -> bool {
     let info_popovers = editor.hover_state.info_popovers.clone();
     for p in info_popovers {
@@ -117,7 +117,7 @@ pub fn hover_at_inlay(
     editor: &mut Editor,
     inlay_hover: InlayHover,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     if EditorSettings::get_global(cx).hover_popover_enabled {
         if editor.pending_rename.is_some() {
@@ -188,7 +188,7 @@ pub fn hover_at_inlay(
 /// Hides the type information popup.
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
-pub fn hide_hover(editor: &mut Editor, cx: &mut ModelContext<Editor>) -> bool {
+pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -213,7 +213,7 @@ fn show_hover(
     anchor: Anchor,
     ignore_timeout: bool,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) -> Option<()> {
     if editor.pending_rename.is_some() {
         return None;
@@ -535,7 +535,7 @@ async fn parse_blocks(
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
-) -> Option<Model<Markdown>> {
+) -> Option<Entity<Markdown>> {
     let fallback_language_name = if let Some(ref l) = language {
         let l = Arc::clone(l);
         Some(l.lsp_id().clone())
@@ -638,7 +638,7 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
         // Otherwise use the start of the hover range
@@ -681,7 +681,7 @@ impl HoverState {
         Some((point, elements))
     }
 
-    pub fn focused(&self, window: &mut Window, cx: &mut ModelContext<Editor>) -> bool {
+    pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
         let mut hover_popover_is_focused = false;
         for info_popover in &self.info_popovers {
             if let Some(markdown_view) = &info_popover.parsed_content {
@@ -704,7 +704,7 @@ impl HoverState {
 #[derive(Debug, Clone)]
 pub(crate) struct InfoPopover {
     pub(crate) symbol_range: RangeInEditor,
-    pub(crate) parsed_content: Option<Model<Markdown>>,
+    pub(crate) parsed_content: Option<Entity<Markdown>>,
     pub(crate) scroll_handle: ScrollHandle,
     pub(crate) scrollbar_state: ScrollbarState,
     pub(crate) keyboard_grace: Rc<RefCell<bool>>,
@@ -715,7 +715,7 @@ impl InfoPopover {
     pub(crate) fn render(
         &mut self,
         max_size: Size<Pixels>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
@@ -751,7 +751,7 @@ impl InfoPopover {
         &self,
         amount: &ScrollAmount,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let mut current = self.scroll_handle.offset();
         current.y -= amount.pixels(
@@ -762,7 +762,7 @@ impl InfoPopover {
         self.scroll_handle.set_offset(current);
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
         div()
             .occlude()
             .id("info-popover-vertical-scroll")
@@ -799,7 +799,7 @@ impl InfoPopover {
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
     pub(crate) local_diagnostic: DiagnosticEntry<Anchor>,
-    parsed_content: Option<Model<Markdown>>,
+    parsed_content: Option<Entity<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
     pub keyboard_grace: Rc<RefCell<bool>>,
@@ -807,7 +807,7 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(&self, max_size: Size<Pixels>, cx: &mut ModelContext<Editor>) -> AnyElement {
+    pub fn render(&self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut markdown_div = div().py_1().px_2();
         if let Some(markdown) = &self.parsed_content {
@@ -865,7 +865,7 @@ mod tests {
         InlayId, PointForPosition,
     };
     use collections::BTreeSet;
-    use gpui::AppContext;
+    use gpui::App;
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
@@ -876,11 +876,11 @@ mod tests {
     use text::Bias;
 
     fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
-        cx.read(|cx: &AppContext| -> u64 { EditorSettings::get_global(cx).hover_popover_delay })
+        cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay })
     }
 
     impl InfoPopover {
-        fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
+        fn get_rendered_text(&self, cx: &gpui::App) -> String {
             let mut rendered_text = String::new();
             if let Some(parsed_content) = self.parsed_content.clone() {
                 let markdown = parsed_content.read(cx);

@@ -1,6 +1,6 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -12,7 +12,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
+use gpui::{App, AsyncAppContext, Global, WindowHandle};
 use language::Point;
 use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
@@ -37,7 +37,7 @@ pub struct OpenRequest {
 }
 
 impl OpenRequest {
-    pub fn parse(urls: Vec<String>, cx: &AppContext) -> Result<Self> {
+    pub fn parse(urls: Vec<String>, cx: &App) -> Result<Self> {
         let mut this = Self::default();
         for url in urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
@@ -67,7 +67,7 @@ impl OpenRequest {
         }
     }
 
-    fn parse_ssh_file_path(&mut self, file: &str, cx: &AppContext) -> Result<()> {
+    fn parse_ssh_file_path(&mut self, file: &str, cx: &App) -> Result<()> {
         let url = url::Url::parse(file)?;
         let host = url
             .host()

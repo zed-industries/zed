@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use assets::Assets;
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, Model, SemanticVersion, UpdateGlobal};
+use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -78,15 +78,15 @@ impl VimTestContext {
         cx.update_workspace(|workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.new_model(|cx| BufferSearchBar::new(window, cx));
+                    let buffer_search_bar = cx.new(|cx| BufferSearchBar::new(window, cx));
                     toolbar.add_item(buffer_search_bar, window, cx);
 
-                    let project_search_bar = cx.new_model(|_| ProjectSearchBar::new());
+                    let project_search_bar = cx.new(|_| ProjectSearchBar::new());
                     toolbar.add_item(project_search_bar, window, cx);
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = cx.new_model(|cx| ModeIndicator::new(window, cx));
+                let vim_mode_indicator = cx.new(|cx| ModeIndicator::new(window, cx));
                 status_bar.add_right_item(vim_mode_indicator, window, cx);
             });
         });
@@ -94,10 +94,10 @@ impl VimTestContext {
         Self { cx }
     }
 
-    pub fn update_model<F, T, R>(&mut self, model: Model<T>, update: F) -> R
+    pub fn update_model<F, T, R>(&mut self, model: Entity<T>, update: F) -> R
     where
         T: 'static,
-        F: FnOnce(&mut T, &mut Window, &mut ModelContext<T>) -> R + 'static,
+        F: FnOnce(&mut T, &mut Window, &mut Context<T>) -> R + 'static,
     {
         let window = self.window;
         self.update_window(window, move |_, window, cx| {
@@ -108,7 +108,7 @@ impl VimTestContext {
 
     pub fn workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut Window, &mut ModelContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
         self.cx.update_workspace(update)
     }

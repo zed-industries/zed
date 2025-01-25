@@ -1,4 +1,4 @@
-use gpui::{actions, Corner, Model, Render};
+use gpui::{actions, Corner, Entity, Render};
 use story::Story;
 
 use crate::prelude::*;
@@ -8,9 +8,9 @@ actions!(context_menu, [PrintCurrentDate, PrintBestFood]);
 
 fn build_menu(
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
     header: impl Into<SharedString>,
-) -> Model<ContextMenu> {
+) -> Entity<ContextMenu> {
     ContextMenu::build(window, cx, |menu, _, _| {
         menu.header(header)
             .separator()
@@ -26,7 +26,7 @@ fn build_menu(
 pub struct ContextMenuStory;
 
 impl Render for ContextMenuStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .on_action(|_: &PrintCurrentDate, _, _| {
                 println!("printing unix time!");

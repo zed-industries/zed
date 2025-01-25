@@ -7,8 +7,8 @@ use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
-    ParentElement, Render, Styled, WeakModel, Window,
+    actions, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Context,
+    ParentElement, Render, Styled, WeakEntity, Window,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
@@ -21,19 +21,19 @@ use workspace::{ModalView, Workspace};
 
 actions!(language_selector, [Toggle]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(LanguageSelector::register).detach();
+pub fn init(cx: &mut App) {
+    cx.observe_new(LanguageSelector::register).detach();
 }
 
 pub struct LanguageSelector {
-    picker: Model<Picker<LanguageSelectorDelegate>>,
+    picker: Entity<Picker<LanguageSelectorDelegate>>,
 }
 
 impl LanguageSelector {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _: &mut ModelContext<Workspace>,
+        _: &mut Context<Workspace>,
     ) {
         workspace.register_action(move |workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, window, cx);
@@ -43,7 +43,7 @@ impl LanguageSelector {
     fn toggle(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> Option<()> {
         let registry = workspace.app_state().languages.clone();
         let (_, buffer, _) = workspace
@@ -60,11 +60,11 @@ impl LanguageSelector {
     }
 
     fn new(
-        buffer: Model<Buffer>,
-        project: Model<Project>,
+        buffer: Entity<Buffer>,
+        project: Entity<Project>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let delegate = LanguageSelectorDelegate::new(
             cx.model().downgrade(),
@@ -73,19 +73,19 @@ impl LanguageSelector {
             language_registry,
         );
 
-        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }
 
 impl Render for LanguageSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
 impl Focusable for LanguageSelector {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
@@ -94,9 +94,9 @@ impl EventEmitter<DismissEvent> for LanguageSelector {}
 impl ModalView for LanguageSelector {}
 
 pub struct LanguageSelectorDelegate {
-    language_selector: WeakModel<LanguageSelector>,
-    buffer: Model<Buffer>,
-    project: Model<Project>,
+    language_selector: WeakEntity<LanguageSelector>,
+    buffer: Entity<Buffer>,
+    project: Entity<Project>,
     language_registry: Arc<LanguageRegistry>,
     candidates: Vec<StringMatchCandidate>,
     matches: Vec<StringMatch>,
@@ -105,9 +105,9 @@ pub struct LanguageSelectorDelegate {
 
 impl LanguageSelectorDelegate {
     fn new(
-        language_selector: WeakModel<LanguageSelector>,
-        buffer: Model<Buffer>,
-        project: Model<Project>,
+        language_selector: WeakEntity<LanguageSelector>,
+        buffer: Entity<Buffer>,
+        project: Entity<Project>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
         let candidates = language_registry
@@ -135,11 +135,7 @@ impl LanguageSelectorDelegate {
         }
     }
 
-    fn language_data_for_match(
-        &self,
-        mat: &StringMatch,
-        cx: &AppContext,
-    ) -> (String, Option<Icon>) {
+    fn language_data_for_match(&self, mat: &StringMatch, cx: &App) -> (String, Option<Icon>) {
         let mut label = mat.string.clone();
         let buffer_language = self.buffer.read(cx).language();
         let need_icon = FileFinderSettings::get_global(cx).file_icons;
@@ -171,7 +167,7 @@ impl LanguageSelectorDelegate {
         }
     }
 
-    fn language_icon(&self, matcher: &LanguageMatcher, cx: &AppContext) -> Option<Icon> {
+    fn language_icon(&self, matcher: &LanguageMatcher, cx: &App) -> Option<Icon> {
         matcher
             .path_suffixes
             .iter()
@@ -190,7 +186,7 @@ impl LanguageSelectorDelegate {
 impl PickerDelegate for LanguageSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a language…".into()
     }
 
@@ -198,7 +194,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         self.matches.len()
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let language_name = &self.candidates[mat.candidate_id].string;
             let language = self.language_registry.language_for_name(language_name);
@@ -221,7 +217,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         self.dismissed(window, cx);
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.language_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -235,7 +231,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _: &mut ModelContext<Picker<Self>>,
+        _: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix;
     }
@@ -244,7 +240,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
@@ -289,7 +285,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         ix: usize,
         selected: bool,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
         let (label, language_icon) = self.language_data_for_match(mat, cx);

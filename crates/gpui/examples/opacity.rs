@@ -2,8 +2,8 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use gpui::{
-    div, hsla, img, point, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds,
-    BoxShadow, ClickEvent, ModelContext, SharedString, Task, Timer, Window, WindowBounds,
+    div, hsla, img, point, prelude::*, px, rgb, size, svg, Application, App, AssetSource, Bounds,
+    BoxShadow, ClickEvent, Context, SharedString, Task, Timer, Window, WindowBounds,
     WindowOptions,
 };
 
@@ -40,14 +40,14 @@ struct HelloWorld {
 }
 
 impl HelloWorld {
-    fn new(_window: &mut Window, _: &mut ModelContext<Self>) -> Self {
+    fn new(_window: &mut Window, _: &mut Context<Self>) -> Self {
         Self {
             _task: None,
             opacity: 0.5,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.opacity = 0.0;
         cx.notify();
 
@@ -76,7 +76,7 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -158,18 +158,18 @@ impl Render for HelloWorld {
 }
 
 fn main() {
-    App::new()
+    Application::new()
         .with_assets(Assets {
             base: PathBuf::from("crates/gpui/examples"),
         })
-        .run(|cx: &mut AppContext| {
+        .run(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(500.0), px(500.0)), cx);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| cx.new_model(|cx| HelloWorld::new(window, cx)),
+                |window, cx| cx.new(|cx| HelloWorld::new(window, cx)),
             )
             .unwrap();
         });

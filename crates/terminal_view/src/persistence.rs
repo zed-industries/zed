@@ -2,11 +2,11 @@ use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{stream::FuturesUnordered, StreamExt as _};
-use gpui::{AsyncWindowContext, Axis, Context as _, Model, Task, WeakModel};
+use gpui::{AppContext as _, AsyncWindowContext, Axis, Entity, Task, WeakEntity};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use ui::{AppContext, ModelContext, Pixels, Window};
+use ui::{App, Context, Pixels, Window};
 use util::ResultExt as _;
 
 use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
@@ -23,16 +23,16 @@ use crate::{
 
 pub(crate) fn serialize_pane_group(
     pane_group: &PaneGroup,
-    active_pane: &Model<Pane>,
-    cx: &mut AppContext,
+    active_pane: &Entity<Pane>,
+    cx: &mut App,
 ) -> SerializedPaneGroup {
     build_serialized_pane_group(&pane_group.root, active_pane, cx)
 }
 
 fn build_serialized_pane_group(
     pane_group: &Member,
-    active_pane: &Model<Pane>,
-    cx: &mut AppContext,
+    active_pane: &Entity<Pane>,
+    cx: &mut App,
 ) -> SerializedPaneGroup {
     match pane_group {
         Member::Axis(PaneAxis {
@@ -54,7 +54,7 @@ fn build_serialized_pane_group(
     }
 }
 
-fn serialize_pane(pane: &Model<Pane>, active: bool, cx: &mut AppContext) -> SerializedPane {
+fn serialize_pane(pane: &Entity<Pane>, active: bool, cx: &mut App) -> SerializedPane {
     let mut items_to_serialize = HashSet::default();
     let pane = pane.read(cx);
     let children = pane
@@ -83,16 +83,16 @@ fn serialize_pane(pane: &Model<Pane>, active: bool, cx: &mut AppContext) -> Seri
 }
 
 pub(crate) fn deserialize_terminal_panel(
-    workspace: WeakModel<Workspace>,
-    project: Model<Project>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     database_id: WorkspaceId,
     serialized_panel: SerializedTerminalPanel,
     window: &mut Window,
-    cx: &mut AppContext,
-) -> Task<anyhow::Result<Model<TerminalPanel>>> {
+    cx: &mut App,
+) -> Task<anyhow::Result<Entity<TerminalPanel>>> {
     window.spawn(cx, move |mut cx| async move {
         let terminal_panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            cx.new_model(|cx| {
+            cx.new(|cx| {
                 let mut panel = TerminalPanel::new(workspace, window, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
                 panel.width = serialized_panel.width.map(|w| w.round());
@@ -142,10 +142,10 @@ pub(crate) fn deserialize_terminal_panel(
 
 fn populate_pane_items(
     pane: &mut Pane,
-    items: Vec<Model<TerminalView>>,
+    items: Vec<Entity<TerminalView>>,
     active_item: Option<u64>,
     window: &mut Window,
-    cx: &mut ModelContext<Pane>,
+    cx: &mut Context<Pane>,
 ) {
     let mut item_index = pane.items_len();
     let mut active_item_index = None;
@@ -163,13 +163,13 @@ fn populate_pane_items(
 
 #[async_recursion(?Send)]
 async fn deserialize_pane_group(
-    workspace: WeakModel<Workspace>,
-    project: Model<Project>,
-    panel: Model<TerminalPanel>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
+    panel: Entity<TerminalPanel>,
     workspace_id: WorkspaceId,
     serialized: &SerializedPaneGroup,
     cx: &mut AsyncWindowContext,
-) -> Option<(Member, Option<Model<Pane>>)> {
+) -> Option<(Member, Option<Entity<Pane>>)> {
     match serialized {
         SerializedPaneGroup::Group {
             axis,
@@ -256,7 +256,7 @@ async fn deserialize_pane_group(
             if let Some(terminal) = terminal {
                 let terminal = terminal.await.ok()?;
                 pane.update_in(cx, |pane, window, cx| {
-                    let terminal_view = Box::new(cx.new_model(|cx| {
+                    let terminal_view = Box::new(cx.new(|cx| {
                         TerminalView::new(
                             terminal,
                             workspace.clone(),
@@ -277,11 +277,11 @@ async fn deserialize_pane_group(
 
 async fn deserialize_terminal_views(
     workspace_id: WorkspaceId,
-    project: Model<Project>,
-    workspace: WeakModel<Workspace>,
+    project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     item_ids: &[u64],
     cx: &mut AsyncWindowContext,
-) -> Vec<Model<TerminalView>> {
+) -> Vec<Entity<TerminalView>> {
     let mut items = Vec::with_capacity(item_ids.len());
     let mut deserialized_items = item_ids
         .iter()

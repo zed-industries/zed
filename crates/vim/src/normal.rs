@@ -29,7 +29,7 @@ use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{actions, ModelContext, Window};
+use gpui::{actions, Context, Window};
 use language::{Point, SelectionGoal, ToPoint};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -62,7 +62,7 @@ actions!(
     ]
 );
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::insert_after);
     Vim::action(editor, cx, Vim::insert_before);
     Vim::action(editor, cx, Vim::insert_first_non_whitespace);
@@ -151,7 +151,7 @@ impl Vim {
         operator: Option<Operator>,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match operator {
             None => self.move_cursor(motion, times, window, cx),
@@ -195,7 +195,7 @@ impl Vim {
         &mut self,
         object: Object,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut waiting_operator: Option<Operator> = None;
         match self.maybe_pop_operator() {
@@ -262,7 +262,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -276,7 +276,7 @@ impl Vim {
         });
     }
 
-    fn insert_after(&mut self, _: &InsertAfter, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn insert_after(&mut self, _: &InsertAfter, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -290,7 +290,7 @@ impl Vim {
         &mut self,
         _: &InsertBefore,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
@@ -300,7 +300,7 @@ impl Vim {
         &mut self,
         _: &InsertFirstNonWhitespace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
@@ -320,7 +320,7 @@ impl Vim {
         &mut self,
         _: &InsertEndOfLine,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
@@ -337,7 +337,7 @@ impl Vim {
         &mut self,
         _: &InsertAtPrevious,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
@@ -354,7 +354,7 @@ impl Vim {
         &mut self,
         _: &InsertLineAbove,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
@@ -395,7 +395,7 @@ impl Vim {
         &mut self,
         _: &InsertLineBelow,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
@@ -441,7 +441,7 @@ impl Vim {
         &mut self,
         insert_whitespace: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
@@ -464,7 +464,7 @@ impl Vim {
         }
     }
 
-    fn yank_line(&mut self, _: &YankLine, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn yank_line(&mut self, _: &YankLine, window: &mut Window, cx: &mut Context<Self>) {
         let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }
@@ -473,7 +473,7 @@ impl Vim {
         &mut self,
         _: &ShowLocation,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx);
         self.update_editor(window, cx, |vim, editor, _window, cx| {
@@ -517,7 +517,7 @@ impl Vim {
         &mut self,
         _: &ToggleComments,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
@@ -537,7 +537,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         self.stop_recording(cx);
@@ -581,7 +581,7 @@ impl Vim {
         &self,
         editor: &Editor,
 
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> HashMap<usize, Anchor> {
         let (map, selections) = editor.selections.all_display(cx);
         selections
@@ -599,7 +599,7 @@ impl Vim {
         &self,
         editor: &mut Editor,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
         mut positions: HashMap<usize, Anchor>,
     ) {
         editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -611,7 +611,7 @@ impl Vim {
         });
     }
 
-    fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn exit_temporary_normal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.temp_mode {
             self.switch_mode(Mode::Insert, true, window, cx);
         }

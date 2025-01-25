@@ -20,8 +20,8 @@ use editor::{
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    point, AppContext, Focusable, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
-    UpdateGlobal, WeakModel, Window,
+    point, App, Entity, Focusable, Global, HighlightStyle, Context, Subscription, Task,
+    UpdateGlobal, WeakEntity, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::LanguageModelRegistry;
@@ -51,10 +51,10 @@ pub fn init(
     fs: Arc<dyn Fs>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new_models(|_workspace: &mut Workspace, window, cx| {
+    cx.observe_new(|_workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -78,17 +78,17 @@ pub fn init(
 const PROMPT_HISTORY_MAX_LEN: usize = 20;
 
 enum InlineAssistTarget {
-    Editor(Model<Editor>),
-    Terminal(Model<TerminalView>),
+    Editor(Entity<Editor>),
+    Terminal(Entity<TerminalView>),
 }
 
 pub struct InlineAssistant {
     next_assist_id: InlineAssistId,
     next_assist_group_id: InlineAssistGroupId,
     assists: HashMap<InlineAssistId, InlineAssist>,
-    assists_by_editor: HashMap<WeakModel<Editor>, EditorInlineAssists>,
+    assists_by_editor: HashMap<WeakEntity<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
+    confirmed_assists: HashMap<InlineAssistId, Entity<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
@@ -121,9 +121,9 @@ impl InlineAssistant {
 
     pub fn register_workspace(
         &mut self,
-        workspace: &Model<Workspace>,
+        workspace: &Entity<Workspace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         window
             .subscribe(workspace, cx, |workspace, event, window, cx| {
@@ -151,10 +151,10 @@ impl InlineAssistant {
 
     fn handle_workspace_event(
         &mut self,
-        workspace: Model<Workspace>,
+        workspace: Entity<Workspace>,
         event: &workspace::Event,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         match event {
             workspace::Event::UserSavedItem { item, .. } => {
@@ -179,10 +179,10 @@ impl InlineAssistant {
 
     fn register_workspace_item(
         &mut self,
-        workspace: &Model<Workspace>,
+        workspace: &Entity<Workspace>,
         item: &dyn ItemHandle,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let is_assistant2_enabled = self.is_assistant2_enabled;
 
@@ -221,7 +221,7 @@ impl InlineAssistant {
         workspace: &mut Workspace,
         _action: &zed_actions::assistant::InlineAssist,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled {
@@ -244,7 +244,7 @@ impl InlineAssistant {
             .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
 
         let handle_assist =
-            |window: &mut Window, cx: &mut ModelContext<Workspace>| match inline_assist_target {
+            |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
                 InlineAssistTarget::Editor(active_editor) => {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
@@ -312,11 +312,11 @@ impl InlineAssistant {
 
     pub fn assist(
         &mut self,
-        editor: &Model<Editor>,
-        workspace: WeakModel<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
+        editor: &Entity<Editor>,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
             (
@@ -382,16 +382,15 @@ impl InlineAssistant {
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| {
-            MultiBuffer::singleton(cx.new_model(|cx| Buffer::local(String::new(), cx)), cx)
-        });
+        let prompt_buffer =
+            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
 
         let mut assists = Vec::new();
         let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
-            let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
-            let codegen = cx.new_model(|cx| {
+            let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
+            let codegen = cx.new(|cx| {
                 BufferCodegen::new(
                     editor.read(cx).buffer().clone(),
                     range.clone(),
@@ -404,7 +403,7 @@ impl InlineAssistant {
             });
 
             let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
-            let prompt_editor = cx.new_model(|cx| {
+            let prompt_editor = cx.new(|cx| {
                 PromptEditor::new_buffer(
                     assist_id,
                     gutter_dimensions.clone(),
@@ -480,19 +479,19 @@ impl InlineAssistant {
     #[allow(clippy::too_many_arguments)]
     pub fn suggest_assist(
         &mut self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         mut range: Range<Anchor>,
         initial_prompt: String,
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
-        workspace: WeakModel<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
-        let prompt_buffer = cx.new_model(|cx| Buffer::local(&initial_prompt, cx));
-        let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
+        let prompt_buffer = cx.new(|cx| Buffer::local(&initial_prompt, cx));
+        let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
 
         let assist_id = self.next_assist_id.post_inc();
 
@@ -503,9 +502,9 @@ impl InlineAssistant {
             range.end = range.end.bias_right(&snapshot);
         }
 
-        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
 
-        let codegen = cx.new_model(|cx| {
+        let codegen = cx.new(|cx| {
             BufferCodegen::new(
                 editor.read(cx).buffer().clone(),
                 range.clone(),
@@ -518,7 +517,7 @@ impl InlineAssistant {
         });
 
         let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
-        let prompt_editor = cx.new_model(|cx| {
+        let prompt_editor = cx.new(|cx| {
             PromptEditor::new_buffer(
                 assist_id,
                 gutter_dimensions.clone(),
@@ -572,10 +571,10 @@ impl InlineAssistant {
 
     fn insert_assist_blocks(
         &self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         range: &Range<Anchor>,
-        prompt_editor: &Model<PromptEditor<BufferCodegen>>,
-        cx: &mut AppContext,
+        prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
+        cx: &mut App,
     ) -> [CustomBlockId; 2] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
             prompt_editor
@@ -612,7 +611,7 @@ impl InlineAssistant {
         })
     }
 
-    fn handle_prompt_editor_focus_in(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
+    fn handle_prompt_editor_focus_in(&mut self, assist_id: InlineAssistId, cx: &mut App) {
         let assist = &self.assists[&assist_id];
         let Some(decorations) = assist.decorations.as_ref() else {
             return;
@@ -653,7 +652,7 @@ impl InlineAssistant {
             .ok();
     }
 
-    fn handle_prompt_editor_focus_out(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
+    fn handle_prompt_editor_focus_out(&mut self, assist_id: InlineAssistId, cx: &mut App) {
         let assist = &self.assists[&assist_id];
         let assist_group = self.assist_groups.get_mut(&assist.group_id).unwrap();
         if assist_group.active_assist_id == Some(assist_id) {
@@ -672,10 +671,10 @@ impl InlineAssistant {
 
     fn handle_prompt_editor_event(
         &mut self,
-        prompt_editor: Model<PromptEditor<BufferCodegen>>,
+        prompt_editor: Entity<PromptEditor<BufferCodegen>>,
         event: &PromptEditorEvent,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let assist_id = prompt_editor.read(cx).id();
         match event {
@@ -700,12 +699,7 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_newline(
-        &mut self,
-        editor: Model<Editor>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn handle_editor_newline(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
@@ -736,12 +730,7 @@ impl InlineAssistant {
         cx.propagate();
     }
 
-    fn handle_editor_cancel(
-        &mut self,
-        editor: Model<Editor>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn handle_editor_cancel(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
@@ -797,9 +786,9 @@ impl InlineAssistant {
 
     fn handle_editor_release(
         &mut self,
-        editor: WeakModel<Editor>,
+        editor: WeakEntity<Editor>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if let Some(editor_assists) = self.assists_by_editor.get_mut(&editor) {
             for assist_id in editor_assists.assist_ids.clone() {
@@ -808,12 +797,7 @@ impl InlineAssistant {
         }
     }
 
-    fn handle_editor_change(
-        &mut self,
-        editor: Model<Editor>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn handle_editor_change(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
         let Some(editor_assists) = self.assists_by_editor.get(&editor.downgrade()) else {
             return;
         };
@@ -840,10 +824,10 @@ impl InlineAssistant {
 
     fn handle_editor_event(
         &mut self,
-        editor: Model<Editor>,
+        editor: Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let Some(editor_assists) = self.assists_by_editor.get_mut(&editor.downgrade()) else {
             return;
@@ -916,7 +900,7 @@ impl InlineAssistant {
         assist_id: InlineAssistId,
         undo: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if let Some(assist) = self.assists.get(&assist_id) {
             let assist_group_id = assist.group_id;
@@ -1001,7 +985,7 @@ impl InlineAssistant {
         &mut self,
         assist_id: InlineAssistId,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> bool {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return false;
@@ -1042,12 +1026,7 @@ impl InlineAssistant {
         true
     }
 
-    fn focus_next_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn focus_next_assist(&mut self, assist_id: InlineAssistId, window: &mut Window, cx: &mut App) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
@@ -1078,12 +1057,7 @@ impl InlineAssistant {
             .ok();
     }
 
-    fn focus_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn focus_assist(&mut self, assist_id: InlineAssistId, window: &mut Window, cx: &mut App) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
         };
@@ -1104,7 +1078,7 @@ impl InlineAssistant {
         &mut self,
         assist_id: InlineAssistId,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let Some(assist) = self.assists.get(&assist_id) else {
             return;
@@ -1167,7 +1141,7 @@ impl InlineAssistant {
         &mut self,
         assist_group_id: InlineAssistGroupId,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Vec<InlineAssistId> {
         let assist_group = self.assist_groups.get_mut(&assist_group_id).unwrap();
         assist_group.linked = false;
@@ -1182,12 +1156,7 @@ impl InlineAssistant {
         assist_group.assist_ids.clone()
     }
 
-    pub fn start_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    pub fn start_assist(&mut self, assist_id: InlineAssistId, window: &mut Window, cx: &mut App) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1218,7 +1187,7 @@ impl InlineAssistant {
             .log_err();
     }
 
-    pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
+    pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut App) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1228,7 +1197,7 @@ impl InlineAssistant {
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
 
-    fn update_editor_highlights(&self, editor: &Model<Editor>, cx: &mut AppContext) {
+    fn update_editor_highlights(&self, editor: &Entity<Editor>, cx: &mut App) {
         let mut gutter_pending_ranges = Vec::new();
         let mut gutter_transformed_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
@@ -1321,10 +1290,10 @@ impl InlineAssistant {
 
     fn update_editor_blocks(
         &mut self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         assist_id: InlineAssistId,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let Some(assist) = self.assists.get_mut(&assist_id) else {
             return;
@@ -1354,10 +1323,9 @@ impl InlineAssistant {
                     ))
                     .unwrap();
 
-                let deleted_lines_editor = cx.new_model(|cx| {
-                    let multi_buffer = cx.new_model(|_| {
-                        MultiBuffer::without_headers(language::Capability::ReadOnly)
-                    });
+                let deleted_lines_editor = cx.new(|cx| {
+                    let multi_buffer =
+                        cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
                     multi_buffer.update(cx, |multi_buffer, cx| {
                         multi_buffer.push_excerpts(
                             old_buffer.clone(),
@@ -1417,7 +1385,7 @@ impl InlineAssistant {
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<InlineAssistTarget> {
         if let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) {
             if terminal_panel
@@ -1466,7 +1434,7 @@ struct InlineAssistScrollLock {
 
 impl EditorInlineAssists {
     #[allow(clippy::too_many_arguments)]
-    fn new(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) -> Self {
+    fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
         let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
         Self {
             assist_ids: Vec::new(),
@@ -1544,7 +1512,7 @@ impl InlineAssistGroup {
     }
 }
 
-fn build_assist_editor_renderer(editor: &Model<PromptEditor<BufferCodegen>>) -> RenderBlock {
+fn build_assist_editor_renderer(editor: &Entity<PromptEditor<BufferCodegen>>) -> RenderBlock {
     let editor = editor.clone();
 
     Arc::new(move |cx: &mut BlockContext| {
@@ -1569,11 +1537,11 @@ impl InlineAssistGroupId {
 pub struct InlineAssist {
     group_id: InlineAssistGroupId,
     range: Range<Anchor>,
-    editor: WeakModel<Editor>,
+    editor: WeakEntity<Editor>,
     decorations: Option<InlineAssistDecorations>,
-    codegen: Model<BufferCodegen>,
+    codegen: Entity<BufferCodegen>,
     _subscriptions: Vec<Subscription>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl InlineAssist {
@@ -1581,15 +1549,15 @@ impl InlineAssist {
     fn new(
         assist_id: InlineAssistId,
         group_id: InlineAssistGroupId,
-        editor: &Model<Editor>,
-        prompt_editor: &Model<PromptEditor<BufferCodegen>>,
+        editor: &Entity<Editor>,
+        prompt_editor: &Entity<PromptEditor<BufferCodegen>>,
         prompt_block_id: CustomBlockId,
         end_block_id: CustomBlockId,
         range: Range<Anchor>,
-        codegen: Model<BufferCodegen>,
-        workspace: WeakModel<Workspace>,
+        codegen: Entity<BufferCodegen>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self {
         let prompt_editor_focus_handle = prompt_editor.focus_handle(cx);
         InlineAssist {
@@ -1674,7 +1642,7 @@ impl InlineAssist {
         }
     }
 
-    fn user_prompt(&self, cx: &AppContext) -> Option<String> {
+    fn user_prompt(&self, cx: &App) -> Option<String> {
         let decorations = self.decorations.as_ref()?;
         Some(decorations.prompt_editor.read(cx).prompt(cx))
     }
@@ -1682,15 +1650,15 @@ impl InlineAssist {
 
 struct InlineAssistDecorations {
     prompt_block_id: CustomBlockId,
-    prompt_editor: Model<PromptEditor<BufferCodegen>>,
+    prompt_editor: Entity<PromptEditor<BufferCodegen>>,
     removed_line_block_ids: HashSet<CustomBlockId>,
     end_block_id: CustomBlockId,
 }
 
 struct AssistantCodeActionProvider {
-    editor: WeakModel<Editor>,
-    workspace: WeakModel<Workspace>,
-    thread_store: Option<WeakModel<ThreadStore>>,
+    editor: WeakEntity<Editor>,
+    workspace: WeakEntity<Workspace>,
+    thread_store: Option<WeakEntity<ThreadStore>>,
 }
 
 const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant2";
@@ -1702,10 +1670,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
 
     fn code_actions(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         range: Range<text::Anchor>,
         _: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
         if !AssistantSettings::get_global(cx).enabled {
             return Task::ready(Ok(Vec::new()));
@@ -1754,12 +1722,12 @@ impl CodeActionProvider for AssistantCodeActionProvider {
 
     fn apply_code_action(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         action: CodeAction,
         excerpt_id: ExcerptId,
         _push_to_history: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<ProjectTransaction>> {
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();

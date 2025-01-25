@@ -26,7 +26,7 @@ use ::settings::Settings;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{
-    px, AppContext, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString,
+    px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString,
     WindowAppearance, WindowBackgroundAppearance,
 };
 use serde::Deserialize;
@@ -87,7 +87,7 @@ pub enum LoadThemes {
 }
 
 /// Initialize the theme system.
-pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
+pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let (assets, load_user_themes) = match themes_to_load {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
@@ -108,7 +108,7 @@ pub trait ActiveTheme {
     fn theme(&self) -> &Arc<Theme>;
 }
 
-impl ActiveTheme for AppContext {
+impl ActiveTheme for App {
     fn theme(&self) -> &Arc<Theme> {
         &ThemeSettings::get_global(self).active_theme
     }

@@ -1,6 +1,6 @@
 use futures::channel::oneshot;
 use fuzzy::PathMatch;
-use gpui::{HighlightStyle, Model, StyledText};
+use gpui::{HighlightStyle, Entity, StyledText};
 use picker::{Picker, PickerDelegate};
 use project::{Entry, PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use std::{
@@ -11,7 +11,7 @@ use std::{
     },
 };
 use ui::{highlight_ranges, prelude::*, LabelLike, ListItemSpacing};
-use ui::{ListItem, ModelContext, Window};
+use ui::{ListItem, Context, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -24,7 +24,7 @@ struct Match {
 }
 
 impl Match {
-    fn entry<'a>(&'a self, project: &'a Project, cx: &'a AppContext) -> Option<&'a Entry> {
+    fn entry<'a>(&'a self, project: &'a Project, cx: &'a App) -> Option<&'a Entry> {
         if let Some(suffix) = &self.suffix {
             let (worktree, path) = if let Some(path_match) = &self.path_match {
                 (
@@ -45,7 +45,7 @@ impl Match {
         }
     }
 
-    fn is_dir(&self, project: &Project, cx: &AppContext) -> bool {
+    fn is_dir(&self, project: &Project, cx: &App) -> bool {
         self.entry(project, cx).is_some_and(|e| e.is_dir())
             || self.suffix.as_ref().is_some_and(|s| s.ends_with('/'))
     }
@@ -68,7 +68,7 @@ impl Match {
         }
     }
 
-    fn project_path(&self, project: &Project, cx: &AppContext) -> Option<ProjectPath> {
+    fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else if let Some(worktree) = project.visible_worktrees(cx).find(|worktree| {
@@ -91,7 +91,7 @@ impl Match {
         })
     }
 
-    fn existing_prefix(&self, project: &Project, cx: &AppContext) -> Option<PathBuf> {
+    fn existing_prefix(&self, project: &Project, cx: &App) -> Option<PathBuf> {
         let worktree = project.worktrees(cx).next()?.read(cx);
         let mut prefix = PathBuf::new();
         let parts = self.suffix.as_ref()?.split('/');
@@ -105,7 +105,7 @@ impl Match {
         None
     }
 
-    fn styled_text(&self, project: &Project, window: &Window, cx: &AppContext) -> StyledText {
+    fn styled_text(&self, project: &Project, window: &Window, cx: &App) -> StyledText {
         let mut text = "./".to_string();
         let mut highlights = Vec::new();
         let mut offset = text.as_bytes().len();
@@ -197,7 +197,7 @@ impl Match {
 }
 
 pub struct NewPathDelegate {
-    project: Model<Project>,
+    project: Entity<Project>,
     tx: Option<oneshot::Sender<Option<ProjectPath>>>,
     selected_index: usize,
     matches: Vec<Match>,
@@ -210,7 +210,7 @@ impl NewPathPrompt {
     pub(crate) fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _cx: &mut ModelContext<Workspace>,
+        _cx: &mut Context<Workspace>,
     ) {
         workspace.set_prompt_for_new_path(Box::new(|workspace, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
@@ -223,7 +223,7 @@ impl NewPathPrompt {
         workspace: &mut Workspace,
         tx: oneshot::Sender<Option<ProjectPath>>,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |window, cx| {
@@ -257,7 +257,7 @@ impl PickerDelegate for NewPathDelegate {
         &mut self,
         ix: usize,
         _: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) {
         self.selected_index = ix;
         cx.notify();
@@ -267,7 +267,7 @@ impl PickerDelegate for NewPathDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query
             .trim()
@@ -341,7 +341,7 @@ impl PickerDelegate for NewPathDelegate {
         &mut self,
         _: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         self.confirm_update_query(window, cx)
     }
@@ -349,7 +349,7 @@ impl PickerDelegate for NewPathDelegate {
     fn confirm_update_query(
         &mut self,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         let m = self.matches.get(self.selected_index)?;
         if m.is_dir(self.project.read(cx), cx) {
@@ -365,7 +365,7 @@ impl PickerDelegate for NewPathDelegate {
         &mut self,
         _: bool,
         window: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) {
         let Some(m) = self.matches.get(self.selected_index) else {
             return;
@@ -416,7 +416,7 @@ impl PickerDelegate for NewPathDelegate {
         self.should_dismiss
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
@@ -428,7 +428,7 @@ impl PickerDelegate for NewPathDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<picker::Picker<Self>>,
+        cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
 
@@ -441,11 +441,11 @@ impl PickerDelegate for NewPathDelegate {
         )
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut AppContext) -> SharedString {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
         "Type a path...".into()
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         Arc::from("[directory/]filename.ext")
     }
 }
@@ -457,7 +457,7 @@ impl NewPathDelegate {
         prefix: String,
         suffix: Option<String>,
         matches: Vec<PathMatch>,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         cx.notify();
         if query.is_empty() {

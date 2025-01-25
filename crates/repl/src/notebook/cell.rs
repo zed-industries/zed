@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, AppContext, Hsla, Model, Task, TextStyleRefinement};
+use gpui::{prelude::*, App, Hsla, Entity, Task, TextStyleRefinement};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
@@ -64,7 +64,7 @@ impl CellControl {
 impl Clickable for CellControl {
     fn on_click(
         self,
-        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         let button = self.button.on_click(handler);
         Self { button }
@@ -78,21 +78,21 @@ impl Clickable for CellControl {
 /// A notebook cell
 #[derive(Clone)]
 pub enum Cell {
-    Code(Model<CodeCell>),
-    Markdown(Model<MarkdownCell>),
-    Raw(Model<RawCell>),
+    Code(Entity<CodeCell>),
+    Markdown(Entity<MarkdownCell>),
+    Raw(Entity<RawCell>),
 }
 
 fn convert_outputs(
     outputs: &Vec<nbformat::v4::Output>,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Vec<Output> {
     outputs
         .into_iter()
         .map(|output| match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
-                content: cx.new_model(|cx| TerminalOutput::from(&text.0, window, cx)),
+                content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),
             },
             nbformat::v4::Output::DisplayData(display_data) => {
                 Output::new(&display_data.data, None, window, cx)
@@ -104,7 +104,7 @@ fn convert_outputs(
                 ename: error.ename.clone(),
                 evalue: error.evalue.clone(),
                 traceback: cx
-                    .new_model(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
+                    .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
             }),
         })
         .collect()
@@ -116,7 +116,7 @@ impl Cell {
         languages: &Arc<LanguageRegistry>,
         notebook_language: Shared<Task<Option<Arc<Language>>>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self {
         match cell {
             nbformat::v4::Cell::Markdown {
@@ -127,7 +127,7 @@ impl Cell {
             } => {
                 let source = source.join("");
 
-                let model = cx.new_model(|cx| {
+                let model = cx.new(|cx| {
                     let markdown_parsing_task = {
                         let languages = languages.clone();
                         let source = source.clone();
@@ -167,13 +167,13 @@ impl Cell {
                 execution_count,
                 source,
                 outputs,
-            } => Cell::Code(cx.new_model(|cx| {
+            } => Cell::Code(cx.new(|cx| {
                 let text = source.join("");
 
-                let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
-                let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+                let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-                let editor_view = cx.new_model(|cx| {
+                let editor_view = cx.new(|cx| {
                     let mut editor = Editor::new(
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
@@ -226,7 +226,7 @@ impl Cell {
                 id,
                 metadata,
                 source,
-            } => Cell::Raw(cx.new_model(|_| RawCell {
+            } => Cell::Raw(cx.new(|_| RawCell {
                 id: id.clone(),
                 metadata: metadata.clone(),
                 source: source.join(""),
@@ -246,7 +246,7 @@ pub trait RenderableCell: Render {
     fn source(&self) -> &String;
     fn selected(&self) -> bool;
     fn set_selected(&mut self, selected: bool) -> &mut Self;
-    fn selected_bg_color(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Hsla {
+    fn selected_bg_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
         if self.selected() {
             let mut color = cx.theme().colors().icon_accent;
             color.fade_out(0.9);
@@ -256,7 +256,7 @@ pub trait RenderableCell: Render {
             cx.theme().colors().tab_bar_background
         }
     }
-    fn control(&self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> Option<CellControl> {
+    fn control(&self, _window: &mut Window, _cx: &mut Context<Self>) -> Option<CellControl> {
         None
     }
 
@@ -264,7 +264,7 @@ pub trait RenderableCell: Render {
         &self,
         is_first: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let cell_position = self.cell_position();
 
@@ -277,7 +277,7 @@ pub trait RenderableCell: Render {
         }
     }
 
-    fn gutter(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn gutter(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
         div()
@@ -325,7 +325,7 @@ pub trait RenderableCell: Render {
 pub trait RunnableCell: RenderableCell {
     fn execution_count(&self) -> Option<i32>;
     fn set_execution_count(&mut self, count: i32) -> &mut Self;
-    fn run(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> ();
+    fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) -> ();
 }
 
 pub struct MarkdownCell {
@@ -367,7 +367,7 @@ impl RenderableCell for MarkdownCell {
         self
     }
 
-    fn control(&self, _window: &mut Window, _: &mut ModelContext<Self>) -> Option<CellControl> {
+    fn control(&self, _window: &mut Window, _: &mut Context<Self>) -> Option<CellControl> {
         None
     }
 
@@ -382,7 +382,7 @@ impl RenderableCell for MarkdownCell {
 }
 
 impl Render for MarkdownCell {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(parsed) = self.parsed_markdown.as_ref() else {
             return div();
         };
@@ -428,7 +428,7 @@ pub struct CodeCell {
     metadata: CellMetadata,
     execution_count: Option<i32>,
     source: String,
-    editor: Model<editor::Editor>,
+    editor: Entity<editor::Editor>,
     outputs: Vec<Output>,
     selected: bool,
     cell_position: Option<CellPosition>,
@@ -436,7 +436,7 @@ pub struct CodeCell {
 }
 
 impl CodeCell {
-    pub fn is_dirty(&self, cx: &AppContext) -> bool {
+    pub fn is_dirty(&self, cx: &App) -> bool {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
     pub fn has_outputs(&self) -> bool {
@@ -458,7 +458,7 @@ impl CodeCell {
     pub fn gutter_output(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_selected = self.selected();
 
@@ -520,7 +520,7 @@ impl RenderableCell for CodeCell {
         &self.source
     }
 
-    fn control(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<CellControl> {
+    fn control(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
         let cell_control = if self.has_outputs() {
             CellControl::new("rerun-cell", CellControlType::RerunCell)
         } else {
@@ -551,7 +551,7 @@ impl RenderableCell for CodeCell {
 }
 
 impl RunnableCell for CodeCell {
-    fn run(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         println!("Running code cell: {}", self.id);
     }
 
@@ -567,7 +567,7 @@ impl RunnableCell for CodeCell {
 }
 
 impl Render for CodeCell {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this
@@ -714,7 +714,7 @@ impl RenderableCell for RawCell {
 }
 
 impl Render for RawCell {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this

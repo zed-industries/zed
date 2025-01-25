@@ -1,12 +1,12 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, uniform_list, App, AppContext, Bounds, ModelContext, Window,
+    div, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context, Window,
     WindowBounds, WindowOptions,
 };
 
 struct UniformListExample {}
 
 impl Render for UniformListExample {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().size_full().bg(rgb(0xffffff)).child(
             uniform_list(
                 cx.model().clone(),
@@ -37,14 +37,14 @@ impl Render for UniformListExample {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new_model(|_| UniformListExample {}),
+            |_, cx| cx.new(|_| UniformListExample {}),
         )
         .unwrap();
     });

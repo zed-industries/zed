@@ -8,7 +8,7 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, ModelContext,
+    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, Entity, IntoElement, Context,
     MouseButton, Pixels, Point, StyleRefinement, Window,
 };
 use parking_lot::Mutex;
@@ -36,7 +36,7 @@ impl PaneGroup {
         Self { root }
     }
 
-    pub fn new(pane: Model<Pane>) -> Self {
+    pub fn new(pane: Entity<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
         }
@@ -44,8 +44,8 @@ impl PaneGroup {
 
     pub fn split(
         &mut self,
-        old_pane: &Model<Pane>,
-        new_pane: &Model<Pane>,
+        old_pane: &Entity<Pane>,
+        new_pane: &Entity<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         match &mut self.root {
@@ -61,14 +61,14 @@ impl PaneGroup {
         }
     }
 
-    pub fn bounding_box_for_pane(&self, pane: &Model<Pane>) -> Option<Bounds<Pixels>> {
+    pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
         match &self.root {
             Member::Pane(_) => None,
             Member::Axis(axis) => axis.bounding_box_for_pane(pane),
         }
     }
 
-    pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Model<Pane>> {
+    pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
         match &self.root {
             Member::Pane(pane) => Some(pane),
             Member::Axis(axis) => axis.pane_at_pixel_position(coordinate),
@@ -79,7 +79,7 @@ impl PaneGroup {
     /// - Ok(true) if it found and removed a pane
     /// - Ok(false) if it found but did not remove the pane
     /// - Err(_) if it did not find the pane
-    pub fn remove(&mut self, pane: &Model<Pane>) -> Result<bool> {
+    pub fn remove(&mut self, pane: &Entity<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
@@ -93,7 +93,7 @@ impl PaneGroup {
 
     pub fn resize(
         &mut self,
-        pane: &Model<Pane>,
+        pane: &Entity<Pane>,
         direction: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
@@ -115,7 +115,7 @@ impl PaneGroup {
         };
     }
 
-    pub fn swap(&mut self, from: &Model<Pane>, to: &Model<Pane>) {
+    pub fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>) {
         match &mut self.root {
             Member::Pane(_) => {}
             Member::Axis(axis) => axis.swap(from, to),
@@ -125,14 +125,14 @@ impl PaneGroup {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         follower_states: &HashMap<PeerId, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
-        active_pane: &Model<Pane>,
+        active_call: Option<&Entity<ActiveCall>>,
+        active_pane: &Entity<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         self.root.render(
             project,
@@ -147,22 +147,22 @@ impl PaneGroup {
         )
     }
 
-    pub fn panes(&self) -> Vec<&Model<Pane>> {
+    pub fn panes(&self) -> Vec<&Entity<Pane>> {
         let mut panes = Vec::new();
         self.root.collect_panes(&mut panes);
         panes
     }
 
-    pub fn first_pane(&self) -> Model<Pane> {
+    pub fn first_pane(&self) -> Entity<Pane> {
         self.root.first_pane()
     }
 
     pub fn find_pane_in_direction(
         &mut self,
-        active_pane: &Model<Pane>,
+        active_pane: &Entity<Pane>,
         direction: SplitDirection,
-        cx: &AppContext,
-    ) -> Option<&Model<Pane>> {
+        cx: &App,
+    ) -> Option<&Entity<Pane>> {
         let bounding_box = self.bounding_box_for_pane(active_pane)?;
         let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
         let center = match cursor {
@@ -193,11 +193,11 @@ impl PaneGroup {
 #[derive(Debug, Clone)]
 pub enum Member {
     Axis(PaneAxis),
-    Pane(Model<Pane>),
+    Pane(Entity<Pane>),
 }
 
 impl Member {
-    fn new_axis(old_pane: Model<Pane>, new_pane: Model<Pane>, direction: SplitDirection) -> Self {
+    fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
         use SplitDirection::*;
 
@@ -214,14 +214,14 @@ impl Member {
         Member::Axis(PaneAxis::new(axis, members))
     }
 
-    fn contains(&self, needle: &Model<Pane>) -> bool {
+    fn contains(&self, needle: &Entity<Pane>) -> bool {
         match self {
             Member::Axis(axis) => axis.members.iter().any(|member| member.contains(needle)),
             Member::Pane(pane) => pane == needle,
         }
     }
 
-    fn first_pane(&self) -> Model<Pane> {
+    fn first_pane(&self) -> Entity<Pane> {
         match self {
             Member::Axis(axis) => axis.members[0].first_pane(),
             Member::Pane(pane) => pane.clone(),
@@ -231,15 +231,15 @@ impl Member {
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         basis: usize,
         follower_states: &HashMap<PeerId, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
-        active_pane: &Model<Pane>,
+        active_call: Option<&Entity<ActiveCall>>,
+        active_pane: &Entity<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> impl IntoElement {
         match self {
             Member::Pane(pane) => {
@@ -384,7 +384,7 @@ impl Member {
         }
     }
 
-    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a Model<Pane>>) {
+    fn collect_panes<'a>(&'a self, panes: &mut Vec<&'a Entity<Pane>>) {
         match self {
             Member::Axis(axis) => {
                 for member in &axis.members {
@@ -432,8 +432,8 @@ impl PaneAxis {
 
     fn split(
         &mut self,
-        old_pane: &Model<Pane>,
-        new_pane: &Model<Pane>,
+        old_pane: &Entity<Pane>,
+        new_pane: &Entity<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         for (mut idx, member) in self.members.iter_mut().enumerate() {
@@ -464,7 +464,7 @@ impl PaneAxis {
         Err(anyhow!("Pane not found"))
     }
 
-    fn remove(&mut self, pane_to_remove: &Model<Pane>) -> Result<Option<Member>> {
+    fn remove(&mut self, pane_to_remove: &Entity<Pane>) -> Result<Option<Member>> {
         let mut found_pane = false;
         let mut remove_member = None;
         for (idx, member) in self.members.iter_mut().enumerate() {
@@ -517,7 +517,7 @@ impl PaneAxis {
 
     fn resize(
         &mut self,
-        pane: &Model<Pane>,
+        pane: &Entity<Pane>,
         axis: Axis,
         amount: Pixels,
         bounds: &Bounds<Pixels>,
@@ -625,7 +625,7 @@ impl PaneAxis {
         Some(true)
     }
 
-    fn swap(&mut self, from: &Model<Pane>, to: &Model<Pane>) {
+    fn swap(&mut self, from: &Entity<Pane>, to: &Entity<Pane>) {
         for member in self.members.iter_mut() {
             match member {
                 Member::Axis(axis) => axis.swap(from, to),
@@ -640,7 +640,7 @@ impl PaneAxis {
         }
     }
 
-    fn bounding_box_for_pane(&self, pane: &Model<Pane>) -> Option<Bounds<Pixels>> {
+    fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
         debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
 
         for (idx, member) in self.members.iter().enumerate() {
@@ -660,7 +660,7 @@ impl PaneAxis {
         None
     }
 
-    fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Model<Pane>> {
+    fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
         debug_assert!(self.members.len() == self.bounding_boxes.lock().len());
 
         let bounding_boxes = self.bounding_boxes.lock();
@@ -681,15 +681,15 @@ impl PaneAxis {
     #[allow(clippy::too_many_arguments)]
     fn render(
         &self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         basis: usize,
         follower_states: &HashMap<PeerId, FollowerState>,
-        active_call: Option<&Model<ActiveCall>>,
-        active_pane: &Model<Pane>,
+        active_call: Option<&Entity<ActiveCall>>,
+        active_pane: &Entity<Pane>,
         zoomed: Option<&AnyWeakView>,
         app_state: &Arc<AppState>,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> gpui::AnyElement {
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
@@ -748,14 +748,14 @@ impl SplitDirection {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
-    pub fn vertical(cx: &mut AppContext) -> Self {
+    pub fn vertical(cx: &mut App) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
             PaneSplitDirectionVertical::Left => SplitDirection::Left,
             PaneSplitDirectionVertical::Right => SplitDirection::Right,
         }
     }
 
-    pub fn horizontal(cx: &mut AppContext) -> Self {
+    pub fn horizontal(cx: &mut App) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
             PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
             PaneSplitDirectionHorizontal::Up => SplitDirection::Up,
@@ -820,9 +820,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        px, relative, size, Along, AnyElement, AppContext, Axis, Bounds, Element, GlobalElementId,
+        px, relative, size, Along, AnyElement, App, Axis, Bounds, Element, GlobalElementId,
         IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-        Size, Style, WeakModel, Window,
+        Size, Style, WeakEntity, Window,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -844,7 +844,7 @@ mod element {
         basis: usize,
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
     ) -> PaneAxisElement {
         PaneAxisElement {
             axis,
@@ -864,7 +864,7 @@ mod element {
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
         active_pane_ix: Option<usize>,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
     }
 
     pub struct PaneAxisLayout {
@@ -897,9 +897,9 @@ mod element {
             axis: Axis,
             child_start: Point<Pixels>,
             container_size: Size<Pixels>,
-            workspace: WeakModel<Workspace>,
+            workspace: WeakEntity<Workspace>,
             window: &mut Window,
-            cx: &mut AppContext,
+            cx: &mut App,
         ) {
             let min_size = match axis {
                 Axis::Horizontal => px(HORIZONTAL_MIN_SIZE),
@@ -984,7 +984,7 @@ mod element {
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
             window: &mut Window,
-            _cx: &mut AppContext,
+            _cx: &mut App,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {
@@ -1028,7 +1028,7 @@ mod element {
             &mut self,
             _global_id: Option<&GlobalElementId>,
             window: &mut Window,
-            cx: &mut AppContext,
+            cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let style = Style {
                 flex_grow: 1.,
@@ -1046,7 +1046,7 @@ mod element {
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             window: &mut Window,
-            cx: &mut AppContext,
+            cx: &mut App,
         ) -> PaneAxisLayout {
             let dragged_handle = window.with_element_state::<Rc<RefCell<Option<usize>>>, _>(
                 global_id.unwrap(),
@@ -1135,7 +1135,7 @@ mod element {
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
             window: &mut Window,
-            cx: &mut AppContext,
+            cx: &mut App,
         ) {
             for child in &mut layout.children {
                 child.element.paint(window, cx);

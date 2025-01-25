@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, AppContext, Bounds, ModelContext, SharedString, Timer,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Timer,
     Window, WindowBounds, WindowKind, WindowOptions,
 };
 
@@ -7,10 +7,7 @@ struct SubWindow {
     custom_titlebar: bool,
 }
 
-fn button(
-    text: &str,
-    on_click: impl Fn(&mut Window, &mut AppContext) + 'static,
-) -> impl IntoElement {
+fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
     div()
         .id(SharedString::from(text.to_string()))
         .flex_none()
@@ -26,7 +23,7 @@ fn button(
 }
 
 impl Render for SubWindow {
-    fn render(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -67,7 +64,7 @@ impl Render for SubWindow {
 struct WindowDemo {}
 
 impl Render for WindowDemo {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_bounds =
             WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
@@ -87,7 +84,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new_model(|_| SubWindow {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -102,7 +99,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new_model(|_| SubWindow {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -117,7 +114,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new_model(|_| SubWindow {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: true,
                         })
                     },
@@ -132,7 +129,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new_model(|_| SubWindow {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -148,7 +145,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new_model(|_| SubWindow {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -172,14 +169,14 @@ impl Render for WindowDemo {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new_model(|_| WindowDemo {}),
+            |_, cx| cx.new(|_| WindowDemo {}),
         )
         .unwrap();
     });

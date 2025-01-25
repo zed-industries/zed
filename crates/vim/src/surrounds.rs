@@ -5,7 +5,7 @@ use crate::{
     Vim,
 };
 use editor::{movement, scroll::Autoscroll, Bias};
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::BracketPair;
 
 use std::sync::Arc;
@@ -23,7 +23,7 @@ impl Vim {
         text: Arc<str>,
         target: SurroundsType,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         let count = Vim::take_count(cx);
@@ -128,7 +128,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
 
@@ -225,7 +225,7 @@ impl Vim {
         text: Arc<str>,
         target: Object,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(will_replace_pair) = object_to_bracket_pair(target) {
             self.stop_recording(cx);
@@ -339,7 +339,7 @@ impl Vim {
         &mut self,
         object: Object,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let mut valid = false;
         if let Some(pair) = object_to_bracket_pair(object) {

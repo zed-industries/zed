@@ -88,7 +88,7 @@ fn cell_content(row: &Value, field: &str) -> String {
 const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
 
 impl TableView {
-    pub fn new(table: &TabularDataResource, window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn new(table: &TabularDataResource, window: &mut Window, cx: &mut App) -> Self {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
 
         let text_system = window.text_system();
@@ -190,7 +190,7 @@ impl TableView {
         is_header: bool,
         row: &Value,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> AnyElement {
         let theme = cx.theme();
 
@@ -249,7 +249,7 @@ impl TableView {
 }
 
 impl Render for TableView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = match &self.table.data {
             Some(data) => data,
             None => return div().into_any_element(),
@@ -282,11 +282,11 @@ impl Render for TableView {
 }
 
 impl OutputContent for TableView {
-    fn clipboard_content(&self, _window: &Window, _cx: &AppContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
         Some(self.cached_clipboard_content.clone())
     }
 
-    fn has_clipboard_content(&self, _window: &Window, _cx: &AppContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
         true
     }
 }

@@ -8,7 +8,7 @@ use collab_ui::{
 };
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
-    point, BackgroundExecutor, BorrowAppContext, Context, Entity, Model, SharedString,
+    point, AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString,
     TestAppContext, VisualTestContext,
 };
 use language::Capability;
@@ -282,7 +282,7 @@ async fn test_basic_following(
     });
 
     // When client A opens a multibuffer, client B does so as well.
-    let multibuffer_a = cx_a.new_model(|cx| {
+    let multibuffer_a = cx_a.new(|cx| {
         let buffer_a1 = project_a.update(cx, |project, cx| {
             project
                 .get_open_buffer(&(worktree_id, "1.txt").into(), cx)
@@ -313,7 +313,7 @@ async fn test_basic_following(
         result
     });
     let multibuffer_editor_a = workspace_a.update_in(cx_a, |workspace, window, cx| {
-        let editor = cx.new_model(|cx| {
+        let editor = cx.new(|cx| {
             Editor::for_multibuffer(multibuffer_a, Some(project_a.clone()), true, window, cx)
         });
         workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
@@ -619,7 +619,7 @@ async fn test_following_tab_order(
         .await
         .unwrap();
 
-    let pane_paths = |pane: &Model<workspace::Pane>, cx: &mut VisualTestContext| {
+    let pane_paths = |pane: &Entity<workspace::Pane>, cx: &mut VisualTestContext| {
         pane.update(cx, |pane, cx| {
             pane.items()
                 .map(|item| {
@@ -1824,7 +1824,7 @@ async fn test_following_into_excluded_file(
     });
 }
 
-fn visible_push_notifications(cx: &mut TestAppContext) -> Vec<Model<ProjectSharedNotification>> {
+fn visible_push_notifications(cx: &mut TestAppContext) -> Vec<Entity<ProjectSharedNotification>> {
     let mut ret = Vec::new();
     for window in cx.windows() {
         window
@@ -1869,7 +1869,7 @@ fn followers_by_leader(project_id: u64, cx: &TestAppContext) -> Vec<(PeerId, Vec
     })
 }
 
-fn pane_summaries(workspace: &Model<Workspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
+fn pane_summaries(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Vec<PaneSummary> {
     workspace.update(cx, |workspace, cx| {
         let active_pane = workspace.active_pane();
         workspace
@@ -2075,7 +2075,7 @@ pub(crate) async fn join_channel(
 }
 
 async fn share_workspace(
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> anyhow::Result<u64> {
     let project = workspace.update(cx, |workspace, _| workspace.project().clone());

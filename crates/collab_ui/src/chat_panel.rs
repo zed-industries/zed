@@ -7,10 +7,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{actions, Editor};
 use gpui::{
-    actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
-    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, Focusable, FontWeight,
-    HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, ModelContext, Render, Stateful,
-    Subscription, Task, WeakModel, Window,
+    actions, div, list, prelude::*, px, Action, App, AsyncWindowContext, ClipboardItem,
+    CursorStyle, DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    HighlightStyle, ListOffset, ListScrollEvent, ListState, Context, Render, Stateful,
+    Subscription, Task, WeakEntity, Window,
 };
 use language::LanguageRegistry;
 use menu::Confirm;
@@ -36,8 +36,8 @@ mod message_editor;
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &str = "ChatPanel";
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ChatPanel>(window, cx);
         });
@@ -47,11 +47,11 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct ChatPanel {
     client: Arc<Client>,
-    channel_store: Model<ChannelStore>,
+    channel_store: Entity<ChannelStore>,
     languages: Arc<LanguageRegistry>,
     message_list: ListState,
-    active_chat: Option<(Model<ChannelChat>, Subscription)>,
-    message_editor: Model<MessageEditor>,
+    active_chat: Option<(Entity<ChannelChat>, Subscription)>,
+    message_editor: Entity<MessageEditor>,
     local_timezone: UtcOffset,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
@@ -77,26 +77,26 @@ impl ChatPanel {
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Model<Self> {
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let channel_store = ChannelStore::global(cx);
         let user_store = workspace.app_state().user_store.clone();
         let languages = workspace.app_state().languages.clone();
 
-        let input_editor = cx.new_model(|cx| {
+        let input_editor = cx.new(|cx| {
             MessageEditor::new(
                 languages.clone(),
                 user_store.clone(),
                 None,
-                cx.new_model(|cx| Editor::auto_height(4, window, cx)),
+                cx.new(|cx| Editor::auto_height(4, window, cx)),
                 window,
                 cx,
             )
         });
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let model = cx.model().downgrade();
             let message_list = ListState::new(
                 0,
@@ -181,7 +181,7 @@ impl ChatPanel {
         })
     }
 
-    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
+    pub fn channel_id(&self, cx: &App) -> Option<ChannelId> {
         self.active_chat
             .as_ref()
             .map(|(chat, _)| chat.read(cx).channel_id)
@@ -191,14 +191,14 @@ impl ChatPanel {
         self.is_scrolled_to_bottom
     }
 
-    pub fn active_chat(&self) -> Option<Model<ChannelChat>> {
+    pub fn active_chat(&self) -> Option<Entity<ChannelChat>> {
         self.active_chat.as_ref().map(|(chat, _)| chat.clone())
     }
 
     pub fn load(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
-    ) -> Task<Result<Model<Self>>> {
+    ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
                 .background_executor()
@@ -225,7 +225,7 @@ impl ChatPanel {
         })
     }
 
-    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -241,7 +241,7 @@ impl ChatPanel {
         );
     }
 
-    fn set_active_chat(&mut self, chat: Model<ChannelChat>, cx: &mut ModelContext<Self>) {
+    fn set_active_chat(&mut self, chat: Entity<ChannelChat>, cx: &mut Context<Self>) {
         if self.active_chat.as_ref().map(|e| &e.0) != Some(&chat) {
             self.markdown_data.clear();
             self.message_list.reset(chat.read(cx).message_count());
@@ -258,9 +258,9 @@ impl ChatPanel {
 
     fn channel_did_change(
         &mut self,
-        _: Model<ChannelChat>,
+        _: Entity<ChannelChat>,
         event: &ChannelChatEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             ChannelChatEvent::MessagesUpdated {
@@ -293,7 +293,7 @@ impl ChatPanel {
         cx.notify();
     }
 
-    fn acknowledge_last_message(&mut self, cx: &mut ModelContext<Self>) {
+    fn acknowledge_last_message(&mut self, cx: &mut Context<Self>) {
         if self.active && self.is_scrolled_to_bottom {
             if let Some((chat, _)) = &self.active_chat {
                 if let Some(channel_id) = self.channel_id(cx) {
@@ -314,7 +314,7 @@ impl ChatPanel {
         &mut self,
         message_id: Option<ChannelMessageId>,
         reply_to_message: &Option<ChannelMessage>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let reply_to_message = match reply_to_message {
             None => {
@@ -393,7 +393,7 @@ impl ChatPanel {
         &mut self,
         ix: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
         let (message, is_continuation_from_previous, is_admin) =
@@ -586,7 +586,7 @@ impl ChatPanel {
         }
     }
 
-    fn render_popover_button(&self, cx: &mut ModelContext<Self>, child: Stateful<Div>) -> Div {
+    fn render_popover_button(&self, cx: &mut Context<Self>, child: Stateful<Div>) -> Div {
         div()
             .w_6()
             .bg(cx.theme().colors().element_background)
@@ -599,7 +599,7 @@ impl ChatPanel {
         message_id: Option<u64>,
         can_delete_message: bool,
         can_edit_message: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Div {
         h_flex()
             .absolute()
@@ -710,12 +710,12 @@ impl ChatPanel {
     }
 
     fn render_message_menu(
-        this: &Model<Self>,
+        this: &Entity<Self>,
         message_id: u64,
         can_delete_message: bool,
         window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Model<ContextMenu> {
+        cx: &mut App,
+    ) -> Entity<ContextMenu> {
         let menu = {
             ContextMenu::build(window, cx, move |menu, window, _| {
                 menu.entry(
@@ -759,7 +759,7 @@ impl ChatPanel {
         current_user_id: u64,
         message: &channel::ChannelMessage,
         local_timezone: UtcOffset,
-        cx: &AppContext,
+        cx: &App,
     ) -> RichText {
         let mentions = message
             .mentions
@@ -807,7 +807,7 @@ impl ChatPanel {
         rich_text
     }
 
-    fn send(&mut self, _: &Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn send(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             let message = self
                 .message_editor
@@ -833,13 +833,13 @@ impl ChatPanel {
         }
     }
 
-    fn remove_message(&mut self, id: u64, cx: &mut ModelContext<Self>) {
+    fn remove_message(&mut self, id: u64, cx: &mut Context<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             chat.update(cx, |chat, cx| chat.remove_message(id, cx).detach())
         }
     }
 
-    fn load_more_messages(&mut self, cx: &mut ModelContext<Self>) {
+    fn load_more_messages(&mut self, cx: &mut Context<Self>) {
         if let Some((chat, _)) = self.active_chat.as_ref() {
             chat.update(cx, |channel, cx| {
                 if let Some(task) = channel.load_more_messages(cx) {
@@ -853,7 +853,7 @@ impl ChatPanel {
         &mut self,
         selected_channel_id: ChannelId,
         scroll_to_message_id: Option<u64>,
-        cx: &mut ModelContext<ChatPanel>,
+        cx: &mut Context<ChatPanel>,
     ) -> Task<Result<()>> {
         let open_chat = self
             .active_chat
@@ -911,12 +911,12 @@ impl ChatPanel {
         })
     }
 
-    fn close_reply_preview(&mut self, cx: &mut ModelContext<Self>) {
+    fn close_reply_preview(&mut self, cx: &mut Context<Self>) {
         self.message_editor
             .update(cx, |editor, _| editor.clear_reply_to_message_id());
     }
 
-    fn cancel_edit_message(&mut self, cx: &mut ModelContext<Self>) {
+    fn cancel_edit_message(&mut self, cx: &mut Context<Self>) {
         self.message_editor.update(cx, |editor, cx| {
             // only clear the editor input if we were editing a message
             if editor.edit_message_id().is_none() {
@@ -939,7 +939,7 @@ impl ChatPanel {
 }
 
 impl Render for ChatPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let channel_id = self
             .active_chat
             .as_ref()
@@ -1107,7 +1107,7 @@ impl Render for ChatPanel {
 }
 
 impl Focusable for ChatPanel {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         if self.active_chat.is_some() {
             self.message_editor.read(cx).focus_handle(cx)
         } else {
@@ -1117,7 +1117,7 @@ impl Focusable for ChatPanel {
 }
 
 impl Panel for ChatPanel {
-    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &App) -> DockPosition {
         ChatPanelSettings::get_global(cx).dock
     }
 
@@ -1129,7 +1129,7 @@ impl Panel for ChatPanel {
         &mut self,
         position: DockPosition,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         settings::update_settings_file::<ChatPanelSettings>(
             self.fs.clone(),
@@ -1138,18 +1138,18 @@ impl Panel for ChatPanel {
         );
     }
 
-    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &App) -> Pixels {
         self.width
             .unwrap_or_else(|| ChatPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();
     }
 
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         if active {
             self.acknowledge_last_message(cx);
@@ -1160,7 +1160,7 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, _window: &Window, cx: &AppContext) -> Option<ui::IconName> {
+    fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
         let show_icon = match ChatPanelSettings::get_global(cx).button {
             ChatPanelButton::Never => false,
             ChatPanelButton::Always => true,
@@ -1177,7 +1177,7 @@ impl Panel for ChatPanel {
         show_icon.then(|| ui::IconName::MessageBubbles)
     }
 
-    fn icon_tooltip(&self, _: &Window, _: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
         Some("Chat Panel")
     }
 
@@ -1185,7 +1185,7 @@ impl Panel for ChatPanel {
         Box::new(ToggleFocus)
     }
 
-    fn starts_open(&self, _: &Window, cx: &AppContext) -> bool {
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
         ActiveCall::global(cx)
             .read(cx)
             .room()
@@ -1209,7 +1209,7 @@ mod tests {
     use util::test::marked_text_ranges;
 
     #[gpui::test]
-    fn test_render_markdown_with_mentions(cx: &mut AppContext) {
+    fn test_render_markdown_with_mentions(cx: &mut App) {
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
         let message = channel::ChannelMessage {
@@ -1266,7 +1266,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links(cx: &mut AppContext) {
+    fn test_render_markdown_with_auto_detect_links(cx: &mut App) {
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
@@ -1315,7 +1315,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_render_markdown_with_auto_detect_links_and_additional_formatting(cx: &mut AppContext) {
+    fn test_render_markdown_with_auto_detect_links_and_additional_formatting(cx: &mut App) {
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),

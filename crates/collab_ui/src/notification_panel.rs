@@ -6,10 +6,10 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
-    actions, div, img, list, px, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, Element, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ListAlignment, ListScrollEvent, ListState, Model, ModelContext, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, WeakModel, Window,
+    actions, div, img, list, px, AnyElement, App, AsyncWindowContext, CursorStyle, DismissEvent,
+    Element, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ListAlignment, ListScrollEvent, ListState, Context, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Task, WeakEntity, Window,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -35,16 +35,16 @@ const NOTIFICATION_PANEL_KEY: &str = "NotificationPanel";
 
 pub struct NotificationPanel {
     client: Arc<Client>,
-    user_store: Model<UserStore>,
-    channel_store: Model<ChannelStore>,
-    notification_store: Model<NotificationStore>,
+    user_store: Entity<UserStore>,
+    channel_store: Entity<ChannelStore>,
+    notification_store: Entity<NotificationStore>,
     fs: Arc<dyn Fs>,
     width: Option<Pixels>,
     active: bool,
     notification_list: ListState,
     pending_serialization: Task<Option<()>>,
     subscriptions: Vec<gpui::Subscription>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     current_notification_toast: Option<(u64, Task<()>)>,
     local_timezone: UtcOffset,
     focus_handle: FocusHandle,
@@ -74,8 +74,8 @@ pub struct NotificationPresenter {
 
 actions!(notification_panel, [ToggleFocus]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<NotificationPanel>(window, cx);
         });
@@ -87,14 +87,14 @@ impl NotificationPanel {
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Model<Self> {
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let client = workspace.app_state().client.clone();
         let user_store = workspace.app_state().user_store.clone();
         let workspace_handle = workspace.weak_handle();
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut status = client.status();
             cx.spawn_in(window, |this, mut cx| async move {
                 while (status.next().await).is_some() {
@@ -178,9 +178,9 @@ impl NotificationPanel {
     }
 
     pub fn load(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
-    ) -> Task<Result<Model<Self>>> {
+    ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let serialized_panel = if let Some(panel) = cx
                 .background_executor()
@@ -207,7 +207,7 @@ impl NotificationPanel {
         })
     }
 
-    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -227,7 +227,7 @@ impl NotificationPanel {
         &mut self,
         ix: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let entry = self.notification_store.read(cx).notification_at(ix)?;
         let notification_id = entry.id;
@@ -360,7 +360,7 @@ impl NotificationPanel {
     fn present_notification(
         &self,
         entry: &NotificationEntry,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<NotificationPresenter> {
         let user_store = self.user_store.read(cx);
         let channel_store = self.channel_store.read(cx);
@@ -432,7 +432,7 @@ impl NotificationPanel {
         notification_id: u64,
         notification: &Notification,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let should_mark_as_read = match notification {
             Notification::ContactRequestAccepted { .. } => true,
@@ -464,7 +464,7 @@ impl NotificationPanel {
         &mut self,
         notification: &Notification,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Notification::ChannelMessageMention {
             message_id,
@@ -491,7 +491,7 @@ impl NotificationPanel {
     fn is_showing_notification(
         &self,
         notification: &Notification,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         if !self.active {
             return false;
@@ -516,10 +516,10 @@ impl NotificationPanel {
 
     fn on_notification_event(
         &mut self,
-        _: &Model<NotificationStore>,
+        _: &Entity<NotificationStore>,
         event: &NotificationEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             NotificationEvent::NewNotification { entry } => {
@@ -547,7 +547,7 @@ impl NotificationPanel {
         &mut self,
         entry: &NotificationEntry,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.is_showing_notification(&entry.notification, cx) {
             return;
@@ -575,7 +575,7 @@ impl NotificationPanel {
                 workspace.dismiss_notification(&id, cx);
                 workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.model().downgrade();
-                    cx.new_model(|_| NotificationToast {
+                    cx.new(|_| NotificationToast {
                         notification_id,
                         actor,
                         text,
@@ -586,7 +586,7 @@ impl NotificationPanel {
             .ok();
     }
 
-    fn remove_toast(&mut self, notification_id: u64, cx: &mut ModelContext<Self>) {
+    fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
         if let Some((current_id, _)) = &self.current_notification_toast {
             if *current_id == notification_id {
                 self.current_notification_toast.take();
@@ -605,7 +605,7 @@ impl NotificationPanel {
         notification: Notification,
         response: bool,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.notification_store.update(cx, |store, cx| {
             store.respond_to_notification(notification, response, cx);
@@ -614,7 +614,7 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .child(
@@ -683,7 +683,7 @@ impl Render for NotificationPanel {
 }
 
 impl Focusable for NotificationPanel {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -696,7 +696,7 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
-    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &App) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
 
@@ -708,7 +708,7 @@ impl Panel for NotificationPanel {
         &mut self,
         position: DockPosition,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         settings::update_settings_file::<NotificationPanelSettings>(
             self.fs.clone(),
@@ -717,18 +717,18 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &App) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();
     }
 
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
 
         if self.active {
@@ -741,7 +741,7 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, _: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
         if !show_button {
             return None;
@@ -754,11 +754,11 @@ impl Panel for NotificationPanel {
         Some(IconName::BellDot)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Notification Panel")
     }
 
-    fn icon_label(&self, _window: &Window, cx: &AppContext) -> Option<String> {
+    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
         let count = self.notification_store.read(cx).unread_notification_count();
         if count == 0 {
             None
@@ -780,11 +780,11 @@ pub struct NotificationToast {
     notification_id: u64,
     actor: Option<Arc<User>>,
     text: String,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl NotificationToast {
-    fn focus_notification_panel(&self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_notification_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let notification_id = self.notification_id;
         window.defer(cx, move |window, cx| {
@@ -809,7 +809,7 @@ impl NotificationToast {
 }
 
 impl Render for NotificationToast {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let user = self.actor.clone();
 
         h_flex()

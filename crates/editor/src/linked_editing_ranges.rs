@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use itertools::Itertools;
 use std::{ops::Range, time::Duration};
 use text::{AnchorRangeExt, BufferId, ToPoint};
@@ -42,7 +42,7 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 pub(super) fn refresh_linked_ranges(
     editor: &mut Editor,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) -> Option<()> {
     if editor.pending_rename.is_some() {
         return None;

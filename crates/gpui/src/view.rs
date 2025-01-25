@@ -1,7 +1,7 @@
 use crate::{
-    AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element, ElementId,
-    Entity, EntityId, GlobalElementId, IntoElement, LayoutId, Model, ModelContext, PaintIndex,
-    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakModel,
+    AnyElement, AnyEntity, AnyWeakEntity, App, Bounds, ContentMask, Context, Element, ElementId,
+    Entity, EntityId, GlobalElementId, IntoElement, LayoutId, PaintIndex, Pixels,
+    PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakEntity,
 };
 use crate::{Empty, Window};
 use anyhow::Result;
@@ -24,7 +24,7 @@ struct ViewCacheKey {
     text_style: TextStyle,
 }
 
-impl<V: Render> Element for Model<V> {
+impl<V: Render> Element for Entity<V> {
     type RequestLayoutState = AnyElement;
     type PrepaintState = ();
 
@@ -36,7 +36,7 @@ impl<V: Render> Element for Model<V> {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut element = self.update(cx, |view, cx| view.render(window, cx).into_any_element());
         let layout_id = element.request_layout(window, cx);
@@ -49,7 +49,7 @@ impl<V: Render> Element for Model<V> {
         _: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         window.set_view_id(self.entity_id());
         element.prepaint(window, cx);
@@ -62,7 +62,7 @@ impl<V: Render> Element for Model<V> {
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         element.paint(window, cx);
     }
@@ -71,13 +71,13 @@ impl<V: Render> Element for Model<V> {
 /// A dynamically-typed handle to a view, which can be downcast to a [View] for a specific type.
 #[derive(Clone, Debug)]
 pub struct AnyView {
-    model: AnyModel,
-    render: fn(&AnyView, &mut Window, &mut AppContext) -> AnyElement,
+    model: AnyEntity,
+    render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
     cached_style: Option<StyleRefinement>,
 }
 
-impl<V: Render> From<Model<V>> for AnyView {
-    fn from(value: Model<V>) -> Self {
+impl<V: Render> From<Entity<V>> for AnyView {
+    fn from(value: Entity<V>) -> Self {
         AnyView {
             model: value.into_any(),
             render: any_view::render::<V>,
@@ -105,7 +105,7 @@ impl AnyView {
 
     /// Convert this to a [View] of a specific type.
     /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
-    pub fn downcast<T: 'static>(self) -> Result<Model<T>, Self> {
+    pub fn downcast<T: 'static>(self) -> Result<Entity<T>, Self> {
         match self.model.downcast() {
             Ok(model) => Ok(model),
             Err(model) => Err(Self {
@@ -147,7 +147,7 @@ impl Element for AnyView {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         if let Some(style) = self.cached_style.as_ref() {
             let mut root_style = Style::default();
@@ -167,7 +167,7 @@ impl Element for AnyView {
         bounds: Bounds<Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<AnyElement> {
         window.set_view_id(self.entity_id());
         if self.cached_style.is_some() {
@@ -235,7 +235,7 @@ impl Element for AnyView {
         _: &mut Self::RequestLayoutState,
         element: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if self.cached_style.is_some() {
             window.with_element_state::<AnyViewState, _>(
@@ -265,8 +265,8 @@ impl Element for AnyView {
     }
 }
 
-impl<V: 'static + Render> IntoElement for Model<V> {
-    type Element = Model<V>;
+impl<V: 'static + Render> IntoElement for Entity<V> {
+    type Element = Entity<V>;
 
     fn into_element(self) -> Self::Element {
         self
@@ -283,8 +283,8 @@ impl IntoElement for AnyView {
 
 /// A weak, dynamically-typed view handle that does not prevent the view from being released.
 pub struct AnyWeakView {
-    model: AnyWeakModel,
-    render: fn(&AnyView, &mut Window, &mut AppContext) -> AnyElement,
+    model: AnyWeakEntity,
+    render: fn(&AnyView, &mut Window, &mut App) -> AnyElement,
 }
 
 impl AnyWeakView {
@@ -299,8 +299,8 @@ impl AnyWeakView {
     }
 }
 
-impl<V: 'static + Render> From<WeakModel<V>> for AnyWeakView {
-    fn from(view: WeakModel<V>) -> Self {
+impl<V: 'static + Render> From<WeakEntity<V>> for AnyWeakView {
+    fn from(view: WeakEntity<V>) -> Self {
         AnyWeakView {
             model: view.into(),
             render: any_view::render::<V>,
@@ -323,12 +323,12 @@ impl std::fmt::Debug for AnyWeakView {
 }
 
 mod any_view {
-    use crate::{AnyElement, AnyView, AppContext, IntoElement, Render, Window};
+    use crate::{AnyElement, AnyView, App, IntoElement, Render, Window};
 
     pub(crate) fn render<V: 'static + Render>(
         view: &AnyView,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> AnyElement {
         let view = view.clone().downcast::<V>().unwrap();
         view.update(cx, |view, cx| view.render(window, cx).into_any_element())
@@ -339,7 +339,7 @@ mod any_view {
 pub struct EmptyView;
 
 impl Render for EmptyView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
 }

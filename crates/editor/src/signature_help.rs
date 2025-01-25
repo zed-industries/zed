@@ -3,7 +3,7 @@ mod state;
 
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{App, Context, Window};
 use language::markdown::parse_markdown;
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
@@ -28,7 +28,7 @@ impl Editor {
         &mut self,
         _: &ToggleAutoSignatureHelp,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.auto_signature_help = self
             .auto_signature_help
@@ -48,7 +48,7 @@ impl Editor {
 
     pub(super) fn hide_signature_help(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         signature_help_hidden_by: SignatureHelpHiddenBy,
     ) -> bool {
         if self.signature_help_state.is_shown() {
@@ -61,7 +61,7 @@ impl Editor {
         }
     }
 
-    pub fn auto_signature_help_enabled(&self, cx: &AppContext) -> bool {
+    pub fn auto_signature_help_enabled(&self, cx: &App) -> bool {
         if let Some(auto_signature_help) = self.auto_signature_help {
             auto_signature_help
         } else {
@@ -74,7 +74,7 @@ impl Editor {
         old_cursor_position: &Anchor,
         backspace_pressed: bool,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
@@ -156,7 +156,7 @@ impl Editor {
         &mut self,
         _: &ShowSignatureHelp,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.pending_rename.is_some() || self.has_active_completions_menu() {
             return;

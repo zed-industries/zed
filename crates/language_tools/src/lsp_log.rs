@@ -3,8 +3,8 @@ use copilot::Copilot;
 use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, Focusable, IntoElement,
-    Model, ModelContext, ParentElement, Render, Styled, Subscription, WeakModel, Window,
+    actions, div, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, Render, Styled, Subscription, WeakEntity, Window,
 };
 use language::{language_settings::SoftWrap, LanguageServerId};
 use lsp::{
@@ -25,7 +25,7 @@ const RECEIVE_LINE: &str = "// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
-    projects: HashMap<WeakModel<Project>, ProjectState>,
+    projects: HashMap<WeakEntity<Project>, ProjectState>,
     language_servers: HashMap<LanguageServerId, LanguageServerState>,
     copilot_log_subscription: Option<lsp::Subscription>,
     _copilot_subscription: Option<gpui::Subscription>,
@@ -112,8 +112,8 @@ struct LanguageServerState {
 
 #[derive(PartialEq, Clone)]
 pub enum LanguageServerKind {
-    Local { project: WeakModel<Project> },
-    Remote { project: WeakModel<Project> },
+    Local { project: WeakEntity<Project> },
+    Remote { project: WeakEntity<Project> },
     Global,
 }
 
@@ -134,7 +134,7 @@ impl std::fmt::Debug for LanguageServerKind {
 }
 
 impl LanguageServerKind {
-    fn project(&self) -> Option<&WeakModel<Project>> {
+    fn project(&self) -> Option<&WeakEntity<Project>> {
         match self {
             Self::Local { project } => Some(project),
             Self::Remote { project } => Some(project),
@@ -149,18 +149,18 @@ struct LanguageServerRpcState {
 }
 
 pub struct LspLogView {
-    pub(crate) editor: Model<Editor>,
+    pub(crate) editor: Entity<Editor>,
     editor_subscriptions: Vec<Subscription>,
-    log_store: Model<LogStore>,
+    log_store: Entity<LogStore>,
     current_server_id: Option<LanguageServerId>,
     active_entry_kind: LogKind,
-    project: Model<Project>,
+    project: Entity<Project>,
     focus_handle: FocusHandle,
     _log_store_subscriptions: Vec<Subscription>,
 }
 
 pub struct LspLogToolbarItemView {
-    log_view: Option<Model<LspLogView>>,
+    log_view: Option<Entity<LspLogView>>,
     _log_view_subscription: Option<Subscription>,
 }
 
@@ -203,10 +203,10 @@ pub(crate) struct LogMenuItem {
 
 actions!(debug, [OpenLanguageServerLogs]);
 
-pub fn init(cx: &mut AppContext) {
-    let log_store = cx.new_model(LogStore::new);
+pub fn init(cx: &mut App) {
+    let log_store = cx.new(LogStore::new);
 
-    cx.observe_new_models(move |workspace: &mut Workspace, _, cx| {
+    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();
         if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
             log_store.update(cx, |store, cx| {
@@ -220,7 +220,7 @@ pub fn init(cx: &mut AppContext) {
             if project.is_local() || project.is_via_ssh() {
                 workspace.split_item(
                     SplitDirection::Right,
-                    Box::new(cx.new_model(|cx| {
+                    Box::new(cx.new(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
                     })),
                     window,
@@ -233,7 +233,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 impl LogStore {
-    pub fn new(cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let (io_tx, mut io_rx) = mpsc::unbounded();
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
@@ -294,7 +294,7 @@ impl LogStore {
         this
     }
 
-    pub fn add_project(&mut self, project: &Model<Project>, cx: &mut ModelContext<Self>) {
+    pub fn add_project(&mut self, project: &Entity<Project>, cx: &mut Context<Self>) {
         let weak_project = project.downgrade();
         self.projects.insert(
             project.downgrade(),
@@ -367,7 +367,7 @@ impl LogStore {
         name: Option<LanguageServerName>,
         worktree_id: Option<WorktreeId>,
         server: Option<Arc<LanguageServer>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<&mut LanguageServerState> {
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
             cx.notify();
@@ -412,7 +412,7 @@ impl LogStore {
         id: LanguageServerId,
         typ: MessageType,
         message: &str,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let language_server_state = self.get_language_server_state(id)?;
 
@@ -435,7 +435,7 @@ impl LogStore {
         &mut self,
         id: LanguageServerId,
         message: &str,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let language_server_state = self.get_language_server_state(id)?;
 
@@ -459,7 +459,7 @@ impl LogStore {
         message: T,
         current_severity: <T as Message>::Level,
         kind: LogKind,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
@@ -475,7 +475,7 @@ impl LogStore {
         }
     }
 
-    fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut ModelContext<Self>) {
+    fn remove_language_server(&mut self, id: LanguageServerId, cx: &mut Context<Self>) {
         self.language_servers.remove(&id);
         cx.notify();
     }
@@ -490,7 +490,7 @@ impl LogStore {
 
     fn server_ids_for_project<'a>(
         &'a self,
-        lookup_project: &'a WeakModel<Project>,
+        lookup_project: &'a WeakEntity<Project>,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
         self.language_servers
             .iter()
@@ -534,7 +534,7 @@ impl LogStore {
         language_server_id: LanguageServerId,
         io_kind: IoKind,
         message: &str,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let is_received = match io_kind {
             IoKind::StdOut => true,
@@ -591,10 +591,10 @@ impl LogStore {
 
 impl LspLogView {
     pub fn new(
-        project: Model<Project>,
-        log_store: Model<LogStore>,
+        project: Entity<Project>,
+        log_store: Entity<LogStore>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let server_id = log_store
             .read(cx)
@@ -701,9 +701,9 @@ impl LspLogView {
     fn editor_for_logs(
         log_contents: String,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = cx.new_model(|cx| {
+        cx: &mut Context<Self>,
+    ) -> (Entity<Editor>, Vec<Subscription>) {
+        let editor = cx.new(|cx| {
             let mut editor = Editor::multi_line(window, cx);
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
@@ -714,11 +714,11 @@ impl LspLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, cx: &mut ModelContext<LspLogView>| cx.emit(event.clone()),
+            |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, cx: &mut ModelContext<LspLogView>| cx.emit(event.clone()),
+            |_, _, event: &SearchEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
         );
         (editor, vec![editor_subscription, search_subscription])
     }
@@ -726,9 +726,9 @@ impl LspLogView {
     fn editor_for_server_info(
         server: &LanguageServer,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = cx.new_model(|cx| {
+        cx: &mut Context<Self>,
+    ) -> (Entity<Editor>, Vec<Subscription>) {
+        let editor = cx.new(|cx| {
             let mut editor = Editor::multi_line(window, cx);
             let server_info = format!(
                 "* Server: {NAME} (id {ID})
@@ -757,16 +757,16 @@ impl LspLogView {
         });
         let editor_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &EditorEvent, cx: &mut ModelContext<LspLogView>| cx.emit(event.clone()),
+            |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
         );
         let search_subscription = cx.subscribe(
             &editor,
-            |_, _, event: &SearchEvent, cx: &mut ModelContext<LspLogView>| cx.emit(event.clone()),
+            |_, _, event: &SearchEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
         );
         (editor, vec![editor_subscription, search_subscription])
     }
 
-    pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
+    pub(crate) fn menu_items<'a>(&'a self, cx: &'a App) -> Option<Vec<LogMenuItem>> {
         let log_store = self.log_store.read(cx);
 
         let unknown_server = LanguageServerName::new_static("unknown server");
@@ -830,7 +830,7 @@ impl LspLogView {
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let typ = self
             .log_store
@@ -859,7 +859,7 @@ impl LspLogView {
         server_id: LanguageServerId,
         level: MessageType,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let log_contents = self.log_store.update(cx, |this, _| {
             if let Some(state) = this.get_language_server_state(server_id) {
@@ -884,7 +884,7 @@ impl LspLogView {
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let log_contents = self
             .log_store
@@ -906,7 +906,7 @@ impl LspLogView {
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let rpc_log = self.log_store.update(cx, |log_store, _| {
             log_store
@@ -950,7 +950,7 @@ impl LspLogView {
         server_id: LanguageServerId,
         enabled: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.log_store.update(cx, |log_store, _| {
             if enabled {
@@ -969,7 +969,7 @@ impl LspLogView {
         &self,
         server_id: LanguageServerId,
         level: TraceValue,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(server) = self
             .project
@@ -994,7 +994,7 @@ impl LspLogView {
         &mut self,
         server_id: LanguageServerId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let lsp_store = self.project.read(cx).lsp_store();
         let Some(server) = lsp_store.read(cx).language_server_for_id(server_id) else {
@@ -1030,7 +1030,7 @@ fn log_contents<T: Message>(lines: &VecDeque<T>, cmp: <T as Message>::Level) -> 
 }
 
 impl Render for LspLogView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.editor.update(cx, |editor, cx| {
             editor.render(window, cx).into_any_element()
         })
@@ -1038,7 +1038,7 @@ impl Render for LspLogView {
 }
 
 impl Focusable for LspLogView {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -1050,7 +1050,7 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("LSP Logs".into())
     }
 
@@ -1058,7 +1058,7 @@ impl Item for LspLogView {
         None
     }
 
-    fn as_searchable(&self, handle: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
@@ -1066,12 +1066,12 @@ impl Item for LspLogView {
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_model(|cx| {
+        Some(cx.new(|cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
@@ -1089,7 +1089,7 @@ impl Item for LspLogView {
 impl SearchableItem for LspLogView {
     type Match = <Editor as SearchableItem>::Match;
 
-    fn clear_matches(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn clear_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor.update(cx, |e, cx| e.clear_matches(window, cx))
     }
 
@@ -1097,13 +1097,13 @@ impl SearchableItem for LspLogView {
         &mut self,
         matches: &[Self::Match],
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor
             .update(cx, |e, cx| e.update_matches(matches, window, cx))
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> String {
+    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         self.editor
             .update(cx, |e, cx| e.query_suggestion(window, cx))
     }
@@ -1113,7 +1113,7 @@ impl SearchableItem for LspLogView {
         index: usize,
         matches: &[Self::Match],
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor
             .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
@@ -1123,7 +1123,7 @@ impl SearchableItem for LspLogView {
         &mut self,
         matches: &[Self::Match],
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor
             .update(cx, |e, cx| e.select_matches(matches, window, cx))
@@ -1133,7 +1133,7 @@ impl SearchableItem for LspLogView {
         &mut self,
         query: Arc<project::search::SearchQuery>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> gpui::Task<Vec<Self::Match>> {
         self.editor
             .update(cx, |e, cx| e.find_matches(query, window, cx))
@@ -1144,7 +1144,7 @@ impl SearchableItem for LspLogView {
         _: &Self::Match,
         _: &SearchQuery,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) {
         // Since LSP Log is read-only, it doesn't make sense to support replace operation.
     }
@@ -1162,7 +1162,7 @@ impl SearchableItem for LspLogView {
         &mut self,
         matches: &[Self::Match],
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor
             .update(cx, |e, cx| e.active_match_index(matches, window, cx))
@@ -1176,7 +1176,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
         if let Some(item) = active_pane_item {
             if let Some(log_view) = item.downcast::<LspLogView>() {
@@ -1194,7 +1194,7 @@ impl ToolbarItemView for LspLogToolbarItemView {
 }
 
 impl Render for LspLogToolbarItemView {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(log_view) = self.log_view.clone() else {
             return div();
         };
@@ -1539,7 +1539,7 @@ impl LspLogToolbarItemView {
         id: LanguageServerId,
         enabled: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(log_view) = &self.log_view {
             log_view.update(cx, |log_view, cx| {

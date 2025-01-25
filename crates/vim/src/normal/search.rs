@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{actions, impl_actions, impl_internal_actions, ModelContext, Window};
+use gpui::{actions, impl_actions, impl_internal_actions, Context, Window};
 use language::Point;
 use schemars::JsonSchema;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
@@ -69,7 +69,7 @@ actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
 impl_actions!(vim, [FindCommand, Search, MoveToPrev, MoveToNext]);
 impl_internal_actions!(vim, [ReplaceCommand]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
     Vim::action(editor, cx, Vim::move_to_prev);
     Vim::action(editor, cx, Vim::move_to_next_match);
@@ -85,7 +85,7 @@ impl Vim {
         &mut self,
         action: &MoveToNext,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.move_to_internal(
             Direction::Next,
@@ -101,7 +101,7 @@ impl Vim {
         &mut self,
         action: &MoveToPrev,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.move_to_internal(
             Direction::Prev,
@@ -117,7 +117,7 @@ impl Vim {
         &mut self,
         _: &MoveToNextMatch,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.move_to_match_internal(self.search.direction, window, cx)
     }
@@ -126,12 +126,12 @@ impl Vim {
         &mut self,
         _: &MoveToPrevMatch,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.move_to_match_internal(self.search.direction.opposite(), window, cx)
     }
 
-    fn search(&mut self, action: &Search, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn search(&mut self, action: &Search, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
@@ -183,13 +183,13 @@ impl Vim {
         &mut self,
         _: &buffer_search::Deploy,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.search = Default::default();
         cx.propagate();
     }
 
-    pub fn search_submit(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn search_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
         let Some(pane) = self.pane(window, cx) else {
             return;
@@ -257,7 +257,7 @@ impl Vim {
         &mut self,
         direction: Direction,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(pane) = self.pane(window, cx) else {
             return;
@@ -299,7 +299,7 @@ impl Vim {
         whole_word: bool,
         regex: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(pane) = self.pane(window, cx) else {
             return;
@@ -373,7 +373,7 @@ impl Vim {
         &mut self,
         action: &FindCommand,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(pane) = self.pane(window, cx) else {
             return;
@@ -422,7 +422,7 @@ impl Vim {
         &mut self,
         action: &ReplaceCommand,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let replacement = action.replacement.clone();
         let Some(((pane, workspace), editor)) = self

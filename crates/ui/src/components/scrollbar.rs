@@ -3,10 +3,10 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
 use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
-    point, quad, Along, AppContext, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges,
-    Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, Model,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
-    Size, Style, UniformListScrollHandle, Window,
+    point, quad, Along, App, Axis as ScrollbarAxis, Bounds, ContentMask, Corners, Edges, Element,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, LayoutId, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent, Size, Style,
+    UniformListScrollHandle, Window,
 };
 
 pub struct Scrollbar {
@@ -114,7 +114,7 @@ impl ScrollbarState {
     }
 
     /// Set a parent model which should be notified whenever this Scrollbar gets a scroll event.
-    pub fn parent_model<V: 'static>(mut self, v: &Model<V>) -> Self {
+    pub fn parent_model<V: 'static>(mut self, v: &Entity<V>) -> Self {
         self.parent_id = Some(v.entity_id());
         self
     }
@@ -195,7 +195,7 @@ impl Element for Scrollbar {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.flex_grow = 1.;
@@ -218,7 +218,7 @@ impl Element for Scrollbar {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Self::PrepaintState {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.insert_hitbox(bounds, false)
@@ -232,7 +232,7 @@ impl Element for Scrollbar {
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let colors = cx.theme().colors();

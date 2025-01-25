@@ -5,7 +5,7 @@ use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
 };
-use gpui::{px, AppContext, AsyncWindowContext, Model, ModelContext, Modifiers, Task, Window};
+use gpui::{px, App, AsyncWindowContext, Entity, Context, Modifiers, Task, Window};
 use language::{Bias, ToOffset};
 use linkify::{LinkFinder, LinkKind};
 use lsp::LanguageServerId;
@@ -93,10 +93,10 @@ impl TriggerPoint {
 }
 
 pub fn exclude_link_to_position(
-    buffer: &Model<language::Buffer>,
+    buffer: &Entity<language::Buffer>,
     current_position: &text::Anchor,
     location: &LocationLink,
-    cx: &AppContext,
+    cx: &App,
 ) -> bool {
     // Exclude definition links that points back to cursor position.
     // (i.e., currently cursor upon definition).
@@ -118,7 +118,7 @@ impl Editor {
         snapshot: &EditorSnapshot,
         modifiers: Modifiers,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
         let hovered_link_modifier = match multi_cursor_setting {
@@ -154,7 +154,7 @@ impl Editor {
         }
     }
 
-    pub(crate) fn hide_hovered_link(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn hide_hovered_link(&mut self, cx: &mut Context<Self>) {
         self.hovered_link_state.take();
         self.clear_highlights::<HoveredLinkState>(cx);
     }
@@ -164,7 +164,7 @@ impl Editor {
         point: PointForPosition,
         modifiers: Modifiers,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
         cx.spawn_in(window, |editor, mut cx| async move {
@@ -189,7 +189,7 @@ impl Editor {
         &mut self,
         amount: &ScrollAmount,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let selection = self.selections.newest_anchor().head();
         let snapshot = self.snapshot(window, cx);
@@ -210,7 +210,7 @@ impl Editor {
         point: PointForPosition,
         modifiers: Modifiers,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
@@ -277,7 +277,7 @@ pub fn update_inlay_link_and_hover_points(
     secondary_held: bool,
     shift_held: bool,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
@@ -456,7 +456,7 @@ pub fn show_link_definition(
     trigger_point: TriggerPoint,
     snapshot: &EditorSnapshot,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     let preferred_kind = match trigger_point {
         TriggerPoint::Text(_) if !shift_held => GotoDefinitionKind::Symbol,
@@ -649,7 +649,7 @@ pub fn show_link_definition(
 }
 
 pub(crate) fn find_url(
-    buffer: &Model<language::Buffer>,
+    buffer: &Entity<language::Buffer>,
     position: text::Anchor,
     mut cx: AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, String)> {
@@ -711,7 +711,7 @@ pub(crate) fn find_url(
 }
 
 pub(crate) fn find_url_from_range(
-    buffer: &Model<language::Buffer>,
+    buffer: &Entity<language::Buffer>,
     range: Range<text::Anchor>,
     mut cx: AsyncWindowContext,
 ) -> Option<String> {
@@ -770,8 +770,8 @@ pub(crate) fn find_url_from_range(
 }
 
 pub(crate) async fn find_file(
-    buffer: &Model<language::Buffer>,
-    project: Option<Model<Project>>,
+    buffer: &Entity<language::Buffer>,
+    project: Option<Entity<Project>>,
     position: text::Anchor,
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
@@ -782,8 +782,8 @@ pub(crate) async fn find_file(
 
     async fn check_path(
         candidate_file_path: &str,
-        project: &Model<Project>,
-        buffer: &Model<language::Buffer>,
+        project: &Entity<Project>,
+        buffer: &Entity<language::Buffer>,
         cx: &mut AsyncWindowContext,
     ) -> Option<ResolvedPath> {
         project

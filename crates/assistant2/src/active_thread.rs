@@ -3,9 +3,9 @@ use std::sync::Arc;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
-    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, UnderlineStyle, WeakModel,
+    list, AbsoluteLength, AnyElement, App, DefiniteLength, EdgesRefinement, Empty, Entity, Length,
+    ListAlignment, ListOffset, ListState, StyleRefinement, Subscription, TextStyleRefinement,
+    UnderlineStyle, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -20,27 +20,27 @@ use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 
 pub struct ActiveThread {
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread_store: Model<ThreadStore>,
-    thread: Model<Thread>,
+    thread_store: Entity<ThreadStore>,
+    thread: Entity<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
-    rendered_messages_by_id: HashMap<MessageId, Model<Markdown>>,
+    rendered_messages_by_id: HashMap<MessageId, Entity<Markdown>>,
     last_error: Option<ThreadError>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ActiveThread {
     pub fn new(
-        thread: Model<Thread>,
-        thread_store: Model<ThreadStore>,
-        workspace: WeakModel<Workspace>,
+        thread: Entity<Thread>,
+        thread_store: Entity<ThreadStore>,
+        workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = vec![
             cx.observe(&thread, |_, _, cx| cx.notify()),
@@ -57,7 +57,7 @@ impl ActiveThread {
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.model().downgrade();
-                move |ix, _: &mut Window, cx: &mut AppContext| {
+                move |ix, _: &mut Window, cx: &mut App| {
                     this.update(cx, |this, cx| this.render_message(ix, cx))
                         .unwrap()
                 }
@@ -73,7 +73,7 @@ impl ActiveThread {
         this
     }
 
-    pub fn thread(&self) -> &Model<Thread> {
+    pub fn thread(&self) -> &Entity<Thread> {
         &self.thread
     }
 
@@ -81,15 +81,15 @@ impl ActiveThread {
         self.messages.is_empty()
     }
 
-    pub fn summary(&self, cx: &AppContext) -> Option<SharedString> {
+    pub fn summary(&self, cx: &App) -> Option<SharedString> {
         self.thread.read(cx).summary()
     }
 
-    pub fn summary_or_default(&self, cx: &AppContext) -> SharedString {
+    pub fn summary_or_default(&self, cx: &App) -> SharedString {
         self.thread.read(cx).summary_or_default()
     }
 
-    pub fn cancel_last_completion(&mut self, cx: &mut AppContext) -> bool {
+    pub fn cancel_last_completion(&mut self, cx: &mut App) -> bool {
         self.last_error.take();
         self.thread
             .update(cx, |thread, _cx| thread.cancel_last_completion())
@@ -108,7 +108,7 @@ impl ActiveThread {
         id: &MessageId,
         text: String,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let old_len = self.messages.len();
         self.messages.push(*id);
@@ -177,7 +177,7 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let markdown = cx.new_model(|cx| {
+        let markdown = cx.new(|cx| {
             Markdown::new(
                 text,
                 markdown_style,
@@ -196,10 +196,10 @@ impl ActiveThread {
 
     fn handle_thread_event(
         &mut self,
-        _: &Model<Thread>,
+        _: &Entity<Thread>,
         event: &ThreadEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             ThreadEvent::ShowError(error) => {
@@ -266,7 +266,7 @@ impl ActiveThread {
         }
     }
 
-    fn render_message(&self, ix: usize, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_message(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
@@ -347,7 +347,7 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .pt_1p5()

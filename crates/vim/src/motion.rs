@@ -6,7 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
 };
-use gpui::{actions, impl_actions, px, ModelContext, Window};
+use gpui::{actions, impl_actions, px, Context, Window};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -304,7 +304,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
@@ -543,7 +543,7 @@ impl Vim {
         &mut self,
         m: Motion,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Motion::ZedSearchResult {
             prior_selections, ..
@@ -576,7 +576,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(Operator::FindForward { .. })
         | Some(Operator::Sneak { .. })

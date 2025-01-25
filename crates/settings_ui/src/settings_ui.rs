@@ -5,7 +5,7 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, Focusable, Model};
+use gpui::{actions, App, Entity, EventEmitter, FocusHandle, Focusable};
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
@@ -20,8 +20,8 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 
 actions!(zed, [OpenSettingsEditor]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -71,8 +71,8 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
-    pub fn new(_workspace: &Workspace, cx: &mut ModelContext<Workspace>) -> Model<Self> {
-        cx.new_model(|cx| Self {
+    pub fn new(_workspace: &Workspace, cx: &mut Context<Workspace>) -> Entity<Self> {
+        cx.new(|cx| Self {
             focus_handle: cx.focus_handle(),
         })
     }
@@ -81,7 +81,7 @@ impl SettingsPage {
 impl EventEmitter<ItemEvent> for SettingsPage {}
 
 impl Focusable for SettingsPage {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -89,11 +89,11 @@ impl Focusable for SettingsPage {
 impl Item for SettingsPage {
     type Event = ItemEvent;
 
-    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Settings))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("Settings".into())
     }
 
@@ -107,7 +107,7 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()

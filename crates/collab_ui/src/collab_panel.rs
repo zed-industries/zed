@@ -11,11 +11,11 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
-    AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset,
-    ListState, Model, ModelContext, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, WeakModel, Window,
+    actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement, App,
+    AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset, ListState,
+    Context, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, SharedString,
+    Styled, Subscription, Task, TextStyle, WeakEntity, Window,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -61,8 +61,8 @@ struct ChannelMoveClipboard {
 
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
         });
@@ -111,22 +111,22 @@ pub struct CollabPanel {
     focus_handle: FocusHandle,
     channel_clipboard: Option<ChannelMoveClipboard>,
     pending_serialization: Task<Option<()>>,
-    context_menu: Option<(Model<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     list_state: ListState,
-    filter_editor: Model<Editor>,
-    channel_name_editor: Model<Editor>,
+    filter_editor: Entity<Editor>,
+    channel_name_editor: Entity<Editor>,
     channel_editing_state: Option<ChannelEditingState>,
     entries: Vec<ListEntry>,
     selection: Option<usize>,
-    channel_store: Model<ChannelStore>,
-    user_store: Model<UserStore>,
+    channel_store: Entity<ChannelStore>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
-    project: Model<Project>,
+    project: Entity<Project>,
     match_candidates: Vec<StringMatchCandidate>,
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -193,10 +193,10 @@ impl CollabPanel {
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Model<Self> {
-        cx.new_model(|cx| {
-            let filter_editor = cx.new_model(|cx| {
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
@@ -219,7 +219,7 @@ impl CollabPanel {
             })
             .detach();
 
-            let channel_name_editor = cx.new_model(|cx| Editor::single_line(window, cx));
+            let channel_name_editor = cx.new(|cx| Editor::single_line(window, cx));
 
             cx.subscribe_in(
                 &channel_name_editor,
@@ -315,9 +315,9 @@ impl CollabPanel {
     }
 
     pub async fn load(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
-    ) -> anyhow::Result<Model<Self>> {
+    ) -> anyhow::Result<Entity<Self>> {
         let serialized_panel = cx
             .background_executor()
             .spawn(async move { KEY_VALUE_STORE.read_kvp(COLLABORATION_PANEL_KEY) })
@@ -348,7 +348,7 @@ impl CollabPanel {
         })
     }
 
-    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         let collapsed_channels = self.collapsed_channels.clone();
         self.pending_serialization = cx.background_executor().spawn(
@@ -374,7 +374,7 @@ impl CollabPanel {
         self.list_state.scroll_to_reveal_item(ix)
     }
 
-    fn update_entries(&mut self, select_same_item: bool, cx: &mut ModelContext<Self>) {
+    fn update_entries(&mut self, select_same_item: bool, cx: &mut Context<Self>) {
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
         let query = self.filter_editor.read(cx).text(cx);
@@ -812,7 +812,7 @@ impl CollabPanel {
         is_pending: bool,
         role: proto::ChannelRole,
         is_selected: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ListItem {
         let user_id = user.id;
         let is_current_user =
@@ -879,7 +879,7 @@ impl CollabPanel {
         is_last: bool,
         is_selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let project_name: SharedString = if worktree_root_names.is_empty() {
             "untitled".to_string()
@@ -920,7 +920,7 @@ impl CollabPanel {
         is_last: bool,
         is_selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
@@ -945,7 +945,7 @@ impl CollabPanel {
             })
     }
 
-    fn take_editing_state(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn take_editing_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.channel_editing_state.take().is_some() {
             self.channel_name_editor.update(cx, |editor, cx| {
                 editor.set_text("", window, cx);
@@ -961,7 +961,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         is_selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
@@ -994,7 +994,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         is_selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let has_messages_notification = channel_store.has_new_messages(channel_id);
@@ -1038,7 +1038,7 @@ impl CollabPanel {
         user_id: u64,
         role: proto::ChannelRole,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let this = cx.model().clone();
         if !(role == proto::ChannelRole::Guest
@@ -1162,7 +1162,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         ix: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let clipboard_channel_name = self.channel_clipboard.as_ref().and_then(|clipboard| {
             self.channel_store
@@ -1335,7 +1335,7 @@ impl CollabPanel {
         position: Point<Pixels>,
         contact: Arc<Contact>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let this = cx.model().clone();
         let in_room = ActiveCall::global(cx).read(cx).room().is_some();
@@ -1396,7 +1396,7 @@ impl CollabPanel {
     fn reset_filter_editor_text(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         self.filter_editor.update(cx, |editor, cx| {
             if editor.buffer().read(cx).len(cx) > 0 {
@@ -1408,7 +1408,7 @@ impl CollabPanel {
         })
     }
 
-    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.take_editing_state(window, cx) {
             window.focus(&self.filter_editor.focus_handle(cx));
         } else if !self.reset_filter_editor_text(window, cx) {
@@ -1423,7 +1423,7 @@ impl CollabPanel {
         self.update_entries(false, cx);
     }
 
-    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.map_or(0, |ix| ix + 1);
         if ix < self.entries.len() {
             self.selection = Some(ix);
@@ -1435,7 +1435,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.take().unwrap_or(0);
         if ix > 0 {
             self.selection = Some(ix - 1);
@@ -1447,7 +1447,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if self.confirm_channel_edit(window, cx) {
             return;
         }
@@ -1548,7 +1548,7 @@ impl CollabPanel {
         }
     }
 
-    fn insert_space(&mut self, _: &InsertSpace, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn insert_space(&mut self, _: &InsertSpace, window: &mut Window, cx: &mut Context<Self>) {
         if self.channel_editing_state.is_some() {
             self.channel_name_editor.update(cx, |editor, cx| {
                 editor.insert(" ", window, cx);
@@ -1559,7 +1559,7 @@ impl CollabPanel {
     fn confirm_channel_edit(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<CollabPanel>,
+        cx: &mut Context<CollabPanel>,
     ) -> bool {
         if let Some(editing_state) = &mut self.channel_editing_state {
             match editing_state {
@@ -1631,7 +1631,7 @@ impl CollabPanel {
         }
     }
 
-    fn toggle_section_expanded(&mut self, section: Section, cx: &mut ModelContext<Self>) {
+    fn toggle_section_expanded(&mut self, section: Section, cx: &mut Context<Self>) {
         if let Some(ix) = self.collapsed_sections.iter().position(|s| *s == section) {
             self.collapsed_sections.remove(ix);
         } else {
@@ -1644,7 +1644,7 @@ impl CollabPanel {
         &mut self,
         _: &CollapseSelectedChannel,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(channel_id) = self.selected_channel().map(|channel| channel.id) else {
             return;
@@ -1661,7 +1661,7 @@ impl CollabPanel {
         &mut self,
         _: &ExpandSelectedChannel,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(id) = self.selected_channel().map(|channel| channel.id) else {
             return;
@@ -1678,7 +1678,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match self.collapsed_channels.binary_search(&channel_id) {
             Ok(ix) => {
@@ -1698,13 +1698,13 @@ impl CollabPanel {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
     }
 
-    fn leave_call(window: &mut Window, cx: &mut AppContext) {
+    fn leave_call(window: &mut Window, cx: &mut App) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| call.hang_up(cx))
             .detach_and_prompt_err("Failed to hang up", window, cx, |_, _, _| None);
     }
 
-    fn toggle_contact_finder(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_contact_finder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 workspace.toggle_modal(window, cx, |window, cx| {
@@ -1716,7 +1716,7 @@ impl CollabPanel {
         }
     }
 
-    fn new_root_channel(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn new_root_channel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.channel_editing_state = Some(ChannelEditingState::Create {
             location: None,
             pending_name: None,
@@ -1738,7 +1738,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.collapsed_channels
             .retain(|channel| *channel != channel_id);
@@ -1756,7 +1756,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.show_channel_modal(channel_id, channel_modal::Mode::ManageMembers, window, cx);
     }
@@ -1765,7 +1765,7 @@ impl CollabPanel {
         &mut self,
         _: &Remove,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(channel) = self.selected_channel() {
             self.remove_channel(channel.id, window, cx)
@@ -1776,7 +1776,7 @@ impl CollabPanel {
         &mut self,
         _: &SecondaryConfirm,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(channel) = self.selected_channel() {
             self.rename_channel(channel.id, window, cx);
@@ -1787,7 +1787,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let channel_store = self.channel_store.read(cx);
         if !channel_store.is_channel_admin(channel_id) {
@@ -1813,7 +1813,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         visibility: ChannelVisibility,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.channel_store
             .update(cx, |channel_store, cx| {
@@ -1834,7 +1834,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         self.channel_clipboard = Some(ChannelMoveClipboard { channel_id });
     }
@@ -1843,7 +1843,7 @@ impl CollabPanel {
         &mut self,
         _: &StartMoveChannel,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(channel) = self.selected_channel() {
             self.start_move_channel(channel.id, window, cx);
@@ -1854,7 +1854,7 @@ impl CollabPanel {
         &mut self,
         to_channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<CollabPanel>,
+        cx: &mut Context<CollabPanel>,
     ) {
         if let Some(clipboard) = self.channel_clipboard.take() {
             self.move_channel(clipboard.channel_id, to_channel_id, window, cx)
@@ -1866,7 +1866,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         to: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.channel_store
             .update(cx, |channel_store, cx| {
@@ -1892,7 +1892,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
             ChannelView::open(channel_id, None, workspace, window, cx).detach();
@@ -1903,7 +1903,7 @@ impl CollabPanel {
         &mut self,
         _: &menu::SecondaryConfirm,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(bounds) = self
             .selection
@@ -1953,7 +1953,7 @@ impl CollabPanel {
         channel_id: ChannelId,
         mode: channel_modal::Mode,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let workspace = self.workspace.clone();
         let user_store = self.user_store.clone();
@@ -1980,7 +1980,7 @@ impl CollabPanel {
         &self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.id) else {
             return;
@@ -2014,7 +2014,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let channel_store = self.channel_store.clone();
         if let Some(channel) = channel_store.read(cx).channel_for_id(channel_id) {
@@ -2049,7 +2049,7 @@ impl CollabPanel {
         user_id: u64,
         github_login: &str,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let user_store = self.user_store.clone();
         let prompt_message = format!(
@@ -2080,7 +2080,7 @@ impl CollabPanel {
         user_id: u64,
         accept: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.user_store
             .update(cx, |store, cx| {
@@ -2098,7 +2098,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         accept: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.channel_store
             .update(cx, |store, cx| {
@@ -2107,7 +2107,7 @@ impl CollabPanel {
             .detach();
     }
 
-    fn call(&mut self, recipient_user_id: u64, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn call(&mut self, recipient_user_id: u64, window: &mut Window, cx: &mut Context<Self>) {
         ActiveCall::global(cx)
             .update(cx, |call, cx| {
                 call.invite(recipient_user_id, Some(self.project.clone()), cx)
@@ -2119,7 +2119,7 @@ impl CollabPanel {
         &self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -2140,7 +2140,7 @@ impl CollabPanel {
         &mut self,
         channel_id: ChannelId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -2158,7 +2158,7 @@ impl CollabPanel {
         });
     }
 
-    fn copy_channel_link(&mut self, channel_id: ChannelId, cx: &mut ModelContext<Self>) {
+    fn copy_channel_link(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
         let channel_store = self.channel_store.read(cx);
         let Some(channel) = channel_store.channel_for_id(channel_id) else {
             return;
@@ -2167,7 +2167,7 @@ impl CollabPanel {
         cx.write_to_clipboard(item)
     }
 
-    fn render_signed_out(&mut self, cx: &mut ModelContext<Self>) -> Div {
+    fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
         v_flex()
@@ -2209,7 +2209,7 @@ impl CollabPanel {
         &mut self,
         ix: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let entry = &self.entries[ix];
 
@@ -2281,7 +2281,7 @@ impl CollabPanel {
         }
     }
 
-    fn render_signed_in(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> Div {
+    fn render_signed_in(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Div {
         self.channel_store.update(cx, |channel_store, _| {
             channel_store.initialize();
         });
@@ -2301,8 +2301,8 @@ impl CollabPanel {
 
     fn render_filter_input(
         &self,
-        editor: &Model<Editor>,
-        cx: &mut ModelContext<Self>,
+        editor: &Entity<Editor>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
@@ -2336,7 +2336,7 @@ impl CollabPanel {
         section: Section,
         is_selected: bool,
         is_collapsed: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut channel_link = None;
         let mut channel_tooltip_text = None;
@@ -2435,7 +2435,7 @@ impl CollabPanel {
         contact: &Arc<Contact>,
         calling: bool,
         is_selected: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let online = contact.online;
         let busy = contact.busy || calling;
@@ -2516,7 +2516,7 @@ impl CollabPanel {
         user: &Arc<User>,
         is_incoming: bool,
         is_selected: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let github_login = SharedString::from(user.github_login.clone());
         let user_id = user.id;
@@ -2570,7 +2570,7 @@ impl CollabPanel {
         &self,
         channel: &Arc<Channel>,
         is_selected: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ListItem {
         let channel_id = channel.id;
         let response_is_pending = self
@@ -2617,7 +2617,7 @@ impl CollabPanel {
     fn render_contact_placeholder(
         &self,
         is_selected: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ListItem {
         ListItem::new("contact-placeholder")
             .child(Icon::new(IconName::Plus))
@@ -2633,7 +2633,7 @@ impl CollabPanel {
         has_children: bool,
         is_selected: bool,
         ix: usize,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let channel_id = channel.id;
 
@@ -2695,7 +2695,7 @@ impl CollabPanel {
             .w_full()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
-                    cx.new_model(|_| DraggedChannelView {
+                    cx.new(|_| DraggedChannelView {
                         channel: channel.clone(),
                         width,
                     })
@@ -2817,7 +2817,7 @@ impl CollabPanel {
             .tooltip({
                 let channel_store = self.channel_store.clone();
                 move |_window, cx| {
-                    cx.new_model(|_| JoinChannelTooltip {
+                    cx.new(|_| JoinChannelTooltip {
                         channel_store: channel_store.clone(),
                         channel_id,
                         has_notes_notification,
@@ -2831,7 +2831,7 @@ impl CollabPanel {
         &self,
         depth: usize,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let item = ListItem::new("channel-editor")
             .inset(false)
@@ -2860,7 +2860,7 @@ fn render_tree_branch(
     is_last: bool,
     overdraw: bool,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> impl IntoElement {
     let rem_size = window.rem_size();
     let line_height = window.text_style().line_height_in_pixels(rem_size);
@@ -2901,7 +2901,7 @@ fn render_tree_branch(
 }
 
 impl Render for CollabPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CollabPanel")
             .on_action(cx.listener(CollabPanel::cancel))
@@ -2937,7 +2937,7 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
-    fn position(&self, _window: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
 
@@ -2949,7 +2949,7 @@ impl Panel for CollabPanel {
         &mut self,
         position: DockPosition,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         settings::update_settings_file::<CollaborationPanelSettings>(
             self.fs.clone(),
@@ -2958,24 +2958,24 @@ impl Panel for CollabPanel {
         );
     }
 
-    fn size(&self, _window: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _window: &Window, cx: &App) -> Pixels {
         self.width
             .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();
     }
 
-    fn icon(&self, _window: &Window, cx: &AppContext) -> Option<ui::IconName> {
+    fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Collab Panel")
     }
 
@@ -2993,7 +2993,7 @@ impl Panel for CollabPanel {
 }
 
 impl Focusable for CollabPanel {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.filter_editor.focus_handle(cx).clone()
     }
 }
@@ -3105,7 +3105,7 @@ struct DraggedChannelView {
 }
 
 impl Render for DraggedChannelView {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.family.clone();
         h_flex()
             .font_family(ui_font)
@@ -3129,14 +3129,14 @@ impl Render for DraggedChannelView {
 }
 
 struct JoinChannelTooltip {
-    channel_store: Model<ChannelStore>,
+    channel_store: Entity<ChannelStore>,
     channel_id: ChannelId,
     #[allow(unused)]
     has_notes_notification: bool,
 }
 
 impl Render for JoinChannelTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         tooltip_container(window, cx, |container, _, cx| {
             let participants = self
                 .channel_store

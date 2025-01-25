@@ -1,5 +1,5 @@
 use gpui::{
-    div, prelude::*, px, rems, AnyElement, AppContext, DefaultColor, DefaultColors, Div,
+    div, prelude::*, px, rems, AnyElement, App, DefaultColor, DefaultColors, Div,
     SharedString, Window,
 };
 use itertools::Itertools;
@@ -135,7 +135,7 @@ impl StoryItem {
 }
 
 impl RenderOnce for StoryItem {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let colors = DefaultColors::light();
 
         div()
@@ -205,7 +205,7 @@ impl StorySection {
 }
 
 impl RenderOnce for StorySection {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let children: SmallVec<[AnyElement; 2]> = SmallVec::from_iter(Itertools::intersperse_with(
             self.children.into_iter(),
             || Story::divider().into_any_element(),

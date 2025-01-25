@@ -1,5 +1,5 @@
 use crate::{
-    black, fill, point, px, size, AppContext, Bounds, Half, Hsla, LineLayout, Pixels, Point,
+    black, fill, point, px, size, App, Bounds, Half, Hsla, LineLayout, Pixels, Point,
     Result, SharedString, StrikethroughStyle, UnderlineStyle, Window, WrapBoundary,
     WrappedLineLayout,
 };
@@ -65,7 +65,7 @@ impl ShapedLine {
         origin: Point<Pixels>,
         line_height: Pixels,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<()> {
         paint_line(
             origin,
@@ -105,7 +105,7 @@ impl WrappedLine {
         origin: Point<Pixels>,
         line_height: Pixels,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<()> {
         paint_line(
             origin,
@@ -128,7 +128,7 @@ fn paint_line(
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Result<()> {
     let line_bounds = Bounds::new(
         origin,

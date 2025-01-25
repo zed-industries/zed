@@ -5,7 +5,7 @@ pub mod webrtc;
 
 use self::id::*;
 use self::{participant::*, publication::*, track::*};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use gpui::BackgroundExecutor;

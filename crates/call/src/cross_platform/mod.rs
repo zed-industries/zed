@@ -34,7 +34,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     );
     CallSettings::register(cx);
 
-    let active_call = cx.new_model(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(GlobalActiveCall(active_call));
 }
 

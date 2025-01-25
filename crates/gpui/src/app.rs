@@ -31,10 +31,10 @@ use util::ResultExt;
 
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
-    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
-    DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor,
-    Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
-    Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem,
+    DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global,
+    KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels,
+    Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
     WindowInvalidator,
@@ -53,7 +53,7 @@ pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 /// Strongly consider removing after stabilization.
 #[doc(hidden)]
 pub struct AppCell {
-    app: RefCell<AppContext>,
+    app: RefCell<App>,
 }
 
 impl AppCell {
@@ -80,7 +80,7 @@ impl AppCell {
 
 #[doc(hidden)]
 #[derive(Deref, DerefMut)]
-pub struct AppRef<'a>(Ref<'a, AppContext>);
+pub struct AppRef<'a>(Ref<'a, App>);
 
 impl<'a> Drop for AppRef<'a> {
     fn drop(&mut self) {
@@ -93,7 +93,7 @@ impl<'a> Drop for AppRef<'a> {
 
 #[doc(hidden)]
 #[derive(Deref, DerefMut)]
-pub struct AppRefMut<'a>(RefMut<'a, AppContext>);
+pub struct AppRefMut<'a>(RefMut<'a, App>);
 
 impl<'a> Drop for AppRefMut<'a> {
     fn drop(&mut self) {
@@ -106,18 +106,18 @@ impl<'a> Drop for AppRefMut<'a> {
 
 /// A reference to a GPUI application, typically constructed in the `main` function of your app.
 /// You won't interact with this type much outside of initial configuration and startup.
-pub struct App(Rc<AppCell>);
+pub struct Application(Rc<AppCell>);
 
 /// Represents an application before it is fully launched. Once your app is
 /// configured, you'll start the app with `App::run`.
-impl App {
+impl Application {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
-        Self(AppContext::new(
+        Self(App::new_app(
             current_platform(false),
             Arc::new(()),
             Arc::new(NullHttpClient),
@@ -128,7 +128,7 @@ impl App {
     /// but makes it possible to run an application in an context like
     /// SSH, where GUI applications are not allowed.
     pub fn headless() -> Self {
-        Self(AppContext::new(
+        Self(App::new_app(
             current_platform(true),
             Arc::new(()),
             Arc::new(NullHttpClient),
@@ -157,7 +157,7 @@ impl App {
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
     where
-        F: 'static + FnOnce(&mut AppContext),
+        F: 'static + FnOnce(&mut App),
     {
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
@@ -181,7 +181,7 @@ impl App {
     /// On macOS, this can occur when the application icon is double-clicked or the app is launched via the dock.
     pub fn on_reopen<F>(&self, mut callback: F) -> &Self
     where
-        F: 'static + FnMut(&mut AppContext),
+        F: 'static + FnMut(&mut App),
     {
         let this = Rc::downgrade(&self.0);
         self.0.borrow_mut().platform.on_reopen(Box::new(move || {
@@ -213,19 +213,18 @@ impl App {
     }
 }
 
-type Handler = Box<dyn FnMut(&mut AppContext) -> bool + 'static>;
-type Listener = Box<dyn FnMut(&dyn Any, &mut AppContext) -> bool + 'static>;
+type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
+type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
-    Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) -> bool + 'static>;
-type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
-type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
-type NewModelListener =
-    Box<dyn FnMut(AnyModel, &mut Option<&mut Window>, &mut AppContext) + 'static>;
+    Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
+type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
+type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
+type NewModelListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
 /// You need a reference to an `AppContext` to access the state of a [Model].
-pub struct AppContext {
+pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
     text_system: Arc<TextSystem>,
@@ -271,9 +270,9 @@ pub struct AppContext {
     pub(crate) name: Option<&'static str>,
 }
 
-impl AppContext {
+impl App {
     #[allow(clippy::new_ret_no_self)]
-    pub(crate) fn new(
+    pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
         http_client: Arc<dyn HttpClient>,
@@ -290,7 +289,7 @@ impl AppContext {
         let keyboard_layout = SharedString::from(platform.keyboard_layout());
 
         let app = Rc::new_cyclic(|this| AppCell {
-            app: RefCell::new(AppContext {
+            app: RefCell::new(App {
                 this: this.clone(),
                 platform: platform.clone(),
                 text_system,
@@ -391,7 +390,7 @@ impl AppContext {
     /// Invokes a handler when the current keyboard layout changes
     pub fn on_keyboard_layout_change<F>(&self, mut callback: F) -> Subscription
     where
-        F: 'static + FnMut(&mut AppContext),
+        F: 'static + FnMut(&mut App),
     {
         let (subscription, activate) = self.keyboard_layout_observers.insert(
             (),
@@ -428,14 +427,13 @@ impl AppContext {
     }
 
     /// Arrange a callback to be invoked when the given model or view calls `notify` on its respective context.
-    pub fn observe<W, E>(
+    pub fn observe<W>(
         &mut self,
-        entity: &E,
-        mut on_notify: impl FnMut(E, &mut AppContext) + 'static,
+        entity: &Entity<W>,
+        mut on_notify: impl FnMut(Entity<W>, &mut App) + 'static,
     ) -> Subscription
     where
         W: 'static,
-        E: Entity<W>,
     {
         self.observe_internal(entity, move |e, cx| {
             on_notify(e, cx);
@@ -445,7 +443,7 @@ impl AppContext {
 
     pub(crate) fn detect_accessed_entities<R>(
         &mut self,
-        callback: impl FnOnce(&mut AppContext) -> R,
+        callback: impl FnOnce(&mut App) -> R,
     ) -> (R, FxHashSet<EntityId>) {
         let accessed_entities_start = self.entities.accessed_entities.borrow().clone();
         let result = callback(self);
@@ -490,21 +488,20 @@ impl AppContext {
         subscription
     }
 
-    pub(crate) fn observe_internal<W, E>(
+    pub(crate) fn observe_internal<W>(
         &mut self,
-        entity: &E,
-        mut on_notify: impl FnMut(E, &mut AppContext) -> bool + 'static,
+        entity: &Entity<W>,
+        mut on_notify: impl FnMut(Entity<W>, &mut App) -> bool + 'static,
     ) -> Subscription
     where
         W: 'static,
-        E: Entity<W>,
     {
         let entity_id = entity.entity_id();
         let handle = entity.downgrade();
         self.new_observer(
             entity_id,
             Box::new(move |cx| {
-                if let Some(handle) = E::upgrade_from(&handle) {
+                if let Some(handle) = Entity::<W>::upgrade_from(&handle) {
                     on_notify(handle, cx)
                 } else {
                     false
@@ -515,14 +512,13 @@ impl AppContext {
 
     /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
     /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
-    pub fn subscribe<T, E, Event>(
+    pub fn subscribe<T, Event>(
         &mut self,
-        entity: &E,
-        mut on_event: impl FnMut(E, &Event, &mut AppContext) + 'static,
+        entity: &Entity<T>,
+        mut on_event: impl FnMut(Entity<T>, &Event, &mut App) + 'static,
     ) -> Subscription
     where
         T: 'static + EventEmitter<Event>,
-        E: Entity<T>,
         Event: 'static,
     {
         self.subscribe_internal(entity, move |entity, event, cx| {
@@ -540,14 +536,13 @@ impl AppContext {
         self.defer(move |_| activate());
         subscription
     }
-    pub(crate) fn subscribe_internal<T, E, Evt>(
+    pub(crate) fn subscribe_internal<T, Evt>(
         &mut self,
-        entity: &E,
-        mut on_event: impl FnMut(E, &Evt, &mut AppContext) -> bool + 'static,
+        entity: &Entity<T>,
+        mut on_event: impl FnMut(Entity<T>, &Evt, &mut App) -> bool + 'static,
     ) -> Subscription
     where
         T: 'static + EventEmitter<Evt>,
-        E: Entity<T>,
         Evt: 'static,
     {
         let entity_id = entity.entity_id();
@@ -558,7 +553,7 @@ impl AppContext {
                 TypeId::of::<Evt>(),
                 Box::new(move |event, cx| {
                     let event: &Evt = event.downcast_ref().expect("invalid event type");
-                    if let Some(handle) = E::upgrade_from(&entity) {
+                    if let Some(handle) = Entity::<T>::upgrade_from(&entity) {
                         on_event(handle, event, cx)
                     } else {
                         false
@@ -598,7 +593,7 @@ impl AppContext {
     pub fn open_window<V: 'static + Render>(
         &mut self,
         options: crate::WindowOptions,
-        build_root_view: impl FnOnce(&mut Window, &mut AppContext) -> Model<V>,
+        build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {
             let id = cx.windows.insert(None);
@@ -974,7 +969,7 @@ impl AppContext {
 
     fn apply_model_created_effect(
         &mut self,
-        entity: AnyModel,
+        entity: AnyEntity,
         tid: TypeId,
         window: Option<WindowId>,
     ) {
@@ -994,7 +989,7 @@ impl AppContext {
 
     fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Window, &mut AppContext) -> T,
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
             let mut window = cx
@@ -1055,7 +1050,7 @@ impl AppContext {
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
-    pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static) {
+    pub fn defer(&mut self, f: impl FnOnce(&mut App) + 'static) {
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
@@ -1185,16 +1180,14 @@ impl AppContext {
 
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
-    pub fn observe_new_models<T: 'static>(
+    pub fn observe_new<T: 'static>(
         &self,
-        on_new: impl 'static + Fn(&mut T, Option<&mut Window>, &mut ModelContext<T>),
+        on_new: impl 'static + Fn(&mut T, Option<&mut Window>, &mut Context<T>),
     ) -> Subscription {
         self.new_model_observer(
             TypeId::of::<T>(),
             Box::new(
-                move |any_model: AnyModel,
-                      window: &mut Option<&mut Window>,
-                      cx: &mut AppContext| {
+                move |any_model: AnyEntity, window: &mut Option<&mut Window>, cx: &mut App| {
                     any_model
                         .downcast::<T>()
                         .unwrap()
@@ -1212,13 +1205,12 @@ impl AppContext {
 
     /// Observe the release of a model or view. The callback is invoked after the model or view
     /// has no more strong references but before it has been dropped.
-    pub fn observe_release<E, T>(
+    pub fn observe_release<T>(
         &self,
-        handle: &E,
-        on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
+        handle: &Entity<T>,
+        on_release: impl FnOnce(&mut T, &mut App) + 'static,
     ) -> Subscription
     where
-        E: Entity<T>,
         T: 'static,
     {
         let (subscription, activate) = self.release_listeners.insert(
@@ -1234,14 +1226,13 @@ impl AppContext {
 
     /// Observe the release of a model or view. The callback is invoked after the model or view
     /// has no more strong references but before it has been dropped.
-    pub fn observe_release_in<E, T>(
+    pub fn observe_release_in<T>(
         &self,
-        handle: &E,
+        handle: &Entity<T>,
         window: &Window,
-        on_release: impl FnOnce(&mut T, &mut Window, &mut AppContext) + 'static,
+        on_release: impl FnOnce(&mut T, &mut Window, &mut App) + 'static,
     ) -> Subscription
     where
-        E: Entity<T>,
         T: 'static,
     {
         let window_handle = window.handle;
@@ -1261,7 +1252,7 @@ impl AppContext {
     /// and that this API will not be invoked if the event's propagation is stopped.
     pub fn observe_keystrokes(
         &mut self,
-        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) + 'static,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
     ) -> Subscription {
         fn inner(
             keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
@@ -1361,7 +1352,7 @@ impl AppContext {
     /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(
         &self,
-        mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
+        mut on_quit: impl FnMut(&mut App) -> Fut + 'static,
     ) -> Subscription
     where
         Fut: 'static + Future<Output = ()>,
@@ -1506,7 +1497,7 @@ impl AppContext {
                 &[&str],
                 PromptHandle,
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> RenderablePromptHandle
             + 'static,
     ) {
@@ -1584,20 +1575,17 @@ impl AppContext {
     }
 }
 
-impl Context for AppContext {
+impl AppContext for App {
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
     /// a `ModelContext` and must return an object representing the entity. A `Model` handle will be returned,
     /// which can be used to access the entity in a context.
-    fn new_model<T: 'static>(
-        &mut self,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Model<T> {
+    fn new<T: 'static>(&mut self, build_model: impl FnOnce(&mut Context<'_, T>) -> T) -> Entity<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
             let model = slot.clone();
-            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            let entity = build_model(&mut Context::new_context(cx, slot.downgrade()));
 
             cx.push_effect(Effect::ModelCreated {
                 entity: model.clone().into_any(),
@@ -1617,11 +1605,11 @@ impl Context for AppContext {
     fn insert_model<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
-    ) -> Self::Result<Model<T>> {
+        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+    ) -> Self::Result<Entity<T>> {
         self.update(|cx| {
             let slot = reservation.0;
-            let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+            let entity = build_model(&mut Context::new_context(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
@@ -1630,12 +1618,15 @@ impl Context for AppContext {
     /// entity along with a `ModelContext` for the entity.
     fn update_model<T: 'static, R>(
         &mut self,
-        model: &Model<T>,
-        update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
+        model: &Entity<T>,
+        update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
             let mut entity = cx.entities.lease(model);
-            let result = update(&mut entity, &mut ModelContext::new(cx, model.downgrade()));
+            let result = update(
+                &mut entity,
+                &mut Context::new_context(cx, model.downgrade()),
+            );
             cx.entities.end_lease(entity);
             result
         })
@@ -1643,8 +1634,8 @@ impl Context for AppContext {
 
     fn read_model<T, R>(
         &self,
-        handle: &Model<T>,
-        read: impl FnOnce(&T, &AppContext) -> R,
+        handle: &Entity<T>,
+        read: impl FnOnce(&T, &App) -> R,
     ) -> Self::Result<R>
     where
         T: 'static,
@@ -1655,7 +1646,7 @@ impl Context for AppContext {
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut Window, &mut AppContext) -> T,
+        F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update_window_id(handle.id, update)
     }
@@ -1663,7 +1654,7 @@ impl Context for AppContext {
     fn read_window<T, R>(
         &self,
         window: &WindowHandle<T>,
-        read: impl FnOnce(Model<T>, &AppContext) -> R,
+        read: impl FnOnce(Entity<T>, &App) -> R,
     ) -> Result<R>
     where
         T: 'static,
@@ -1699,10 +1690,10 @@ pub(crate) enum Effect {
         global_type: TypeId,
     },
     Defer {
-        callback: Box<dyn FnOnce(&mut AppContext) + 'static>,
+        callback: Box<dyn FnOnce(&mut App) + 'static>,
     },
     ModelCreated {
-        entity: AnyModel,
+        entity: AnyEntity,
         tid: TypeId,
         window: Option<WindowId>,
     },
@@ -1779,7 +1770,7 @@ pub struct AnyTooltip {
     /// Given the bounds of the tooltip, checks whether the tooltip should still be visible and
     /// updates its state accordingly. This is needed atop the hovered element's mouse move handler
     /// to handle the case where the element is not painted (e.g. via use of `visible_on_hover`).
-    pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut AppContext) -> bool>,
+    pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut Window, &mut App) -> bool>,
 }
 
 /// A keystroke event, and potentially the associated action

@@ -13,8 +13,8 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusHandle,
-    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, Model, ModelContext,
+    actions, div, impl_actions, Action, App, ClickEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, Context,
     ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
 };
 use project::{
@@ -71,15 +71,15 @@ pub enum Event {
     UpdateLocation,
 }
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| BufferSearchBar::register(workspace))
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| BufferSearchBar::register(workspace))
         .detach();
 }
 
 pub struct BufferSearchBar {
-    query_editor: Model<Editor>,
+    query_editor: Entity<Editor>,
     query_editor_focused: bool,
-    replacement_editor: Model<Editor>,
+    replacement_editor: Entity<Editor>,
     replacement_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
@@ -104,10 +104,10 @@ pub struct BufferSearchBar {
 impl BufferSearchBar {
     fn render_text_input(
         &self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         color: Hsla,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
@@ -144,7 +144,7 @@ impl BufferSearchBar {
 impl EventEmitter<Event> for BufferSearchBar {}
 impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.dismissed {
             return div().id("search_bar");
         }
@@ -495,7 +495,7 @@ impl Render for BufferSearchBar {
 }
 
 impl Focusable for BufferSearchBar {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.query_editor.focus_handle(cx)
     }
 }
@@ -505,7 +505,7 @@ impl ToolbarItemView for BufferSearchBar {
         &mut self,
         item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_searchable_item_subscription.take();
@@ -604,11 +604,11 @@ impl BufferSearchBar {
         }))
     }
 
-    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let query_editor = cx.new_model(|cx| Editor::single_line(window, cx));
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new_model(|cx| Editor::single_line(window, cx));
+        let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
@@ -647,7 +647,7 @@ impl BufferSearchBar {
         self.dismissed
     }
 
-    pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
@@ -675,7 +675,7 @@ impl BufferSearchBar {
         &mut self,
         deploy: &Deploy,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         if self.show(window, cx) {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
@@ -710,7 +710,7 @@ impl BufferSearchBar {
         false
     }
 
-    pub fn toggle(&mut self, action: &Deploy, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn toggle(&mut self, action: &Deploy, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_dismissed() {
             self.deploy(action, window, cx);
         } else {
@@ -718,7 +718,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn show(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    pub fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
@@ -747,7 +747,7 @@ impl BufferSearchBar {
             .unwrap_or_default()
     }
 
-    pub fn search_suggested(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn search_suggested(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let search = self
             .query_suggestion(window, cx)
             .map(|suggestion| self.search(&suggestion, Some(self.default_options), window, cx));
@@ -763,7 +763,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn activate_current_match(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn activate_current_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(match_ix) = self.active_match_index {
             if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
                 if let Some(matches) = self
@@ -776,24 +776,24 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn select_query(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.select_all(&Default::default(), window, cx);
         });
     }
 
-    pub fn query(&self, cx: &AppContext) -> String {
+    pub fn query(&self, cx: &App) -> String {
         self.query_editor.read(cx).text(cx)
     }
 
-    pub fn replacement(&self, cx: &mut AppContext) -> String {
+    pub fn replacement(&self, cx: &mut App) -> String {
         self.replacement_editor.read(cx).text(cx)
     }
 
     pub fn query_suggestion(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<String> {
         self.active_searchable_item
             .as_ref()
@@ -801,7 +801,7 @@ impl BufferSearchBar {
             .filter(|suggestion| !suggestion.is_empty())
     }
 
-    pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut ModelContext<Self>) {
+    pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut Context<Self>) {
         if replacement.is_none() {
             self.replace_enabled = false;
             return;
@@ -823,7 +823,7 @@ impl BufferSearchBar {
         query: &str,
         options: Option<SearchOptions>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let options = options.unwrap_or(self.default_options);
         let updated = query != self.query(cx) || self.search_options != options;
@@ -845,7 +845,7 @@ impl BufferSearchBar {
         &self,
         option: SearchOptions,
         focus_handle: FocusHandle,
-        action: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+        action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         let is_active = self.search_options.contains(option);
         option.as_button(is_active, focus_handle, action)
@@ -855,7 +855,7 @@ impl BufferSearchBar {
         &mut self,
         _: &FocusEditor,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(active_editor) = self.active_searchable_item.as_ref() {
             let handle = active_editor.item_focus_handle(cx);
@@ -867,7 +867,7 @@ impl BufferSearchBar {
         &mut self,
         search_option: SearchOptions,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
@@ -883,7 +883,7 @@ impl BufferSearchBar {
         &mut self,
         search_option: SearchOptions,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if !self.search_options.contains(search_option) {
             self.toggle_search_option(search_option, window, cx)
@@ -894,7 +894,7 @@ impl BufferSearchBar {
         &mut self,
         search_options: SearchOptions,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.search_options = search_options;
         cx.notify();
@@ -904,7 +904,7 @@ impl BufferSearchBar {
         &mut self,
         _: &SelectNextMatch,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.select_match(Direction::Next, 1, window, cx);
     }
@@ -913,7 +913,7 @@ impl BufferSearchBar {
         &mut self,
         _: &SelectPrevMatch,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.select_match(Direction::Prev, 1, window, cx);
     }
@@ -922,7 +922,7 @@ impl BufferSearchBar {
         &mut self,
         _: &SelectAllMatches,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if !self.dismissed && self.active_match_index.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
@@ -942,7 +942,7 @@ impl BufferSearchBar {
         direction: Direction,
         count: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(index) = self.active_match_index {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
@@ -969,7 +969,7 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn select_last_match(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_last_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(searchable_item) = self.active_searchable_item.as_ref() {
             if let Some(matches) = self
                 .searchable_items_with_matches
@@ -987,10 +987,10 @@ impl BufferSearchBar {
 
     fn on_query_editor_event(
         &mut self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         event: &editor::EditorEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
@@ -1024,9 +1024,9 @@ impl BufferSearchBar {
 
     fn on_replacement_editor_event(
         &mut self,
-        _: Model<Editor>,
+        _: Entity<Editor>,
         event: &editor::EditorEvent,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) {
         match event {
             editor::EditorEvent::Focused => self.replacement_editor_focused = true,
@@ -1039,7 +1039,7 @@ impl BufferSearchBar {
         &mut self,
         event: &SearchEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             SearchEvent::MatchesInvalidated => {
@@ -1053,7 +1053,7 @@ impl BufferSearchBar {
         &mut self,
         _: &ToggleCaseSensitive,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx)
     }
@@ -1062,7 +1062,7 @@ impl BufferSearchBar {
         &mut self,
         _: &ToggleWholeWord,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx)
     }
@@ -1071,7 +1071,7 @@ impl BufferSearchBar {
         &mut self,
         _: &ToggleSelection,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(active_item) = self.active_searchable_item.as_mut() {
             self.selection_search_enabled = !self.selection_search_enabled;
@@ -1081,11 +1081,11 @@ impl BufferSearchBar {
         }
     }
 
-    fn toggle_regex(&mut self, _: &ToggleRegex, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_regex(&mut self, _: &ToggleRegex, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_search_option(SearchOptions::REGEX, window, cx)
     }
 
-    fn clear_active_searchable_item_matches(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn clear_active_searchable_item_matches(&mut self, window: &mut Window, cx: &mut App) {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.active_match_index = None;
             self.searchable_items_with_matches
@@ -1098,7 +1098,7 @@ impl BufferSearchBar {
         self.active_match_index.is_some()
     }
 
-    fn clear_matches(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn clear_matches(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut active_item_matches = None;
         for (searchable_item, matches) in self.searchable_items_with_matches.drain() {
             if let Some(searchable_item) =
@@ -1120,7 +1120,7 @@ impl BufferSearchBar {
         &mut self,
         reuse_existing_query: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (done_tx, done_rx) = oneshot::channel();
         let query = self.query(cx);
@@ -1219,7 +1219,7 @@ impl BufferSearchBar {
         done_rx
     }
 
-    pub fn update_match_index(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn update_match_index(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_index = self
             .active_searchable_item
             .as_ref()
@@ -1235,7 +1235,7 @@ impl BufferSearchBar {
         }
     }
 
-    fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
         // Search -> Replace -> Editor
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
             self.replacement_editor.focus_handle(cx)
@@ -1248,7 +1248,7 @@ impl BufferSearchBar {
         cx.stop_propagation();
     }
 
-    fn tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut Context<Self>) {
         // Search -> Replace -> Search
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
             self.replacement_editor.focus_handle(cx)
@@ -1265,7 +1265,7 @@ impl BufferSearchBar {
         &mut self,
         _: &NextHistoryQuery,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(new_query) = self
             .search_history
@@ -1283,7 +1283,7 @@ impl BufferSearchBar {
         &mut self,
         _: &PreviousHistoryQuery,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.query(cx).is_empty() {
             if let Some(new_query) = self
@@ -1305,7 +1305,7 @@ impl BufferSearchBar {
         }
     }
 
-    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut Context<Self>) {
         cx.on_next_frame(window, |_, window, _| {
             window.invalidate_character_coordinates();
         });
@@ -1316,7 +1316,7 @@ impl BufferSearchBar {
         &mut self,
         _: &ToggleReplace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
@@ -1330,7 +1330,7 @@ impl BufferSearchBar {
         }
     }
 
-    fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
         let mut should_propagate = true;
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
@@ -1362,7 +1362,7 @@ impl BufferSearchBar {
         &mut self,
         _: &ReplaceAll,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if !self.dismissed && self.active_search.is_some() {
             if let Some(searchable_item) = self.active_searchable_item.as_ref() {
@@ -1382,12 +1382,12 @@ impl BufferSearchBar {
         }
     }
 
-    pub fn match_exists(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    pub fn match_exists(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.update_match_index(window, cx);
         self.active_match_index.is_some()
     }
 
-    pub fn should_use_smartcase_search(&mut self, cx: &mut ModelContext<Self>) -> bool {
+    pub fn should_use_smartcase_search(&mut self, cx: &mut Context<Self>) -> bool {
         EditorSettings::get_global(cx).use_smartcase_search
     }
 
@@ -1395,7 +1395,7 @@ impl BufferSearchBar {
         str.chars().any(|c| c.is_uppercase())
     }
 
-    fn smartcase(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn smartcase(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.should_use_smartcase_search(cx) {
             let query = self.query(cx);
             if !query.is_empty() {
@@ -1437,12 +1437,12 @@ mod tests {
     fn init_test(
         cx: &mut TestAppContext,
     ) -> (
-        Model<Editor>,
-        Model<BufferSearchBar>,
+        Entity<Editor>,
+        Entity<BufferSearchBar>,
         &mut VisualTestContext,
     ) {
         init_globals(cx);
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new(|cx| {
             Buffer::local(
                 r#"
                 A regular expression (shortened as regex or regexp;[1] also referred to as
@@ -1820,7 +1820,7 @@ mod tests {
             expected_query_matches_count > 1,
             "Should pick a query with multiple results"
         );
-        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
+        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
         let window = cx.add_window(|_, _| gpui::Empty);
 
         let editor = window.build_model(cx, |window, cx| {
@@ -2029,7 +2029,7 @@ mod tests {
         });
         "#
         .unindent();
-        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
+        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
         let cx = cx.add_empty_window();
 
         let editor =
@@ -2103,7 +2103,7 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
         .unindent();
-        let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
+        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
         let cx = cx.add_empty_window();
 
         let editor =
@@ -2359,8 +2359,8 @@ mod tests {
     }
 
     struct ReplacementTestParams<'a> {
-        editor: &'a Model<Editor>,
-        search_bar: &'a Model<BufferSearchBar>,
+        editor: &'a Entity<Editor>,
+        search_bar: &'a Entity<BufferSearchBar>,
         cx: &'a mut VisualTestContext,
         search_text: &'static str,
         search_options: Option<SearchOptions>,
@@ -2471,7 +2471,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         init_globals(cx);
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new(|cx| {
             Buffer::local(
                 r#"
                 aaa bbb aaa ccc

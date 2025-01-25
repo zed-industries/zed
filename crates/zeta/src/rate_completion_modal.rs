@@ -1,7 +1,7 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
+    actions, prelude::*, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Entity,
 };
 use language::language_settings;
 use std::time::Duration;
@@ -21,8 +21,8 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(move |workspace: &mut Workspace, _, _cx| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
             RateCompletionModal::toggle(workspace, window, cx);
         });
@@ -31,7 +31,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct RateCompletionModal {
-    zeta: Model<Zeta>,
+    zeta: Entity<Zeta>,
     active_completion: Option<ActiveCompletion>,
     selected_index: usize,
     focus_handle: FocusHandle,
@@ -41,7 +41,7 @@ pub struct RateCompletionModal {
 
 struct ActiveCompletion {
     completion: InlineCompletion,
-    feedback_editor: Model<Editor>,
+    feedback_editor: Entity<Editor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -63,14 +63,14 @@ impl RateCompletionModal {
     pub fn toggle(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         if let Some(zeta) = Zeta::global(cx) {
             workspace.toggle_modal(window, cx, |_window, cx| RateCompletionModal::new(zeta, cx));
         }
     }
 
-    pub fn new(zeta: Model<Zeta>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
 
         Self {
@@ -83,11 +83,11 @@ impl RateCompletionModal {
         }
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
@@ -96,12 +96,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
 
-    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
         let next_index = self
             .zeta
             .read(cx)
@@ -118,7 +118,7 @@ impl RateCompletionModal {
         }
     }
 
-    fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut Context<Self>) {
         let zeta = self.zeta.read(cx);
         let completions_len = zeta.shown_completions_len();
 
@@ -140,7 +140,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = 0;
         cx.notify();
     }
@@ -149,7 +149,7 @@ impl RateCompletionModal {
         &mut self,
         _: &menu::SelectLast,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.selected_index = self.zeta.read(cx).shown_completions_len() - 1;
         cx.notify();
@@ -159,7 +159,7 @@ impl RateCompletionModal {
         &mut self,
         _: &ThumbsUpActiveCompletion,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
@@ -187,7 +187,7 @@ impl RateCompletionModal {
         &mut self,
         _: &ThumbsDownActiveCompletion,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(active) = &self.active_completion {
             if active.feedback_editor.read(cx).text(cx).is_empty() {
@@ -219,7 +219,7 @@ impl RateCompletionModal {
         &mut self,
         _: &FocusCompletions,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         cx.focus_self(window);
         cx.notify();
@@ -229,7 +229,7 @@ impl RateCompletionModal {
         &mut self,
         _: &PreviewCompletion,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let completion = self
             .zeta
@@ -243,7 +243,7 @@ impl RateCompletionModal {
         self.select_completion(completion, false, window, cx);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let completion = self
             .zeta
             .read(cx)
@@ -261,7 +261,7 @@ impl RateCompletionModal {
         completion: Option<InlineCompletion>,
         focus: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // Avoid resetting completion rating if it's already selected.
         if let Some(completion) = completion.as_ref() {
@@ -287,7 +287,7 @@ impl RateCompletionModal {
 
         self.active_completion = completion.map(|completion| ActiveCompletion {
             completion,
-            feedback_editor: cx.new_model(|cx| {
+            feedback_editor: cx.new(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_show_line_numbers(false, cx);
@@ -308,7 +308,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn render_view_nav(&self, cx: &ModelContext<Self>) -> impl IntoElement {
+    fn render_view_nav(&self, cx: &Context<Self>) -> impl IntoElement {
         h_flex()
             .h_8()
             .px_1()
@@ -342,7 +342,7 @@ impl RateCompletionModal {
             )
     }
 
-    fn render_suggested_edits(&self, cx: &mut ModelContext<Self>) -> Option<gpui::Stateful<Div>> {
+    fn render_suggested_edits(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
         let active_completion = self.active_completion.as_ref()?;
         let bg_color = cx.theme().colors().editor_background;
 
@@ -361,7 +361,7 @@ impl RateCompletionModal {
         )
     }
 
-    fn render_raw_input(&self, cx: &mut ModelContext<Self>) -> Option<gpui::Stateful<Div>> {
+    fn render_raw_input(&self, cx: &mut Context<Self>) -> Option<gpui::Stateful<Div>> {
         Some(
             v_flex()
                 .size_full()
@@ -392,7 +392,7 @@ impl RateCompletionModal {
     fn render_active_completion(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
@@ -538,7 +538,7 @@ impl RateCompletionModal {
 }
 
 impl Render for RateCompletionModal {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border_color = cx.theme().colors().border;
 
         h_flex()
@@ -667,7 +667,7 @@ impl Render for RateCompletionModal {
 impl EventEmitter<DismissEvent> for RateCompletionModal {}
 
 impl Focusable for RateCompletionModal {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

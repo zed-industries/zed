@@ -6,7 +6,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{AppContext, Model, Task, WeakModel};
+use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
@@ -25,7 +25,7 @@ impl SlashCommand for TerminalSlashCommand {
         "terminal".into()
     }
 
-    fn label(&self, cx: &AppContext) -> CodeLabel {
+    fn label(&self, cx: &App) -> CodeLabel {
         create_label_for_command("terminal", &[LINE_COUNT_ARG], cx)
     }
 
@@ -53,9 +53,9 @@ impl SlashCommand for TerminalSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakModel<Workspace>>,
+        _workspace: Option<WeakEntity<Workspace>>,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -65,10 +65,10 @@ impl SlashCommand for TerminalSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
@@ -109,9 +109,9 @@ impl SlashCommand for TerminalSlashCommand {
 }
 
 fn resolve_active_terminal(
-    workspace: &Model<Workspace>,
-    cx: &mut AppContext,
-) -> Option<Model<TerminalView>> {
+    workspace: &Entity<Workspace>,
+    cx: &mut App,
+) -> Option<Entity<TerminalView>> {
     if let Some(terminal_view) = workspace
         .read(cx)
         .active_item(cx)

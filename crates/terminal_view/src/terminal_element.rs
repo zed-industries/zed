@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, AppContext, AvailableSpace, Bounds,
-    ContentMask, DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
+    div, fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, ContentMask,
+    Context, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent,
-    Pixels, Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun,
-    TextStyle, UTF16Selection, UnderlineStyle, WeakModel, WhiteSpace, Window, WindowTextSystem,
+    IntoElement, LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
+    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -89,7 +89,7 @@ impl LayoutCell {
         dimensions: &TerminalSize,
         _visible_bounds: Bounds<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let pos = {
             let point = self.point;
@@ -151,9 +151,9 @@ impl LayoutRect {
 /// The GPUI element that paints the terminal.
 /// We need to keep a reference to the model for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
-    terminal: Model<Terminal>,
-    terminal_view: Model<TerminalView>,
-    workspace: WeakModel<Workspace>,
+    terminal: Entity<Terminal>,
+    terminal_view: Entity<TerminalView>,
+    workspace: WeakEntity<Workspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -173,9 +173,9 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        terminal: Model<Terminal>,
-        terminal_view: Model<TerminalView>,
-        workspace: WeakModel<Workspace>,
+        terminal: Entity<Terminal>,
+        terminal_view: Entity<TerminalView>,
+        workspace: WeakEntity<Workspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -206,7 +206,7 @@ impl TerminalElement {
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
         window: &Window,
-        cx: &AppContext,
+        cx: &App,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme = cx.theme();
         let mut cells = vec![];
@@ -412,11 +412,11 @@ impl TerminalElement {
     }
 
     fn generic_button_handler<E>(
-        connection: Model<Terminal>,
+        connection: Entity<Terminal>,
         origin: Point<Pixels>,
         focus_handle: FocusHandle,
-        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(&E, &mut Window, &mut AppContext) {
+        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut Context<Terminal>),
+    ) -> impl Fn(&E, &mut Window, &mut App) {
         move |event, window, cx| {
             window.focus(&focus_handle);
             connection.update(cx, |terminal, cx| {
@@ -553,7 +553,7 @@ impl TerminalElement {
         }
     }
 
-    fn rem_size(&self, cx: &mut AppContext) -> Option<Pixels> {
+    fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
         let buffer_font_size = settings.buffer_font_size();
         let rem_size_scale = {
@@ -586,7 +586,7 @@ impl Element for TerminalElement {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id =
             self.interactivity
@@ -606,7 +606,7 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self::PrepaintState {
         let rem_size = self.rem_size(cx);
         self.interactivity.prepaint(
@@ -882,7 +882,7 @@ impl Element for TerminalElement {
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
@@ -988,8 +988,8 @@ impl IntoElement for TerminalElement {
 }
 
 struct TerminalInputHandler {
-    terminal: Model<Terminal>,
-    workspace: WeakModel<Workspace>,
+    terminal: Entity<Terminal>,
+    workspace: WeakEntity<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -998,7 +998,7 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _ignore_disabled_input: bool,
         _: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<UTF16Selection> {
         if self
             .terminal
@@ -1016,11 +1016,7 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
-    fn marked_text_range(
-        &mut self,
-        _: &mut Window,
-        _: &mut AppContext,
-    ) -> Option<std::ops::Range<usize>> {
+    fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<std::ops::Range<usize>> {
         None
     }
 
@@ -1029,7 +1025,7 @@ impl InputHandler for TerminalInputHandler {
         _: std::ops::Range<usize>,
         _: &mut Option<std::ops::Range<usize>>,
         _: &mut Window,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Option<String> {
         None
     }
@@ -1039,7 +1035,7 @@ impl InputHandler for TerminalInputHandler {
         _replacement_range: Option<std::ops::Range<usize>>,
         text: &str,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(text.into());
@@ -1061,17 +1057,17 @@ impl InputHandler for TerminalInputHandler {
         _new_text: &str,
         _new_selected_range: Option<std::ops::Range<usize>>,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
     }
 
-    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut AppContext) {}
+    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut App) {}
 
     fn bounds_for_range(
         &mut self,
         _range_utf16: std::ops::Range<usize>,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
     }

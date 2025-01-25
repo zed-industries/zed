@@ -18,12 +18,11 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
-    ModelContext, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakModel,
-    Window,
+    AnyElement, App, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context, DismissEvent,
+    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful,
+    Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -68,7 +67,7 @@ const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 
 pub struct ProjectPanel {
-    project: Model<Project>,
+    project: Entity<Project>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
@@ -88,12 +87,12 @@ pub struct ProjectPanel {
     // Currently selected leaf entry (see auto-folding for a definition of that) in a file tree
     selection: Option<SelectedEntry>,
     marked_entries: BTreeSet<SelectedEntry>,
-    context_menu: Option<(Model<ContextMenu>, Point<Pixels>, Subscription)>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
-    filename_editor: Model<Editor>,
+    filename_editor: Entity<Editor>,
     clipboard: Option<ClipboardEntry>,
     _dragged_entry_destination: Option<Arc<Path>>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     show_scrollbar: bool,
@@ -213,15 +212,15 @@ impl FoldedAncestors {
     }
 }
 
-pub fn init_settings(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut App) {
     ProjectPanelSettings::register(cx);
 }
 
-pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
+pub fn init(assets: impl AssetSource, cx: &mut App) {
     init_settings(cx);
     file_icons::init(assets, cx);
 
-    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });
@@ -263,7 +262,7 @@ struct ItemColors {
     focused: Hsla,
 }
 
-fn get_item_color(cx: &AppContext) -> ItemColors {
+fn get_item_color(cx: &App) -> ItemColors {
     let colors = cx.theme().colors();
 
     ItemColors {
@@ -279,10 +278,10 @@ impl ProjectPanel {
     fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Model<Self> {
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
         let project = workspace.project().clone();
-        let project_panel = cx.new_model(|cx| {
+        let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
@@ -336,7 +335,7 @@ impl ProjectPanel {
                 });
             }
 
-            let filename_editor = cx.new_model(|cx| Editor::single_line(window, cx));
+            let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
             cx.subscribe(
                 &filename_editor,
@@ -497,9 +496,9 @@ impl ProjectPanel {
     }
 
     pub async fn load(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
-    ) -> Result<Model<Self>> {
+    ) -> Result<Entity<Self>> {
         let serialized_panel = cx
             .background_executor()
             .spawn(async move { KEY_VALUE_STORE.read_kvp(PROJECT_PANEL_KEY) })
@@ -524,7 +523,7 @@ impl ProjectPanel {
         })
     }
 
-    fn update_diagnostics(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_diagnostics(&mut self, cx: &mut Context<Self>) {
         let mut diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity> =
             Default::default();
         let show_diagnostics_setting = ProjectPanelSettings::get_global(cx).show_diagnostics;
@@ -582,7 +581,7 @@ impl ProjectPanel {
             .or_insert(diagnostic_severity);
     }
 
-    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut Context<Self>) {
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -598,13 +597,13 @@ impl ProjectPanel {
         );
     }
 
-    fn focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
         }
     }
 
-    fn focus_out(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) {
             self.confirm(&Confirm, window, cx);
         }
@@ -615,7 +614,7 @@ impl ProjectPanel {
         position: Point<Pixels>,
         entry_id: ProjectEntryId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let project = self.project.read(cx);
 
@@ -756,7 +755,7 @@ impl ProjectPanel {
         &mut self,
         _: &ExpandSelectedEntry,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
@@ -796,7 +795,7 @@ impl ProjectPanel {
         &mut self,
         _: &CollapseSelectedEntry,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some((worktree, entry)) = self.selected_entry_handle(cx) else {
             return;
@@ -804,12 +803,7 @@ impl ProjectPanel {
         self.collapse_entry(entry.clone(), worktree, cx)
     }
 
-    fn collapse_entry(
-        &mut self,
-        entry: Entry,
-        worktree: Model<Worktree>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn collapse_entry(&mut self, entry: Entry, worktree: Entity<Worktree>, cx: &mut Context<Self>) {
         let worktree = worktree.read(cx);
         if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
             if folded_ancestors.current_ancestor_depth + 1 < folded_ancestors.max_ancestor_depth() {
@@ -853,7 +847,7 @@ impl ProjectPanel {
         &mut self,
         _: &CollapseAllEntries,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
@@ -867,7 +861,7 @@ impl ProjectPanel {
         &mut self,
         entry_id: ProjectEntryId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
@@ -889,7 +883,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(edit_state) = &self.edit_state {
             if edit_state.processing_filename.is_none() {
                 self.filename_editor.update(cx, |editor, cx| {
@@ -932,23 +926,18 @@ impl ProjectPanel {
         }
     }
 
-    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(task) = self.confirm_edit(window, cx) {
             task.detach_and_notify_err(window, cx);
         }
     }
 
-    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn open(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
         self.open_internal(true, !preview_tabs_enabled, window, cx);
     }
 
-    fn open_permanent(
-        &mut self,
-        _: &OpenPermanent,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn open_permanent(&mut self, _: &OpenPermanent, window: &mut Window, cx: &mut Context<Self>) {
         self.open_internal(false, true, window, cx);
     }
 
@@ -957,7 +946,7 @@ impl ProjectPanel {
         allow_preview: bool,
         focus_opened_item: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
@@ -971,7 +960,7 @@ impl ProjectPanel {
     fn confirm_edit(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let edit_state = self.edit_state.as_mut()?;
         window.focus(&self.focus_handle);
@@ -1086,7 +1075,7 @@ impl ProjectPanel {
         }))
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
@@ -1108,7 +1097,7 @@ impl ProjectPanel {
         focus_opened_item: bool,
         allow_preview: bool,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         cx.emit(Event::OpenedEntry {
             entry_id,
@@ -1117,24 +1106,19 @@ impl ProjectPanel {
         });
     }
 
-    fn split_entry(&mut self, entry_id: ProjectEntryId, cx: &mut ModelContext<Self>) {
+    fn split_entry(&mut self, entry_id: ProjectEntryId, cx: &mut Context<Self>) {
         cx.emit(Event::SplitEntry { entry_id });
     }
 
-    fn new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn new_file(&mut self, _: &NewFile, window: &mut Window, cx: &mut Context<Self>) {
         self.add_entry(false, window, cx)
     }
 
-    fn new_directory(
-        &mut self,
-        _: &NewDirectory,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn new_directory(&mut self, _: &NewDirectory, window: &mut Window, cx: &mut Context<Self>) {
         self.add_entry(true, window, cx)
     }
 
-    fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn add_entry(&mut self, is_dir: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(SelectedEntry {
             worktree_id,
             entry_id,
@@ -1209,7 +1193,7 @@ impl ProjectPanel {
         &mut self,
         selection: Option<Range<usize>>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(SelectedEntry {
             worktree_id,
@@ -1255,15 +1239,15 @@ impl ProjectPanel {
         }
     }
 
-    fn rename(&mut self, _: &Rename, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn rename(&mut self, _: &Rename, window: &mut Window, cx: &mut Context<Self>) {
         self.rename_impl(None, window, cx);
     }
 
-    fn trash(&mut self, action: &Trash, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn trash(&mut self, action: &Trash, window: &mut Window, cx: &mut Context<Self>) {
         self.remove(true, action.skip_prompt, window, cx);
     }
 
-    fn delete(&mut self, action: &Delete, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn delete(&mut self, action: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         self.remove(false, action.skip_prompt, window, cx);
     }
 
@@ -1272,7 +1256,7 @@ impl ProjectPanel {
         trash: bool,
         skip_prompt: bool,
         window: &mut Window,
-        cx: &mut ModelContext<ProjectPanel>,
+        cx: &mut Context<ProjectPanel>,
     ) {
         maybe!({
             let items_to_delete = self.disjoint_entries(cx);
@@ -1387,7 +1371,7 @@ impl ProjectPanel {
     fn find_next_selection_after_deletion(
         &self,
         sanitized_entries: BTreeSet<SelectedEntry>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
         if sanitized_entries.is_empty() {
             return None;
@@ -1467,12 +1451,7 @@ impl ProjectPanel {
         })
     }
 
-    fn unfold_directory(
-        &mut self,
-        _: &UnfoldDirectory,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn unfold_directory(&mut self, _: &UnfoldDirectory, _: &mut Window, cx: &mut Context<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             self.unfolded_dir_ids.insert(entry.id);
 
@@ -1499,7 +1478,7 @@ impl ProjectPanel {
         }
     }
 
-    fn fold_directory(&mut self, _: &FoldDirectory, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn fold_directory(&mut self, _: &FoldDirectory, _: &mut Window, cx: &mut Context<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             self.unfolded_dir_ids.remove(&entry.id);
 
@@ -1525,7 +1504,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(edit_state) = &self.edit_state {
             if edit_state.processing_filename.is_none() {
                 self.filename_editor.update(cx, |editor, cx| {
@@ -1577,7 +1556,7 @@ impl ProjectPanel {
         &mut self,
         _: &SelectPrevDiagnostic,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selection = self.find_entry(
             self.selection.as_ref(),
@@ -1612,7 +1591,7 @@ impl ProjectPanel {
         &mut self,
         _: &SelectNextDiagnostic,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selection = self.find_entry(
             self.selection.as_ref(),
@@ -1647,7 +1626,7 @@ impl ProjectPanel {
         &mut self,
         _: &SelectPrevGitEntry,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selection = self.find_entry(
             self.selection.as_ref(),
@@ -1680,7 +1659,7 @@ impl ProjectPanel {
         &mut self,
         _: &SelectPrevDirectory,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selection = self.find_visible_entry(
             self.selection.as_ref(),
@@ -1710,7 +1689,7 @@ impl ProjectPanel {
         &mut self,
         _: &SelectNextDirectory,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selection = self.find_visible_entry(
             self.selection.as_ref(),
@@ -1740,7 +1719,7 @@ impl ProjectPanel {
         &mut self,
         _: &SelectNextGitEntry,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let selection = self.find_entry(
             self.selection.as_ref(),
@@ -1769,12 +1748,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_parent(
-        &mut self,
-        _: &SelectParent,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_parent(&mut self, _: &SelectParent, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if let Some(parent) = entry.path.parent() {
                 let worktree = worktree.read(cx);
@@ -1792,7 +1766,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let worktree = self
             .visible_entries
             .first()
@@ -1817,7 +1791,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut Context<Self>) {
         let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
             self.project.read(cx).worktree_for_id(*worktree_id, cx)
         });
@@ -1835,7 +1809,7 @@ impl ProjectPanel {
         }
     }
 
-    fn autoscroll(&mut self, cx: &mut ModelContext<Self>) {
+    fn autoscroll(&mut self, cx: &mut Context<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
             self.scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Center);
@@ -1843,7 +1817,7 @@ impl ProjectPanel {
         }
     }
 
-    fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
@@ -1851,7 +1825,7 @@ impl ProjectPanel {
         }
     }
 
-    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
@@ -1862,8 +1836,8 @@ impl ProjectPanel {
     fn create_paste_path(
         &self,
         source: &SelectedEntry,
-        (worktree, target_entry): (Model<Worktree>, &Entry),
-        cx: &AppContext,
+        (worktree, target_entry): (Entity<Worktree>, &Entry),
+        cx: &App,
     ) -> Option<(PathBuf, Option<Range<usize>>)> {
         let mut new_path = target_entry.path.to_path_buf();
         // If we're pasting into a file, or a directory into itself, go up one level.
@@ -1914,7 +1888,7 @@ impl ProjectPanel {
         Some((new_path, disambiguation_range))
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
@@ -2031,12 +2005,12 @@ impl ProjectPanel {
         });
     }
 
-    fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn duplicate(&mut self, _: &Duplicate, window: &mut Window, cx: &mut Context<Self>) {
         self.copy(&Copy {}, window, cx);
         self.paste(&Paste {}, window, cx);
     }
 
-    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
         let abs_file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2060,12 +2034,7 @@ impl ProjectPanel {
         }
     }
 
-    fn copy_relative_path(
-        &mut self,
-        _: &CopyRelativePath,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
         let file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2090,7 +2059,7 @@ impl ProjectPanel {
         &mut self,
         _: &RevealInFileManager,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             cx.reveal_path(&worktree.read(cx).abs_path().join(&entry.path));
@@ -2101,7 +2070,7 @@ impl ProjectPanel {
         &mut self,
         _: &RemoveFromProject,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         for entry in self.effective_entries().iter() {
             let worktree_id = entry.worktree_id;
@@ -2110,7 +2079,7 @@ impl ProjectPanel {
         }
     }
 
-    fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut Context<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
             cx.open_with_system(&abs_path);
@@ -2121,7 +2090,7 @@ impl ProjectPanel {
         &mut self,
         _: &OpenInTerminal,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let abs_path = match &entry.canonical_path {
@@ -2147,7 +2116,7 @@ impl ProjectPanel {
         &mut self,
         _: &NewSearchInDirectory,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if entry.is_dir() {
@@ -2176,7 +2145,7 @@ impl ProjectPanel {
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
         destination_is_file: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self
             .project
@@ -2193,7 +2162,7 @@ impl ProjectPanel {
         &mut self,
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
             let Some(worktree_to_move) = project.worktree_for_entry(entry_to_move, cx) else {
@@ -2217,7 +2186,7 @@ impl ProjectPanel {
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
         destination_is_file: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if entry_to_move == destination {
             return;
@@ -2270,7 +2239,7 @@ impl ProjectPanel {
         None
     }
 
-    fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
+    fn disjoint_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
         let marked_entries = self.effective_entries();
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
@@ -2364,10 +2333,7 @@ impl ProjectPanel {
             .unwrap_or(id)
     }
 
-    pub fn selected_entry<'a>(
-        &self,
-        cx: &'a AppContext,
-    ) -> Option<(&'a Worktree, &'a project::Entry)> {
+    pub fn selected_entry<'a>(&self, cx: &'a App) -> Option<(&'a Worktree, &'a project::Entry)> {
         let (worktree, entry) = self.selected_entry_handle(cx)?;
         Some((worktree.read(cx), entry))
     }
@@ -2376,8 +2342,8 @@ impl ProjectPanel {
     /// selected subentry if dir auto-folding is enabled.
     fn selected_sub_entry<'a>(
         &self,
-        cx: &'a AppContext,
-    ) -> Option<(Model<Worktree>, &'a project::Entry)> {
+        cx: &'a App,
+    ) -> Option<(Entity<Worktree>, &'a project::Entry)> {
         let (worktree, mut entry) = self.selected_entry_handle(cx)?;
 
         let resolved_id = self.resolve_entry(entry.id);
@@ -2389,8 +2355,8 @@ impl ProjectPanel {
     }
     fn selected_entry_handle<'a>(
         &self,
-        cx: &'a AppContext,
-    ) -> Option<(Model<Worktree>, &'a project::Entry)> {
+        cx: &'a App,
+    ) -> Option<(Entity<Worktree>, &'a project::Entry)> {
         let selection = self.selection?;
         let project = self.project.read(cx);
         let worktree = project.worktree_for_id(selection.worktree_id, cx)?;
@@ -2398,7 +2364,7 @@ impl ProjectPanel {
         Some((worktree, entry))
     }
 
-    fn expand_to_selection(&mut self, cx: &mut ModelContext<Self>) -> Option<()> {
+    fn expand_to_selection(&mut self, cx: &mut Context<Self>) -> Option<()> {
         let (worktree, entry) = self.selected_entry(cx)?;
         let expanded_dir_ids = self.expanded_dir_ids.entry(worktree.id()).or_default();
 
@@ -2419,7 +2385,7 @@ impl ProjectPanel {
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
         let project = self.project.read(cx);
@@ -2651,7 +2617,7 @@ impl ProjectPanel {
         &mut self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
             if let Some((worktree, expanded_dir_ids)) = project
@@ -2685,7 +2651,7 @@ impl ProjectPanel {
         paths: &[PathBuf],
         entry_id: ProjectEntryId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut paths: Vec<Arc<Path>> = paths.iter().map(|path| Arc::from(path.clone())).collect();
 
@@ -2763,7 +2729,7 @@ impl ProjectPanel {
         target_entry_id: ProjectEntryId,
         is_file: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let should_copy = window.modifiers().alt;
         if should_copy {
@@ -2868,13 +2834,8 @@ impl ProjectPanel {
         &self,
         range: Range<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<ProjectPanel>,
-        mut callback: impl FnMut(
-            &Entry,
-            &HashSet<Arc<Path>>,
-            &mut Window,
-            &mut ModelContext<ProjectPanel>,
-        ),
+        cx: &mut Context<ProjectPanel>,
+        mut callback: impl FnMut(&Entry, &HashSet<Arc<Path>>, &mut Window, &mut Context<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (_, visible_worktree_entries, entries_paths) in &self.visible_entries {
@@ -2906,13 +2867,8 @@ impl ProjectPanel {
         &self,
         range: Range<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<ProjectPanel>,
-        mut callback: impl FnMut(
-            ProjectEntryId,
-            EntryDetails,
-            &mut Window,
-            &mut ModelContext<ProjectPanel>,
-        ),
+        cx: &mut Context<ProjectPanel>,
+        mut callback: impl FnMut(ProjectEntryId, EntryDetails, &mut Window, &mut Context<ProjectPanel>),
     ) {
         let mut ix = 0;
         for (worktree_id, visible_worktree_entries, entries_paths) in &self.visible_entries {
@@ -3103,7 +3059,7 @@ impl ProjectPanel {
         reverse_search: bool,
         only_visible_entries: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<GitEntry> {
         if only_visible_entries {
             let entries = self
@@ -3139,7 +3095,7 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3246,7 +3202,7 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3361,7 +3317,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         details: EntryDetails,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         const GROUP_NAME: &str = "project_entry";
 
@@ -3547,7 +3503,7 @@ impl ProjectPanel {
             .on_drag(
                 dragged_selection,
                 move |selection, click_offset, _window, cx| {
-                    cx.new_model(|_| DraggedProjectEntryView {
+                    cx.new(|_| DraggedProjectEntryView {
                         details: details.clone(),
                         width,
                         click_offset,
@@ -3815,7 +3771,7 @@ impl ProjectPanel {
             )
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
         {
@@ -3865,7 +3821,7 @@ impl ProjectPanel {
         )
     }
 
-    fn render_horizontal_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
+    fn render_horizontal_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
         {
@@ -3928,7 +3884,7 @@ impl ProjectPanel {
         )
     }
 
-    fn dispatch_context(&self, window: &Window, cx: &ModelContext<Self>) -> KeyContext {
+    fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
         dispatch_context.add("menu");
@@ -3943,7 +3899,7 @@ impl ProjectPanel {
         dispatch_context
     }
 
-    fn should_show_scrollbar(cx: &AppContext) -> bool {
+    fn should_show_scrollbar(cx: &App) -> bool {
         let show = ProjectPanelSettings::get_global(cx)
             .scrollbar
             .show
@@ -3956,7 +3912,7 @@ impl ProjectPanel {
         }
     }
 
-    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+    fn should_autohide_scrollbar(cx: &App) -> bool {
         let show = ProjectPanelSettings::get_global(cx)
             .scrollbar
             .show
@@ -3971,7 +3927,7 @@ impl ProjectPanel {
         }
     }
 
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         if !Self::should_autohide_scrollbar(cx) {
             return;
@@ -3991,10 +3947,10 @@ impl ProjectPanel {
 
     fn reveal_entry(
         &mut self,
-        project: Model<Project>,
+        project: Entity<Project>,
         entry_id: ProjectEntryId,
         skip_ignored: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
             let worktree = worktree.read(cx);
@@ -4027,7 +3983,7 @@ impl ProjectPanel {
     fn find_active_indent_guide(
         &self,
         indent_guides: &[IndentGuideLayout],
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<usize> {
         let (worktree, entry) = self.selected_entry(cx)?;
 
@@ -4099,7 +4055,7 @@ fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -
 }
 
 impl Render for ProjectPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
@@ -4118,7 +4074,7 @@ impl Render for ProjectPanel {
                 this: &mut ProjectPanel,
                 e: &DragMoveEvent<T>,
                 window: &mut Window,
-                cx: &mut ModelContext<ProjectPanel>,
+                cx: &mut Context<ProjectPanel>,
             ) {
                 if !e.bounds.contains(&e.event.position) {
                     return;
@@ -4457,7 +4413,7 @@ impl Render for ProjectPanel {
 }
 
 impl Render for DraggedProjectEntryView {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
@@ -4495,7 +4451,7 @@ impl EventEmitter<Event> for ProjectPanel {}
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
 impl Panel for ProjectPanel {
-    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
             ProjectPanelDockPosition::Right => DockPosition::Right,
@@ -4506,12 +4462,7 @@ impl Panel for ProjectPanel {
         matches!(position, DockPosition::Left | DockPosition::Right)
     }
 
-    fn set_position(
-        &mut self,
-        position: DockPosition,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file::<ProjectPanelSettings>(
             self.fs.clone(),
             cx,
@@ -4525,24 +4476,24 @@ impl Panel for ProjectPanel {
         );
     }
 
-    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &App) -> Pixels {
         self.width
             .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
         self.width = size;
         self.serialize(cx);
         cx.notify();
     }
 
-    fn icon(&self, _: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
         ProjectPanelSettings::get_global(cx)
             .button
             .then_some(IconName::FileTree)
     }
 
-    fn icon_tooltip(&self, _window: &Window, _cx: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Project Panel")
     }
 
@@ -4554,7 +4505,7 @@ impl Panel for ProjectPanel {
         "Project Panel"
     }
 
-    fn starts_open(&self, _: &Window, cx: &AppContext) -> bool {
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
         let project = &self.project.read(cx);
         project.visible_worktrees(cx).any(|tree| {
             tree.read(cx)
@@ -4569,7 +4520,7 @@ impl Panel for ProjectPanel {
 }
 
 impl Focusable for ProjectPanel {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -4590,7 +4541,7 @@ impl ClipboardEntry {
 mod tests {
     use super::*;
     use collections::HashSet;
-    use gpui::{Empty, Model, TestAppContext, VisualTestContext, WindowHandle};
+    use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
     use pretty_assertions::assert_eq;
     use project::{FakeFs, WorktreeSettings};
     use serde_json::json;
@@ -8324,7 +8275,7 @@ mod tests {
     }
 
     fn toggle_expand_dir(
-        panel: &Model<ProjectPanel>,
+        panel: &Entity<ProjectPanel>,
         path: impl AsRef<Path>,
         cx: &mut VisualTestContext,
     ) {
@@ -8343,7 +8294,7 @@ mod tests {
     }
 
     fn select_path(
-        panel: &Model<ProjectPanel>,
+        panel: &Entity<ProjectPanel>,
         path: impl AsRef<Path>,
         cx: &mut VisualTestContext,
     ) {
@@ -8365,7 +8316,7 @@ mod tests {
     }
 
     fn select_path_with_mark(
-        panel: &Model<ProjectPanel>,
+        panel: &Entity<ProjectPanel>,
         path: impl AsRef<Path>,
         cx: &mut VisualTestContext,
     ) {
@@ -8391,7 +8342,7 @@ mod tests {
     }
 
     fn find_project_entry(
-        panel: &Model<ProjectPanel>,
+        panel: &Entity<ProjectPanel>,
         path: impl AsRef<Path>,
         cx: &mut VisualTestContext,
     ) -> Option<ProjectEntryId> {
@@ -8408,7 +8359,7 @@ mod tests {
     }
 
     fn visible_entries_as_strings(
-        panel: &Model<ProjectPanel>,
+        panel: &Entity<ProjectPanel>,
         range: Range<usize>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
@@ -8539,7 +8490,7 @@ mod tests {
             .unwrap();
     }
 
-    fn submit_deletion(panel: &Model<ProjectPanel>, cx: &mut VisualTestContext) {
+    fn submit_deletion(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
         assert!(
             !cx.has_pending_prompt(),
             "Should have no prompts before the deletion"
@@ -8559,7 +8510,7 @@ mod tests {
         cx.executor().run_until_parked();
     }
 
-    fn submit_deletion_skipping_prompt(panel: &Model<ProjectPanel>, cx: &mut VisualTestContext) {
+    fn submit_deletion_skipping_prompt(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
         assert!(
             !cx.has_pending_prompt(),
             "Should have no prompts before the deletion"
@@ -8605,19 +8556,19 @@ mod tests {
 
     impl project::ProjectItem for TestProjectItem {
         fn try_open(
-            _project: &Model<Project>,
+            _project: &Entity<Project>,
             path: &ProjectPath,
-            cx: &mut AppContext,
-        ) -> Option<Task<gpui::Result<Model<Self>>>> {
+            cx: &mut App,
+        ) -> Option<Task<gpui::Result<Entity<Self>>>> {
             let path = path.clone();
-            Some(cx.spawn(|mut cx| async move { cx.new_model(|_| Self { path }) }))
+            Some(cx.spawn(|mut cx| async move { cx.new(|_| Self { path }) }))
         }
 
-        fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+        fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
             None
         }
 
-        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+        fn project_path(&self, _: &App) -> Option<ProjectPath> {
             Some(self.path.clone())
         }
 
@@ -8630,10 +8581,10 @@ mod tests {
         type Item = TestProjectItem;
 
         fn for_project_item(
-            _: Model<Project>,
-            project_item: Model<Self::Item>,
+            _: Entity<Project>,
+            project_item: Entity<Self::Item>,
             _: &mut Window,
-            cx: &mut ModelContext<Self>,
+            cx: &mut Context<Self>,
         ) -> Self
         where
             Self: Sized,
@@ -8652,13 +8603,13 @@ mod tests {
     impl EventEmitter<()> for TestProjectItemView {}
 
     impl Focusable for TestProjectItemView {
-        fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
             self.focus_handle.clone()
         }
     }
 
     impl Render for TestProjectItemView {
-        fn render(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             Empty
         }
     }

@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 pub use buffer_search::BufferSearchBar;
 use editor::SearchSettings;
-use gpui::{actions, Action, AppContext, FocusHandle, IntoElement};
+use gpui::{actions, Action, App, FocusHandle, IntoElement};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
 use ui::{prelude::*, Tooltip};
@@ -13,7 +13,7 @@ pub mod buffer_search;
 pub mod project_search;
 pub(crate) mod search_bar;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
@@ -107,7 +107,7 @@ impl SearchOptions {
         &self,
         active: bool,
         focus_handle: FocusHandle,
-        action: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
+        action: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         IconButton::new(self.label(), self.icon())
             .on_click(action)
@@ -122,7 +122,7 @@ impl SearchOptions {
     }
 }
 
-pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut AppContext) {
+pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
     window.defer(cx, |window, cx| {
         struct NotifType();
         let notification_id = NotificationId::unique::<NotifType>();

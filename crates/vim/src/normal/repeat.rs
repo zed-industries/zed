@@ -8,7 +8,7 @@ use crate::{
     Vim,
 };
 use editor::Editor;
-use gpui::{actions, Action, AppContext, ModelContext, Window};
+use gpui::{actions, Action, App, Context, Window};
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
@@ -44,7 +44,7 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     }
 }
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &EndRepeat, window, cx| {
         Vim::globals(cx).dot_replaying = false;
         vim.switch_mode(Mode::Normal, false, window, cx)
@@ -93,7 +93,7 @@ impl Replayer {
         &mut self,
         actions: Vec<ReplayableAction>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let mut lock = self.0.borrow_mut();
         let range = lock.ix..lock.ix;
@@ -110,7 +110,7 @@ impl Replayer {
         self.0.borrow_mut().actions.clear()
     }
 
-    pub fn next(self, window: &mut Window, cx: &mut AppContext) {
+    pub fn next(self, window: &mut Window, cx: &mut App) {
         let mut lock = self.0.borrow_mut();
         let action = if lock.ix < 10000 {
             lock.actions.get(lock.ix).cloned()
@@ -159,7 +159,7 @@ impl Vim {
         &mut self,
         register: char,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let globals = Vim::globals(cx);
         globals.recording_register = Some(register);
@@ -172,7 +172,7 @@ impl Vim {
         &mut self,
         mut register: char,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut count = Vim::take_count(cx).unwrap_or(1);
         self.clear_operator(window, cx);
@@ -203,7 +203,7 @@ impl Vim {
         &mut self,
         from_insert_mode: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = Vim::take_count(cx);
 

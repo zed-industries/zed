@@ -33,7 +33,7 @@ pub struct WindowControlStyle {
 }
 
 impl WindowControlStyle {
-    pub fn default(cx: &mut AppContext) -> Self {
+    pub fn default(cx: &mut App) -> Self {
         let colors = cx.theme().colors();
 
         Self {
@@ -82,7 +82,7 @@ pub struct WindowControl {
 }
 
 impl WindowControl {
-    pub fn new(id: impl Into<ElementId>, icon: WindowControlType, cx: &mut AppContext) -> Self {
+    pub fn new(id: impl Into<ElementId>, icon: WindowControlType, cx: &mut App) -> Self {
         let style = WindowControlStyle::default(cx);
 
         Self {
@@ -97,7 +97,7 @@ impl WindowControl {
         id: impl Into<ElementId>,
         icon: WindowControlType,
         close_action: Box<dyn Action>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self {
         let style = WindowControlStyle::default(cx);
 
@@ -125,7 +125,7 @@ impl WindowControl {
 }
 
 impl RenderOnce for WindowControl {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let icon = svg()
             .size_4()
             .flex_none()

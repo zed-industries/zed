@@ -14,11 +14,11 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, AppContext,
-    AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext, Model,
-    ModelContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel,
-    Render, ScrollHandle, Subscription, Task, WeakFocusHandle, WeakModel, Window,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, App,
+    AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, Entity, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext, Context,
+    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    ScrollHandle, Subscription, Task, WeakFocusHandle, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -210,7 +210,7 @@ pub enum Event {
         focus_changed: bool,
     },
     Remove {
-        focus_on_pane: Option<Model<Pane>>,
+        focus_on_pane: Option<Entity<Pane>>,
     },
     RemoveItem {
         idx: usize,
@@ -286,29 +286,29 @@ pub struct Pane {
     preview_item_id: Option<EntityId>,
     last_focus_handle_by_item: HashMap<EntityId, WeakFocusHandle>,
     nav_history: NavHistory,
-    toolbar: Model<Toolbar>,
-    pub(crate) workspace: WeakModel<Workspace>,
-    project: WeakModel<Project>,
+    toolbar: Entity<Toolbar>,
+    pub(crate) workspace: WeakEntity<Workspace>,
+    project: WeakEntity<Project>,
     drag_split_direction: Option<SplitDirection>,
-    can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut AppContext) -> bool>>,
+    can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
     custom_drop_handle: Option<
         Arc<
             dyn Fn(
                 &mut Pane,
                 &dyn Any,
                 &mut Window,
-                &mut ModelContext<Pane>,
+                &mut Context<Pane>,
             ) -> ControlFlow<(), ()>,
         >,
     >,
     can_split_predicate:
-        Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut ModelContext<Self>) -> bool>>,
-    should_display_tab_bar: Rc<dyn Fn(&Window, &mut ModelContext<Pane>) -> bool>,
+        Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
+    should_display_tab_bar: Rc<dyn Fn(&Window, &mut Context<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<
         dyn Fn(
             &mut Pane,
             &mut Window,
-            &mut ModelContext<Pane>,
+            &mut Context<Pane>,
         ) -> (Option<AnyElement>, Option<AnyElement>),
     >,
     _subscriptions: Vec<Subscription>,
@@ -345,7 +345,7 @@ struct NavHistoryState {
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
-    pane: WeakModel<Pane>,
+    pane: WeakEntity<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
 
@@ -374,7 +374,7 @@ pub struct NavigationEntry {
 
 #[derive(Clone)]
 pub struct DraggedTab {
-    pub pane: Model<Pane>,
+    pub pane: Entity<Pane>,
     pub item: Box<dyn ItemHandle>,
     pub ix: usize,
     pub detail: usize,
@@ -385,15 +385,13 @@ impl EventEmitter<Event> for Pane {}
 
 impl Pane {
     pub fn new(
-        workspace: WeakModel<Workspace>,
-        project: Model<Project>,
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         next_timestamp: Arc<AtomicUsize>,
-        can_drop_predicate: Option<
-            Arc<dyn Fn(&dyn Any, &mut Window, &mut AppContext) -> bool + 'static>,
-        >,
+        can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
         double_click_dispatch_action: Box<dyn Action>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
@@ -426,7 +424,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            toolbar: cx.new_model(|_| Toolbar::new()),
+            toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -532,7 +530,7 @@ impl Pane {
         }
     }
 
-    fn alternate_file(&mut self, window: &mut Window, cx: &mut ModelContext<Pane>) {
+    fn alternate_file(&mut self, window: &mut Window, cx: &mut Context<Pane>) {
         let (_, alternative) = &self.alternate_file_items;
         if let Some(alternative) = alternative {
             let existing = self
@@ -563,7 +561,7 @@ impl Pane {
         }
     }
 
-    pub fn has_focus(&self, window: &Window, cx: &AppContext) -> bool {
+    pub fn has_focus(&self, window: &Window, cx: &App) -> bool {
         // We not only check whether our focus handle contains focus, but also
         // whether the active item might have focus, because we might have just activated an item
         // that hasn't rendered yet.
@@ -576,7 +574,7 @@ impl Pane {
             })
     }
 
-    fn focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.was_focused {
             self.was_focused = true;
             cx.emit(Event::Focus);
@@ -610,7 +608,7 @@ impl Pane {
         }
     }
 
-    pub fn context_menu_focused(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    pub fn context_menu_focused(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.new_item_context_menu_handle.is_focused(window, cx)
             || self.split_item_context_menu_handle.is_focused(window, cx)
     }
@@ -619,7 +617,7 @@ impl Pane {
         &mut self,
         _event: FocusOutEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.was_focused = false;
         self.toolbar.update(cx, |toolbar, cx| {
@@ -630,9 +628,9 @@ impl Pane {
 
     fn project_events(
         &mut self,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         event: &project::Event,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             project::Event::DiskBasedDiagnosticsFinished { .. }
@@ -646,7 +644,7 @@ impl Pane {
         }
     }
 
-    fn update_diagnostics(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_diagnostics(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.upgrade() else {
             return;
         };
@@ -672,7 +670,7 @@ impl Pane {
         }
     }
 
-    fn settings_changed(&mut self, cx: &mut ModelContext<Self>) {
+    fn settings_changed(&mut self, cx: &mut Context<Self>) {
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
             *display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
         }
@@ -693,7 +691,7 @@ impl Pane {
 
     pub fn set_should_display_tab_bar<F>(&mut self, should_display_tab_bar: F)
     where
-        F: 'static + Fn(&Window, &mut ModelContext<Pane>) -> bool,
+        F: 'static + Fn(&Window, &mut Context<Pane>) -> bool,
     {
         self.should_display_tab_bar = Rc::new(should_display_tab_bar);
     }
@@ -702,43 +700,43 @@ impl Pane {
         &mut self,
         can_split_predicate: Option<
             Arc<
-                dyn Fn(&mut Self, &dyn Any, &mut Window, &mut ModelContext<Self>) -> bool + 'static,
+                dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool + 'static,
             >,
         >,
     ) {
         self.can_split_predicate = can_split_predicate;
     }
 
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ModelContext<Self>) {
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut Context<Self>) {
         self.toolbar.update(cx, |toolbar, cx| {
             toolbar.set_can_navigate(can_navigate, cx);
         });
         cx.notify();
     }
 
-    pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ModelContext<Self>, render: F)
+    pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut Context<Self>, render: F)
     where
         F: 'static
             + Fn(
                 &mut Pane,
                 &mut Window,
-                &mut ModelContext<Pane>,
+                &mut Context<Pane>,
             ) -> (Option<AnyElement>, Option<AnyElement>),
     {
         self.render_tab_bar_buttons = Rc::new(render);
         cx.notify();
     }
 
-    pub fn set_custom_drop_handle<F>(&mut self, cx: &mut ModelContext<Self>, handle: F)
+    pub fn set_custom_drop_handle<F>(&mut self, cx: &mut Context<Self>, handle: F)
     where
         F: 'static
-            + Fn(&mut Pane, &dyn Any, &mut Window, &mut ModelContext<Pane>) -> ControlFlow<(), ()>,
+            + Fn(&mut Pane, &dyn Any, &mut Window, &mut Context<Pane>) -> ControlFlow<(), ()>,
     {
         self.custom_drop_handle = Some(Arc::new(handle));
         cx.notify();
     }
 
-    pub fn nav_history_for_item<T: Item>(&self, item: &Model<T>) -> ItemNavHistory {
+    pub fn nav_history_for_item<T: Item>(&self, item: &Entity<T>) -> ItemNavHistory {
         ItemNavHistory {
             history: self.nav_history.clone(),
             item: Arc::new(item.downgrade()),
@@ -770,7 +768,7 @@ impl Pane {
         !self.nav_history.0.lock().forward_stack.is_empty()
     }
 
-    fn navigate_backward(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn navigate_backward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let pane = cx.model().downgrade();
             window.defer(cx, move |window, cx| {
@@ -781,7 +779,7 @@ impl Pane {
         }
     }
 
-    fn navigate_forward(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn navigate_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
             let pane = cx.model().downgrade();
             window.defer(cx, move |window, cx| {
@@ -794,7 +792,7 @@ impl Pane {
         }
     }
 
-    fn history_updated(&mut self, cx: &mut ModelContext<Self>) {
+    fn history_updated(&mut self, cx: &mut Context<Self>) {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
@@ -824,7 +822,7 @@ impl Pane {
 
     /// Marks the item with the given ID as the preview item.
     /// This will be ignored if the global setting `preview_tabs` is disabled.
-    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &AppContext) {
+    pub fn set_preview_item_id(&mut self, item_id: Option<EntityId>, cx: &App) {
         if PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = item_id;
         }
@@ -838,7 +836,7 @@ impl Pane {
         self.pinned_tab_count
     }
 
-    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &AppContext) {
+    pub fn handle_item_edit(&mut self, item_id: EntityId, cx: &App) {
         if let Some(preview_item) = self.preview_item() {
             if preview_item.item_id() == item_id && !preview_item.preserve_preview(cx) {
                 self.set_preview_item_id(None, cx);
@@ -854,8 +852,8 @@ impl Pane {
         allow_preview: bool,
         suggested_position: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-        build_item: impl FnOnce(&mut Window, &mut ModelContext<Pane>) -> Box<dyn ItemHandle>,
+        cx: &mut Context<Self>,
+        build_item: impl FnOnce(&mut Window, &mut Context<Pane>) -> Box<dyn ItemHandle>,
     ) -> Box<dyn ItemHandle> {
         let mut existing_item = None;
         if let Some(project_entry_id) = project_entry_id {
@@ -911,7 +909,7 @@ impl Pane {
     pub fn close_current_preview_item(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<usize> {
         let item_idx = self.preview_item_idx()?;
         let id = self.preview_item_id()?;
@@ -934,7 +932,7 @@ impl Pane {
         focus_item: bool,
         destination_index: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.close_items_over_max_tabs(window, cx);
 
@@ -1043,7 +1041,7 @@ impl Pane {
         self.items.iter()
     }
 
-    pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = Model<T>> {
+    pub fn items_of_type<T: Render>(&self) -> impl '_ + Iterator<Item = Entity<T>> {
         self.items
             .iter()
             .filter_map(|item| item.to_any().downcast().ok())
@@ -1053,7 +1051,7 @@ impl Pane {
         self.items.get(self.active_item_index).cloned()
     }
 
-    pub fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>> {
+    pub fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>> {
         self.items
             .get(self.active_item_index)?
             .pixel_position_of_cursor(cx)
@@ -1062,7 +1060,7 @@ impl Pane {
     pub fn item_for_entry(
         &self,
         entry_id: ProjectEntryId,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(|item| {
             if item.is_singleton(cx) && (item.project_entry_ids(cx).as_slice() == [entry_id]) {
@@ -1076,7 +1074,7 @@ impl Pane {
     pub fn item_for_path(
         &self,
         project_path: ProjectPath,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.items.iter().find_map(move |item| {
             if item.is_singleton(cx) && (item.project_path(cx).as_slice() == [project_path.clone()])
@@ -1104,7 +1102,7 @@ impl Pane {
         &mut self,
         _: &ToggleZoom,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.zoomed {
             cx.emit(Event::ZoomOut);
@@ -1122,7 +1120,7 @@ impl Pane {
         activate_pane: bool,
         focus_item: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
@@ -1170,7 +1168,7 @@ impl Pane {
         &mut self,
         activate_pane: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index > 0 {
@@ -1185,7 +1183,7 @@ impl Pane {
         &mut self,
         activate_pane: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index + 1 < self.items.len() {
@@ -1196,7 +1194,7 @@ impl Pane {
         self.activate_item(index, activate_pane, activate_pane, window, cx);
     }
 
-    pub fn swap_item_left(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn swap_item_left(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let index = self.active_item_index;
         if index == 0 {
             return;
@@ -1206,7 +1204,7 @@ impl Pane {
         self.activate_item(index - 1, true, true, window, cx);
     }
 
-    pub fn swap_item_right(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn swap_item_right(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let index = self.active_item_index;
         if index + 1 == self.items.len() {
             return;
@@ -1220,7 +1218,7 @@ impl Pane {
         &mut self,
         action: &CloseActiveItem,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             // Close the window when there's no active items to close, if configured
@@ -1247,7 +1245,7 @@ impl Pane {
         item_id_to_close: EntityId,
         save_intent: SaveIntent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.close_items(window, cx, save_intent, move |view_id| {
             view_id == item_id_to_close
@@ -1258,7 +1256,7 @@ impl Pane {
         &mut self,
         action: &CloseInactiveItems,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             return None;
@@ -1278,7 +1276,7 @@ impl Pane {
         &mut self,
         action: &CloseCleanItems,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let item_ids: Vec<_> = self
             .items()
@@ -1297,7 +1295,7 @@ impl Pane {
         &mut self,
         action: &CloseItemsToTheLeft,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             return None;
@@ -1319,7 +1317,7 @@ impl Pane {
         action: &CloseItemsToTheLeft,
         non_closeable_items: Vec<EntityId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let item_ids: Vec<_> = self
             .items()
@@ -1337,7 +1335,7 @@ impl Pane {
         &mut self,
         action: &CloseItemsToTheRight,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             return None;
@@ -1359,7 +1357,7 @@ impl Pane {
         action: &CloseItemsToTheRight,
         non_closeable_items: Vec<EntityId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let item_ids: Vec<_> = self
             .items()
@@ -1378,7 +1376,7 @@ impl Pane {
         &mut self,
         action: &CloseAllItems,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.items.is_empty() {
             return None;
@@ -1393,7 +1391,7 @@ impl Pane {
         ))
     }
 
-    pub fn close_items_over_max_tabs(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn close_items_over_max_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(max_tabs) = WorkspaceSettings::get_global(cx).max_tabs.map(|i| i.get()) else {
             return;
         };
@@ -1433,7 +1431,7 @@ impl Pane {
     pub(super) fn file_names_for_prompt(
         items: &mut dyn Iterator<Item = &Box<dyn ItemHandle>>,
         all_dirty_items: usize,
-        cx: &AppContext,
+        cx: &App,
     ) -> (String, String) {
         /// Quantity of item paths displayed in prompt prior to cutoff..
         const FILE_NAMES_CUTOFF_POINT: usize = 10;
@@ -1470,7 +1468,7 @@ impl Pane {
     pub fn close_items(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Pane>,
+        cx: &mut Context<Pane>,
         mut save_intent: SaveIntent,
         should_close: impl Fn(EntityId) -> bool,
     ) -> Task<Result<()>> {
@@ -1601,7 +1599,7 @@ impl Pane {
         activate_pane: bool,
         close_pane_if_empty: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(item_index) = self.index_for_item_id(item_id) else {
             return;
@@ -1620,9 +1618,9 @@ impl Pane {
         &mut self,
         item_index: usize,
         activate_pane: bool,
-        focus_on_pane_if_closed: Model<Pane>,
+        focus_on_pane_if_closed: Entity<Pane>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self._remove_item(
             item_index,
@@ -1639,9 +1637,9 @@ impl Pane {
         item_index: usize,
         activate_pane: bool,
         close_pane_if_empty: bool,
-        focus_on_pane_if_closed: Option<Model<Pane>>,
+        focus_on_pane_if_closed: Option<Entity<Pane>>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let activate_on_close = &ItemSettings::get_global(cx).activate_on_close;
         self.activation_history
@@ -1752,8 +1750,8 @@ impl Pane {
     }
 
     pub async fn save_item(
-        project: Model<Project>,
-        pane: &WeakModel<Pane>,
+        project: Entity<Project>,
+        pane: &WeakEntity<Pane>,
         item_ix: usize,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
@@ -1944,16 +1942,16 @@ impl Pane {
         })
     }
 
-    fn can_autosave_item(item: &dyn ItemHandle, cx: &AppContext) -> bool {
+    fn can_autosave_item(item: &dyn ItemHandle, cx: &App) -> bool {
         let is_deleted = item.project_entry_ids(cx).is_empty();
         item.is_dirty(cx) && !item.has_conflict(cx) && item.can_save(cx) && !is_deleted
     }
 
     pub fn autosave_item(
         item: &dyn ItemHandle,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         let format = !matches!(
             item.workspace_settings(cx).autosave,
@@ -1966,18 +1964,18 @@ impl Pane {
         }
     }
 
-    pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(active_item) = self.active_item() {
             let focus_handle = active_item.item_focus_handle(cx);
             window.focus(&focus_handle);
         }
     }
 
-    pub fn split(&mut self, direction: SplitDirection, cx: &mut ModelContext<Self>) {
+    pub fn split(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         cx.emit(Event::Split(direction));
     }
 
-    pub fn toolbar(&self) -> &Model<Toolbar> {
+    pub fn toolbar(&self) -> &Entity<Toolbar> {
         &self.toolbar
     }
 
@@ -1985,7 +1983,7 @@ impl Pane {
         &mut self,
         entry_id: ProjectEntryId,
         window: &mut Window,
-        cx: &mut ModelContext<Pane>,
+        cx: &mut Context<Pane>,
     ) -> Option<()> {
         let item_id = self.items().find_map(|item| {
             if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
@@ -2001,7 +1999,7 @@ impl Pane {
         Some(())
     }
 
-    fn update_toolbar(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_toolbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let active_item = self
             .items
             .get(self.active_item_index)
@@ -2011,7 +2009,7 @@ impl Pane {
         });
     }
 
-    fn update_status_bar(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_status_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let pane = cx.model().clone();
 
@@ -2027,7 +2025,7 @@ impl Pane {
         });
     }
 
-    fn entry_abs_path(&self, entry: ProjectEntryId, cx: &AppContext) -> Option<PathBuf> {
+    fn entry_abs_path(&self, entry: ProjectEntryId, cx: &App) -> Option<PathBuf> {
         let worktree = self
             .workspace
             .upgrade()?
@@ -2055,7 +2053,7 @@ impl Pane {
         &mut self,
         _: &TogglePinTab,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.items.is_empty() {
             return;
@@ -2068,7 +2066,7 @@ impl Pane {
         }
     }
 
-    fn pin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn pin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let pane = cx.model().clone();
             let destination_index = self.pinned_tab_count.min(ix);
@@ -2091,7 +2089,7 @@ impl Pane {
         });
     }
 
-    fn unpin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn unpin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let pane = cx.model().clone();
             self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
@@ -2126,7 +2124,7 @@ impl Pane {
         detail: usize,
         focus_handle: &FocusHandle,
         window: &mut Window,
-        cx: &mut ModelContext<Pane>,
+        cx: &mut Context<Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
         let is_preview = self
@@ -2245,7 +2243,7 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, _, _, cx| cx.new_model(|_| tab.clone()),
+                |tab, _, _, cx| cx.new(|_| tab.clone()),
             )
             .drag_over::<DraggedTab>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
@@ -2558,7 +2556,7 @@ impl Pane {
     fn render_tab_bar(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Pane>,
+        cx: &mut Context<Pane>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
@@ -2679,13 +2677,13 @@ impl Pane {
             )
     }
 
-    pub fn render_menu_overlay(menu: &Model<ContextMenu>) -> Div {
+    pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
             deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 
-    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ModelContext<Self>) {
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut Context<Self>) {
         self.zoomed = zoomed;
         cx.notify();
     }
@@ -2698,7 +2696,7 @@ impl Pane {
         &mut self,
         event: &DragMoveEvent<T>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let can_split_predicate = self.can_split_predicate.take();
         let can_split = match &can_split_predicate {
@@ -2755,7 +2753,7 @@ impl Pane {
         dragged_tab: &DraggedTab,
         ix: usize,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, window, cx) {
@@ -2823,7 +2821,7 @@ impl Pane {
         dragged_selection: &DraggedSelection,
         dragged_onto: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, window, cx)
@@ -2844,7 +2842,7 @@ impl Pane {
         project_entry_id: &ProjectEntryId,
         target: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, window, cx) {
@@ -2918,7 +2916,7 @@ impl Pane {
         &mut self,
         paths: &ExternalPaths,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, paths, window, cx) {
@@ -3025,13 +3023,13 @@ impl Pane {
 }
 
 impl Focusable for Pane {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 impl Render for Pane {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("Pane");
         if self.active_item().is_none() {
@@ -3304,7 +3302,7 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut AppContext) {
+    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut App) {
         if self
             .item
             .upgrade()
@@ -3315,11 +3313,11 @@ impl ItemNavHistory {
         }
     }
 
-    pub fn pop_backward(&mut self, cx: &mut AppContext) -> Option<NavigationEntry> {
+    pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&mut self, cx: &mut AppContext) -> Option<NavigationEntry> {
+    pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingForward, cx)
     }
 }
@@ -3327,7 +3325,7 @@ impl ItemNavHistory {
 impl NavHistory {
     pub fn for_each_entry(
         &self,
-        cx: &AppContext,
+        cx: &App,
         mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
     ) {
         let borrowed_history = self.0.lock();
@@ -3365,7 +3363,7 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
-    pub fn pop(&mut self, mode: NavigationMode, cx: &mut AppContext) -> Option<NavigationEntry> {
+    pub fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
@@ -3387,7 +3385,7 @@ impl NavHistory {
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
         is_preview: bool,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let state = &mut *self.0.lock();
         match state.mode {
@@ -3461,7 +3459,7 @@ impl NavHistory {
 }
 
 impl NavHistoryState {
-    pub fn did_update(&self, cx: &mut AppContext) {
+    pub fn did_update(&self, cx: &mut App) {
         if let Some(pane) = self.pane.upgrade() {
             cx.defer(move |cx| {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
@@ -3483,7 +3481,7 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 
-pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize> {
+pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &App) -> Vec<usize> {
     let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
     let mut tab_descriptions = HashMap::default();
     let mut done = false;
@@ -3519,7 +3517,7 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize>
     tab_details
 }
 
-pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &AppContext) -> Option<Indicator> {
+pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indicator> {
     maybe!({
         let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
             (true, _) => Color::Warning,
@@ -3532,7 +3530,7 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &AppContext) -> Opti
 }
 
 impl Render for DraggedTab {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         let label = self.item.tab_content(
             TabContentParams {
@@ -3643,7 +3641,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(0),
@@ -3657,7 +3655,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(2),
@@ -3671,7 +3669,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(5),
@@ -3686,7 +3684,7 @@ mod tests {
         set_labeled_items(&pane, ["A*", "B", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -3700,7 +3698,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
+                Box::new(cx.new(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -3800,7 +3798,7 @@ mod tests {
         // singleton view
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| {
+                Box::new(cx.new(|cx| {
                     TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
@@ -3818,7 +3816,7 @@ mod tests {
         // new singleton view with the same project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| {
+                Box::new(cx.new(|cx| {
                     TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
@@ -3836,7 +3834,7 @@ mod tests {
         // new singleton view with different project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| {
+                Box::new(cx.new(|cx| {
                     TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 2")
@@ -3854,7 +3852,7 @@ mod tests {
         // new multibuffer view with the same project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| {
+                Box::new(cx.new(|cx| {
                     TestItem::new(cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1")
@@ -3872,7 +3870,7 @@ mod tests {
         // another multibuffer view with the same project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| {
+                Box::new(cx.new(|cx| {
                     TestItem::new(cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1b")
@@ -4358,14 +4356,14 @@ mod tests {
     }
 
     fn add_labeled_item(
-        pane: &Model<Pane>,
+        pane: &Entity<Pane>,
         label: &str,
         is_dirty: bool,
         cx: &mut VisualTestContext,
-    ) -> Box<Model<TestItem>> {
+    ) -> Box<Entity<TestItem>> {
         pane.update_in(cx, |pane, window, cx| {
             let labeled_item = Box::new(
-                cx.new_model(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
+                cx.new(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
             );
             pane.add_item(labeled_item.clone(), false, false, None, window, cx);
             labeled_item
@@ -4373,10 +4371,10 @@ mod tests {
     }
 
     fn set_labeled_items<const COUNT: usize>(
-        pane: &Model<Pane>,
+        pane: &Entity<Pane>,
         labels: [&str; COUNT],
         cx: &mut VisualTestContext,
-    ) -> [Box<Model<TestItem>>; COUNT] {
+    ) -> [Box<Entity<TestItem>>; COUNT] {
         pane.update_in(cx, |pane, window, cx| {
             pane.items.clear();
             let mut active_item_index = 0;
@@ -4388,7 +4386,7 @@ mod tests {
                     active_item_index = index;
                 }
 
-                let labeled_item = Box::new(cx.new_model(|cx| TestItem::new(cx).with_label(label)));
+                let labeled_item = Box::new(cx.new(|cx| TestItem::new(cx).with_label(label)));
                 pane.add_item(labeled_item.clone(), false, false, None, window, cx);
                 index += 1;
                 labeled_item
@@ -4403,7 +4401,7 @@ mod tests {
     // Assert the item label, with the active item label suffixed with a '*'
     #[track_caller]
     fn assert_item_labels<const COUNT: usize>(
-        pane: &Model<Pane>,
+        pane: &Entity<Pane>,
         expected_states: [&str; COUNT],
         cx: &mut VisualTestContext,
     ) {

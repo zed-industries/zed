@@ -1,13 +1,13 @@
 use editor::{movement, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{actions, Action};
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
 
 use crate::{motion::Motion, state::Mode, Vim};
 
 actions!(vim, [HelixNormalAfter, HelixDelete]);
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_delete);
 }
@@ -17,7 +17,7 @@ impl Vim {
         &mut self,
         action: &HelixNormalAfter,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.active_operator().is_some() {
             self.operator_stack.clear();
@@ -34,7 +34,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.helix_move_cursor(motion, times, window, cx);
     }
@@ -43,7 +43,7 @@ impl Vim {
         &mut self,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -96,7 +96,7 @@ impl Vim {
         &mut self,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -154,7 +154,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -182,7 +182,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match motion {
             Motion::NextWordStart { ignore_punctuation } => {
@@ -242,7 +242,7 @@ impl Vim {
         &mut self,
         _: &HelixDelete,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

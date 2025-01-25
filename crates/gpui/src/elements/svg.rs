@@ -1,5 +1,5 @@
 use crate::{
-    geometry::Negate as _, point, px, radians, size, AppContext, Bounds, Element, GlobalElementId,
+    geometry::Negate as _, point, px, radians, size, App, Bounds, Element, GlobalElementId,
     Hitbox, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians,
     SharedString, Size, StyleRefinement, Styled, TransformationMatrix, Window,
 };
@@ -48,7 +48,7 @@ impl Element for Svg {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id =
             self.interactivity
@@ -64,7 +64,7 @@ impl Element for Svg {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Hitbox> {
         self.interactivity.prepaint(
             global_id,
@@ -83,7 +83,7 @@ impl Element for Svg {
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) where
         Self: Sized,
     {

@@ -16,10 +16,10 @@ use std::{
 use crate::{
     display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
 };
-use anyhow::Context;
+use anyhow::Context as _;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncAppContext, Model, ModelContext, Task, Window};
+use gpui::{AsyncAppContext, Context, Entity, Task, Window};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -281,10 +281,10 @@ impl InlayHintCache {
     /// Does not update inlay hint cache state on disabling or inlay hint kinds change: only reenabling forces new LSP queries.
     pub(super) fn update_settings(
         &mut self,
-        multi_buffer: &Model<MultiBuffer>,
+        multi_buffer: &Entity<MultiBuffer>,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
         let old_enabled = self.enabled;
         // If the setting for inlay hints has changed, update `enabled`. This condition avoids inlay
@@ -348,10 +348,10 @@ impl InlayHintCache {
     pub(super) fn spawn_hint_refresh(
         &mut self,
         reason_description: &'static str,
-        excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
+        excerpts_to_query: HashMap<ExcerptId, (Entity<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         ignore_debounce: bool,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
             return None;
@@ -411,10 +411,10 @@ impl InlayHintCache {
 
     fn new_allowed_hint_kinds_splice(
         &self,
-        multi_buffer: &Model<MultiBuffer>,
+        multi_buffer: &Entity<MultiBuffer>,
         visible_hints: &[Inlay],
         new_kinds: &HashSet<Option<InlayHintKind>>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<InlaySplice> {
         let old_kinds = &self.allowed_hint_kinds;
         if new_kinds == old_kinds {
@@ -583,7 +583,7 @@ impl InlayHintCache {
         excerpt_id: ExcerptId,
         id: InlayId,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
@@ -641,10 +641,10 @@ fn debounce_value(debounce_ms: u64) -> Option<Duration> {
 fn spawn_new_update_tasks(
     editor: &mut Editor,
     reason: &'static str,
-    excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
+    excerpts_to_query: HashMap<ExcerptId, (Entity<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
         excerpts_to_query
@@ -739,9 +739,9 @@ impl QueryRanges {
 fn determine_query_ranges(
     multi_buffer: &mut MultiBuffer,
     excerpt_id: ExcerptId,
-    excerpt_buffer: &Model<Buffer>,
+    excerpt_buffer: &Entity<Buffer>,
     excerpt_visible_range: Range<usize>,
-    cx: &mut ModelContext<'_, MultiBuffer>,
+    cx: &mut Context<'_, MultiBuffer>,
 ) -> Option<QueryRanges> {
     let full_excerpt_range = multi_buffer
         .excerpts_for_buffer(excerpt_buffer, cx)
@@ -810,8 +810,8 @@ const INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS: u64 = 400;
 fn new_update_task(
     query: ExcerptQuery,
     query_ranges: QueryRanges,
-    excerpt_buffer: Model<Buffer>,
-    cx: &mut ModelContext<Editor>,
+    excerpt_buffer: Entity<Buffer>,
+    cx: &mut Context<Editor>,
 ) -> Task<()> {
     cx.spawn(move |editor, mut cx| async move {
         let visible_range_update_results = future::join_all(
@@ -893,11 +893,11 @@ fn new_update_task(
 }
 
 fn fetch_and_update_hints(
-    excerpt_buffer: Model<Buffer>,
+    excerpt_buffer: Entity<Buffer>,
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
     invalidate: bool,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(|editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
@@ -1143,7 +1143,7 @@ fn apply_hint_update(
     invalidate: bool,
     buffer_snapshot: BufferSnapshot,
     multi_buffer_snapshot: MultiBufferSnapshot,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     let cached_excerpt_hints = editor
         .inlay_hint_cache
@@ -1263,7 +1263,7 @@ pub mod tests {
     use crate::scroll::ScrollAmount;
     use crate::{scroll::Autoscroll, test::editor_lsp_test_context::rust_lang, ExcerptRange};
     use futures::StreamExt;
-    use gpui::{Context, SemanticVersion, TestAppContext, WindowHandle};
+    use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
     use language::{language_settings::AllLanguageSettingsContent, Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
@@ -2507,7 +2507,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.new_model(|cx| {
+        let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -2850,7 +2850,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -3482,7 +3482,7 @@ pub mod tests {
         labels
     }
 
-    pub fn visible_hint_labels(editor: &Editor, cx: &ModelContext<Editor>) -> Vec<String> {
+    pub fn visible_hint_labels(editor: &Editor, cx: &Context<Editor>) -> Vec<String> {
         editor
             .visible_inlay_hints(cx)
             .into_iter()

@@ -1,6 +1,6 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{AppContext, ModelContext, Task as AsyncTask, Window};
+use gpui::{App, Context, Task as AsyncTask, Window};
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, WorktreeId};
 use task::{RevealTarget, TaskId};
@@ -12,12 +12,12 @@ mod settings;
 
 pub use modal::{Rerun, Spawn};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     settings::TaskSettings::register(cx);
-    cx.observe_new_models(
+    cx.observe_new(
         |workspace: &mut Workspace,
          _window: Option<&mut Window>,
-         _: &mut ModelContext<Workspace>| {
+         _: &mut Context<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
@@ -93,7 +93,7 @@ fn spawn_task_or_modal(
     workspace: &mut Workspace,
     action: &Spawn,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     match action {
         Spawn::ByName {
@@ -115,7 +115,7 @@ fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> AsyncTask<()> {
     let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
@@ -152,7 +152,7 @@ fn spawn_task_with_name(
     name: String,
     overrides: Option<TaskOverrides>,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn_in(window, |workspace, mut cx| async move {
         let context_task = workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -226,7 +226,7 @@ fn spawn_task_with_name(
 
 fn active_item_selection_properties(
     workspace: &Workspace,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> (Option<WorktreeId>, Option<Location>) {
     let active_item = workspace.active_item(cx);
     let worktree_id = active_item

@@ -28,7 +28,7 @@ impl IndentGuidesStory {
         depths.push(1);
         depths.push(0);
 
-        cx.new_model(|_cx| Self { depths })
+        cx.new(|_cx| Self { depths })
     }
 }
 

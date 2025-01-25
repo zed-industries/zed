@@ -8,7 +8,7 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    point, px, size, AnyElement, AppContext, AvailableSpace, Bounds, ContentMask, DispatchPhase,
+    point, px, size, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase,
     Edges, Element, FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point,
     ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window,
 };
@@ -49,14 +49,14 @@ pub struct ListState(Rc<RefCell<StateInner>>);
 struct StateInner {
     last_layout_bounds: Option<Bounds<Pixels>>,
     last_padding: Option<Edges<Pixels>>,
-    render_item: Box<dyn FnMut(usize, &mut Window, &mut AppContext) -> AnyElement>,
+    render_item: Box<dyn FnMut(usize, &mut Window, &mut App) -> AnyElement>,
     items: SumTree<ListItem>,
     logical_scroll_top: Option<ListOffset>,
     alignment: ListAlignment,
     overdraw: Pixels,
     reset: bool,
     #[allow(clippy::type_complexity)]
-    scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut AppContext)>>,
+    scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -146,7 +146,7 @@ impl ListItem {
         }
     }
 
-    fn contains_focused(&self, window: &Window, cx: &AppContext) -> bool {
+    fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         match self {
             ListItem::Unmeasured { focus_handle } | ListItem::Measured { focus_handle, .. } => {
                 focus_handle
@@ -186,7 +186,7 @@ impl ListState {
         render_item: R,
     ) -> Self
     where
-        R: 'static + FnMut(usize, &mut Window, &mut AppContext) -> AnyElement,
+        R: 'static + FnMut(usize, &mut Window, &mut App) -> AnyElement,
     {
         let this = Self(Rc::new(RefCell::new(StateInner {
             last_layout_bounds: None,
@@ -272,7 +272,7 @@ impl ListState {
     /// Set a handler that will be called when the list is scrolled.
     pub fn set_scroll_handler(
         &self,
-        handler: impl FnMut(&ListScrollEvent, &mut Window, &mut AppContext) + 'static,
+        handler: impl FnMut(&ListScrollEvent, &mut Window, &mut App) + 'static,
     ) {
         self.0.borrow_mut().scroll_handler = Some(Box::new(handler))
     }
@@ -372,7 +372,7 @@ impl StateInner {
         height: Pixels,
         delta: Point<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         // Drop scroll events after a reset, since we can't calculate
         // the new logical scroll top without the item heights
@@ -442,7 +442,7 @@ impl StateInner {
         available_height: Pixels,
         padding: &Edges<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> LayoutItemsResponse {
         let old_items = self.items.clone();
         let mut measured_items = VecDeque::new();
@@ -618,7 +618,7 @@ impl StateInner {
         padding: Edges<Pixels>,
         autoscroll: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<LayoutItemsResponse, ListOffset> {
         window.transact(|window| {
             let mut layout_response = self.layout_items(
@@ -727,7 +727,7 @@ impl Element for List {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         let layout_id = match self.sizing_behavior {
             ListSizingBehavior::Infer => {
@@ -796,7 +796,7 @@ impl Element for List {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> ListPrepaintState {
         let state = &mut *self.state.0.borrow_mut();
         state.reset = false;
@@ -845,7 +845,7 @@ impl Element for List {
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for item in &mut prepaint.layout.item_layouts {

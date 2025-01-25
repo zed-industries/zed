@@ -2,16 +2,19 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ReadGlobal, Task};
+use gpui::{App, AppContext as _, AsyncAppContext, Entity, Global, ReadGlobal, Task};
 use project::Project;
 
 use crate::ServerCommand;
 
 pub type ContextServerFactory = Arc<
-    dyn Fn(Model<Project>, &AsyncAppContext) -> Task<Result<ServerCommand>> + Send + Sync + 'static,
+    dyn Fn(Entity<Project>, &AsyncAppContext) -> Task<Result<ServerCommand>>
+        + Send
+        + Sync
+        + 'static,
 >;
 
-struct GlobalContextServerFactoryRegistry(Model<ContextServerFactoryRegistry>);
+struct GlobalContextServerFactoryRegistry(Entity<ContextServerFactoryRegistry>);
 
 impl Global for GlobalContextServerFactoryRegistry {}
 
@@ -22,16 +25,16 @@ pub struct ContextServerFactoryRegistry {
 
 impl ContextServerFactoryRegistry {
     /// Returns the global [`ContextServerFactoryRegistry`].
-    pub fn global(cx: &AppContext) -> Model<Self> {
+    pub fn global(cx: &App) -> Entity<Self> {
         GlobalContextServerFactoryRegistry::global(cx).0.clone()
     }
 
     /// Returns the global [`ContextServerFactoryRegistry`].
     ///
     /// Inserts a default [`ContextServerFactoryRegistry`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Model<Self> {
+    pub fn default_global(cx: &mut App) -> Entity<Self> {
         if !cx.has_global::<GlobalContextServerFactoryRegistry>() {
-            let registry = cx.new_model(|_| Self::new());
+            let registry = cx.new(|_| Self::new());
             cx.set_global(GlobalContextServerFactoryRegistry(registry));
         }
         cx.global::<GlobalContextServerFactoryRegistry>().0.clone()

@@ -16,9 +16,8 @@ use editor::{
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
 use gpui::{
-    anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, Focusable, FontWeight, Model, ModelContext, Subscription, TextStyle, WeakModel,
-    Window,
+    anchored, deferred, point, AnyElement, App, ClickEvent, Context, CursorStyle, Entity,
+    EventEmitter, FocusHandle, Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::LanguageModelSelector;
@@ -35,12 +34,12 @@ use util::ResultExt;
 use workspace::Workspace;
 
 pub struct PromptEditor<T> {
-    pub editor: Model<Editor>,
+    pub editor: Entity<Editor>,
     mode: PromptEditorMode,
-    context_store: Model<ContextStore>,
-    context_strip: Model<ContextStrip>,
+    context_store: Entity<ContextStore>,
+    context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Model<AssistantModelSelector>,
+    model_selector: Entity<AssistantModelSelector>,
     model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
@@ -56,7 +55,7 @@ pub struct PromptEditor<T> {
 impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let mut buttons = Vec::new();
 
@@ -208,7 +207,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 }
 
 impl<T: 'static> Focusable for PromptEditor<T> {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
@@ -216,14 +215,14 @@ impl<T: 'static> Focusable for PromptEditor<T> {
 impl<T: 'static> PromptEditor<T> {
     const MAX_LINES: u8 = 8;
 
-    fn codegen_status<'a>(&'a self, cx: &'a AppContext) -> &'a CodegenStatus {
+    fn codegen_status<'a>(&'a self, cx: &'a App) -> &'a CodegenStatus {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => codegen.read(cx).status(cx),
             PromptEditorMode::Terminal { codegen, .. } => &codegen.read(cx).status,
         }
     }
 
-    fn subscribe_to_editor(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn subscribe_to_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor_subscriptions.clear();
         self.editor_subscriptions.push(cx.subscribe_in(
             &self.editor,
@@ -235,17 +234,17 @@ impl<T: 'static> PromptEditor<T> {
     pub fn set_show_cursor_when_unfocused(
         &mut self,
         show_cursor_when_unfocused: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             editor.set_show_cursor_when_unfocused(show_cursor_when_unfocused, cx)
         });
     }
 
-    pub fn unlink(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn unlink(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prompt = self.prompt(cx);
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
-        self.editor = cx.new_model(|cx| {
+        self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor.set_placeholder_text(Self::placeholder_text(&self.mode, window, cx), cx);
@@ -259,11 +258,7 @@ impl<T: 'static> PromptEditor<T> {
         self.subscribe_to_editor(window, cx);
     }
 
-    pub fn placeholder_text(
-        mode: &PromptEditorMode,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> String {
+    pub fn placeholder_text(mode: &PromptEditorMode, window: &mut Window, cx: &mut App) -> String {
         let action = match mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 if codegen.read(cx).is_insertion {
@@ -283,7 +278,7 @@ impl<T: 'static> PromptEditor<T> {
         format!("{action}… ({assistant_panel_keybinding}↓↑ for history)")
     }
 
-    pub fn prompt(&self, cx: &AppContext) -> String {
+    pub fn prompt(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
     }
 
@@ -291,7 +286,7 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &ClickEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.show_rate_limit_notice = !self.show_rate_limit_notice;
         if self.show_rate_limit_notice {
@@ -302,10 +297,10 @@ impl<T: 'static> PromptEditor<T> {
 
     fn handle_prompt_editor_events(
         &mut self,
-        _: &Model<Editor>,
+        _: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             EditorEvent::Edited { .. } => {
@@ -349,7 +344,7 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &ToggleContextPicker,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
@@ -358,7 +353,7 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &ToggleModelSelector,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.model_selector_menu_handle.toggle(window, cx);
     }
@@ -367,7 +362,7 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &RemoveAllContext,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
@@ -377,7 +372,7 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &editor::actions::Cancel,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
@@ -389,7 +384,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
                 cx.emit(PromptEditorEvent::StartRequested);
@@ -410,7 +405,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.prompt_history_ix {
             if ix > 0 {
                 self.prompt_history_ix = Some(ix - 1);
@@ -430,7 +425,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.prompt_history_ix {
             if ix < self.prompt_history.len() - 1 {
                 self.prompt_history_ix = Some(ix + 1);
@@ -452,7 +447,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn render_buttons(&self, _window: &mut Window, cx: &mut ModelContext<Self>) -> Vec<AnyElement> {
+    fn render_buttons(&self, _window: &mut Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mode = match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 let codegen = codegen.read(cx);
@@ -552,7 +547,7 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _: &CyclePreviousInlineAssist,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
@@ -564,12 +559,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn cycle_next(
-        &mut self,
-        _: &CycleNextInlineAssist,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn cycle_next(&mut self, _: &CycleNextInlineAssist, _: &mut Window, cx: &mut Context<Self>) {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => {
                 codegen.update(cx, |codegen, cx| codegen.cycle_next(cx));
@@ -580,7 +570,7 @@ impl<T: 'static> PromptEditor<T> {
         }
     }
 
-    fn render_close_button(&self, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
         IconButton::new("cancel", IconName::Close)
             .icon_color(Color::Muted)
             .shape(IconButtonShape::Square)
@@ -589,11 +579,7 @@ impl<T: 'static> PromptEditor<T> {
             .into_any_element()
     }
 
-    fn render_cycle_controls(
-        &self,
-        codegen: &BufferCodegen,
-        cx: &ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_cycle_controls(&self, codegen: &BufferCodegen, cx: &Context<Self>) -> AnyElement {
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
         let model_registry = LanguageModelRegistry::read_global(cx);
@@ -634,7 +620,7 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new_model(|_| {
+                            cx.new(|_| {
                                 let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CyclePreviousInlineAssist,
@@ -675,7 +661,7 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            cx.new_model(|_| {
+                            cx.new(|_| {
                                 let mut tooltip = Tooltip::new("Next Alternative").key_binding(
                                     KeyBinding::for_action_in(
                                         &CycleNextInlineAssist,
@@ -698,7 +684,7 @@ impl<T: 'static> PromptEditor<T> {
             .into_any_element()
     }
 
-    fn render_rate_limit_notice(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_rate_limit_notice(&self, cx: &mut Context<Self>) -> impl IntoElement {
         Popover::new().child(
             v_flex()
                 .occlude()
@@ -753,7 +739,7 @@ impl<T: 'static> PromptEditor<T> {
         )
     }
 
-    fn render_editor(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(window.rem_size()) * 1.3;
 
@@ -789,10 +775,10 @@ impl<T: 'static> PromptEditor<T> {
 
     fn handle_context_strip_event(
         &mut self,
-        _context_strip: &Model<ContextStrip>,
+        _context_strip: &Entity<ContextStrip>,
         event: &ContextStripEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             ContextStripEvent::PickerDismissed
@@ -806,12 +792,12 @@ impl<T: 'static> PromptEditor<T> {
 pub enum PromptEditorMode {
     Buffer {
         id: InlineAssistId,
-        codegen: Model<BufferCodegen>,
+        codegen: Entity<BufferCodegen>,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
     },
     Terminal {
         id: TerminalInlineAssistId,
-        codegen: Model<TerminalCodegen>,
+        codegen: Entity<TerminalCodegen>,
         height_in_lines: u8,
     },
 }
@@ -842,14 +828,14 @@ impl PromptEditor<BufferCodegen> {
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
-        prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<BufferCodegen>,
+        prompt_buffer: Entity<MultiBuffer>,
+        codegen: Entity<BufferCodegen>,
         fs: Arc<dyn Fs>,
-        context_store: Model<ContextStore>,
-        workspace: WeakModel<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
+        context_store: Entity<ContextStore>,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
-        cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
+        cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) -> PromptEditor<BufferCodegen> {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
         let mode = PromptEditorMode::Buffer {
@@ -858,7 +844,7 @@ impl PromptEditor<BufferCodegen> {
             gutter_dimensions,
         };
 
-        let prompt_editor = cx.new_model(|cx| {
+        let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -880,7 +866,7 @@ impl PromptEditor<BufferCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let context_strip = cx.new_model(|cx| {
+        let context_strip = cx.new(|cx| {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
@@ -901,7 +887,7 @@ impl PromptEditor<BufferCodegen> {
             context_store,
             context_strip,
             context_picker_menu_handle,
-            model_selector: cx.new_model(|cx| {
+            model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),
@@ -929,8 +915,8 @@ impl PromptEditor<BufferCodegen> {
 
     fn handle_codegen_changed(
         &mut self,
-        _: Model<BufferCodegen>,
-        cx: &mut ModelContext<PromptEditor<BufferCodegen>>,
+        _: Entity<BufferCodegen>,
+        cx: &mut Context<PromptEditor<BufferCodegen>>,
     ) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle => {
@@ -969,7 +955,7 @@ impl PromptEditor<BufferCodegen> {
         }
     }
 
-    pub fn codegen(&self) -> &Model<BufferCodegen> {
+    pub fn codegen(&self) -> &Entity<BufferCodegen> {
         match &self.mode {
             PromptEditorMode::Buffer { codegen, .. } => codegen,
             PromptEditorMode::Terminal { .. } => unreachable!(),
@@ -1002,14 +988,14 @@ impl PromptEditor<TerminalCodegen> {
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
-        prompt_buffer: Model<MultiBuffer>,
-        codegen: Model<TerminalCodegen>,
+        prompt_buffer: Entity<MultiBuffer>,
+        codegen: Entity<TerminalCodegen>,
         fs: Arc<dyn Fs>,
-        context_store: Model<ContextStore>,
-        workspace: WeakModel<Workspace>,
-        thread_store: Option<WeakModel<ThreadStore>>,
+        context_store: Entity<ContextStore>,
+        workspace: WeakEntity<Workspace>,
+        thread_store: Option<WeakEntity<ThreadStore>>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let codegen_subscription = cx.observe(&codegen, Self::handle_codegen_changed);
         let mode = PromptEditorMode::Terminal {
@@ -1018,7 +1004,7 @@ impl PromptEditor<TerminalCodegen> {
             height_in_lines: 1,
         };
 
-        let prompt_editor = cx.new_model(|cx| {
+        let prompt_editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -1036,7 +1022,7 @@ impl PromptEditor<TerminalCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let context_strip = cx.new_model(|cx| {
+        let context_strip = cx.new(|cx| {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
@@ -1057,7 +1043,7 @@ impl PromptEditor<TerminalCodegen> {
             context_store,
             context_strip,
             context_picker_menu_handle,
-            model_selector: cx.new_model(|cx| {
+            model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),
@@ -1083,7 +1069,7 @@ impl PromptEditor<TerminalCodegen> {
         this
     }
 
-    fn count_lines(&mut self, cx: &mut ModelContext<Self>) {
+    fn count_lines(&mut self, cx: &mut Context<Self>) {
         let height_in_lines = cmp::max(
             2, // Make the editor at least two lines tall, to account for padding and buttons.
             cmp::min(
@@ -1107,7 +1093,7 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
-    fn handle_codegen_changed(&mut self, _: Model<TerminalCodegen>, cx: &mut ModelContext<Self>) {
+    fn handle_codegen_changed(&mut self, _: Entity<TerminalCodegen>, cx: &mut Context<Self>) {
         match &self.codegen().read(cx).status {
             CodegenStatus::Idle => {
                 self.editor
@@ -1125,7 +1111,7 @@ impl PromptEditor<TerminalCodegen> {
         }
     }
 
-    pub fn codegen(&self) -> &Model<TerminalCodegen> {
+    pub fn codegen(&self) -> &Entity<TerminalCodegen> {
         match &self.mode {
             PromptEditorMode::Buffer { .. } => unreachable!(),
             PromptEditorMode::Terminal { codegen, .. } => codegen,
@@ -1149,7 +1135,7 @@ fn dismissed_rate_limit_notice() -> bool {
         .map_or(false, |s| s.is_some())
 }
 
-fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut AppContext) {
+fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut App) {
     db::write_and_log(cx, move || async move {
         if is_dismissed {
             db::kvp::KEY_VALUE_STORE

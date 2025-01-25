@@ -5,9 +5,8 @@ use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{
-    actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
-    AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
-    WeakModel,
+    actions, div, pulsating_between, Action, Animation, AnimationExt, App, AsyncWindowContext,
+    Corner, Entity, IntoElement, ParentElement, Render, Subscription, WeakEntity,
 };
 use language::{
     language_settings::{
@@ -46,8 +45,8 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    workspace: WeakModel<Workspace>,
-    user_store: Model<UserStore>,
+    workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
@@ -59,7 +58,7 @@ enum SupermavenButtonStatus {
 }
 
 impl Render for InlineCompletionButton {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.inline_completions.provider {
@@ -313,11 +312,11 @@ impl Render for InlineCompletionButton {
 
 impl InlineCompletionButton {
     pub fn new(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
-        user_store: Model<UserStore>,
+        user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
@@ -342,8 +341,8 @@ impl InlineCompletionButton {
     pub fn build_copilot_start_menu(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Model<ContextMenu> {
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
             menu.entry("Sign In", None, copilot::initiate_sign_in)
@@ -364,11 +363,7 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn build_language_settings_menu(
-        &self,
-        mut menu: ContextMenu,
-        cx: &mut AppContext,
-    ) -> ContextMenu {
+    pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
         if let Some(language) = self.language.clone() {
@@ -436,8 +431,8 @@ impl InlineCompletionButton {
     fn build_copilot_context_menu(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Model<ContextMenu> {
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |menu, _, cx| {
             self.build_language_settings_menu(menu, cx)
                 .separator()
@@ -455,8 +450,8 @@ impl InlineCompletionButton {
     fn build_supermaven_context_menu(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Model<ContextMenu> {
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |menu, _, cx| {
             self.build_language_settings_menu(menu, cx)
                 .separator()
@@ -467,8 +462,8 @@ impl InlineCompletionButton {
     fn build_zeta_context_menu(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Model<ContextMenu> {
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
         let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
             self.build_language_settings_menu(menu, cx)
@@ -487,7 +482,7 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn update_enabled(&mut self, editor: Model<Editor>, cx: &mut ModelContext<Self>) {
+    pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -511,7 +506,7 @@ impl InlineCompletionButton {
         cx.notify();
     }
 
-    pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.popover_menu_handle.toggle(window, cx);
     }
 }
@@ -521,7 +516,7 @@ impl StatusItemView for InlineCompletionButton {
         &mut self,
         item: Option<&dyn ItemHandle>,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
@@ -566,7 +561,7 @@ impl SupermavenButtonStatus {
 }
 
 async fn configure_disabled_globs(
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     path_to_disable: Option<Arc<Path>>,
     mut cx: AsyncWindowContext,
 ) -> Result<()> {
@@ -620,7 +615,7 @@ async fn configure_disabled_globs(
     anyhow::Ok(())
 }
 
-fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
     let show_inline_completions =
         all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
@@ -628,11 +623,7 @@ fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     });
 }
 
-fn set_completion_provider(
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-    provider: InlineCompletionProvider,
-) {
+fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: InlineCompletionProvider) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
@@ -640,11 +631,7 @@ fn set_completion_provider(
     });
 }
 
-fn toggle_inline_completions_for_language(
-    language: Arc<Language>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) {
+fn toggle_inline_completions_for_language(language: Arc<Language>, fs: Arc<dyn Fs>, cx: &mut App) {
     let show_inline_completions =
         all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
@@ -655,7 +642,7 @@ fn toggle_inline_completions_for_language(
     });
 }
 
-fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())

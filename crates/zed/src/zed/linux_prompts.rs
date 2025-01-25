@@ -26,7 +26,7 @@ pub fn fallback_prompt_renderer(
     window: &mut Window,
     cx: &mut AppContext,
 ) -> RenderablePromptHandle {
-    let renderer = cx.new_model({
+    let renderer = cx.new({
         |cx| FallbackPromptRenderer {
             _level: level,
             message: message.to_string(),
@@ -34,7 +34,7 @@ pub fn fallback_prompt_renderer(
             focus: cx.focus_handle(),
             active_action_id: 0,
             detail: detail.filter(|text| !text.is_empty()).map(|text| {
-                cx.new_model(|cx| {
+                cx.new(|cx| {
                     let settings = ThemeSettings::get_global(cx);
                     let mut base_text_style = window.text_style();
                     base_text_style.refine(&TextStyleRefinement {

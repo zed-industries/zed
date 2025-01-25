@@ -90,7 +90,7 @@ impl SelectableButton for IconButton {
 impl Clickable for IconButton {
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -131,7 +131,7 @@ impl ButtonCommon for IconButton {
 
     fn tooltip(
         mut self,
-        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+        tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
@@ -151,7 +151,7 @@ impl VisibleOnHover for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;

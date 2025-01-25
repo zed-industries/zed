@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, Model, StyleRefinement, WindowOptions};
+use gpui::{prelude::*, rgb, Application, KeyBinding, Entity, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -7,7 +7,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
-use ui::{div, AppContext, Window};
+use ui::{div, App, Window};
 
 const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
@@ -99,7 +99,7 @@ Remember, markdown processors may have slight differences and extensions, so alw
 
 pub fn main() {
     env_logger::init();
-    App::new().with_assets(Assets).run(|cx| {
+    Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
@@ -119,7 +119,7 @@ pub fn main() {
 
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |window, cx| {
-            cx.new_model(|cx| {
+            cx.new(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Plex Sans".into(),
@@ -174,7 +174,7 @@ pub fn main() {
 }
 
 struct MarkdownExample {
-    markdown: Model<Markdown>,
+    markdown: Entity<Markdown>,
 }
 
 impl MarkdownExample {
@@ -183,16 +183,16 @@ impl MarkdownExample {
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self {
         let markdown = cx
-            .new_model(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
+            .new(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
         Self { markdown }
     }
 }
 
 impl Render for MarkdownExample {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("markdown-example")
             .debug_selector(|| "foo".into())

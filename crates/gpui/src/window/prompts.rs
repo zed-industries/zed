@@ -3,8 +3,8 @@ use std::ops::Deref;
 use futures::channel::oneshot;
 
 use crate::{
-    div, opaque_grey, white, AnyView, AppContext, Context, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Model, ModelContext, ParentElement, PromptLevel, Render,
+    div, opaque_grey, white, AnyView, App, AppContext as _, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
     StatefulInteractiveElement, Styled,
 };
 
@@ -33,14 +33,14 @@ impl PromptHandle {
     /// Construct a new prompt handle from a view of the appropriate types
     pub fn with_view<V: Prompt + Render>(
         self,
-        view: Model<V>,
+        view: Entity<V>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> RenderablePromptHandle {
         let mut sender = Some(self.sender);
         let previous_focus = window.focused(cx);
         let window_handle = window.window_handle();
-        cx.subscribe(&view, move |_, e: &PromptResponse, cx| {
+        cx.subscribe(&view, move |_: Entity<V>, e: &PromptResponse, cx| {
             if let Some(sender) = sender.take() {
                 sender.send(e.0).ok();
                 window_handle
@@ -77,9 +77,9 @@ pub fn fallback_prompt_renderer(
     actions: &[&str],
     handle: PromptHandle,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> RenderablePromptHandle {
-    let renderer = cx.new_model(|cx| FallbackPromptRenderer {
+    let renderer = cx.new(|cx| FallbackPromptRenderer {
         _level: level,
         message: message.to_string(),
         detail: detail.map(ToString::to_string),
@@ -100,7 +100,7 @@ pub struct FallbackPromptRenderer {
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prompt = div()
             .cursor_default()
             .track_focus(&self.focus)
@@ -179,7 +179,7 @@ impl Render for FallbackPromptRenderer {
 impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
 impl Focusable for FallbackPromptRenderer {
-    fn focus_handle(&self, _: &crate::AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &crate::App) -> FocusHandle {
         self.focus.clone()
     }
 }
@@ -188,7 +188,7 @@ pub(crate) trait PromptViewHandle {
     fn any_view(&self) -> AnyView;
 }
 
-impl<V: Prompt + Render> PromptViewHandle for Model<V> {
+impl<V: Prompt + Render> PromptViewHandle for Entity<V> {
     fn any_view(&self) -> AnyView {
         self.clone().into()
     }
@@ -205,7 +205,7 @@ pub(crate) enum PromptBuilder {
                 &[&str],
                 PromptHandle,
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> RenderablePromptHandle,
         >,
     ),
@@ -219,7 +219,7 @@ impl Deref for PromptBuilder {
         &[&str],
         PromptHandle,
         &mut Window,
-        &mut AppContext,
+        &mut App,
     ) -> RenderablePromptHandle;
 
     fn deref(&self) -> &Self::Target {

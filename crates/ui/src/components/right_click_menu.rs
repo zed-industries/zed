@@ -3,22 +3,22 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    anchored, deferred, div, px, AnyElement, AppContext, Bounds, Corner, DismissEvent,
+    anchored, deferred, div, px, AnyElement, App, Bounds, Corner, DismissEvent,
     DispatchPhase, Element, ElementId, Focusable as _, GlobalElementId, Hitbox, InteractiveElement,
-    IntoElement, LayoutId, ManagedView, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    IntoElement, LayoutId, ManagedView, Entity, MouseButton, MouseDownEvent, ParentElement, Pixels,
     Point, Window,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool) -> AnyElement + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut AppContext) -> Model<M> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Entity<M> + 'static>>,
     anchor: Option<Corner>,
     attach: Option<Corner>,
 }
 
 impl<M: ManagedView> RightClickMenu<M> {
-    pub fn menu(mut self, f: impl Fn(&mut Window, &mut AppContext) -> Model<M> + 'static) -> Self {
+    pub fn menu(mut self, f: impl Fn(&mut Window, &mut App) -> Entity<M> + 'static) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
@@ -45,8 +45,8 @@ impl<M: ManagedView> RightClickMenu<M> {
         &mut self,
         global_id: &GlobalElementId,
         window: &mut Window,
-        cx: &mut AppContext,
-        f: impl FnOnce(&mut Self, &mut MenuHandleElementState<M>, &mut Window, &mut AppContext) -> R,
+        cx: &mut App,
+        f: impl FnOnce(&mut Self, &mut MenuHandleElementState<M>, &mut Window, &mut App) -> R,
     ) -> R {
         window.with_optional_element_state::<MenuHandleElementState<M>, _>(
             Some(global_id),
@@ -71,7 +71,7 @@ pub fn right_click_menu<M: ManagedView>(id: impl Into<ElementId>) -> RightClickM
 }
 
 pub struct MenuHandleElementState<M> {
-    menu: Rc<RefCell<Option<Model<M>>>>,
+    menu: Rc<RefCell<Option<Entity<M>>>>,
     position: Rc<RefCell<Point<Pixels>>>,
 }
 
@@ -116,7 +116,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         &mut self,
         id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         self.with_element_state(
             id.unwrap(),
@@ -173,7 +173,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> PrepaintState {
         let hitbox = window.insert_hitbox(bounds, false);
 
@@ -200,7 +200,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         request_layout: &mut Self::RequestLayoutState,
         prepaint_state: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.with_element_state(
             id.unwrap(),

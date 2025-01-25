@@ -16,9 +16,9 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
+    point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds,
     ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Model,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Entity,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
@@ -67,7 +67,7 @@ pub struct DragMoveEvent<T> {
 
 impl<T: 'static> DragMoveEvent<T> {
     /// Returns the drag state for this event.
-    pub fn drag<'b>(&self, cx: &'b AppContext) -> &'b T {
+    pub fn drag<'b>(&self, cx: &'b App) -> &'b T {
         cx.active_drag
             .as_ref()
             .and_then(|drag| drag.value.downcast_ref::<T>())
@@ -88,7 +88,7 @@ impl Interactivity {
     pub fn on_mouse_down(
         &mut self,
         button: MouseButton,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -107,7 +107,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn capture_any_mouse_down(
         &mut self,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -123,7 +123,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_any_mouse_down(
         &mut self,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -140,7 +140,7 @@ impl Interactivity {
     pub fn on_mouse_up(
         &mut self,
         button: MouseButton,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -159,7 +159,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn capture_any_mouse_up(
         &mut self,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -175,7 +175,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_any_mouse_up(
         &mut self,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -192,7 +192,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_mouse_down_out(
         &mut self,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -210,7 +210,7 @@ impl Interactivity {
     pub fn on_mouse_up_out(
         &mut self,
         button: MouseButton,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -229,7 +229,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_mouse_move(
         &mut self,
-        listener: impl Fn(&MouseMoveEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static,
     ) {
         self.mouse_move_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -248,7 +248,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_drag_move<T>(
         &mut self,
-        listener: impl Fn(&DragMoveEvent<T>, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&DragMoveEvent<T>, &mut Window, &mut App) + 'static,
     ) where
         T: 'static,
     {
@@ -279,7 +279,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_scroll_wheel(
         &mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
@@ -295,7 +295,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn capture_action<A: Action>(
         &mut self,
-        listener: impl Fn(&A, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) {
         self.action_listeners.push((
             TypeId::of::<A>(),
@@ -316,7 +316,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_action<A: Action>(
         &mut self,
-        listener: impl Fn(&A, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) {
         self.action_listeners.push((
             TypeId::of::<A>(),
@@ -338,7 +338,7 @@ impl Interactivity {
     pub fn on_boxed_action(
         &mut self,
         action: &dyn Action,
-        listener: impl Fn(&dyn Action, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&dyn Action, &mut Window, &mut App) + 'static,
     ) {
         let action = action.boxed_clone();
         self.action_listeners.push((
@@ -357,7 +357,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_key_down(
         &mut self,
-        listener: impl Fn(&KeyDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
     ) {
         self.key_down_listeners
             .push(Box::new(move |event, phase, window, cx| {
@@ -373,7 +373,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn capture_key_down(
         &mut self,
-        listener: impl Fn(&KeyDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
     ) {
         self.key_down_listeners
             .push(Box::new(move |event, phase, window, cx| {
@@ -389,7 +389,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_key_up(
         &mut self,
-        listener: impl Fn(&KeyUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static,
     ) {
         self.key_up_listeners
             .push(Box::new(move |event, phase, window, cx| {
@@ -405,7 +405,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn capture_key_up(
         &mut self,
-        listener: impl Fn(&KeyUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static,
     ) {
         self.key_up_listeners
             .push(Box::new(move |event, phase, window, cx| {
@@ -421,7 +421,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_modifiers_changed(
         &mut self,
-        listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut App) + 'static,
     ) {
         self.modifiers_changed_listeners
             .push(Box::new(move |event, window, cx| {
@@ -435,7 +435,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_drop<T: 'static>(
         &mut self,
-        listener: impl Fn(&T, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
     ) {
         self.drop_listeners.push((
             TypeId::of::<T>(),
@@ -449,7 +449,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::can_drop`]
     pub fn can_drop(
         &mut self,
-        predicate: impl Fn(&dyn Any, &mut Window, &mut AppContext) -> bool + 'static,
+        predicate: impl Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static,
     ) {
         self.can_drop_predicate = Some(Box::new(predicate));
     }
@@ -460,7 +460,7 @@ impl Interactivity {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     pub fn on_click(
         &mut self,
-        listener: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) where
         Self: Sized,
     {
@@ -479,7 +479,7 @@ impl Interactivity {
     pub fn on_drag<T, W>(
         &mut self,
         value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> Model<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) where
         Self: Sized,
         T: 'static,
@@ -502,7 +502,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut AppContext) + 'static)
+    pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
     where
         Self: Sized,
     {
@@ -517,7 +517,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::tooltip`]
     pub fn tooltip(
         &mut self,
-        build_tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) where
         Self: Sized,
     {
@@ -536,7 +536,7 @@ impl Interactivity {
     /// the tooltip. The imperative API equivalent to [`InteractiveElement::hoverable_tooltip`]
     pub fn hoverable_tooltip(
         &mut self,
-        build_tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) where
         Self: Sized,
     {
@@ -628,7 +628,7 @@ pub trait InteractiveElement: Sized {
     fn on_mouse_down(
         mut self,
         button: MouseButton,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_down(button, listener);
         self
@@ -658,7 +658,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn capture_any_mouse_down(
         mut self,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().capture_any_mouse_down(listener);
         self
@@ -670,7 +670,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_any_mouse_down(
         mut self,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_any_mouse_down(listener);
         self
@@ -683,7 +683,7 @@ pub trait InteractiveElement: Sized {
     fn on_mouse_up(
         mut self,
         button: MouseButton,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_up(button, listener);
         self
@@ -695,7 +695,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn capture_any_mouse_up(
         mut self,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().capture_any_mouse_up(listener);
         self
@@ -708,7 +708,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_mouse_down_out(
         mut self,
-        listener: impl Fn(&MouseDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_down_out(listener);
         self
@@ -722,7 +722,7 @@ pub trait InteractiveElement: Sized {
     fn on_mouse_up_out(
         mut self,
         button: MouseButton,
-        listener: impl Fn(&MouseUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_up_out(button, listener);
         self
@@ -734,7 +734,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_mouse_move(
         mut self,
-        listener: impl Fn(&MouseMoveEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&MouseMoveEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_mouse_move(listener);
         self
@@ -749,7 +749,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_drag_move<T: 'static>(
         mut self,
-        listener: impl Fn(&DragMoveEvent<T>, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&DragMoveEvent<T>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_drag_move(listener);
         self
@@ -761,7 +761,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_scroll_wheel(
         mut self,
-        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&ScrollWheelEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_scroll_wheel(listener);
         self
@@ -773,7 +773,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn capture_action<A: Action>(
         mut self,
-        listener: impl Fn(&A, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().capture_action(listener);
         self
@@ -785,7 +785,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_action<A: Action>(
         mut self,
-        listener: impl Fn(&A, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_action(listener);
         self
@@ -800,7 +800,7 @@ pub trait InteractiveElement: Sized {
     fn on_boxed_action(
         mut self,
         action: &dyn Action,
-        listener: impl Fn(&dyn Action, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&dyn Action, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_boxed_action(action, listener);
         self
@@ -812,7 +812,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_key_down(
         mut self,
-        listener: impl Fn(&KeyDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_key_down(listener);
         self
@@ -824,7 +824,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn capture_key_down(
         mut self,
-        listener: impl Fn(&KeyDownEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().capture_key_down(listener);
         self
@@ -836,7 +836,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_key_up(
         mut self,
-        listener: impl Fn(&KeyUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_key_up(listener);
         self
@@ -848,7 +848,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn capture_key_up(
         mut self,
-        listener: impl Fn(&KeyUpEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&KeyUpEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().capture_key_up(listener);
         self
@@ -860,7 +860,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_modifiers_changed(
         mut self,
-        listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&ModifiersChangedEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_modifiers_changed(listener);
         self
@@ -869,7 +869,7 @@ pub trait InteractiveElement: Sized {
     /// Apply the given style when the given data type is dragged over this element
     fn drag_over<S: 'static>(
         mut self,
-        f: impl 'static + Fn(StyleRefinement, &S, &Window, &AppContext) -> StyleRefinement,
+        f: impl 'static + Fn(StyleRefinement, &S, &Window, &App) -> StyleRefinement,
     ) -> Self {
         self.interactivity().drag_over_styles.push((
             TypeId::of::<S>(),
@@ -907,7 +907,7 @@ pub trait InteractiveElement: Sized {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_drop<T: 'static>(
         mut self,
-        listener: impl Fn(&T, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.interactivity().on_drop(listener);
         self
@@ -917,7 +917,7 @@ pub trait InteractiveElement: Sized {
     /// The fluent API equivalent to [`Interactivity::can_drop`]
     fn can_drop(
         mut self,
-        predicate: impl Fn(&dyn Any, &mut Window, &mut AppContext) -> bool + 'static,
+        predicate: impl Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static,
     ) -> Self {
         self.interactivity().can_drop(predicate);
         self
@@ -1008,7 +1008,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
     fn on_click(
         mut self,
-        listener: impl Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1027,7 +1027,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     fn on_drag<T, W>(
         mut self,
         value: T,
-        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut AppContext) -> Model<W> + 'static,
+        constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1043,7 +1043,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// The fluent API equivalent to [`Interactivity::on_hover`]
     ///
     /// See [`ViewContext::listener`](crate::ViewContext::listener) to get access to a view's state from this callback.
-    fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut AppContext) + 'static) -> Self
+    fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self
     where
         Self: Sized,
     {
@@ -1055,7 +1055,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// The fluent API equivalent to [`Interactivity::tooltip`]
     fn tooltip(
         mut self,
-        build_tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1069,7 +1069,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// the tooltip. The fluent API equivalent to [`Interactivity::hoverable_tooltip`]
     fn hoverable_tooltip(
         mut self,
-        build_tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self
     where
         Self: Sized,
@@ -1101,41 +1101,41 @@ pub trait FocusableElement: InteractiveElement {
 }
 
 pub(crate) type MouseDownListener =
-    Box<dyn Fn(&MouseDownEvent, DispatchPhase, &Hitbox, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&MouseDownEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 pub(crate) type MouseUpListener =
-    Box<dyn Fn(&MouseUpEvent, DispatchPhase, &Hitbox, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&MouseUpEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type MouseMoveListener =
-    Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&MouseMoveEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ScrollWheelListener =
-    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut AppContext) + 'static>;
+pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
-    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut AppContext) -> AnyView + 'static>;
+    Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
 
-type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) + 'static>;
+type DropListener = Box<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
 
-type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) -> bool + 'static>;
+type CanDropPredicate = Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>;
 
 pub(crate) struct TooltipBuilder {
-    build: Rc<dyn Fn(&mut Window, &mut AppContext) -> AnyView + 'static>,
+    build: Rc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>,
     hoverable: bool,
 }
 
 pub(crate) type KeyDownListener =
-    Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&KeyDownEvent, DispatchPhase, &mut Window, &mut App) + 'static>;
 
 pub(crate) type KeyUpListener =
-    Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&KeyUpEvent, DispatchPhase, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ModifiersChangedListener =
-    Box<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type ActionListener =
-    Box<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut AppContext) + 'static>;
+    Box<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static>;
 
 /// Construct a new [`Div`] element
 #[track_caller]
@@ -1161,7 +1161,7 @@ pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
     prepaint_listener:
-        Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static>>,
+        Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static>>,
 }
 
 impl Div {
@@ -1169,7 +1169,7 @@ impl Div {
     /// This allows you to store the [`Bounds`] of the children for later use.
     pub fn on_children_prepainted(
         mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.prepaint_listener = Some(Box::new(listener));
         self
@@ -1216,7 +1216,7 @@ impl Element for Div {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut child_layout_ids = SmallVec::new();
         let layout_id =
@@ -1240,7 +1240,7 @@ impl Element for Div {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Hitbox> {
         let has_prepaint_listener = self.prepaint_listener.is_some();
         let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
@@ -1318,7 +1318,7 @@ impl Element for Div {
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.interactivity.paint(
             global_id,
@@ -1374,7 +1374,7 @@ pub struct Interactivity {
     pub(crate) group_active_style: Option<GroupStyle>,
     pub(crate) drag_over_styles: Vec<(
         TypeId,
-        Box<dyn Fn(&dyn Any, &mut Window, &mut AppContext) -> StyleRefinement>,
+        Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> StyleRefinement>,
     )>,
     pub(crate) group_drag_over_styles: Vec<(TypeId, GroupStyle)>,
     pub(crate) mouse_down_listeners: Vec<MouseDownListener>,
@@ -1389,7 +1389,7 @@ pub struct Interactivity {
     pub(crate) can_drop_predicate: Option<CanDropPredicate>,
     pub(crate) click_listeners: Vec<ClickListener>,
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
-    pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut AppContext)>>,
+    pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) occlude_mouse: bool,
 
@@ -1406,8 +1406,8 @@ impl Interactivity {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
-        f: impl FnOnce(Style, &mut Window, &mut AppContext) -> LayoutId,
+        cx: &mut App,
+        f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -1471,8 +1471,8 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
-        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut AppContext) -> R,
+        cx: &mut App,
+        f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
@@ -1544,7 +1544,7 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         style: &Style,
         window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             if let Some(scroll_handle) = &self.tracked_scroll_handle {
@@ -1596,8 +1596,8 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
         window: &mut Window,
-        cx: &mut AppContext,
-        f: impl FnOnce(&Style, &mut Window, &mut AppContext),
+        cx: &mut App,
+        f: impl FnOnce(&Style, &mut Window, &mut App),
     ) {
         self.hovered = hitbox.map(|hitbox| hitbox.is_hovered(window));
         window.with_optional_element_state::<InteractiveElementState, _>(
@@ -1627,7 +1627,7 @@ impl Interactivity {
                         bounds,
                         window,
                         cx,
-                        |window: &mut Window, cx: &mut AppContext| {
+                        |window: &mut Window, cx: &mut App| {
                             window.with_text_style(style.text_style().cloned(), |window| {
                                 window.with_content_mask(
                                     style.overflow_mask(bounds, window.rem_size()),
@@ -1684,7 +1684,7 @@ impl Interactivity {
         hitbox: &Hitbox,
         style: &Style,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if global_id.is_some()
             && (style.debug || style.debug_below || cx.has_global::<crate::DebugBelow>())
@@ -1794,7 +1794,7 @@ impl Interactivity {
         hitbox: &Hitbox,
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
@@ -2026,7 +2026,7 @@ impl Interactivity {
                     .clone();
 
                 let tooltip_is_hoverable = tooltip_builder.hoverable;
-                let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut AppContext| {
+                let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some(((tooltip_builder.build)(window, cx), tooltip_is_hoverable))
                 });
                 // Use bounds instead of testing hitbox since check_is_hovered is also called
@@ -2080,7 +2080,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_keyboard_listeners(&mut self, window: &mut Window, _cx: &mut AppContext) {
+    fn paint_keyboard_listeners(&mut self, window: &mut Window, _cx: &mut App) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
         let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
@@ -2112,7 +2112,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_hover_group_handler(&self, window: &mut Window, cx: &mut AppContext) {
+    fn paint_hover_group_handler(&self, window: &mut Window, cx: &mut App) {
         let group_hitbox = self
             .group_hover_style
             .as_ref()
@@ -2134,7 +2134,7 @@ impl Interactivity {
         hitbox: &Hitbox,
         style: &Style,
         window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
@@ -2187,7 +2187,7 @@ impl Interactivity {
         global_id: Option<&GlobalElementId>,
         hitbox: Option<&Hitbox>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Style {
         window.with_optional_element_state(global_id, |element_state, window| {
             let mut element_state =
@@ -2203,7 +2203,7 @@ impl Interactivity {
         hitbox: Option<&Hitbox>,
         element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Style {
         let mut style = Style::default();
         style.refine(&self.base_style);
@@ -2380,7 +2380,7 @@ pub(crate) fn set_tooltip_on_window(
 pub(crate) fn register_tooltip_mouse_handlers(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     tooltip_id: Option<TooltipId>,
-    build_tooltip: Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<(AnyView, bool)>>,
+    build_tooltip: Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: Rc<dyn Fn(&Window) -> bool>,
     window: &mut Window,
 ) {
@@ -2421,11 +2421,11 @@ pub(crate) fn register_tooltip_mouse_handlers(
 
 fn handle_tooltip_mouse_move(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
-    build_tooltip: &Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<(AnyView, bool)>>,
+    build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
     phase: DispatchPhase,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     // Separates logic for what mutation should occur from applying it, to avoid overlapping
     // RefCell borrows.
@@ -2519,7 +2519,7 @@ fn handle_tooltip_check_visible_and_update(
     check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
     tooltip_bounds: Bounds<Pixels>,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> bool {
     // Separates logic for what mutation should occur from applying it, to avoid overlapping RefCell
     // borrows.
@@ -2594,7 +2594,7 @@ pub(crate) struct GroupHitboxes(HashMap<SharedString, SmallVec<[HitboxId; 1]>>);
 impl Global for GroupHitboxes {}
 
 impl GroupHitboxes {
-    pub fn get(name: &SharedString, cx: &mut AppContext) -> Option<HitboxId> {
+    pub fn get(name: &SharedString, cx: &mut App) -> Option<HitboxId> {
         cx.default_global::<Self>()
             .0
             .get(name)
@@ -2602,7 +2602,7 @@ impl GroupHitboxes {
             .cloned()
     }
 
-    pub fn push(name: SharedString, hitbox_id: HitboxId, cx: &mut AppContext) {
+    pub fn push(name: SharedString, hitbox_id: HitboxId, cx: &mut App) {
         cx.default_global::<Self>()
             .0
             .entry(name)
@@ -2610,7 +2610,7 @@ impl GroupHitboxes {
             .push(hitbox_id);
     }
 
-    pub fn pop(name: &SharedString, cx: &mut AppContext) {
+    pub fn pop(name: &SharedString, cx: &mut App) {
         cx.default_global::<Self>().0.get_mut(name).unwrap().pop();
     }
 }
@@ -2648,7 +2648,7 @@ impl FocusableWrapper<Div> {
     /// This allows you to store the [`Bounds`] of the children for later use.
     pub fn on_children_prepainted(
         mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.element = self.element.on_children_prepainted(listener);
         self
@@ -2670,7 +2670,7 @@ where
         &mut self,
         id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         self.element.request_layout(id, window, cx)
     }
@@ -2681,7 +2681,7 @@ where
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> E::PrepaintState {
         self.element.prepaint(id, bounds, state, window, cx)
     }
@@ -2693,7 +2693,7 @@ where
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.element
             .paint(id, bounds, request_layout, prepaint, window, cx)
@@ -2767,7 +2767,7 @@ where
         &mut self,
         id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         self.element.request_layout(id, window, cx)
     }
@@ -2778,7 +2778,7 @@ where
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> E::PrepaintState {
         self.element.prepaint(id, bounds, state, window, cx)
     }
@@ -2790,7 +2790,7 @@ where
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.element
             .paint(id, bounds, request_layout, prepaint, window, cx);
@@ -2835,7 +2835,7 @@ impl ScrollAnchor {
         }
     }
     /// Request scroll to this item on the next frame.
-    pub fn scroll_to(&self, window: &mut Window, _cx: &mut AppContext) {
+    pub fn scroll_to(&self, window: &mut Window, _cx: &mut App) {
         let this = self.clone();
 
         window.on_next_frame(move |_, _| {

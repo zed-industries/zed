@@ -1,6 +1,6 @@
 use gpui::{
     black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black, white, App,
-    AppContext, Bounds, CursorStyle, Decorations, Hsla, ModelContext, MouseButton, Pixels, Point,
+    Application, Bounds, CursorStyle, Decorations, Hsla, Context, MouseButton, Pixels, Point,
     ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
     WindowOptions,
 };
@@ -14,7 +14,7 @@ struct WindowShadow {}
 // 3. We need to implement the techniques in here in Zed
 
 impl Render for WindowShadow {
-    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let decorations = window.window_decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
@@ -203,7 +203,7 @@ fn resize_edge(pos: Point<Pixels>, shadow_size: Pixels, size: Size<Pixels>) -> O
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(600.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -213,7 +213,7 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                cx.new_model(|cx| {
+                cx.new(|cx| {
                     cx.observe_window_appearance(window, |_, window, _| {
                         window.refresh();
                     })

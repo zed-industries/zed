@@ -1,6 +1,5 @@
 use gpui::{
-    actions, div, prelude::*, AppContext, FocusHandle, KeyBinding, Model, Render, Subscription,
-    Window,
+    actions, div, prelude::*, App, Entity, FocusHandle, KeyBinding, Render, Subscription, Window,
 };
 use ui::prelude::*;
 
@@ -14,14 +13,14 @@ pub struct FocusStory {
 }
 
 impl FocusStory {
-    pub fn model(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
+    pub fn model(window: &mut Window, cx: &mut App) -> Entity<Self> {
         cx.bind_keys([
             KeyBinding::new("cmd-a", ActionA, Some("parent")),
             KeyBinding::new("cmd-a", ActionB, Some("child-1")),
             KeyBinding::new("cmd-c", ActionC, None),
         ]);
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let parent_focus = cx.focus_handle();
             let child_1_focus = cx.focus_handle();
             let child_2_focus = cx.focus_handle();
@@ -57,7 +56,7 @@ impl FocusStory {
 }
 
 impl Render for FocusStory {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let color_1 = theme.status().created;
         let color_2 = theme.status().modified;

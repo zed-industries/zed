@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use gpui::{AppContext, FontFeatures, FontWeight};
+use gpui::{App, FontFeatures, FontWeight};
 use settings::{EditableSettingControl, Settings};
 use theme::{FontFamilyCache, SystemAppearance, ThemeMode, ThemeRegistry, ThemeSettings};
 use ui::{
@@ -18,7 +18,7 @@ impl AppearanceSettingsControls {
 }
 
 impl RenderOnce for AppearanceSettingsControls {
-    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         SettingsContainer::new()
             .child(
                 SettingsGroup::new("Theme").child(
@@ -55,7 +55,7 @@ impl EditableSettingControl for ThemeControl {
         "Theme".into()
     }
 
-    fn read(cx: &AppContext) -> Self::Value {
+    fn read(cx: &App) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
         let appearance = SystemAppearance::global(cx);
         settings
@@ -68,7 +68,7 @@ impl EditableSettingControl for ThemeControl {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let appearance = SystemAppearance::global(cx);
         settings.set_theme(value, appearance.0);
@@ -76,7 +76,7 @@ impl EditableSettingControl for ThemeControl {
 }
 
 impl RenderOnce for ThemeControl {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         DropdownMenu::new(
@@ -118,7 +118,7 @@ impl EditableSettingControl for ThemeModeControl {
         "Theme Mode".into()
     }
 
-    fn read(cx: &AppContext) -> Self::Value {
+    fn read(cx: &App) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
         settings
             .theme_selection
@@ -130,14 +130,14 @@ impl EditableSettingControl for ThemeModeControl {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        _cx: &AppContext,
+        _cx: &App,
     ) {
         settings.set_mode(value);
     }
 }
 
 impl RenderOnce for ThemeModeControl {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -179,7 +179,7 @@ impl EditableSettingControl for UiFontFamilyControl {
         "UI Font Family".into()
     }
 
-    fn read(cx: &AppContext) -> Self::Value {
+    fn read(cx: &App) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
         settings.ui_font.family.clone()
     }
@@ -187,14 +187,14 @@ impl EditableSettingControl for UiFontFamilyControl {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        _cx: &AppContext,
+        _cx: &App,
     ) {
         settings.ui_font_family = Some(value.to_string());
     }
 }
 
 impl RenderOnce for UiFontFamilyControl {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -238,7 +238,7 @@ impl EditableSettingControl for UiFontSizeControl {
         "UI Font Size".into()
     }
 
-    fn read(cx: &AppContext) -> Self::Value {
+    fn read(cx: &App) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
         settings.ui_font_size
     }
@@ -246,14 +246,14 @@ impl EditableSettingControl for UiFontSizeControl {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        _cx: &AppContext,
+        _cx: &App,
     ) {
         settings.ui_font_size = Some(value.into());
     }
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -283,7 +283,7 @@ impl EditableSettingControl for UiFontWeightControl {
         "UI Font Weight".into()
     }
 
-    fn read(cx: &AppContext) -> Self::Value {
+    fn read(cx: &App) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
         settings.ui_font.weight
     }
@@ -291,14 +291,14 @@ impl EditableSettingControl for UiFontWeightControl {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        _cx: &AppContext,
+        _cx: &App,
     ) {
         settings.ui_font_weight = Some(value.0);
     }
 }
 
 impl RenderOnce for UiFontWeightControl {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -336,7 +336,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
         "UI Font Ligatures".into()
     }
 
-    fn read(cx: &AppContext) -> Self::Value {
+    fn read(cx: &App) -> Self::Value {
         let settings = ThemeSettings::get_global(cx);
         settings.ui_font.features.is_calt_enabled().unwrap_or(true)
     }
@@ -344,7 +344,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        _cx: &AppContext,
+        _cx: &App,
     ) {
         let value = if value { 1 } else { 0 };
 
@@ -365,7 +365,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
 }
 
 impl RenderOnce for UiFontLigaturesControl {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(

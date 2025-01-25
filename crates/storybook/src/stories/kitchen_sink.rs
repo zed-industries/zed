@@ -1,4 +1,4 @@
-use gpui::{prelude::*, Model, Render};
+use gpui::{prelude::*, Entity, Render};
 use story::Story;
 use strum::IntoEnumIterator;
 use ui::prelude::*;
@@ -8,13 +8,13 @@ use crate::story_selector::ComponentStory;
 pub struct KitchenSinkStory;
 
 impl KitchenSinkStory {
-    pub fn model(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self)
+    pub fn model(cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self)
     }
 }
 
 impl Render for KitchenSinkStory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let component_stories = ComponentStory::iter()
             .map(|selector| selector.story(window, cx))
             .collect::<Vec<_>>();

@@ -1,5 +1,5 @@
 use crate::{
-    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds,
+    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
@@ -49,7 +49,7 @@ pub enum ImageSource {
         Arc<
             dyn Fn(
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> Option<Result<Arc<RenderImage>, ImageCacheError>>,
         >,
     ),
@@ -122,7 +122,7 @@ impl From<Arc<Image>> for ImageSource {
 }
 
 impl<
-        F: Fn(&mut Window, &mut AppContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>
+        F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>
             + 'static,
     > From<F> for ImageSource
 {
@@ -258,7 +258,7 @@ impl Element for Img {
         &mut self,
         global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut layout_state = ImgLayoutState {
             frame_index: 0,
@@ -391,7 +391,7 @@ impl Element for Img {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self::PrepaintState {
         self.interactivity.prepaint(
             global_id,
@@ -416,7 +416,7 @@ impl Element for Img {
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let source = self.source.clone();
         self.interactivity.paint(
@@ -478,7 +478,7 @@ impl ImageSource {
     pub(crate) fn use_data(
         &self,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
             ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
@@ -498,7 +498,7 @@ impl Asset for ImageDecoder {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let renderer = cx.svg_renderer();
         async move { source.to_image_data(renderer).map_err(Into::into) }
@@ -515,7 +515,7 @@ impl Asset for ImageAssetLoader {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?

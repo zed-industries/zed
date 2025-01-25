@@ -3,7 +3,7 @@ use alacritty_terminal::vte::ansi::{
 };
 use collections::HashMap;
 use gpui::{
-    px, AbsoluteLength, AppContext, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
+    px, AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, SharedString,
 };
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde_derive::{Deserialize, Serialize};
@@ -232,7 +232,7 @@ impl settings::Settings for TerminalSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
@@ -240,7 +240,7 @@ impl settings::Settings for TerminalSettings {
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
-        _: &AppContext,
+        _: &App,
     ) -> RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
         root_schema.definitions.extend([

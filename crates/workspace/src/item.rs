@@ -13,9 +13,8 @@ use client::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Font,
-    HighlightStyle, Model, ModelContext, Pixels, Point, Render, SharedString, Task, WeakModel,
-    Window,
+    AnyElement, AnyView, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -130,7 +129,7 @@ impl Settings for ItemSettings {
 
     type FileContent = ItemSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
@@ -140,7 +139,7 @@ impl Settings for PreviewTabsSettings {
 
     type FileContent = PreviewTabsSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
@@ -180,7 +179,7 @@ impl TabContentParams {
 
 pub enum TabTooltipContent {
     Text(SharedString),
-    Custom(Box<dyn Fn(&mut Window, &mut AppContext) -> AnyView>),
+    Custom(Box<dyn Fn(&mut Window, &mut App) -> AnyView>),
 }
 
 pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
@@ -190,12 +189,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     ///
     /// By default this returns a [`Label`] that displays that text from
     /// `tab_content_text`.
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &Window,
-        cx: &AppContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         let Some(text) = self.tab_content_text(window, cx) else {
             return gpui::Empty.into_any();
         };
@@ -208,18 +202,18 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// Returns the textual contents of the tab.
     ///
     /// Use this if you don't need to customize the tab contents.
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         None
     }
 
-    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         None
     }
 
     /// Returns the tab tooltip text.
     ///
     /// Use this if you don't need to customize the tab tooltip content.
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         None
     }
 
@@ -227,31 +221,20 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     ///
     /// By default this returns a Tooltip text from
     /// `tab_tooltip_text`.
-    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
     }
 
-    fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
+    fn tab_description(&self, _: usize, _: &App) -> Option<SharedString> {
         None
     }
 
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
-    fn deactivated(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) {}
-    fn discarded(
-        &self,
-        _project: Model<Project>,
-        _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
-    ) {
-    }
-    fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut ModelContext<Self>) {}
-    fn navigate(
-        &mut self,
-        _: Box<dyn Any>,
-        _window: &mut Window,
-        _: &mut ModelContext<Self>,
-    ) -> bool {
+    fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
+    fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    fn navigate(&mut self, _: Box<dyn Any>, _window: &mut Window, _: &mut Context<Self>) -> bool {
         false
     }
 
@@ -262,66 +245,60 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     /// (model id, Item)
     fn for_each_project_item(
         &self,
-        _: &AppContext,
+        _: &App,
         _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
     }
-    fn is_singleton(&self, _cx: &AppContext) -> bool {
+    fn is_singleton(&self, _cx: &App) -> bool {
         false
     }
-    fn set_nav_history(
-        &mut self,
-        _: ItemNavHistory,
-        _window: &mut Window,
-        _: &mut ModelContext<Self>,
-    ) {
-    }
+    fn set_nav_history(&mut self, _: ItemNavHistory, _window: &mut Window, _: &mut Context<Self>) {}
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        _: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
         None
     }
-    fn is_dirty(&self, _: &AppContext) -> bool {
+    fn is_dirty(&self, _: &App) -> bool {
         false
     }
-    fn has_deleted_file(&self, _: &AppContext) -> bool {
+    fn has_deleted_file(&self, _: &App) -> bool {
         false
     }
-    fn has_conflict(&self, _: &AppContext) -> bool {
+    fn has_conflict(&self, _: &App) -> bool {
         false
     }
-    fn can_save(&self, _cx: &AppContext) -> bool {
+    fn can_save(&self, _cx: &App) -> bool {
         false
     }
     fn save(
         &mut self,
         _format: bool,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save() must be implemented if can_save() returns true")
     }
     fn save_as(
         &mut self,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         _path: ProjectPath,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("save_as() must be implemented if can_save() returns true")
     }
     fn reload(
         &mut self,
-        _project: Model<Project>,
+        _project: Entity<Project>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
     }
@@ -329,8 +306,8 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a Model<Self>,
-        _: &'a AppContext,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
     ) -> Option<AnyView> {
         if TypeId::of::<Self>() == type_id {
             Some(self_handle.clone().into())
@@ -339,15 +316,15 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         }
     }
 
-    fn as_searchable(&self, _: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         None
     }
 
-    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _theme: &Theme, _cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _theme: &Theme, _cx: &App) -> Option<Vec<BreadcrumbText>> {
         None
     }
 
@@ -355,7 +332,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         &mut self,
         _workspace: &mut Workspace,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
     }
 
@@ -363,11 +340,11 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         true
     }
 
-    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
+    fn pixel_position_of_cursor(&self, _: &App) -> Option<Point<Pixels>> {
         None
     }
 
-    fn preserve_preview(&self, _cx: &AppContext) -> bool {
+    fn preserve_preview(&self, _cx: &App) -> bool {
         false
     }
 
@@ -383,17 +360,17 @@ pub trait SerializableItem: Item {
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>>;
 
     fn deserialize(
-        _project: Model<Project>,
-        _workspace: WeakModel<Workspace>,
+        _project: Entity<Project>,
+        _workspace: WeakEntity<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
         _window: &mut Window,
-        _cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>>;
+        _cx: &mut App,
+    ) -> Task<Result<Entity<Self>>>;
 
     fn serialize(
         &mut self,
@@ -401,7 +378,7 @@ pub trait SerializableItem: Item {
         item_id: ItemId,
         closing: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>>;
 
     fn should_serialize(&self, event: &Self::Event) -> bool;
@@ -414,12 +391,12 @@ pub trait SerializableItemHandle: ItemHandle {
         workspace: &mut Workspace,
         closing: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<Result<()>>>;
-    fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool;
+    fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool;
 }
 
-impl<T> SerializableItemHandle for Model<T>
+impl<T> SerializableItemHandle for Entity<T>
 where
     T: SerializableItem,
 {
@@ -432,14 +409,14 @@ where
         workspace: &mut Workspace,
         closing: bool,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<Result<()>>> {
         self.update(cx, |this, cx| {
             this.serialize(workspace, cx.entity_id().as_u64(), closing, window, cx)
         })
     }
 
-    fn should_serialize(&self, event: &dyn Any, cx: &AppContext) -> bool {
+    fn should_serialize(&self, event: &dyn Any, cx: &App) -> bool {
         event
             .downcast_ref::<T::Event>()
             .map_or(false, |event| self.read(cx).should_serialize(event))
@@ -447,99 +424,95 @@ where
 }
 
 pub trait ItemHandle: 'static + Send {
-    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle;
+    fn item_focus_handle(&self, cx: &App) -> FocusHandle;
     fn subscribe_to_item_events(
         &self,
         window: &mut Window,
-        cx: &mut AppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
+        cx: &mut App,
+        handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription;
-    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext)
-        -> AnyElement;
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon>;
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
-    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent>;
-    fn telemetry_event_text(&self, cx: &AppContext) -> Option<&'static str>;
+    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString>;
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement;
+    fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon>;
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString>;
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent>;
+    fn telemetry_event_text(&self, cx: &App) -> Option<&'static str>;
     fn dragged_tab_content(
         &self,
         params: TabContentParams,
         window: &Window,
-        cx: &AppContext,
+        cx: &App,
     ) -> AnyElement;
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
-    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
-    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
+    fn project_path(&self, cx: &App) -> Option<ProjectPath>;
+    fn project_entry_ids(&self, cx: &App) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_paths(&self, cx: &App) -> SmallVec<[ProjectPath; 3]>;
+    fn project_item_model_ids(&self, cx: &App) -> SmallVec<[EntityId; 3]>;
     fn for_each_project_item(
         &self,
-        _: &AppContext,
+        _: &App,
         _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     );
-    fn is_singleton(&self, cx: &AppContext) -> bool;
+    fn is_singleton(&self, cx: &App) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Box<dyn ItemHandle>>;
     fn added_to_pane(
         &self,
         workspace: &mut Workspace,
-        pane: Model<Pane>,
+        pane: Entity<Pane>,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     );
-    fn deactivated(&self, window: &mut Window, cx: &mut AppContext);
-    fn discarded(&self, project: Model<Project>, window: &mut Window, cx: &mut AppContext);
-    fn workspace_deactivated(&self, window: &mut Window, cx: &mut AppContext);
-    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut AppContext) -> bool;
+    fn deactivated(&self, window: &mut Window, cx: &mut App);
+    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App);
+    fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
+    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
     fn to_any(&self) -> AnyView;
-    fn is_dirty(&self, cx: &AppContext) -> bool;
-    fn has_deleted_file(&self, cx: &AppContext) -> bool;
-    fn has_conflict(&self, cx: &AppContext) -> bool;
-    fn can_save(&self, cx: &AppContext) -> bool;
+    fn is_dirty(&self, cx: &App) -> bool;
+    fn has_deleted_file(&self, cx: &App) -> bool;
+    fn has_conflict(&self, cx: &App) -> bool;
+    fn can_save(&self, cx: &App) -> bool;
     fn save(
         &self,
         format: bool,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>>;
     fn save_as(
         &self,
-        project: Model<Project>,
+        project: Entity<Project>,
         path: ProjectPath,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>>;
     fn reload(
         &self,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>>;
-    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyView>;
-    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>>;
-    fn to_serializable_item_handle(
-        &self,
-        cx: &AppContext,
-    ) -> Option<Box<dyn SerializableItemHandle>>;
+    fn act_as_type(&self, type_id: TypeId, cx: &App) -> Option<AnyView>;
+    fn to_followable_item_handle(&self, cx: &App) -> Option<Box<dyn FollowableItemHandle>>;
+    fn to_serializable_item_handle(&self, cx: &App) -> Option<Box<dyn SerializableItemHandle>>;
     fn on_release(
         &self,
-        cx: &mut AppContext,
-        callback: Box<dyn FnOnce(&mut AppContext) + Send>,
+        cx: &mut App,
+        callback: Box<dyn FnOnce(&mut App) + Send>,
     ) -> gpui::Subscription;
-    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>>;
-    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>>;
-    fn show_toolbar(&self, cx: &AppContext) -> bool;
-    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
+    fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
+    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn show_toolbar(&self, cx: &App) -> bool;
+    fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
-    fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
-    fn preserve_preview(&self, cx: &AppContext) -> bool;
+    fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings;
+    fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
 }
 
@@ -550,58 +523,53 @@ pub trait WeakItemHandle: Send + Sync {
 }
 
 impl dyn ItemHandle {
-    pub fn downcast<V: 'static>(&self) -> Option<Model<V>> {
+    pub fn downcast<V: 'static>(&self) -> Option<Entity<V>> {
         self.to_any().downcast().ok()
     }
 
-    pub fn act_as<V: 'static>(&self, cx: &AppContext) -> Option<Model<V>> {
+    pub fn act_as<V: 'static>(&self, cx: &App) -> Option<Entity<V>> {
         self.act_as_type(TypeId::of::<V>(), cx)
             .and_then(|t| t.downcast().ok())
     }
 }
 
-impl<T: Item> ItemHandle for Model<T> {
+impl<T: Item> ItemHandle for Entity<T> {
     fn subscribe_to_item_events(
         &self,
         window: &mut Window,
-        cx: &mut AppContext,
-        handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
+        cx: &mut App,
+        handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription {
         window.subscribe(self, cx, move |_, event, window, cx| {
             T::to_item_events(event, |item_event| handler(item_event, window, cx));
         })
     }
 
-    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn item_focus_handle(&self, cx: &App) -> FocusHandle {
         self.read(cx).focus_handle(cx)
     }
 
-    fn telemetry_event_text(&self, cx: &AppContext) -> Option<&'static str> {
+    fn telemetry_event_text(&self, cx: &App) -> Option<&'static str> {
         self.read(cx).telemetry_event_text()
     }
 
-    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString> {
+    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
         self.read(cx).tab_description(detail, cx)
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &Window,
-        cx: &AppContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &App) -> AnyElement {
         self.read(cx).tab_content(params, window, cx)
     }
 
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &App) -> Option<Icon> {
         self.read(cx).tab_icon(window, cx)
     }
 
-    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         self.read(cx).tab_tooltip_content(cx)
     }
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
@@ -609,7 +577,7 @@ impl<T: Item> ItemHandle for Model<T> {
         &self,
         params: TabContentParams,
         window: &Window,
-        cx: &AppContext,
+        cx: &App,
     ) -> AnyElement {
         self.read(cx).tab_content(
             TabContentParams {
@@ -621,7 +589,7 @@ impl<T: Item> ItemHandle for Model<T> {
         )
     }
 
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
         let this = self.read(cx);
         let mut result = None;
         if this.is_singleton(cx) {
@@ -632,7 +600,7 @@ impl<T: Item> ItemHandle for Model<T> {
         result
     }
 
-    fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings {
+    fn workspace_settings<'a>(&self, cx: &'a App) -> &'a WorkspaceSettings {
         if let Some(project_path) = self.project_path(cx) {
             WorkspaceSettings::get(
                 Some(SettingsLocation {
@@ -646,7 +614,7 @@ impl<T: Item> ItemHandle for Model<T> {
         }
     }
 
-    fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]> {
+    fn project_entry_ids(&self, cx: &App) -> SmallVec<[ProjectEntryId; 3]> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
             if let Some(id) = item.entry_id(cx) {
@@ -656,7 +624,7 @@ impl<T: Item> ItemHandle for Model<T> {
         result
     }
 
-    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]> {
+    fn project_paths(&self, cx: &App) -> SmallVec<[ProjectPath; 3]> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
             if let Some(id) = item.project_path(cx) {
@@ -666,7 +634,7 @@ impl<T: Item> ItemHandle for Model<T> {
         result
     }
 
-    fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]> {
+    fn project_item_model_ids(&self, cx: &App) -> SmallVec<[EntityId; 3]> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |id, _| {
             result.push(id);
@@ -676,13 +644,13 @@ impl<T: Item> ItemHandle for Model<T> {
 
     fn for_each_project_item(
         &self,
-        cx: &AppContext,
+        cx: &App,
         f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.read(cx).for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, cx: &AppContext) -> bool {
+    fn is_singleton(&self, cx: &App) -> bool {
         self.read(cx).is_singleton(cx)
     }
 
@@ -694,7 +662,7 @@ impl<T: Item> ItemHandle for Model<T> {
         &self,
         workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Box<dyn ItemHandle>> {
         self.update(cx, |item, cx| item.clone_on_split(workspace_id, window, cx))
             .map(|handle| Box::new(handle) as Box<dyn ItemHandle>)
@@ -703,9 +671,9 @@ impl<T: Item> ItemHandle for Model<T> {
     fn added_to_pane(
         &self,
         workspace: &mut Workspace,
-        pane: Model<Pane>,
+        pane: Entity<Pane>,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let weak_item = self.downgrade();
         let history = pane.read(cx).nav_history_for_item(self);
@@ -769,7 +737,7 @@ impl<T: Item> ItemHandle for Model<T> {
             let mut event_subscription = Some(cx.subscribe_in(
                 self,
                 window,
-                move |workspace, item: &Model<T>, event, window, cx| {
+                move |workspace, item: &Entity<T>, event, window, cx| {
                     let pane = if let Some(pane) = workspace
                         .panes_by_item
                         .get(&item.item_id())
@@ -882,19 +850,19 @@ impl<T: Item> ItemHandle for Model<T> {
         });
     }
 
-    fn discarded(&self, project: Model<Project>, window: &mut Window, cx: &mut AppContext) {
+    fn discarded(&self, project: Entity<Project>, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.discarded(project, window, cx));
     }
 
-    fn deactivated(&self, window: &mut Window, cx: &mut AppContext) {
+    fn deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.deactivated(window, cx));
     }
 
-    fn workspace_deactivated(&self, window: &mut Window, cx: &mut AppContext) {
+    fn workspace_deactivated(&self, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| this.workspace_deactivated(window, cx));
     }
 
-    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut AppContext) -> bool {
+    fn navigate(&self, data: Box<dyn Any>, window: &mut Window, cx: &mut App) -> bool {
         self.update(cx, |this, cx| this.navigate(data, window, cx))
     }
 
@@ -906,84 +874,84 @@ impl<T: Item> ItemHandle for Model<T> {
         self.clone().into()
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
+    fn is_dirty(&self, cx: &App) -> bool {
         self.read(cx).is_dirty(cx)
     }
 
-    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+    fn has_deleted_file(&self, cx: &App) -> bool {
         self.read(cx).has_deleted_file(cx)
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
+    fn has_conflict(&self, cx: &App) -> bool {
         self.read(cx).has_conflict(cx)
     }
 
-    fn can_save(&self, cx: &AppContext) -> bool {
+    fn can_save(&self, cx: &App) -> bool {
         self.read(cx).can_save(cx)
     }
 
     fn save(
         &self,
         format: bool,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(format, project, window, cx))
     }
 
     fn save_as(
         &self,
-        project: Model<Project>,
+        project: Entity<Project>,
         path: ProjectPath,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
         self.update(cx, |item, cx| item.save_as(project, path, window, cx))
     }
 
     fn reload(
         &self,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, window, cx))
     }
 
-    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a AppContext) -> Option<AnyView> {
+    fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a App) -> Option<AnyView> {
         self.read(cx).act_as_type(type_id, self, cx)
     }
 
-    fn to_followable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn FollowableItemHandle>> {
+    fn to_followable_item_handle(&self, cx: &App) -> Option<Box<dyn FollowableItemHandle>> {
         FollowableViewRegistry::to_followable_view(self.clone(), cx)
     }
 
     fn on_release(
         &self,
-        cx: &mut AppContext,
-        callback: Box<dyn FnOnce(&mut AppContext) + Send>,
+        cx: &mut App,
+        callback: Box<dyn FnOnce(&mut App) + Send>,
     ) -> gpui::Subscription {
         cx.observe_release(self, move |_, cx| callback(cx))
     }
 
-    fn to_searchable_item_handle(&self, cx: &AppContext) -> Option<Box<dyn SearchableItemHandle>> {
+    fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
         self.read(cx).as_searchable(self)
     }
 
-    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
         self.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, theme: &Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.read(cx).breadcrumbs(theme, cx)
     }
 
-    fn show_toolbar(&self, cx: &AppContext) -> bool {
+    fn show_toolbar(&self, cx: &App) -> bool {
         self.read(cx).show_toolbar()
     }
 
-    fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>> {
+    fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>> {
         self.read(cx).pixel_position_of_cursor(cx)
     }
 
@@ -991,14 +959,11 @@ impl<T: Item> ItemHandle for Model<T> {
         Box::new(self.downgrade())
     }
 
-    fn to_serializable_item_handle(
-        &self,
-        cx: &AppContext,
-    ) -> Option<Box<dyn SerializableItemHandle>> {
+    fn to_serializable_item_handle(&self, cx: &App) -> Option<Box<dyn SerializableItemHandle>> {
         SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
     }
 
-    fn preserve_preview(&self, cx: &AppContext) -> bool {
+    fn preserve_preview(&self, cx: &App) -> bool {
         self.read(cx).preserve_preview(cx)
     }
 
@@ -1025,7 +990,7 @@ impl Clone for Box<dyn ItemHandle> {
     }
 }
 
-impl<T: Item> WeakItemHandle for WeakModel<T> {
+impl<T: Item> WeakItemHandle for WeakEntity<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
     }
@@ -1043,10 +1008,10 @@ pub trait ProjectItem: Item {
     type Item: project::ProjectItem;
 
     fn for_project_item(
-        project: Model<Project>,
-        item: Model<Self::Item>,
+        project: Entity<Project>,
+        item: Entity<Self::Item>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self
     where
         Self: Sized;
@@ -1064,89 +1029,70 @@ pub enum Dedup {
 
 pub trait FollowableItem: Item {
     fn remote_id(&self) -> Option<ViewId>;
-    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant>;
+    fn to_state_proto(&self, window: &Window, cx: &App) -> Option<proto::view::Variant>;
     fn from_state_proto(
-        project: Model<Workspace>,
+        project: Entity<Workspace>,
         id: ViewId,
         state: &mut Option<proto::view::Variant>,
         window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<Task<Result<Model<Self>>>>;
+        cx: &mut App,
+    ) -> Option<Task<Result<Entity<Self>>>>;
     fn to_follow_event(event: &Self::Event) -> Option<FollowEvent>;
     fn add_event_to_update_proto(
         &self,
         event: &Self::Event,
         update: &mut Option<proto::update_view::Variant>,
         window: &Window,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool;
     fn apply_update_proto(
         &mut self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         message: proto::update_view::Variant,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>>;
-    fn is_project_item(&self, window: &Window, cx: &AppContext) -> bool;
+    fn is_project_item(&self, window: &Window, cx: &App) -> bool;
     fn set_leader_peer_id(
         &mut self,
         leader_peer_id: Option<PeerId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     );
-    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup>;
+    fn dedup(&self, existing: &Self, window: &Window, cx: &App) -> Option<Dedup>;
 }
 
 pub trait FollowableItemHandle: ItemHandle {
-    fn remote_id(
-        &self,
-        client: &Arc<Client>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<ViewId>;
+    fn remote_id(&self, client: &Arc<Client>, window: &mut Window, cx: &mut App) -> Option<ViewId>;
     fn downgrade(&self) -> Box<dyn WeakFollowableItemHandle>;
-    fn set_leader_peer_id(
-        &self,
-        leader_peer_id: Option<PeerId>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    );
-    fn to_state_proto(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<proto::view::Variant>;
+    fn set_leader_peer_id(&self, leader_peer_id: Option<PeerId>, window: &mut Window, cx: &mut App);
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant>;
     fn add_event_to_update_proto(
         &self,
         event: &dyn Any,
         update: &mut Option<proto::update_view::Variant>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> bool;
     fn to_follow_event(&self, event: &dyn Any) -> Option<FollowEvent>;
     fn apply_update_proto(
         &self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         message: proto::update_view::Variant,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>>;
-    fn is_project_item(&self, window: &mut Window, cx: &mut AppContext) -> bool;
+    fn is_project_item(&self, window: &mut Window, cx: &mut App) -> bool;
     fn dedup(
         &self,
         existing: &dyn FollowableItemHandle,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Dedup>;
 }
 
-impl<T: FollowableItem> FollowableItemHandle for Model<T> {
-    fn remote_id(
-        &self,
-        client: &Arc<Client>,
-        _: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<ViewId> {
+impl<T: FollowableItem> FollowableItemHandle for Entity<T> {
+    fn remote_id(&self, client: &Arc<Client>, _: &mut Window, cx: &mut App) -> Option<ViewId> {
         self.read(cx).remote_id().or_else(|| {
             client.peer_id().map(|creator| ViewId {
                 creator,
@@ -1163,18 +1109,14 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         &self,
         leader_peer_id: Option<PeerId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
             this.set_leader_peer_id(leader_peer_id, window, cx)
         })
     }
 
-    fn to_state_proto(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, window: &mut Window, cx: &mut App) -> Option<proto::view::Variant> {
         self.read(cx).to_state_proto(window, cx)
     }
 
@@ -1183,7 +1125,7 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         event: &dyn Any,
         update: &mut Option<proto::update_view::Variant>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> bool {
         if let Some(event) = event.downcast_ref() {
             self.read(cx)
@@ -1199,17 +1141,17 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
 
     fn apply_update_proto(
         &self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         message: proto::update_view::Variant,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         self.update(cx, |this, cx| {
             this.apply_update_proto(project, message, window, cx)
         })
     }
 
-    fn is_project_item(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    fn is_project_item(&self, window: &mut Window, cx: &mut App) -> bool {
         self.read(cx).is_project_item(window, cx)
     }
 
@@ -1217,7 +1159,7 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
         &self,
         existing: &dyn FollowableItemHandle,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Dedup> {
         let existing = existing.to_any().downcast::<T>().ok()?;
         self.read(cx).dedup(existing.read(cx), window, cx)
@@ -1228,7 +1170,7 @@ pub trait WeakFollowableItemHandle: Send + Sync {
     fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>>;
 }
 
-impl<T: FollowableItem> WeakFollowableItemHandle for WeakModel<T> {
+impl<T: FollowableItem> WeakFollowableItemHandle for WeakEntity<T> {
     fn upgrade(&self) -> Option<Box<dyn FollowableItemHandle>> {
         Some(Box::new(self.upgrade()?))
     }
@@ -1239,9 +1181,8 @@ pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AppContext, Context as _, EntityId, EventEmitter, Focusable,
-        InteractiveElement, IntoElement, Model, ModelContext, Render, SharedString, Task,
-        WeakModel, Window,
+        AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
+        InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -1262,7 +1203,7 @@ pub mod test {
         pub is_dirty: bool,
         pub is_singleton: bool,
         pub has_conflict: bool,
-        pub project_items: Vec<Model<TestProjectItem>>,
+        pub project_items: Vec<Entity<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
         pub tab_detail: Cell<Option<usize>>,
@@ -1272,17 +1213,17 @@ pub mod test {
 
     impl project::ProjectItem for TestProjectItem {
         fn try_open(
-            _project: &Model<Project>,
+            _project: &Entity<Project>,
             _path: &ProjectPath,
-            _cx: &mut AppContext,
-        ) -> Option<Task<gpui::Result<Model<Self>>>> {
+            _cx: &mut App,
+        ) -> Option<Task<gpui::Result<Entity<Self>>>> {
             None
         }
-        fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+        fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
             self.entry_id
         }
 
-        fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+        fn project_path(&self, _: &App) -> Option<ProjectPath> {
             self.project_path.clone()
         }
 
@@ -1296,21 +1237,21 @@ pub mod test {
     }
 
     impl TestProjectItem {
-        pub fn new(id: u64, path: &str, cx: &mut AppContext) -> Model<Self> {
+        pub fn new(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
                 worktree_id: WorktreeId::from_usize(0),
                 path: Path::new(path).into(),
             });
-            cx.new_model(|_| Self {
+            cx.new(|_| Self {
                 entry_id,
                 project_path,
                 is_dirty: false,
             })
         }
 
-        pub fn new_untitled(cx: &mut AppContext) -> Model<Self> {
-            cx.new_model(|_| Self {
+        pub fn new_untitled(cx: &mut App) -> Entity<Self> {
+            cx.new(|_| Self {
                 project_path: None,
                 entry_id: None,
                 is_dirty: false,
@@ -1319,7 +1260,7 @@ pub mod test {
     }
 
     impl TestItem {
-        pub fn new(cx: &mut ModelContext<Self>) -> Self {
+        pub fn new(cx: &mut Context<Self>) -> Self {
             Self {
                 state: String::new(),
                 label: String::new(),
@@ -1339,7 +1280,7 @@ pub mod test {
             }
         }
 
-        pub fn new_deserialized(id: WorkspaceId, cx: &mut ModelContext<Self>) -> Self {
+        pub fn new_deserialized(id: WorkspaceId, cx: &mut Context<Self>) -> Self {
             let mut this = Self::new(cx);
             this.workspace_id = Some(id);
             this
@@ -1365,7 +1306,7 @@ pub mod test {
             self
         }
 
-        pub fn with_project_items(mut self, items: &[Model<TestProjectItem>]) -> Self {
+        pub fn with_project_items(mut self, items: &[Entity<TestProjectItem>]) -> Self {
             self.project_items.clear();
             self.project_items.extend(items.iter().cloned());
             self
@@ -1379,12 +1320,12 @@ pub mod test {
             self
         }
 
-        pub fn set_state(&mut self, state: String, cx: &mut ModelContext<Self>) {
+        pub fn set_state(&mut self, state: String, cx: &mut Context<Self>) {
             self.push_to_nav_history(cx);
             self.state = state;
         }
 
-        fn push_to_nav_history(&mut self, cx: &mut ModelContext<Self>) {
+        fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
                 history.push(Some(Box::new(self.state.clone())), cx);
             }
@@ -1392,11 +1333,7 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        fn render(
-            &mut self,
-            _window: &mut Window,
-            cx: &mut ModelContext<Self>,
-        ) -> impl IntoElement {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             gpui::div().track_focus(&self.focus_handle(cx))
         }
     }
@@ -1404,7 +1341,7 @@ pub mod test {
     impl EventEmitter<ItemEvent> for TestItem {}
 
     impl Focusable for TestItem {
-        fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+        fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
             self.focus_handle.clone()
         }
     }
@@ -1416,7 +1353,7 @@ pub mod test {
             f(*event)
         }
 
-        fn tab_description(&self, detail: usize, _: &AppContext) -> Option<SharedString> {
+        fn tab_description(&self, detail: usize, _: &App) -> Option<SharedString> {
             self.tab_descriptions.as_ref().and_then(|descriptions| {
                 let description = *descriptions.get(detail).or_else(|| descriptions.last())?;
                 Some(description.into())
@@ -1427,19 +1364,14 @@ pub mod test {
             None
         }
 
-        fn tab_content(
-            &self,
-            params: TabContentParams,
-            _window: &Window,
-            _cx: &AppContext,
-        ) -> AnyElement {
+        fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
             self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }
 
         fn for_each_project_item(
             &self,
-            cx: &AppContext,
+            cx: &App,
             f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
         ) {
             self.project_items
@@ -1447,7 +1379,7 @@ pub mod test {
                 .for_each(|item| f(item.entity_id(), item.read(cx)))
         }
 
-        fn is_singleton(&self, _: &AppContext) -> bool {
+        fn is_singleton(&self, _: &App) -> bool {
             self.is_singleton
         }
 
@@ -1455,7 +1387,7 @@ pub mod test {
             &mut self,
             history: ItemNavHistory,
             _window: &mut Window,
-            _: &mut ModelContext<Self>,
+            _: &mut Context<Self>,
         ) {
             self.nav_history = Some(history);
         }
@@ -1464,7 +1396,7 @@ pub mod test {
             &mut self,
             state: Box<dyn Any>,
             _window: &mut Window,
-            _: &mut ModelContext<Self>,
+            _: &mut Context<Self>,
         ) -> bool {
             let state = *state.downcast::<String>().unwrap_or_default();
             if state != self.state {
@@ -1475,7 +1407,7 @@ pub mod test {
             }
         }
 
-        fn deactivated(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
+        fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
             self.push_to_nav_history(cx);
         }
 
@@ -1483,12 +1415,12 @@ pub mod test {
             &self,
             _workspace_id: Option<WorkspaceId>,
             _: &mut Window,
-            cx: &mut ModelContext<Self>,
-        ) -> Option<Model<Self>>
+            cx: &mut Context<Self>,
+        ) -> Option<Entity<Self>>
         where
             Self: Sized,
         {
-            Some(cx.new_model(|cx| Self {
+            Some(cx.new(|cx| Self {
                 state: self.state.clone(),
                 label: self.label.clone(),
                 save_count: self.save_count,
@@ -1507,15 +1439,15 @@ pub mod test {
             }))
         }
 
-        fn is_dirty(&self, _: &AppContext) -> bool {
+        fn is_dirty(&self, _: &App) -> bool {
             self.is_dirty
         }
 
-        fn has_conflict(&self, _: &AppContext) -> bool {
+        fn has_conflict(&self, _: &App) -> bool {
             self.has_conflict
         }
 
-        fn can_save(&self, cx: &AppContext) -> bool {
+        fn can_save(&self, cx: &App) -> bool {
             !self.project_items.is_empty()
                 && self
                     .project_items
@@ -1526,9 +1458,9 @@ pub mod test {
         fn save(
             &mut self,
             _: bool,
-            _: Model<Project>,
+            _: Entity<Project>,
             _window: &mut Window,
-            _: &mut ModelContext<Self>,
+            _: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_count += 1;
             self.is_dirty = false;
@@ -1537,10 +1469,10 @@ pub mod test {
 
         fn save_as(
             &mut self,
-            _: Model<Project>,
+            _: Entity<Project>,
             _: ProjectPath,
             _window: &mut Window,
-            _: &mut ModelContext<Self>,
+            _: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.save_as_count += 1;
             self.is_dirty = false;
@@ -1549,9 +1481,9 @@ pub mod test {
 
         fn reload(
             &mut self,
-            _: Model<Project>,
+            _: Entity<Project>,
             _window: &mut Window,
-            _: &mut ModelContext<Self>,
+            _: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
             self.reload_count += 1;
             self.is_dirty = false;
@@ -1565,14 +1497,14 @@ pub mod test {
         }
 
         fn deserialize(
-            _project: Model<Project>,
-            _workspace: WeakModel<Workspace>,
+            _project: Entity<Project>,
+            _workspace: WeakEntity<Workspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
             _window: &mut Window,
-            cx: &mut AppContext,
-        ) -> Task<anyhow::Result<Model<Self>>> {
-            let model = cx.new_model(|cx| Self::new_deserialized(workspace_id, cx));
+            cx: &mut App,
+        ) -> Task<anyhow::Result<Entity<Self>>> {
+            let model = cx.new(|cx| Self::new_deserialized(workspace_id, cx));
             Task::ready(Ok(model))
         }
 
@@ -1580,7 +1512,7 @@ pub mod test {
             _workspace_id: WorkspaceId,
             _alive_items: Vec<ItemId>,
             _window: &mut Window,
-            _cx: &mut AppContext,
+            _cx: &mut App,
         ) -> Task<anyhow::Result<()>> {
             Task::ready(Ok(()))
         }
@@ -1591,7 +1523,7 @@ pub mod test {
             _item_id: ItemId,
             _closing: bool,
             _window: &mut Window,
-            _cx: &mut ModelContext<Self>,
+            _cx: &mut Context<Self>,
         ) -> Option<Task<anyhow::Result<()>>> {
             if let Some(serialize) = self.serialize.take() {
                 let result = serialize();

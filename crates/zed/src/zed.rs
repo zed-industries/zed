@@ -23,8 +23,8 @@ use feature_flags::FeatureFlagAppExt;
 use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, Action, AppContext, AsyncAppContext, Context, DismissEvent, Element,
-    Focusable, KeyBinding, MenuItem, Model, ModelContext, ParentElement, PathPromptOptions,
+    actions, point, px, Action, App, AppContext as _, AsyncAppContext, Context, DismissEvent,
+    Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions,
     PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind,
     WindowOptions,
 };
@@ -85,7 +85,7 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
     #[cfg(target_os = "macos")]
@@ -99,7 +99,7 @@ pub fn init(cx: &mut AppContext) {
     }
 }
 
-pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> WindowOptions {
+pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowOptions {
     let display = display_uuid.and_then(|uuid| {
         cx.displays()
             .into_iter()
@@ -137,9 +137,9 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut AppContext) -> 
 pub fn initialize_workspace(
     app_state: Arc<AppState>,
     prompt_builder: Arc<PromptBuilder>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
-    cx.observe_new_models(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new(move |workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
@@ -172,7 +172,7 @@ pub fn initialize_workspace(
 
         let popover_menu_handle = PopoverMenuHandle::default();
 
-        let inline_completion_button = cx.new_model(|cx| {
+        let inline_completion_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
@@ -189,7 +189,7 @@ pub fn initialize_workspace(
         });
 
         let diagnostic_summary =
-            cx.new_model(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
+            cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
             app_state.languages.clone(),
@@ -197,12 +197,12 @@ pub fn initialize_workspace(
             cx,
         );
         let active_buffer_language =
-            cx.new_model(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
-            cx.new_model(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
-        let vim_mode_indicator = cx.new_model(|cx| vim::ModeIndicator::new(window, cx));
+            cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
+        let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let cursor_position =
-            cx.new_model(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+            cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
@@ -236,7 +236,7 @@ pub fn initialize_workspace(
     feature_gate_zed_pro_actions(cx);
 }
 
-fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
+fn feature_gate_zed_pro_actions(cx: &mut App) {
     let zed_pro_actions = [TypeId::of::<OpenAccountSettings>()];
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
@@ -258,7 +258,7 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>) {
+fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
             db::indoc! {r#"
@@ -289,7 +289,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
 }
 
 #[cfg(target_os = "windows")]
-fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>) {
+fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
             db::indoc! {r#"
@@ -322,7 +322,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
 fn show_software_emulation_warning_if_needed(
     specs: gpui::GpuSpecs,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
         let message = format!(
@@ -360,7 +360,7 @@ fn show_software_emulation_warning_if_needed(
 fn initialize_panels(
     prompt_builder: Arc<PromptBuilder>,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
     let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
@@ -505,7 +505,7 @@ fn register_actions(
     app_state: Arc<AppState>,
     workspace: &mut Workspace,
     _: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     workspace
         .register_action(about)
@@ -665,7 +665,7 @@ fn register_actions(
             move |workspace: &mut Workspace,
                   _: &zed_actions::OpenTelemetryLog,
                   window: &mut Window,
-                  cx: &mut ModelContext<Workspace>| {
+                  cx: &mut Context<Workspace>| {
                 open_telemetry_log_file(workspace, window, cx);
             },
         )
@@ -673,7 +673,7 @@ fn register_actions(
             move |_: &mut Workspace,
                   _: &zed_actions::OpenKeymap,
                   window: &mut Window,
-                  cx: &mut ModelContext<Workspace>| {
+                  cx: &mut Context<Workspace>| {
                 open_settings_file(
                     paths::keymap_file(),
                     || settings::initial_keymap_content().as_ref().into(),
@@ -686,7 +686,7 @@ fn register_actions(
             move |_: &mut Workspace,
                   _: &OpenSettings,
                   window: &mut Window,
-                  cx: &mut ModelContext<Workspace>| {
+                  cx: &mut Context<Workspace>| {
                 open_settings_file(
                     paths::settings_file(),
                     || settings::initial_user_settings_content().as_ref().into(),
@@ -699,7 +699,7 @@ fn register_actions(
             |_: &mut Workspace,
              _: &OpenAccountSettings,
              _: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 cx.open_url(&zed_urls::account_url(cx));
             },
         )
@@ -707,7 +707,7 @@ fn register_actions(
             move |_: &mut Workspace,
                   _: &OpenTasks,
                   window: &mut Window,
-                  cx: &mut ModelContext<Workspace>| {
+                  cx: &mut Context<Workspace>| {
                 open_settings_file(
                     paths::tasks_file(),
                     || settings::initial_tasks_content().as_ref().into(),
@@ -722,7 +722,7 @@ fn register_actions(
             move |workspace: &mut Workspace,
                   _: &zed_actions::OpenDefaultKeymap,
                   window: &mut Window,
-                  cx: &mut ModelContext<Workspace>| {
+                  cx: &mut Context<Workspace>| {
                 open_bundled_file(
                     workspace,
                     settings::default_keymap(),
@@ -737,7 +737,7 @@ fn register_actions(
             move |workspace: &mut Workspace,
                   _: &OpenDefaultSettings,
                   window: &mut Window,
-                  cx: &mut ModelContext<Workspace>| {
+                  cx: &mut Context<Workspace>| {
                 open_bundled_file(
                     workspace,
                     settings::default_settings(),
@@ -752,7 +752,7 @@ fn register_actions(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
              window: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
             },
         )
@@ -760,7 +760,7 @@ fn register_actions(
             |workspace: &mut Workspace,
              _: &outline_panel::ToggleFocus,
              window: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
             },
         )
@@ -768,7 +768,7 @@ fn register_actions(
             |workspace: &mut Workspace,
              _: &collab_ui::collab_panel::ToggleFocus,
              window: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<collab_ui::collab_panel::CollabPanel>(window, cx);
             },
         )
@@ -776,7 +776,7 @@ fn register_actions(
             |workspace: &mut Workspace,
              _: &collab_ui::chat_panel::ToggleFocus,
              window: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<collab_ui::chat_panel::ChatPanel>(window, cx);
             },
         )
@@ -784,7 +784,7 @@ fn register_actions(
             |workspace: &mut Workspace,
              _: &collab_ui::notification_panel::ToggleFocus,
              window: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<collab_ui::notification_panel::NotificationPanel>(
                     window, cx,
                 );
@@ -794,7 +794,7 @@ fn register_actions(
             |workspace: &mut Workspace,
              _: &terminal_panel::ToggleFocus,
              window: &mut Window,
-             cx: &mut ModelContext<Workspace>| {
+             cx: &mut Context<Workspace>| {
                 workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
             },
         )
@@ -865,32 +865,31 @@ fn register_actions(
 
 fn initialize_pane(
     workspace: &Workspace,
-    pane: &Model<Pane>,
+    pane: &Entity<Pane>,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let multibuffer_hint = cx.new_model(|_| MultibufferHint::new());
+            let multibuffer_hint = cx.new(|_| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, window, cx);
-            let breadcrumbs = cx.new_model(|_| Breadcrumbs::new());
+            let breadcrumbs = cx.new(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
-            let buffer_search_bar = cx.new_model(|cx| search::BufferSearchBar::new(window, cx));
+            let buffer_search_bar = cx.new(|cx| search::BufferSearchBar::new(window, cx));
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
 
-            let proposed_change_bar = cx.new_model(|_| ProposedChangesEditorToolbar::new());
+            let proposed_change_bar = cx.new(|_| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
             let quick_action_bar =
-                cx.new_model(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
+                cx.new(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, window, cx);
-            let diagnostic_editor_controls = cx.new_model(|_| diagnostics::ToolbarControls::new());
+            let diagnostic_editor_controls = cx.new(|_| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, window, cx);
-            let project_search_bar = cx.new_model(|_| ProjectSearchBar::new());
+            let project_search_bar = cx.new(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, window, cx);
-            let lsp_log_item = cx.new_model(|_| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
-            let syntax_tree_item =
-                cx.new_model(|_| language_tools::SyntaxTreeToolbarItemView::new());
+            let syntax_tree_item = cx.new(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
         })
     });
@@ -900,7 +899,7 @@ fn about(
     _: &mut Workspace,
     _: &zed_actions::About,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
@@ -915,7 +914,7 @@ fn about(
         .detach();
 }
 
-fn test_panic(_: &TestPanic, _: &mut AppContext) {
+fn test_panic(_: &TestPanic, _: &mut App) {
     panic!("Ran the TestPanic action")
 }
 
@@ -923,7 +922,7 @@ fn install_cli(
     _: &mut Workspace,
     _: &install_cli::Install,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
 
@@ -963,7 +962,7 @@ fn install_cli(
     .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);
 }
 
-fn quit(_: &Quit, cx: &mut AppContext) {
+fn quit(_: &Quit, cx: &mut App) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspace_windows = cx.update(|cx| {
@@ -1020,7 +1019,7 @@ fn quit(_: &Quit, cx: &mut AppContext) {
     .detach_and_log_err(cx);
 }
 
-fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelContext<Workspace>) {
+fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
     const MAX_LINES: usize = 1000;
     workspace
         .with_local_workspace(window, cx, move |workspace, window, cx| {
@@ -1060,7 +1059,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
                                 NotificationId::unique::<OpenLogError>(),
                                 cx,
                                 |cx| {
-                                    cx.new_model(|_| {
+                                    cx.new(|_| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
                                             paths::log_file().as_path()
@@ -1075,10 +1074,9 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
                             project.create_local_buffer(&log, None, cx)
                         });
 
-                        let buffer = cx.new_model(|cx| {
-                            MultiBuffer::singleton(buffer, cx).with_title("Log".into())
-                        });
-                        let editor = cx.new_model(|cx| {
+                        let buffer = cx
+                            .new(|cx| MultiBuffer::singleton(buffer, cx).with_title("Log".into()));
+                        let editor = cx.new(|cx| {
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx);
                             editor.set_breadcrumb_header(format!(
@@ -1109,7 +1107,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
 
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     BaseKeymap::register(cx);
     VimModeSetting::register(cx);
@@ -1187,12 +1185,12 @@ pub fn handle_keymap_file_changes(
 fn show_keymap_file_json_error(
     notification_id: NotificationId,
     error: &anyhow::Error,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     let message: SharedString =
         format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
     show_app_notification(notification_id, cx, move |cx| {
-        cx.new_model(|_cx| {
+        cx.new(|_cx| {
             MessageNotification::new(message.clone())
                 .with_click_message("Open keymap file")
                 .on_click(|window, cx| {
@@ -1207,7 +1205,7 @@ fn show_keymap_file_json_error(
 fn show_keymap_file_load_error(
     notification_id: NotificationId,
     markdown_error_message: MarkdownString,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     let parsed_markdown = cx.background_executor().spawn(async move {
         let file_location_directory = None;
@@ -1226,7 +1224,7 @@ fn show_keymap_file_load_error(
             show_app_notification(notification_id, cx, move |cx| {
                 let workspace_handle = cx.model().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
-                cx.new_model(move |_cx| {
+                cx.new(move |_cx| {
                     MessageNotification::new_from_builder(move |window, cx| {
                         gpui::div()
                             .text_xs()
@@ -1252,7 +1250,7 @@ fn show_keymap_file_load_error(
     .detach();
 }
 
-fn reload_keymaps(cx: &mut AppContext, user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
     cx.bind_keys(user_key_bindings);
@@ -1260,7 +1258,7 @@ fn reload_keymaps(cx: &mut AppContext, user_key_bindings: Vec<KeyBinding>) {
     cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
 }
 
-pub fn load_default_keymap(cx: &mut AppContext) {
+pub fn load_default_keymap(cx: &mut App) {
     let base_keymap = *BaseKeymap::get_global(cx);
     if base_keymap == BaseKeymap::None {
         return;
@@ -1280,7 +1278,7 @@ pub fn open_new_ssh_project_from_project(
     workspace: &mut Workspace,
     paths: Vec<PathBuf>,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
     let app_state = workspace.app_state().clone();
     let Some(ssh_client) = workspace.project().read(cx).ssh_client() else {
@@ -1307,7 +1305,7 @@ fn open_project_settings_file(
     workspace: &mut Workspace,
     _: &OpenProjectSettings,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     open_local_file(
         workspace,
@@ -1322,7 +1320,7 @@ fn open_project_tasks_file(
     workspace: &mut Workspace,
     _: &OpenProjectTasks,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     open_local_file(
         workspace,
@@ -1338,7 +1336,7 @@ fn open_local_file(
     settings_relative_path: &'static Path,
     initial_contents: Cow<'static, str>,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     let project = workspace.project().clone();
     let worktree = project
@@ -1398,7 +1396,7 @@ fn open_local_file(
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            cx.new_model(|_| MessageNotification::new("This project has no folders open."))
+            cx.new(|_| MessageNotification::new("This project has no folders open."))
         })
     }
 }
@@ -1406,7 +1404,7 @@ fn open_local_file(
 fn open_telemetry_log_file(
     workspace: &mut Workspace,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     workspace.with_local_workspace(window, cx, move |workspace, window, cx| {
         let app_state = workspace.app_state().clone();
@@ -1435,11 +1433,11 @@ fn open_telemetry_log_file(
             workspace.update_in(&mut cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
                 let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
-                let buffer = cx.new_model(|cx| {
+                let buffer = cx.new(|cx| {
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(cx.new_model(|cx| {
+                    Box::new(cx.new(|cx| {
                         let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
@@ -1462,7 +1460,7 @@ fn open_bundled_file(
     title: &'static str,
     language: &'static str,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     let language = workspace.app_state().languages.language_for_name(language);
     cx.spawn_in(window, |workspace, mut cx| async move {
@@ -1474,11 +1472,10 @@ fn open_bundled_file(
                     let buffer = project.update(cx, move |project, cx| {
                         project.create_local_buffer(text.as_ref(), language, cx)
                     });
-                    let buffer = cx.new_model(|cx| {
-                        MultiBuffer::singleton(buffer, cx).with_title(title.into())
-                    });
+                    let buffer =
+                        cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
                     workspace.add_item_to_active_pane(
-                        Box::new(cx.new_model(|cx| {
+                        Box::new(cx.new(|cx| {
                             let mut editor = Editor::for_multibuffer(
                                 buffer,
                                 Some(project.clone()),
@@ -1506,7 +1503,7 @@ fn open_settings_file(
     abs_path: &'static Path,
     default_content: impl FnOnce() -> Rope + Send + 'static,
     window: &mut Window,
-    cx: &mut ModelContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, |workspace, mut cx| async move {
         let (worktree_creation_task, settings_open_task) = workspace
@@ -1549,8 +1546,8 @@ mod tests {
     use collections::HashSet;
     use editor::{display_map::DisplayRow, scroll::Autoscroll, DisplayPoint, Editor};
     use gpui::{
-        actions, Action, AnyWindowHandle, AppContext, AssetSource, BorrowAppContext, Entity,
-        SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle,
+        actions, Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
+        TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle,
     };
     use language::{LanguageMatcher, LanguageRegistry};
     use project::{project_settings::ProjectSettings, Project, ProjectPath, WorktreeSettings};
@@ -2325,7 +2322,7 @@ mod tests {
             workspace: &Workspace,
             expected_worktree_path: &Path,
             expected_entry_path: &Path,
-            cx: &AppContext,
+            cx: &App,
         ) {
             let project_panel = [
                 workspace.left_dock().read(cx).panel::<ProjectPanel>(),
@@ -3917,7 +3914,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_bundled_settings_and_themes(cx: &mut AppContext) {
+    fn test_bundled_settings_and_themes(cx: &mut App) {
         cx.text_system()
             .add_fonts(vec![
                 Assets

@@ -1,6 +1,6 @@
 use gpui::{
-    uniform_list, AppContext, FocusHandle, Focusable, Model, ScrollStrategy,
-    UniformListScrollHandle, WeakModel,
+    uniform_list, App, FocusHandle, Focusable, Entity, ScrollStrategy,
+    UniformListScrollHandle, WeakEntity,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -10,18 +10,18 @@ use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
-    assistant_panel: WeakModel<AssistantPanel>,
-    thread_store: Model<ThreadStore>,
+    assistant_panel: WeakEntity<AssistantPanel>,
+    thread_store: Entity<ThreadStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
 }
 
 impl ThreadHistory {
     pub(crate) fn new(
-        assistant_panel: WeakModel<AssistantPanel>,
-        thread_store: Model<ThreadStore>,
+        assistant_panel: WeakEntity<AssistantPanel>,
+        thread_store: Entity<ThreadStore>,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -36,7 +36,7 @@ impl ThreadHistory {
         &mut self,
         _: &menu::SelectPrev,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
@@ -52,7 +52,7 @@ impl ThreadHistory {
         &mut self,
         _: &menu::SelectNext,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
@@ -68,7 +68,7 @@ impl ThreadHistory {
         &mut self,
         _: &menu::SelectFirst,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
@@ -80,7 +80,7 @@ impl ThreadHistory {
         &mut self,
         _: &menu::SelectLast,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
@@ -92,7 +92,7 @@ impl ThreadHistory {
         &mut self,
         index: usize,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.selected_index = index;
         self.scroll_handle
@@ -100,7 +100,7 @@ impl ThreadHistory {
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
@@ -116,7 +116,7 @@ impl ThreadHistory {
         &mut self,
         _: &RemoveSelectedThread,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
@@ -133,13 +133,13 @@ impl ThreadHistory {
 }
 
 impl Focusable for ThreadHistory {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
         let selected_index = self.selected_index;
 
@@ -197,14 +197,14 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: SavedThreadMetadata,
-    assistant_panel: WeakModel<AssistantPanel>,
+    assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
         thread: SavedThreadMetadata,
-        assistant_panel: WeakModel<AssistantPanel>,
+        assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
     ) -> Self {
         Self {
@@ -216,7 +216,7 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.thread.summary;
 
         let thread_timestamp = time_format::format_localized_timestamp(

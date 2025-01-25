@@ -14,9 +14,9 @@ use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Model, ModelContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    Styled, Task, WeakModel, Window,
+    actions, Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Context, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled,
+    Task, WeakEntity, Window,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -48,7 +48,7 @@ impl ModalView for FileFinder {
     fn on_before_dismiss(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> workspace::DismissDecision {
         let submenu_focused = self.picker.update(cx, |picker, cx| {
             picker.delegate.popover_menu_handle.is_focused(window, cx)
@@ -58,27 +58,27 @@ impl ModalView for FileFinder {
 }
 
 pub struct FileFinder {
-    picker: Model<Picker<FileFinderDelegate>>,
+    picker: Entity<Picker<FileFinderDelegate>>,
     picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
 }
 
-pub fn init_settings(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut App) {
     FileFinderSettings::register(cx);
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     init_settings(cx);
-    cx.observe_new_models(FileFinder::register).detach();
-    cx.observe_new_models(NewPathPrompt::register).detach();
-    cx.observe_new_models(OpenPathPrompt::register).detach();
+    cx.observe_new(FileFinder::register).detach();
+    cx.observe_new(NewPathPrompt::register).detach();
+    cx.observe_new(OpenPathPrompt::register).detach();
 }
 
 impl FileFinder {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _: &mut ModelContext<Workspace>,
+        _: &mut Context<Workspace>,
     ) {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
@@ -101,7 +101,7 @@ impl FileFinder {
         workspace: &mut Workspace,
         separate_history: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) -> Task<()> {
         let project = workspace.project().read(cx);
         let fs = project.fs();
@@ -167,8 +167,8 @@ impl FileFinder {
         })
     }
 
-    fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
+    fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -184,7 +184,7 @@ impl FileFinder {
         &mut self,
         event: &ModifiersChangedEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(init_modifiers) = self.init_modifiers.take() else {
             return;
@@ -201,7 +201,7 @@ impl FileFinder {
         &mut self,
         _: &SelectPrev,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.init_modifiers = Some(window.modifiers());
         window.dispatch_action(Box::new(menu::SelectPrev), cx);
@@ -211,7 +211,7 @@ impl FileFinder {
         &mut self,
         _: &ToggleMenu,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
@@ -227,7 +227,7 @@ impl FileFinder {
         &mut self,
         _: &pane::SplitLeft,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.go_to_file_split_inner(SplitDirection::Left, window, cx)
     }
@@ -236,7 +236,7 @@ impl FileFinder {
         &mut self,
         _: &pane::SplitRight,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.go_to_file_split_inner(SplitDirection::Right, window, cx)
     }
@@ -245,7 +245,7 @@ impl FileFinder {
         &mut self,
         _: &pane::SplitUp,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.go_to_file_split_inner(SplitDirection::Up, window, cx)
     }
@@ -254,7 +254,7 @@ impl FileFinder {
         &mut self,
         _: &pane::SplitDown,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.go_to_file_split_inner(SplitDirection::Down, window, cx)
     }
@@ -263,7 +263,7 @@ impl FileFinder {
         &mut self,
         split_direction: SplitDirection,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
@@ -308,13 +308,13 @@ impl FileFinder {
 impl EventEmitter<DismissEvent> for FileFinder {}
 
 impl Focusable for FileFinder {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.picker_focus_handle.clone()
     }
 }
 
 impl Render for FileFinder {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let key_context = self.picker.read(cx).delegate.key_context(window, cx);
 
         let file_finder_settings = FileFinderSettings::get_global(cx);
@@ -335,9 +335,9 @@ impl Render for FileFinder {
 }
 
 pub struct FileFinderDelegate {
-    file_finder: WeakModel<FileFinder>,
-    workspace: WeakModel<Workspace>,
-    project: Model<Project>,
+    file_finder: WeakEntity<FileFinder>,
+    workspace: WeakEntity<Workspace>,
+    project: Entity<Project>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -656,14 +656,14 @@ impl FileSearchQuery {
 impl FileFinderDelegate {
     #[allow(clippy::too_many_arguments)]
     fn new(
-        file_finder: WeakModel<FileFinder>,
-        workspace: WeakModel<Workspace>,
-        project: Model<Project>,
+        file_finder: WeakEntity<FileFinder>,
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
         separate_history: bool,
         window: &mut Window,
-        cx: &mut ModelContext<FileFinder>,
+        cx: &mut Context<FileFinder>,
     ) -> Self {
         Self::subscribe_to_updates(&project, window, cx);
         Self {
@@ -688,9 +688,9 @@ impl FileFinderDelegate {
     }
 
     fn subscribe_to_updates(
-        project: &Model<Project>,
+        project: &Entity<Project>,
         window: &mut Window,
-        cx: &mut ModelContext<FileFinder>,
+        cx: &mut Context<FileFinder>,
     ) {
         cx.subscribe_in(project, window, |file_finder, _, event, window, cx| {
             match event {
@@ -709,7 +709,7 @@ impl FileFinderDelegate {
         &mut self,
         query: FileSearchQuery,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let relative_to = self
             .currently_opened_path
@@ -771,7 +771,7 @@ impl FileFinderDelegate {
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
 
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
             self.latest_search_id = search_id;
@@ -815,7 +815,7 @@ impl FileFinderDelegate {
     fn labels_for_match(
         &self,
         path_match: &Match,
-        cx: &AppContext,
+        cx: &App,
         ix: usize,
     ) -> (String, Vec<usize>, String, Vec<usize>) {
         let (file_name, file_name_positions, full_path, full_path_positions) = match &path_match {
@@ -934,7 +934,7 @@ impl FileFinderDelegate {
         &self,
         query: FileSearchQuery,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn_in(window, |picker, mut cx| async move {
             let Some(project) = picker
@@ -1004,7 +1004,7 @@ impl FileFinderDelegate {
         0
     }
 
-    fn key_context(&self, window: &Window, cx: &AppContext) -> KeyContext {
+    fn key_context(&self, window: &Window, cx: &App) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("FileFinder");
         if self.popover_menu_handle.is_focused(window, cx) {
@@ -1017,7 +1017,7 @@ impl FileFinderDelegate {
 impl PickerDelegate for FileFinderDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search project files...".into()
     }
 
@@ -1033,7 +1033,7 @@ impl PickerDelegate for FileFinderDelegate {
         &mut self,
         ix: usize,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         self.has_changed_selected_index = true;
         self.selected_index = ix;
@@ -1062,7 +1062,7 @@ impl PickerDelegate for FileFinderDelegate {
         &mut self,
         raw_query: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
@@ -1124,7 +1124,7 @@ impl PickerDelegate for FileFinderDelegate {
         &mut self,
         secondary: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<FileFinderDelegate>>,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             if let Some(workspace) = self.workspace.upgrade() {
@@ -1133,7 +1133,7 @@ impl PickerDelegate for FileFinderDelegate {
                         |workspace: &mut Workspace,
                          project_path,
                          window: &mut Window,
-                         cx: &mut ModelContext<Workspace>| {
+                         cx: &mut Context<Workspace>| {
                             let allow_preview =
                                 PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                             if secondary {
@@ -1254,7 +1254,7 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<FileFinderDelegate>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -1265,7 +1265,7 @@ impl PickerDelegate for FileFinderDelegate {
         ix: usize,
         selected: bool,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
 
@@ -1319,7 +1319,7 @@ impl PickerDelegate for FileFinderDelegate {
     fn render_footer(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let context = self.focus_handle.clone();
         Some(

@@ -1,12 +1,12 @@
 use gpui::{
-    actions, div, prelude::*, rgb, App, AppContext, Menu, MenuItem, ModelContext, Window,
+    actions, div, prelude::*, rgb, App, Application, Menu, MenuItem, Context, Window,
     WindowOptions,
 };
 
 struct SetMenus;
 
 impl Render for SetMenus {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .bg(rgb(0x2e7d32))
@@ -20,7 +20,7 @@ impl Render for SetMenus {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         // Bring the menu bar to the foreground (so you can see the menu bar)
         cx.activate(true);
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
@@ -31,7 +31,7 @@ fn main() {
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
         cx.open_window(WindowOptions::default(), |_, cx| {
-            cx.new_model(|_| SetMenus {})
+            cx.new(|_| SetMenus {})
         })
         .unwrap();
     });
@@ -41,7 +41,7 @@ fn main() {
 actions!(set_menus, [Quit]);
 
 // Define the quit function that is registered with the AppContext
-fn quit(_: &Quit, cx: &mut AppContext) {
+fn quit(_: &Quit, cx: &mut App) {
     println!("Gracefully quitting the application . . .");
     cx.quit();
 }

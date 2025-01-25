@@ -1,5 +1,5 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, ModelContext,
+    canvas, div, point, prelude::*, px, size, Application, App, Bounds, Context,
     MouseDownEvent, Path, Pixels, Point, Render, Window, WindowOptions,
 };
 struct PaintingViewer {
@@ -70,13 +70,13 @@ impl PaintingViewer {
         }
     }
 
-    fn clear(&mut self, cx: &mut ModelContext<Self>) {
+    fn clear(&mut self, cx: &mut Context<Self>) {
         self.lines.clear();
         cx.notify();
     }
 }
 impl Render for PaintingViewer {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         div()
@@ -185,13 +185,13 @@ impl Render for PaintingViewer {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            |_, cx| cx.new_model(|_| PaintingViewer::new()),
+            |_, cx| cx.new(|_| PaintingViewer::new()),
         )
         .unwrap();
         cx.activate(true);

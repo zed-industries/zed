@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context as _, Global, Model, ModelContext,
-    SemanticVersion, Task, Window,
+    actions, App, AppContext as _, AsyncAppContext, Context, Entity, Global, SemanticVersion, Task,
+    Window,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -112,7 +112,7 @@ impl Settings for AutoUpdateSetting {
 
     type FileContent = Option<AutoUpdateSettingContent>;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let auto_update = [sources.server, sources.release_channel, sources.user]
             .into_iter()
             .find_map(|value| value.copied().flatten())
@@ -123,14 +123,14 @@ impl Settings for AutoUpdateSetting {
 }
 
 #[derive(Default)]
-struct GlobalAutoUpdate(Option<Model<AutoUpdater>>);
+struct GlobalAutoUpdate(Option<Entity<AutoUpdater>>);
 
 impl Global for GlobalAutoUpdate {}
 
-pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
+pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     AutoUpdateSetting::register(cx);
 
-    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
 
         workspace.register_action(|_, action, _, cx| {
@@ -140,7 +140,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     .detach();
 
     let version = release_channel::AppVersion::global(cx);
-    let auto_updater = cx.new_model(|cx| {
+    let auto_updater = cx.new(|cx| {
         let updater = AutoUpdater::new(version, http_client);
 
         let poll_for_updates = ReleaseChannel::try_global(cx)
@@ -155,7 +155,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
                 .0
                 .then(|| updater.start_polling(cx));
 
-            cx.observe_global::<SettingsStore>(move |updater, cx| {
+            cx.observe_global::<SettingsStore>(move |updater: &mut AutoUpdater, cx| {
                 if AutoUpdateSetting::get_global(cx).0 {
                     if update_subscription.is_none() {
                         update_subscription = Some(updater.start_polling(cx))
@@ -172,7 +172,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
 }
 
-pub fn check(_: &Check, window: &mut Window, cx: &mut AppContext) {
+pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
     if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
         drop(window.prompt(
             gpui::PromptLevel::Info,
@@ -215,7 +215,7 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut AppContext) {
     }
 }
 
-pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<()> {
+pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
     let auto_updater = AutoUpdater::get(cx)?;
     let release_channel = ReleaseChannel::try_global(cx)?;
 
@@ -239,7 +239,7 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut AppContext) -> Option<(
 }
 
 impl AutoUpdater {
-    pub fn get(cx: &mut AppContext) -> Option<Model<Self>> {
+    pub fn get(cx: &mut App) -> Option<Entity<Self>> {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
@@ -252,7 +252,7 @@ impl AutoUpdater {
         }
     }
 
-    pub fn start_polling(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.spawn(|this, mut cx| async move {
             loop {
                 this.update(&mut cx, |this, cx| this.poll(cx))?;
@@ -261,7 +261,7 @@ impl AutoUpdater {
         })
     }
 
-    pub fn poll(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn poll(&mut self, cx: &mut Context<Self>) {
         if self.pending_poll.is_some() || self.status.is_updated() {
             return;
         }
@@ -290,7 +290,7 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) {
         self.status = AutoUpdateStatus::Idle;
         cx.notify();
     }
@@ -374,7 +374,7 @@ impl AutoUpdater {
     }
 
     async fn get_release(
-        this: &Model<Self>,
+        this: &Entity<Self>,
         asset: &str,
         os: &str,
         arch: &str,
@@ -424,7 +424,7 @@ impl AutoUpdater {
     }
 
     async fn get_latest_release(
-        this: &Model<Self>,
+        this: &Entity<Self>,
         asset: &str,
         os: &str,
         arch: &str,
@@ -434,7 +434,7 @@ impl AutoUpdater {
         Self::get_release(this, asset, os, arch, None, release_channel, cx).await
     }
 
-    async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
+    async fn update(this: Entity<Self>, mut cx: AsyncAppContext) -> Result<()> {
         let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
             cx.notify();
@@ -512,7 +512,7 @@ impl AutoUpdater {
     pub fn set_should_show_update_notification(
         &self,
         should_show: bool,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<()>> {
         cx.background_executor().spawn(async move {
             if should_show {
@@ -531,7 +531,7 @@ impl AutoUpdater {
         })
     }
 
-    pub fn should_show_update_notification(&self, cx: &AppContext) -> Task<Result<bool>> {
+    pub fn should_show_update_notification(&self, cx: &App) -> Task<Result<bool>> {
         cx.background_executor().spawn(async move {
             Ok(KEY_VALUE_STORE
                 .read_kvp(SHOULD_SHOW_UPDATE_NOTIFICATION_KEY)?

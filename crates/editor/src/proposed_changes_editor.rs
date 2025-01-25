@@ -1,7 +1,7 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
-use gpui::{AppContext, EventEmitter, Focusable, Model, Render, Subscription, Task};
+use gpui::{App, EventEmitter, Focusable, Entity, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::{buffer_store::BufferChangeSet, Project};
@@ -15,8 +15,8 @@ use workspace::{
 };
 
 pub struct ProposedChangesEditor {
-    editor: Model<Editor>,
-    multibuffer: Model<MultiBuffer>,
+    editor: Entity<Editor>,
+    multibuffer: Entity<MultiBuffer>,
     title: SharedString,
     buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
@@ -24,22 +24,22 @@ pub struct ProposedChangesEditor {
 }
 
 pub struct ProposedChangeLocation<T> {
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub ranges: Vec<Range<T>>,
 }
 
 struct BufferEntry {
-    base: Model<Buffer>,
-    branch: Model<Buffer>,
+    base: Entity<Buffer>,
+    branch: Entity<Buffer>,
     _subscription: Subscription,
 }
 
 pub struct ProposedChangesEditorToolbar {
-    current_editor: Option<Model<ProposedChangesEditor>>,
+    current_editor: Option<Entity<ProposedChangesEditor>>,
 }
 
 struct RecalculateDiff {
-    buffer: Model<Buffer>,
+    buffer: Entity<Buffer>,
     debounce: bool,
 }
 
@@ -53,14 +53,14 @@ impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
         title: impl Into<SharedString>,
         locations: Vec<ProposedChangeLocation<T>>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
-            editor: cx.new_model(|cx| {
+            editor: cx.new(|cx| {
                 let mut editor =
                     Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
                 editor.set_expand_all_diff_hunks(cx);
@@ -131,7 +131,7 @@ impl ProposedChangesEditor {
         this
     }
 
-    pub fn branch_buffer_for_base(&self, base_buffer: &Model<Buffer>) -> Option<Model<Buffer>> {
+    pub fn branch_buffer_for_base(&self, base_buffer: &Entity<Buffer>) -> Option<Entity<Buffer>> {
         self.buffer_entries.iter().find_map(|entry| {
             if &entry.base == base_buffer {
                 Some(entry.branch.clone())
@@ -141,7 +141,7 @@ impl ProposedChangesEditor {
         })
     }
 
-    pub fn set_title(&mut self, title: SharedString, cx: &mut ModelContext<Self>) {
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.title = title;
         cx.notify();
     }
@@ -150,7 +150,7 @@ impl ProposedChangesEditor {
         &mut self,
         locations: Vec<ProposedChangeLocation<T>>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // Undo all branch changes
         for entry in &self.buffer_entries {
@@ -189,7 +189,7 @@ impl ProposedChangesEditor {
                 buffer_entries.push(entry);
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                new_change_sets.push(cx.new_model(|cx| {
+                new_change_sets.push(cx.new(|cx| {
                     let mut change_set = BufferChangeSet::new(&branch_buffer, cx);
                     let _ = change_set.set_base_text(
                         location.buffer.read(cx).text(),
@@ -241,9 +241,9 @@ impl ProposedChangesEditor {
 
     fn on_buffer_event(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         event: &BufferEvent,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         match event {
             BufferEvent::Operation { .. } => {
@@ -268,7 +268,7 @@ impl ProposedChangesEditor {
 }
 
 impl Render for ProposedChangesEditor {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .key_context("ProposedChangesEditor")
@@ -277,7 +277,7 @@ impl Render for ProposedChangesEditor {
 }
 
 impl Focusable for ProposedChangesEditor {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
@@ -287,23 +287,23 @@ impl EventEmitter<EditorEvent> for ProposedChangesEditor {}
 impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
-    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some(self.title.clone())
     }
 
-    fn as_searchable(&self, _: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a Model<Self>,
-        _: &'a AppContext,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
     ) -> Option<gpui::AnyView> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.to_any())
@@ -318,14 +318,14 @@ impl Item for ProposedChangesEditor {
         &mut self,
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             Item::added_to_workspace(editor, workspace, window, cx)
         });
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
@@ -334,7 +334,7 @@ impl Item for ProposedChangesEditor {
         &mut self,
         data: Box<dyn std::any::Any>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         self.editor
             .update(cx, |editor, cx| Item::navigate(editor, data, window, cx))
@@ -344,23 +344,23 @@ impl Item for ProposedChangesEditor {
         &mut self,
         nav_history: workspace::ItemNavHistory,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             Item::set_nav_history(editor, nav_history, window, cx)
         });
     }
 
-    fn can_save(&self, cx: &AppContext) -> bool {
+    fn can_save(&self, cx: &App) -> bool {
         self.editor.read(cx).can_save(cx)
     }
 
     fn save(
         &mut self,
         format: bool,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<gpui::Result<()>> {
         self.editor.update(cx, |editor, cx| {
             Item::save(editor, format, project, window, cx)
@@ -385,7 +385,7 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
 
         match &self.current_editor {
@@ -413,7 +413,7 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) -> workspace::ToolbarItemLocation {
         self.current_editor =
             active_pane_item.and_then(|item| item.downcast::<ProposedChangesEditor>());
@@ -424,10 +424,10 @@ impl ToolbarItemView for ProposedChangesEditorToolbar {
 impl BranchBufferSemanticsProvider {
     fn to_base(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         positions: &[text::Anchor],
-        cx: &AppContext,
-    ) -> Option<Model<Buffer>> {
+        cx: &App,
+    ) -> Option<Entity<Buffer>> {
         let base_buffer = buffer.read(cx).base_buffer()?;
         let version = base_buffer.read(cx).version();
         if positions
@@ -443,9 +443,9 @@ impl BranchBufferSemanticsProvider {
 impl SemanticsProvider for BranchBufferSemanticsProvider {
     fn hover(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: text::Anchor,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<Vec<project::Hover>>> {
         let buffer = self.to_base(buffer, &[position], cx)?;
         self.0.hover(&buffer, position, cx)
@@ -453,9 +453,9 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn inlay_hints(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         range: Range<text::Anchor>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
         let buffer = self.to_base(&buffer, &[range.start, range.end], cx)?;
         self.0.inlay_hints(buffer, range, cx)
@@ -464,15 +464,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
     fn resolve_inlay_hint(
         &self,
         hint: project::InlayHint,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         server_id: lsp::LanguageServerId,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<anyhow::Result<project::InlayHint>>> {
         let buffer = self.to_base(&buffer, &[], cx)?;
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
-    fn supports_inlay_hints(&self, buffer: &Model<Buffer>, cx: &AppContext) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
         if let Some(buffer) = self.to_base(&buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {
@@ -482,9 +482,9 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn document_highlights(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: text::Anchor,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<gpui::Result<Vec<project::DocumentHighlight>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.document_highlights(&buffer, position, cx)
@@ -492,10 +492,10 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn definitions(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: text::Anchor,
         kind: crate::GotoDefinitionKind,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Task<gpui::Result<Vec<project::LocationLink>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
@@ -503,19 +503,19 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
 
     fn range_for_rename(
         &self,
-        _: &Model<Buffer>,
+        _: &Entity<Buffer>,
         _: text::Anchor,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Option<Task<gpui::Result<Option<Range<text::Anchor>>>>> {
         None
     }
 
     fn perform_rename(
         &self,
-        _: &Model<Buffer>,
+        _: &Entity<Buffer>,
         _: text::Anchor,
         _: String,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Option<Task<gpui::Result<project::ProjectTransaction>>> {
         None
     }

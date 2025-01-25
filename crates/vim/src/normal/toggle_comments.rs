@@ -1,7 +1,7 @@
 use crate::{motion::Motion, object::Object, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Bias};
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::SelectionGoal;
 
 impl Vim {
@@ -10,7 +10,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -40,7 +40,7 @@ impl Vim {
         object: Object,
         around: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {

@@ -16,7 +16,7 @@ use gpui::SharedString;
 use gpui::Task;
 use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
-type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut AppContext)>;
+type OnSelect = Box<dyn Fn(KernelSpecification, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct KernelSelector<T: PopoverTrigger> {
@@ -88,13 +88,13 @@ impl PickerDelegate for KernelPickerDelegate {
         &mut self,
         ix: usize,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_kernelspec = self.filtered_kernels.get(ix).cloned();
         cx.notify();
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a kernel...".into()
     }
 
@@ -102,7 +102,7 @@ impl PickerDelegate for KernelPickerDelegate {
         &mut self,
         query: String,
         _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_kernels = self.all_kernels.clone();
 
@@ -127,7 +127,7 @@ impl PickerDelegate for KernelPickerDelegate {
         &mut self,
         _secondary: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if let Some(kernelspec) = &self.selected_kernelspec {
             (self.on_select)(kernelspec.clone(), window, cx);
@@ -135,14 +135,14 @@ impl PickerDelegate for KernelPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let kernelspec = self.filtered_kernels.get(ix)?;
         let is_selected = self.selected_kernelspec.as_ref() == Some(kernelspec);
@@ -223,7 +223,7 @@ impl PickerDelegate for KernelPickerDelegate {
     fn render_footer(
         &self,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         Some(
             h_flex()
@@ -246,7 +246,7 @@ impl PickerDelegate for KernelPickerDelegate {
 }
 
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
 
         let all_kernels: Vec<KernelSpecification> = store
@@ -263,7 +263,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
             selected_kernelspec,
         };
 
-        let picker_view = cx.new_model(|cx| {
+        let picker_view = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(30.))
                 .max_height(Some(rems(20.).into()));

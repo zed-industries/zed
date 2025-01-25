@@ -6,7 +6,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, Model, Pixels};
+use gpui::{App, Entity, Pixels};
 use itertools::Itertools;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
@@ -26,8 +26,8 @@ pub struct PendingSelection {
 
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
-    display_map: Model<DisplayMap>,
-    buffer: Model<MultiBuffer>,
+    display_map: Entity<DisplayMap>,
+    buffer: Entity<MultiBuffer>,
     pub next_selection_id: usize,
     pub line_mode: bool,
     /// The non-pending, non-overlapping selections.
@@ -38,7 +38,7 @@ pub struct SelectionsCollection {
 }
 
 impl SelectionsCollection {
-    pub fn new(display_map: Model<DisplayMap>, buffer: Model<MultiBuffer>) -> Self {
+    pub fn new(display_map: Entity<DisplayMap>, buffer: Entity<MultiBuffer>) -> Self {
         Self {
             display_map,
             buffer,
@@ -58,11 +58,11 @@ impl SelectionsCollection {
         }
     }
 
-    pub fn display_map(&self, cx: &mut AppContext) -> DisplaySnapshot {
+    pub fn display_map(&self, cx: &mut App) -> DisplaySnapshot {
         self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
-    fn buffer<'a>(&self, cx: &'a AppContext) -> Ref<'a, MultiBufferSnapshot> {
+    fn buffer<'a>(&self, cx: &'a App) -> Ref<'a, MultiBufferSnapshot> {
         self.buffer.read(cx).read(cx)
     }
 
@@ -102,7 +102,7 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<Selection<D>> {
         let map = self.display_map(cx);
         let selection = resolve_selections(self.pending_anchor().as_ref(), &map).next();
@@ -113,7 +113,7 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, cx: &mut AppContext) -> Vec<Selection<D>>
+    pub fn all<'a, D>(&self, cx: &mut App) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
@@ -148,7 +148,7 @@ impl SelectionsCollection {
     }
 
     /// Returns all of the selections, adjusted to take into account the selection line_mode
-    pub fn all_adjusted(&self, cx: &mut AppContext) -> Vec<Selection<Point>> {
+    pub fn all_adjusted(&self, cx: &mut App) -> Vec<Selection<Point>> {
         let mut selections = self.all::<Point>(cx);
         if self.line_mode {
             let map = self.display_map(cx);
@@ -162,7 +162,7 @@ impl SelectionsCollection {
     }
 
     /// Returns the newest selection, adjusted to take into account the selection line_mode
-    pub fn newest_adjusted(&self, cx: &mut AppContext) -> Selection<Point> {
+    pub fn newest_adjusted(&self, cx: &mut App) -> Selection<Point> {
         let mut selection = self.newest::<Point>(cx);
         if self.line_mode {
             let map = self.display_map(cx);
@@ -175,7 +175,7 @@ impl SelectionsCollection {
 
     pub fn all_adjusted_display(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         if self.line_mode {
             let selections = self.all::<Point>(cx);
@@ -198,7 +198,7 @@ impl SelectionsCollection {
     pub fn disjoint_in_range<'a, D>(
         &self,
         range: Range<Anchor>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
@@ -222,7 +222,7 @@ impl SelectionsCollection {
 
     pub fn all_display(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
         let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
@@ -266,7 +266,7 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Selection<D> {
         let map = self.display_map(cx);
         let selection = resolve_selections([self.newest_anchor()], &map)
@@ -275,7 +275,7 @@ impl SelectionsCollection {
         selection
     }
 
-    pub fn newest_display(&self, cx: &mut AppContext) -> Selection<DisplayPoint> {
+    pub fn newest_display(&self, cx: &mut App) -> Selection<DisplayPoint> {
         let map = self.display_map(cx);
         let selection = resolve_selections_display([self.newest_anchor()], &map)
             .next()
@@ -293,7 +293,7 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Selection<D> {
         let map = self.display_map(cx);
         let selection = resolve_selections([self.oldest_anchor()], &map)
@@ -311,21 +311,21 @@ impl SelectionsCollection {
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Selection<D> {
         self.all(cx).first().unwrap().clone()
     }
 
     pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Selection<D> {
         self.all(cx).last().unwrap().clone()
     }
 
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Vec<Range<D>> {
         self.all::<D>(cx)
             .iter()
@@ -340,7 +340,7 @@ impl SelectionsCollection {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn display_ranges(&self, cx: &mut AppContext) -> Vec<Range<DisplayPoint>> {
+    pub fn display_ranges(&self, cx: &mut App) -> Vec<Range<DisplayPoint>> {
         let display_map = self.display_map(cx);
         self.disjoint_anchors()
             .iter()
@@ -391,7 +391,7 @@ impl SelectionsCollection {
 
     pub fn change_with<R>(
         &mut self,
-        cx: &mut AppContext,
+        cx: &mut App,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
     ) -> (bool, R) {
         let mut mutable_collection = MutableSelectionsCollection {
@@ -412,7 +412,7 @@ impl SelectionsCollection {
 pub struct MutableSelectionsCollection<'a> {
     collection: &'a mut SelectionsCollection,
     selections_changed: bool,
-    cx: &'a mut AppContext,
+    cx: &'a mut App,
 }
 
 impl<'a> MutableSelectionsCollection<'a> {

@@ -107,7 +107,7 @@ pub fn highlight_ranges(
 }
 
 impl RenderOnce for HighlightedLabel {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let highlight_color = cx.theme().colors().text_accent;
 
         let highlights = highlight_ranges(

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use fs::Fs;
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{App, Entity, Context};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 
 mod logging;
@@ -22,10 +22,10 @@ pub use crate::settings::*;
 pub use logging::report_assistant_event;
 
 pub fn init(
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     crate::settings::init(fs, cx);
     let registry = LanguageModelRegistry::global(cx);
@@ -36,9 +36,9 @@ pub fn init(
 
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
-    cx: &mut ModelContext<LanguageModelRegistry>,
+    cx: &mut Context<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
 

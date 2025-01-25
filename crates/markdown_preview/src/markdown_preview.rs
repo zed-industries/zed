@@ -1,4 +1,4 @@
-use gpui::{actions, AppContext};
+use gpui::{actions, App};
 use workspace::Workspace;
 
 pub mod markdown_elements;
@@ -8,8 +8,8 @@ pub mod markdown_renderer;
 
 actions!(markdown, [OpenPreview, OpenPreviewToTheSide]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };

@@ -18,7 +18,10 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{Action, App, AppContext, AsyncAppContext, Context, DismissEvent, UpdateGlobal as _};
+use gpui::{
+    Action, App, AppContext as _, Application, AsyncAppContext, DismissEvent, UpdateGlobal as _,
+};
+
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -99,9 +102,9 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
         .collect::<Vec<_>>().join("\n\n");
 
     eprintln!("{message}: {error_details}");
-    App::new().run(move |cx| {
+    Application::new().run(move |cx| {
         if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
-            cx.new_model(|_| gpui::Empty)
+            cx.new(|_| gpui::Empty)
         }) {
             window
                 .update(cx, |_, window, cx| {
@@ -130,7 +133,7 @@ fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncAppContext) {
     cx.update(|cx| fail_to_open_window(e, cx)).log_err();
 }
 
-fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
+fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     eprintln!(
         "Zed failed to open a window: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
     );
@@ -186,7 +189,7 @@ fn main() {
 
     log::info!("========== starting zed ==========");
 
-    let app = App::new().with_assets(Assets);
+    let app = Application::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
     let installation_id = app.background_executor().block(installation_id()).ok();
@@ -357,8 +360,8 @@ fn main() {
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
-        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         Client::set_global(client.clone(), cx);
 
@@ -388,7 +391,7 @@ fn main() {
                 }
             }
         }
-        let app_session = cx.new_model(|cx| AppSession::new(session, cx));
+        let app_session = cx.new(|cx| AppSession::new(session, cx));
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
@@ -613,7 +616,7 @@ fn main() {
     });
 }
 
-fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
+fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
@@ -628,7 +631,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                             // Local settings will be displayed by the projects
                         } else {
                             workspace.show_notification(id.clone(), cx, |cx| {
-                                cx.new_model(|_cx| {
+                                cx.new(|_cx| {
                                     MessageNotification::new(format!(
                                         "Invalid user settings file\n{error}"
                                     ))
@@ -651,7 +654,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     }
 }
 
-fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut AppContext) {
+fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
         cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
@@ -1060,7 +1063,7 @@ impl ToString for IdType {
     }
 }
 
-fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
+fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => Ok(format!("file://{}", path.display())),
         Err(error) => {
@@ -1077,7 +1080,7 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     }
 }
 
-fn load_embedded_fonts(cx: &AppContext) {
+fn load_embedded_fonts(cx: &App) {
     let asset_source = cx.asset_source();
     let font_paths = asset_source.list("fonts").unwrap();
     let embedded_fonts = Mutex::new(Vec::new());
@@ -1102,7 +1105,7 @@ fn load_embedded_fonts(cx: &AppContext) {
 }
 
 /// Spawns a background task to load the user themes from the themes directory.
-fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     cx.spawn({
         let fs = fs.clone();
         |cx| async move {
@@ -1136,7 +1139,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 /// Spawns a background task to watch the themes directory for changes.
-fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     use std::time::Duration;
     cx.spawn(|cx| async move {
         let (mut events, _) = fs
@@ -1165,7 +1168,7 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 #[cfg(debug_assertions)]
-fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &mut AppContext) {
+fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &mut App) {
     use std::time::Duration;
 
     let path = {
@@ -1195,10 +1198,10 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 }
 
 #[cfg(not(debug_assertions))]
-fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut AppContext) {}
+fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
 
 #[cfg(debug_assertions)]
-fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
+fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     use std::time::Duration;
 
     use file_icons::FileIcons;
@@ -1227,4 +1230,4 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
 }
 
 #[cfg(not(debug_assertions))]
-fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut AppContext) {}
+fn watch_file_types(_fs: Arc<dyn fs::Fs>, _cx: &mut App) {}

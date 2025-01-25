@@ -10,7 +10,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::Selection;
 
 impl Vim {
@@ -19,7 +19,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // Some motions ignore failure when switching to normal mode
         let mut motion_succeeded = matches!(
@@ -94,7 +94,7 @@ impl Vim {
         object: Object,
         around: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut objects_found = false;
         self.update_editor(window, cx, |vim, editor, window, cx| {

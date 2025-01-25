@@ -4,13 +4,13 @@ mod tool_working_set;
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::{AppContext, Task, WeakModel, Window};
+use gpui::{App, Task, WeakEntity, Window};
 use workspace::Workspace;
 
 pub use crate::tool_registry::*;
 pub use crate::tool_working_set::*;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     ToolRegistry::default_global(cx);
 }
 
@@ -31,8 +31,8 @@ pub trait Tool: 'static + Send + Sync {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<String>>;
 }

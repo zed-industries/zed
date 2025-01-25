@@ -3,14 +3,14 @@ use crate::notifications::collab_notification::CollabNotification;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
-use gpui::{AppContext, Size};
+use gpui::{App, Size};
 use std::sync::{Arc, Weak};
 
 use ui::{prelude::*, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
 
-pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     let app_state = Arc::downgrade(app_state);
     let active_call = ActiveCall::global(cx);
     let mut notification_windows = HashMap::default();
@@ -29,7 +29,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                 let options = notification_window_options(screen, window_size, cx);
                 let Some(window) = cx
                     .open_window(options, |_, cx| {
-                        cx.new_model(|_| {
+                        cx.new(|_| {
                             ProjectSharedNotification::new(
                                 owner.clone(),
                                 *project_id,
@@ -101,14 +101,14 @@ impl ProjectSharedNotification {
         }
     }
 
-    fn join(&mut self, cx: &mut ModelContext<Self>) {
+    fn join(&mut self, cx: &mut Context<Self>) {
         if let Some(app_state) = self.app_state.upgrade() {
             workspace::join_in_room_project(self.project_id, self.owner.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ModelContext<Self>) {
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
         if let Some(active_room) =
             ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
         {
@@ -122,7 +122,7 @@ impl ProjectSharedNotification {
 }
 
 impl Render for ProjectSharedNotification {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(

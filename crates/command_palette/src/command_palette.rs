@@ -11,8 +11,8 @@ use command_palette_hooks::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Global, Model,
-    ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, WeakModel, Window,
+    Action, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Global, Context,
+    ParentElement, Render, Styled, Task, UpdateGlobal, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
@@ -22,17 +22,17 @@ use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
 use zed_actions::{command_palette::Toggle, OpenZedUrl};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     client::init_settings(cx);
     cx.set_global(HitCounts::default());
     command_palette_hooks::init(cx);
-    cx.observe_new_models(CommandPalette::register).detach();
+    cx.observe_new(CommandPalette::register).detach();
 }
 
 impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
-    picker: Model<Picker<CommandPaletteDelegate>>,
+    picker: Entity<Picker<CommandPaletteDelegate>>,
 }
 
 /// Removes subsequent whitespace characters and double colons from the query.
@@ -62,7 +62,7 @@ impl CommandPalette {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _: &mut ModelContext<Workspace>,
+        _: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, "", window, cx)
@@ -73,7 +73,7 @@ impl CommandPalette {
         workspace: &mut Workspace,
         query: &str,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
@@ -87,7 +87,7 @@ impl CommandPalette {
         previous_focus_handle: FocusHandle,
         query: &str,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
 
@@ -109,7 +109,7 @@ impl CommandPalette {
         let delegate =
             CommandPaletteDelegate::new(cx.model().downgrade(), commands, previous_focus_handle);
 
-        let picker = cx.new_model(|cx| {
+        let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
             picker.set_query(query, window, cx);
             picker
@@ -117,7 +117,7 @@ impl CommandPalette {
         Self { picker }
     }
 
-    pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.picker
             .update(cx, |picker, cx| picker.set_query(query, window, cx))
     }
@@ -126,19 +126,19 @@ impl CommandPalette {
 impl EventEmitter<DismissEvent> for CommandPalette {}
 
 impl Focusable for CommandPalette {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
 pub struct CommandPaletteDelegate {
-    command_palette: WeakModel<CommandPalette>,
+    command_palette: WeakEntity<CommandPalette>,
     all_commands: Vec<Command>,
     commands: Vec<Command>,
     matches: Vec<StringMatch>,
@@ -174,7 +174,7 @@ impl Global for HitCounts {}
 
 impl CommandPaletteDelegate {
     fn new(
-        command_palette: WeakModel<CommandPalette>,
+        command_palette: WeakEntity<CommandPalette>,
         commands: Vec<Command>,
         previous_focus_handle: FocusHandle,
     ) -> Self {
@@ -194,7 +194,7 @@ impl CommandPaletteDelegate {
         query: String,
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         self.updating_matches.take();
 
@@ -248,7 +248,7 @@ impl CommandPaletteDelegate {
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
     }
 
@@ -264,7 +264,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _: &mut ModelContext<Picker<Self>>,
+        _: &mut Context<Picker<Self>>,
     ) {
         self.selected_ix = ix;
     }
@@ -273,7 +273,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &mut self,
         mut query: String,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
@@ -346,7 +346,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         query: String,
         duration: Duration,
         _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> bool {
         let Some((task, rx)) = self.updating_matches.take() else {
             return true;
@@ -367,13 +367,13 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.command_palette
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if self.matches.is_empty() {
             self.dismissed(window, cx);
             return;
@@ -401,7 +401,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        _: &mut ModelContext<Picker<Self>>,
+        _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let r#match = self.matches.get(ix)?;
         let command = self.commands.get(r#match.candidate_id)?;

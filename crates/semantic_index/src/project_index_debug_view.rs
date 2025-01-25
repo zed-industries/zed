@@ -1,7 +1,7 @@
 use crate::ProjectIndex;
 use gpui::{
-    canvas, div, list, uniform_list, AnyElement, AppContext, CursorStyle, EventEmitter,
-    FocusHandle, Focusable, IntoElement, ListOffset, ListState, Model, MouseMoveEvent, Render,
+    canvas, div, list, uniform_list, AnyElement, App, CursorStyle, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, ListOffset, ListState, MouseMoveEvent, Render,
     UniformListScrollHandle,
 };
 use project::WorktreeId;
@@ -12,7 +12,7 @@ use ui::prelude::*;
 use workspace::item::Item;
 
 pub struct ProjectIndexDebugView {
-    index: Model<ProjectIndex>,
+    index: Entity<ProjectIndex>,
     rows: Vec<Row>,
     selected_path: Option<PathState>,
     hovered_row_ix: Option<usize>,
@@ -34,9 +34,9 @@ enum Row {
 
 impl ProjectIndexDebugView {
     pub fn new(
-        index: Model<ProjectIndex>,
+        index: Entity<ProjectIndex>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             rows: Vec::new(),
@@ -53,7 +53,7 @@ impl ProjectIndexDebugView {
         this
     }
 
-    fn update_rows(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_rows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let worktree_indices = self.index.read(cx).worktree_indices(cx);
         cx.spawn_in(window, |this, mut cx| async move {
             let mut rows = Vec::new();
@@ -90,7 +90,7 @@ impl ProjectIndexDebugView {
         worktree_id: WorktreeId,
         file_path: Arc<Path>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let project_index = self.index.read(cx);
         let fs = project_index.fs().clone();
@@ -143,7 +143,7 @@ impl ProjectIndexDebugView {
         None
     }
 
-    fn render_chunk(&mut self, ix: usize, cx: &mut ModelContext<Self>) -> AnyElement {
+    fn render_chunk(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let Some(state) = &self.selected_path else {
             return div().into_any();
@@ -203,7 +203,7 @@ impl ProjectIndexDebugView {
 }
 
 impl Render for ProjectIndexDebugView {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(selected_path) = self.selected_path.as_ref() {
             v_flex()
                 .child(
@@ -293,7 +293,7 @@ impl EventEmitter<()> for ProjectIndexDebugView {}
 impl Item for ProjectIndexDebugView {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("Project Index (Debug)".into())
     }
 
@@ -301,17 +301,17 @@ impl Item for ProjectIndexDebugView {
         &self,
         _: Option<workspace::WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_model(|cx| Self::new(self.index.clone(), window, cx)))
+        Some(cx.new(|cx| Self::new(self.index.clone(), window, cx)))
     }
 }
 
 impl Focusable for ProjectIndexDebugView {
-    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }

@@ -22,7 +22,7 @@ use alacritty_terminal::{
     term::Config,
     vte::ansi::Processor,
 };
-use gpui::{canvas, size, ClipboardItem, FontStyle, Model, TextStyle, WhiteSpace};
+use gpui::{canvas, size, ClipboardItem, FontStyle, Entity, TextStyle, WhiteSpace};
 use language::Buffer;
 use settings::Settings as _;
 use terminal_view::terminal_element::TerminalElement;
@@ -45,7 +45,7 @@ use crate::outputs::OutputContent;
 /// supporting ANSI escape sequences for text formatting and colors.
 ///
 pub struct TerminalOutput {
-    full_buffer: Option<Model<Buffer>>,
+    full_buffer: Option<Entity<Buffer>>,
     /// ANSI escape sequence processor for parsing input text.
     parser: Processor,
     /// Alacritty terminal instance that manages the terminal state and content.
@@ -56,7 +56,7 @@ const DEFAULT_NUM_LINES: usize = 32;
 const DEFAULT_NUM_COLUMNS: usize = 128;
 
 /// Returns the default text style for the terminal output.
-pub fn text_style(window: &mut Window, cx: &mut AppContext) -> TextStyle {
+pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
     let settings = ThemeSettings::get_global(cx).clone();
 
     let font_size = settings.buffer_font_size().into();
@@ -88,7 +88,7 @@ pub fn text_style(window: &mut Window, cx: &mut AppContext) -> TextStyle {
 }
 
 /// Returns the default terminal size for the terminal output.
-pub fn terminal_size(window: &mut Window, cx: &mut AppContext) -> terminal::TerminalSize {
+pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalSize {
     let text_style = text_style(window, cx);
     let text_system = window.text_system();
 
@@ -122,7 +122,7 @@ impl TerminalOutput {
     /// This method initializes a new terminal emulator with default configuration
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
-    pub fn new(window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn new(window: &mut Window, cx: &mut App) -> Self {
         let term = alacritty_terminal::Term::new(
             Config::default(),
             &terminal_size(window, cx),
@@ -148,7 +148,7 @@ impl TerminalOutput {
     /// # Returns
     ///
     /// A new instance of `TerminalOutput` containing the provided text.
-    pub fn from(text: &str, window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn from(text: &str, window: &mut Window, cx: &mut App) -> Self {
         let mut output = Self::new(window, cx);
         output.append_text(text, cx);
         output
@@ -180,7 +180,7 @@ impl TerminalOutput {
     /// # Arguments
     ///
     /// * `text` - A string slice containing the text to be appended.
-    pub fn append_text(&mut self, text: &str, cx: &mut AppContext) {
+    pub fn append_text(&mut self, text: &str, cx: &mut App) {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
@@ -244,7 +244,7 @@ impl Render for TerminalOutput {
     /// Converts the current terminal state into a renderable GPUI element. It handles
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = text_style(window, cx);
         let text_system = window.text_system();
 
@@ -310,24 +310,24 @@ impl Render for TerminalOutput {
 }
 
 impl OutputContent for TerminalOutput {
-    fn clipboard_content(&self, _window: &Window, _cx: &AppContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.full_text()))
     }
 
-    fn has_clipboard_content(&self, _window: &Window, _cx: &AppContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
         true
     }
 
-    fn has_buffer_content(&self, _window: &Window, _cx: &AppContext) -> bool {
+    fn has_buffer_content(&self, _window: &Window, _cx: &App) -> bool {
         true
     }
 
-    fn buffer_content(&mut self, _: &mut Window, cx: &mut AppContext) -> Option<Model<Buffer>> {
+    fn buffer_content(&mut self, _: &mut Window, cx: &mut App) -> Option<Entity<Buffer>> {
         if self.full_buffer.as_ref().is_some() {
             return self.full_buffer.clone();
         }
 
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new(|cx| {
             let mut buffer =
                 Buffer::local(self.full_text(), cx).with_language(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);

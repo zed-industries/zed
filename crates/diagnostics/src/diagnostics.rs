@@ -15,9 +15,9 @@ use editor::{
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
-    ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, WeakModel, Window,
+    actions, div, svg, AnyElement, AnyView, App, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, Styled, StyledText, Subscription, Task, WeakEntity, Window,
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
@@ -51,19 +51,18 @@ actions!(diagnostics, [Deploy, ToggleWarnings]);
 struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     ProjectDiagnosticsSettings::register(cx);
-    cx.observe_new_models(ProjectDiagnosticsEditor::register)
-        .detach();
+    cx.observe_new(ProjectDiagnosticsEditor::register).detach();
 }
 
 struct ProjectDiagnosticsEditor {
-    project: Model<Project>,
-    workspace: WeakModel<Workspace>,
+    project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    editor: Model<Editor>,
+    editor: Entity<Editor>,
     summary: DiagnosticSummary,
-    excerpts: Model<MultiBuffer>,
+    excerpts: Entity<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<(ProjectPath, Option<LanguageServerId>)>,
     include_warnings: bool,
@@ -91,7 +90,7 @@ impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 impl Render for ProjectDiagnosticsEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
                 .key_context("EmptyPane")
@@ -118,7 +117,7 @@ impl ProjectDiagnosticsEditor {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _: &mut ModelContext<Workspace>,
+        _: &mut Context<Workspace>,
     ) {
         workspace.register_action(Self::deploy);
     }
@@ -126,10 +125,10 @@ impl ProjectDiagnosticsEditor {
     fn new_with_context(
         context: u32,
         include_warnings: bool,
-        project_handle: Model<Project>,
-        workspace: WeakModel<Workspace>,
+        project_handle: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let project_event_subscription =
             cx.subscribe_in(&project_handle, window, |this, project, event, window, cx| match event {
@@ -169,8 +168,8 @@ impl ProjectDiagnosticsEditor {
         })
         .detach();
 
-        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
-        let editor = cx.new_model(|cx| {
+        let excerpts = cx.new(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
+        let editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(
                 excerpts.clone(),
                 Some(project_handle.clone()),
@@ -223,7 +222,7 @@ impl ProjectDiagnosticsEditor {
         this
     }
 
-    fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_stale_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.update_excerpts_task.is_some() {
             return;
         }
@@ -259,11 +258,11 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn new(
-        project_handle: Model<Project>,
+        project_handle: Entity<Project>,
         include_warnings: bool,
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::new_with_context(
             editor::DEFAULT_MULTIBUFFER_CONTEXT,
@@ -279,7 +278,7 @@ impl ProjectDiagnosticsEditor {
         workspace: &mut Workspace,
         _: &Deploy,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
@@ -291,7 +290,7 @@ impl ProjectDiagnosticsEditor {
                 None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             };
 
-            let diagnostics = cx.new_model(|cx| {
+            let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
                     workspace.project().clone(),
                     include_warnings,
@@ -304,25 +303,20 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn toggle_warnings(
-        &mut self,
-        _: &ToggleWarnings,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn toggle_warnings(&mut self, _: &ToggleWarnings, window: &mut Window, cx: &mut Context<Self>) {
         self.include_warnings = !self.include_warnings;
         cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_all_excerpts(window, cx);
         cx.notify();
     }
 
-    fn focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_handle.is_focused(window) && !self.path_states.is_empty() {
             self.editor.focus_handle(cx).focus(window)
         }
     }
 
-    fn focus_out(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
             self.update_stale_excerpts(window, cx);
@@ -331,7 +325,7 @@ impl ProjectDiagnosticsEditor {
 
     /// Enqueue an update of all excerpts. Updates all paths that either
     /// currently have diagnostics or are currently present in this view.
-    fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.project.update(cx, |project, cx| {
             let mut paths = project
                 .diagnostic_summaries(false, cx)
@@ -353,9 +347,9 @@ impl ProjectDiagnosticsEditor {
         &mut self,
         path_to_update: ProjectPath,
         server_to_update: Option<LanguageServerId>,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
@@ -664,7 +658,7 @@ impl ProjectDiagnosticsEditor {
     }
 
     #[cfg(test)]
-    fn check_invariants(&self, cx: &mut ModelContext<Self>) {
+    fn check_invariants(&self, cx: &mut Context<Self>) {
         let mut excerpts = Vec::new();
         for (id, buffer, _) in self.excerpts.read(cx).snapshot(cx).excerpts() {
             if let Some(file) = buffer.file() {
@@ -685,7 +679,7 @@ impl ProjectDiagnosticsEditor {
 }
 
 impl Focusable for ProjectDiagnosticsEditor {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -697,7 +691,7 @@ impl Item for ProjectDiagnosticsEditor {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
@@ -706,22 +700,17 @@ impl Item for ProjectDiagnosticsEditor {
         &mut self,
         data: Box<dyn Any>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Project Diagnostics".into())
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        _window: &Window,
-        _: &AppContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
         h_flex()
             .gap_1()
             .when(
@@ -766,13 +755,13 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn for_each_project_item(
         &self,
-        cx: &AppContext,
+        cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, _: &AppContext) -> bool {
+    fn is_singleton(&self, _: &App) -> bool {
         false
     }
 
@@ -780,7 +769,7 @@ impl Item for ProjectDiagnosticsEditor {
         &mut self,
         nav_history: ItemNavHistory,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
@@ -791,12 +780,12 @@ impl Item for ProjectDiagnosticsEditor {
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_model(|cx| {
+        Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.project.clone(),
                 self.include_warnings,
@@ -807,47 +796,47 @@ impl Item for ProjectDiagnosticsEditor {
         }))
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
+    fn is_dirty(&self, cx: &App) -> bool {
         self.excerpts.read(cx).is_dirty(cx)
     }
 
-    fn has_deleted_file(&self, cx: &AppContext) -> bool {
+    fn has_deleted_file(&self, cx: &App) -> bool {
         self.excerpts.read(cx).has_deleted_file(cx)
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
+    fn has_conflict(&self, cx: &App) -> bool {
         self.excerpts.read(cx).has_conflict(cx)
     }
 
-    fn can_save(&self, _: &AppContext) -> bool {
+    fn can_save(&self, _: &App) -> bool {
         true
     }
 
     fn save(
         &mut self,
         format: bool,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.editor.save(format, project, window, cx)
     }
 
     fn save_as(
         &mut self,
-        _: Model<Project>,
+        _: Entity<Project>,
         _: ProjectPath,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
     }
 
     fn reload(
         &mut self,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.editor.reload(project, window, cx)
     }
@@ -855,8 +844,8 @@ impl Item for ProjectDiagnosticsEditor {
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a Model<Self>,
-        _: &'a AppContext,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
     ) -> Option<AnyView> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.to_any())
@@ -867,15 +856,15 @@ impl Item for ProjectDiagnosticsEditor {
         }
     }
 
-    fn as_searchable(&self, _: &Model<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
     }
 
-    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.editor.breadcrumbs(theme, cx)
     }
 
@@ -883,7 +872,7 @@ impl Item for ProjectDiagnosticsEditor {
         &mut self,
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             editor.added_to_workspace(workspace, window, cx)
@@ -992,7 +981,7 @@ fn context_range_for_entry(
     entry: &DiagnosticEntry<Point>,
     context: u32,
     snapshot: &BufferSnapshot,
-    cx: &AppContext,
+    cx: &App,
 ) -> Range<Point> {
     if let Some(rows) = heuristic_syntactic_expand(
         entry.range.clone(),
@@ -1023,7 +1012,7 @@ fn heuristic_syntactic_expand<'a>(
     input_range: Range<Point>,
     max_row_count: u32,
     snapshot: &'a BufferSnapshot,
-    cx: &'a AppContext,
+    cx: &'a App,
 ) -> Option<RangeInclusive<BufferRow>> {
     let input_row_count = input_range.end.row - input_range.start.row;
     if input_row_count > max_row_count {

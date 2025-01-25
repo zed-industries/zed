@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use gpui::{actions, AppContext, Task, Window};
+use gpui::{actions, App, Task, Window};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
@@ -16,7 +16,7 @@ actions!(
     [ToggleScreenSharing, ToggleMute, ToggleDeafen, LeaveCall]
 );
 
-fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut AppContext) {
+fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut App) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         let toggle_screen_sharing = room.update(cx, |room, cx| {
@@ -40,7 +40,7 @@ fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut 
     }
 }
 
-fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
+fn toggle_mute(_: &ToggleMute, cx: &mut App) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
         room.update(cx, |room, cx| {
@@ -60,7 +60,7 @@ fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     }
 }
 
-fn toggle_deafen(_: &ToggleDeafen, cx: &mut AppContext) {
+fn toggle_deafen(_: &ToggleDeafen, cx: &mut App) {
     if let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() {
         room.update(cx, |room, cx| room.toggle_deafen(cx));
     }
@@ -95,7 +95,7 @@ impl TitleBar {
     pub(crate) fn render_collaborator_list(
         &self,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let room = ActiveCall::global(cx).read(cx).room().cloned();
         let current_user = self.user_store.read(cx).current_user();
@@ -203,7 +203,7 @@ impl TitleBar {
         room: &Room,
         project_id: Option<u64>,
         current_user: &Arc<User>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<Div> {
         if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
             return None;
@@ -279,7 +279,7 @@ impl TitleBar {
     pub(crate) fn render_call_controls(
         &self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let Some(room) = ActiveCall::global(cx).read(cx).room().cloned() else {
             return Vec::new();

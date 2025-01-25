@@ -2,8 +2,8 @@ use futures::Future;
 use git::blame::BlameEntry;
 use git::Oid;
 use gpui::{
-    AppContext, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
-    StatefulInteractiveElement, WeakModel,
+    App, Asset, ClipboardItem, Element, ParentElement, Render, ScrollHandle,
+    StatefulInteractiveElement, WeakEntity,
 };
 use settings::Settings;
 use std::hash::Hash;
@@ -30,7 +30,7 @@ impl<'a> CommitAvatar<'a> {
     fn render(
         &'a self,
         window: &mut Window,
-        cx: &mut ModelContext<BlameEntryTooltip>,
+        cx: &mut Context<BlameEntryTooltip>,
     ) -> Option<impl IntoElement> {
         let remote = self
             .details
@@ -77,7 +77,7 @@ impl Asset for CommitAvatarAsset {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
 
@@ -95,7 +95,7 @@ pub(crate) struct BlameEntryTooltip {
     blame_entry: BlameEntry,
     details: Option<CommitDetails>,
     editor_style: EditorStyle,
-    workspace: Option<WeakModel<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     scroll_handle: ScrollHandle,
 }
 
@@ -104,7 +104,7 @@ impl BlameEntryTooltip {
         blame_entry: BlameEntry,
         details: Option<CommitDetails>,
         style: &EditorStyle,
-        workspace: Option<WeakModel<Workspace>>,
+        workspace: Option<WeakEntity<Workspace>>,
     ) -> Self {
         Self {
             editor_style: style.clone(),
@@ -117,7 +117,7 @@ impl BlameEntryTooltip {
 }
 
 impl Render for BlameEntryTooltip {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let avatar =
             CommitAvatar::new(self.details.as_ref(), self.blame_entry.sha).render(window, cx);
 

@@ -32,8 +32,8 @@
 //! your own custom layout algorithm or rendering a code editor.
 
 use crate::{
-    util::FluentBuilder, AppContext, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId,
-    FocusHandle, LayoutId, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
+    util::FluentBuilder, App, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId,
+    FocusHandle, LayoutId, Context, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -65,7 +65,7 @@ pub trait Element: 'static + IntoElement {
         &mut self,
         id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState);
 
     /// After laying out an element, we need to commit its bounds to the current frame for hitbox
@@ -76,7 +76,7 @@ pub trait Element: 'static + IntoElement {
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self::PrepaintState;
 
     /// Once layout has been completed, this method will be called to paint the element to the screen.
@@ -88,7 +88,7 @@ pub trait Element: 'static + IntoElement {
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
 
     /// Convert this element into a dynamically-typed [`AnyElement`].
@@ -118,11 +118,11 @@ impl<T: IntoElement> FluentBuilder for T {}
 /// models. Views are drawn to the screen and care about the current window's state, models are not and do not.
 pub trait Render: 'static + Sized {
     /// Render this view into an element tree.
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<'_, Self>) -> impl IntoElement;
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement;
 }
 
 impl Render for Empty {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
 }
@@ -136,7 +136,7 @@ pub trait RenderOnce: 'static {
     /// Render this component into an element tree. Note that this method
     /// takes ownership of self, as compared to [`Render::render()`] method
     /// which takes a mutable reference.
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement;
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement;
 }
 
 /// This is a helper trait to provide a uniform interface for constructing elements that
@@ -188,7 +188,7 @@ impl<C: RenderOnce> Element for Component<C> {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut element = self.0.take().unwrap().render(window, cx).into_any_element();
         let layout_id = element.request_layout(window, cx);
@@ -201,7 +201,7 @@ impl<C: RenderOnce> Element for Component<C> {
         _: Bounds<Pixels>,
         element: &mut AnyElement,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         element.prepaint(window, cx);
     }
@@ -213,7 +213,7 @@ impl<C: RenderOnce> Element for Component<C> {
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         element.paint(window, cx);
     }
@@ -234,17 +234,17 @@ pub struct GlobalElementId(pub(crate) SmallVec<[ElementId; 32]>);
 trait ElementObject {
     fn inner_element(&mut self) -> &mut dyn Any;
 
-    fn request_layout(&mut self, window: &mut Window, cx: &mut AppContext) -> LayoutId;
+    fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId;
 
-    fn prepaint(&mut self, window: &mut Window, cx: &mut AppContext);
+    fn prepaint(&mut self, window: &mut Window, cx: &mut App);
 
-    fn paint(&mut self, window: &mut Window, cx: &mut AppContext);
+    fn paint(&mut self, window: &mut Window, cx: &mut App);
 
     fn layout_as_root(
         &mut self,
         available_space: Size<AvailableSpace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Size<Pixels>;
 }
 
@@ -289,7 +289,7 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    fn request_layout(&mut self, window: &mut Window, cx: &mut AppContext) -> LayoutId {
+    fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Start => {
                 let global_id = self.element.id().map(|element_id| {
@@ -315,7 +315,7 @@ impl<E: Element> Drawable<E> {
         }
     }
 
-    pub(crate) fn prepaint(&mut self, window: &mut Window, cx: &mut AppContext) {
+    pub(crate) fn prepaint(&mut self, window: &mut Window, cx: &mut App) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::RequestLayout {
                 layout_id,
@@ -363,7 +363,7 @@ impl<E: Element> Drawable<E> {
     pub(crate) fn paint(
         &mut self,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (E::RequestLayoutState, E::PrepaintState) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Prepaint {
@@ -404,7 +404,7 @@ impl<E: Element> Drawable<E> {
         &mut self,
         available_space: Size<AvailableSpace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
             self.request_layout(window, cx);
@@ -458,15 +458,15 @@ where
         &mut self.element
     }
 
-    fn request_layout(&mut self, window: &mut Window, cx: &mut AppContext) -> LayoutId {
+    fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId {
         Drawable::request_layout(self, window, cx)
     }
 
-    fn prepaint(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn prepaint(&mut self, window: &mut Window, cx: &mut App) {
         Drawable::prepaint(self, window, cx);
     }
 
-    fn paint(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn paint(&mut self, window: &mut Window, cx: &mut App) {
         Drawable::paint(self, window, cx);
     }
 
@@ -474,7 +474,7 @@ where
         &mut self,
         available_space: Size<AvailableSpace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Size<Pixels> {
         Drawable::layout_as_root(self, available_space, window, cx)
     }
@@ -502,13 +502,13 @@ impl AnyElement {
 
     /// Request the layout ID of the element stored in this `AnyElement`.
     /// Used for laying out child elements in a parent element.
-    pub fn request_layout(&mut self, window: &mut Window, cx: &mut AppContext) -> LayoutId {
+    pub fn request_layout(&mut self, window: &mut Window, cx: &mut App) -> LayoutId {
         self.0.request_layout(window, cx)
     }
 
     /// Prepares the element to be painted by storing its bounds, giving it a chance to draw hitboxes and
     /// request autoscroll before the final paint pass is confirmed.
-    pub fn prepaint(&mut self, window: &mut Window, cx: &mut AppContext) -> Option<FocusHandle> {
+    pub fn prepaint(&mut self, window: &mut Window, cx: &mut App) -> Option<FocusHandle> {
         let focus_assigned = window.next_frame.focus.is_some();
 
         self.0.prepaint(window, cx);
@@ -523,7 +523,7 @@ impl AnyElement {
     }
 
     /// Paints the element stored in this `AnyElement`.
-    pub fn paint(&mut self, window: &mut Window, cx: &mut AppContext) {
+    pub fn paint(&mut self, window: &mut Window, cx: &mut App) {
         self.0.paint(window, cx);
     }
 
@@ -532,7 +532,7 @@ impl AnyElement {
         &mut self,
         available_space: Size<AvailableSpace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Size<Pixels> {
         self.0.layout_as_root(available_space, window, cx)
     }
@@ -543,7 +543,7 @@ impl AnyElement {
         &mut self,
         origin: Point<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<FocusHandle> {
         window.with_absolute_element_offset(origin, |window| self.prepaint(window, cx))
     }
@@ -555,7 +555,7 @@ impl AnyElement {
         origin: Point<Pixels>,
         available_space: Size<AvailableSpace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<FocusHandle> {
         self.layout_as_root(available_space, window, cx);
         window.with_absolute_element_offset(origin, |window| self.prepaint(window, cx))
@@ -574,7 +574,7 @@ impl Element for AnyElement {
         &mut self,
         _: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self.request_layout(window, cx);
         (layout_id, ())
@@ -586,7 +586,7 @@ impl Element for AnyElement {
         _: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.prepaint(window, cx);
     }
@@ -598,7 +598,7 @@ impl Element for AnyElement {
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.paint(window, cx);
     }
@@ -639,7 +639,7 @@ impl Element for Empty {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         (window.request_layout(Style::default(), None, cx), ())
     }
@@ -650,7 +650,7 @@ impl Element for Empty {
         _bounds: Bounds<Pixels>,
         _state: &mut Self::RequestLayoutState,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
     }
 
@@ -661,7 +661,7 @@ impl Element for Empty {
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
     }
 }

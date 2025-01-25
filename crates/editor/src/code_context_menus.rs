@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
-    BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Model, ScrollStrategy, SharedString,
-    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, WeakModel,
+    BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Entity, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, WeakEntity,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -46,7 +46,7 @@ impl CodeContextMenu {
     pub fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
@@ -62,7 +62,7 @@ impl CodeContextMenu {
     pub fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
@@ -78,7 +78,7 @@ impl CodeContextMenu {
     pub fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
@@ -94,7 +94,7 @@ impl CodeContextMenu {
     pub fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
@@ -127,7 +127,7 @@ impl CodeContextMenu {
         max_height_in_lines: u32,
         y_flipped: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> AnyElement {
         match self {
             CodeContextMenu::Completions(menu) => {
@@ -143,8 +143,8 @@ impl CodeContextMenu {
         &self,
         style: &EditorStyle,
         max_size: Size<Pixels>,
-        workspace: Option<WeakModel<Workspace>>,
-        cx: &mut ModelContext<Editor>,
+        workspace: Option<WeakEntity<Workspace>>,
+        cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         match self {
             CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, cx),
@@ -163,7 +163,7 @@ pub struct CompletionsMenu {
     pub id: CompletionId,
     sort_completions: bool,
     pub initial_position: Anchor,
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub completions: Rc<RefCell<Box<[Completion]>>>,
     match_candidates: Rc<[StringMatchCandidate]>,
     pub entries: Rc<RefCell<Vec<CompletionEntry>>>,
@@ -186,7 +186,7 @@ impl CompletionsMenu {
         sort_completions: bool,
         show_completion_documentation: bool,
         initial_position: Anchor,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
     ) -> Self {
         let match_candidates = completions
@@ -216,7 +216,7 @@ impl CompletionsMenu {
         sort_completions: bool,
         choices: &Vec<String>,
         selection: Range<Anchor>,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
     ) -> Self {
         let completions = choices
             .iter()
@@ -272,7 +272,7 @@ impl CompletionsMenu {
     fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
             self.entries.borrow().len() - 1
@@ -285,7 +285,7 @@ impl CompletionsMenu {
     fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
             0
@@ -298,7 +298,7 @@ impl CompletionsMenu {
     fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
             self.next_match_index()
@@ -311,7 +311,7 @@ impl CompletionsMenu {
     fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
@@ -325,7 +325,7 @@ impl CompletionsMenu {
         &mut self,
         match_index: usize,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if self.selected_item != match_index {
             self.selected_item = match_index;
@@ -373,7 +373,7 @@ impl CompletionsMenu {
     pub fn resolve_visible_completions(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if !self.resolve_completions {
             return;
@@ -471,7 +471,7 @@ impl CompletionsMenu {
         max_height_in_lines: u32,
         y_flipped: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> AnyElement {
         let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
@@ -709,8 +709,8 @@ impl CompletionsMenu {
         &self,
         style: &EditorStyle,
         max_size: Size<Pixels>,
-        workspace: Option<WeakModel<Workspace>>,
-        cx: &mut ModelContext<Editor>,
+        workspace: Option<WeakEntity<Workspace>>,
+        cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         if !self.show_completion_documentation {
             return None;
@@ -1012,14 +1012,14 @@ impl CodeActionsItem {
 
 pub struct CodeActionsMenu {
     pub actions: CodeActionContents,
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
     pub deployed_from_indicator: Option<DisplayRow>,
 }
 
 impl CodeActionsMenu {
-    fn select_first(&mut self, cx: &mut ModelContext<Editor>) {
+    fn select_first(&mut self, cx: &mut Context<Editor>) {
         self.selected_item = if self.scroll_handle.y_flipped() {
             self.actions.len() - 1
         } else {
@@ -1030,7 +1030,7 @@ impl CodeActionsMenu {
         cx.notify()
     }
 
-    fn select_last(&mut self, cx: &mut ModelContext<Editor>) {
+    fn select_last(&mut self, cx: &mut Context<Editor>) {
         self.selected_item = if self.scroll_handle.y_flipped() {
             0
         } else {
@@ -1041,7 +1041,7 @@ impl CodeActionsMenu {
         cx.notify()
     }
 
-    fn select_prev(&mut self, cx: &mut ModelContext<Editor>) {
+    fn select_prev(&mut self, cx: &mut Context<Editor>) {
         self.selected_item = if self.scroll_handle.y_flipped() {
             self.next_match_index()
         } else {
@@ -1052,7 +1052,7 @@ impl CodeActionsMenu {
         cx.notify();
     }
 
-    fn select_next(&mut self, cx: &mut ModelContext<Editor>) {
+    fn select_next(&mut self, cx: &mut Context<Editor>) {
         self.selected_item = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
         } else {
@@ -1097,7 +1097,7 @@ impl CodeActionsMenu {
         max_height_in_lines: u32,
         y_flipped: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;

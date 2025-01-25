@@ -1,12 +1,12 @@
 use editor::{Editor, MultiBufferSnapshot};
-use gpui::{AppContext, FocusHandle, Focusable, Model, Subscription, Task, WeakModel};
+use gpui::{App, FocusHandle, Focusable, Entity, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
-    div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ModelContext,
+    div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, Context,
     ParentElement, Render, Tooltip, Window,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
@@ -23,7 +23,7 @@ pub struct CursorPosition {
     position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }
@@ -66,10 +66,10 @@ impl CursorPosition {
 
     fn update_position(
         &mut self,
-        editor: Model<Editor>,
+        editor: Entity<Editor>,
         debounce: Option<Duration>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let editor = editor.downgrade();
         self.update_position = cx.spawn_in(window, |cursor_position, mut cx| async move {
@@ -138,7 +138,7 @@ impl CursorPosition {
         });
     }
 
-    fn write_position(&self, text: &mut String, cx: &AppContext) {
+    fn write_position(&self, text: &mut String, cx: &App) {
         if self.selected_count
             <= (SelectionStats {
                 selections: 1,
@@ -192,7 +192,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -249,7 +249,7 @@ impl StatusItemView for CursorPosition {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self._observe_active_editor =
@@ -297,7 +297,7 @@ impl Settings for LineIndicatorFormat {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> anyhow::Result<Self> {
         let format = [sources.release_channel, sources.user]
             .into_iter()

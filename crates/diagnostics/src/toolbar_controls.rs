@@ -1,15 +1,15 @@
 use crate::ProjectDiagnosticsEditor;
-use gpui::{EventEmitter, Model, ModelContext, ParentElement, Render, WeakModel, Window};
+use gpui::{EventEmitter, Entity, Context, ParentElement, Render, WeakEntity, Window};
 use ui::prelude::*;
 use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
-    editor: Option<WeakModel<ProjectDiagnosticsEditor>>,
+    editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
 }
 
 impl Render for ToolbarControls {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
@@ -80,7 +80,7 @@ impl ToolbarItemView for ToolbarControls {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         if let Some(pane_item) = active_pane_item.as_ref() {
             if let Some(editor) = pane_item.downcast::<ProjectDiagnosticsEditor>() {
@@ -106,7 +106,7 @@ impl ToolbarControls {
         ToolbarControls { editor: None }
     }
 
-    fn diagnostics(&self) -> Option<Model<ProjectDiagnosticsEditor>> {
+    fn diagnostics(&self) -> Option<Entity<ProjectDiagnosticsEditor>> {
         self.editor.as_ref()?.upgrade()
     }
 }

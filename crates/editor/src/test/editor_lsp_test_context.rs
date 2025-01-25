@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{Focusable as _, Model, ModelContext, VisualTestContext, Window};
+use gpui::{Focusable as _, Entity, Context, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -27,7 +27,7 @@ use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
-    pub workspace: Model<Workspace>,
+    pub workspace: Entity<Workspace>,
     pub buffer_lsp_url: lsp::Url,
 }
 
@@ -317,7 +317,7 @@ impl EditorLspTestContext {
 
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut Window, &mut ModelContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
         self.workspace.update_in(&mut self.cx.cx, update)
     }

@@ -3,10 +3,10 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
+use gpui::{App, AsyncAppContext, BackgroundExecutor, SharedString, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
@@ -614,7 +614,7 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
+    pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         InitializeParams {
@@ -811,7 +811,7 @@ impl LanguageServer {
         mut self,
         initialize_params: Option<InitializeParams>,
         configuration: Arc<DidChangeConfigurationParams>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         let params = if let Some(params) = initialize_params {
             params

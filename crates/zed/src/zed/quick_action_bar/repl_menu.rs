@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::ElementId;
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Model, Transformation};
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Entity, Transformation};
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
@@ -32,7 +32,7 @@ struct ReplMenuState {
 }
 
 impl QuickActionBar {
-    pub fn render_repl_menu(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    pub fn render_repl_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !JupyterSettings::enabled(cx) {
             return None;
         }
@@ -256,7 +256,7 @@ impl QuickActionBar {
     pub fn render_repl_launch_menu(
         &self,
         kernel_specification: KernelSpecification,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
@@ -278,7 +278,7 @@ impl QuickActionBar {
         )
     }
 
-    pub fn render_kernel_selector(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_kernel_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let editor = if let Some(editor) = self.active_editor() {
             editor
         } else {
@@ -354,7 +354,7 @@ impl QuickActionBar {
         &self,
         language: &str,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
@@ -377,7 +377,7 @@ impl QuickActionBar {
     }
 }
 
-fn session_state(session: Model<Session>, cx: &mut AppContext) -> ReplMenuState {
+fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
     let session = session.read(cx);
 
     let kernel_name = session.kernel_specification.name();

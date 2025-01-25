@@ -6,10 +6,10 @@
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AsyncAppContext, Bounds, Context, InteractiveElement, KeyBinding, Menu,
-    MenuItem, Model, ModelContext, ParentElement, Pixels, Render, ScreenCaptureStream,
-    SharedString, StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    px, rgb, size, AppContext as _, AsyncAppContext, Bounds, Context, Entity, InteractiveElement,
+    KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
+    StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
+    WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
 use livekit_client::{
@@ -46,7 +46,7 @@ fn main() {}
 fn main() {
     SimpleLogger::init(LevelFilter::Info, Default::default()).expect("could not initialize logger");
 
-    gpui::App::new().run(|cx| {
+    gpui::Application::new().run(|cx| {
         livekit_client::init(
             cx.background_executor().dispatcher.clone(),
             cx.http_client(),
@@ -98,7 +98,7 @@ fn main() {
     });
 }
 
-fn quit(_: &Quit, cx: &mut gpui::AppContext) {
+fn quit(_: &Quit, cx: &mut gpui::App) {
     cx.quit();
 }
 
@@ -117,7 +117,7 @@ struct LivekitWindow {
 struct ParticipantState {
     audio_output_stream: Option<(RemoteTrackPublication, AudioStream)>,
     muted: bool,
-    screen_share_output_view: Option<(RemoteVideoTrack, Model<RemoteVideoTrackView>)>,
+    screen_share_output_view: Option<(RemoteVideoTrack, Entity<RemoteVideoTrackView>)>,
     speaking: bool,
 }
 
@@ -140,7 +140,7 @@ impl LivekitWindow {
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new_model(|cx| {
+                    cx.new(|cx| {
                         let _events_task = cx.spawn_in(window, |this, mut cx| async move {
                             while let Some(event) = events.recv().await {
                                 cx.update(|window, cx| {
@@ -169,12 +169,7 @@ impl LivekitWindow {
         .unwrap()
     }
 
-    fn handle_room_event(
-        &mut self,
-        event: RoomEvent,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn handle_room_event(&mut self, event: RoomEvent, window: &mut Window, cx: &mut Context<Self>) {
         eprintln!("event: {event:?}");
 
         match event {
@@ -217,7 +212,7 @@ impl LivekitWindow {
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
                             track.clone(),
-                            cx.new_model(|cx| RemoteVideoTrackView::new(track, window, cx)),
+                            cx.new(|cx| RemoteVideoTrackView::new(track, window, cx)),
                         ));
                     }
                 }
@@ -271,7 +266,7 @@ impl LivekitWindow {
         }
     }
 
-    fn toggle_mute(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(track) = &self.microphone_track {
             if track.is_muted() {
                 track.unmute();
@@ -303,7 +298,7 @@ impl LivekitWindow {
         }
     }
 
-    fn toggle_screen_share(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_screen_share(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(track) = self.screen_share_track.take() {
             self.screen_share_stream.take();
             let participant = self.room.local_participant();
@@ -345,7 +340,7 @@ impl LivekitWindow {
         &mut self,
         identity: &ParticipantIdentity,
 
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
             if id == identity {
@@ -363,7 +358,7 @@ impl LivekitWindow {
 
 #[cfg(not(windows))]
 impl Render for LivekitWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         fn button() -> gpui::Div {
             div()
                 .w(px(180.0))

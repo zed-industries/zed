@@ -1,5 +1,5 @@
 use client::telemetry;
-use gpui::{AppContext, Task, Window};
+use gpui::{App, Task, Window};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
@@ -19,7 +19,7 @@ pub struct SystemSpecs {
 }
 
 impl SystemSpecs {
-    pub fn new(window: &mut Window, cx: &mut AppContext) -> Task<Self> {
+    pub fn new(window: &mut Window, cx: &mut App) -> Task<Self> {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx);
         let os_name = telemetry::os_name();

@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Context as _;
-use gpui::{AppContext, Context, Model, ModelContext, Window};
+use gpui::{App, AppContext as _, Context, Entity, Window};
 use language::Language;
 use multi_buffer::MultiBuffer;
 use project::lsp_ext_command::ExpandMacro;
@@ -18,7 +18,7 @@ fn is_rust_language(language: &Language) -> bool {
     language.name() == "Rust".into()
 }
 
-pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
     if editor
         .update(cx, |e, cx| {
             find_specific_language_server_in_selection(e, cx, is_rust_language, RUST_ANALYZER_NAME)
@@ -34,7 +34,7 @@ pub fn expand_macro_recursively(
     editor: &mut Editor,
     _: &ExpandMacroRecursively,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     if editor.selections.count() == 0 {
         return;
@@ -83,11 +83,10 @@ pub fn expand_macro_recursively(
                 buffer.edit([(0..0, macro_expansion.expansion)], None, cx);
                 buffer.set_language(Some(rust_language), cx)
             });
-            let multibuffer = cx.new_model(|cx| {
-                MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name)
-            });
+            let multibuffer =
+                cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(macro_expansion.name));
             workspace.add_item_to_active_pane(
-                Box::new(cx.new_model(|cx| {
+                Box::new(cx.new(|cx| {
                     Editor::for_multibuffer(multibuffer, Some(project), true, window, cx)
                 })),
                 None,
@@ -100,12 +99,7 @@ pub fn expand_macro_recursively(
     .detach_and_log_err(cx);
 }
 
-pub fn open_docs(
-    editor: &mut Editor,
-    _: &OpenDocs,
-    window: &mut Window,
-    cx: &mut ModelContext<Editor>,
-) {
+pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mut Context<Editor>) {
     if editor.selections.count() == 0 {
         return;
     }

@@ -1,5 +1,5 @@
 use crate::{
-    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, AppContext,
+    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App,
     Bounds, DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox,
     IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
     SharedString, Size, TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, Window, WrappedLine,
@@ -29,7 +29,7 @@ impl Element for &'static str {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut state = TextLayout::default();
         let layout_id = state.layout(SharedString::from(*self), None, window, cx);
@@ -42,7 +42,7 @@ impl Element for &'static str {
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
         text_layout.prepaint(bounds, self)
     }
@@ -54,7 +54,7 @@ impl Element for &'static str {
         text_layout: &mut TextLayout,
         _: &mut (),
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         text_layout.paint(self, window, cx)
     }
@@ -90,7 +90,7 @@ impl Element for SharedString {
         _id: Option<&GlobalElementId>,
 
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut state = TextLayout::default();
         let layout_id = state.layout(self.clone(), None, window, cx);
@@ -103,7 +103,7 @@ impl Element for SharedString {
         bounds: Bounds<Pixels>,
         text_layout: &mut Self::RequestLayoutState,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
         text_layout.prepaint(bounds, self.as_ref())
     }
@@ -115,7 +115,7 @@ impl Element for SharedString {
         text_layout: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         text_layout.paint(self.as_ref(), window, cx)
     }
@@ -204,7 +204,7 @@ impl Element for StyledText {
         _id: Option<&GlobalElementId>,
 
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let layout_id = self
             .layout
@@ -218,7 +218,7 @@ impl Element for StyledText {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) {
         self.layout.prepaint(bounds, &self.text)
     }
@@ -230,7 +230,7 @@ impl Element for StyledText {
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.layout.paint(&self.text, window, cx)
     }
@@ -268,7 +268,7 @@ impl TextLayout {
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         window: &mut Window,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
@@ -372,7 +372,7 @@ impl TextLayout {
         element_state.bounds = Some(bounds);
     }
 
-    fn paint(&self, text: &str, window: &mut Window, cx: &mut AppContext) {
+    fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {
         let element_state = self.lock();
         let element_state = element_state
             .as_ref()
@@ -515,11 +515,11 @@ pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
     click_listener: Option<
-        Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut AppContext)>,
+        Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut App)>,
     >,
     hover_listener:
-        Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext)>>,
-    tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut AppContext) -> Option<AnyView>>>,
+        Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App)>>,
+    tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut App) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,
 }
@@ -557,7 +557,7 @@ impl InteractiveText {
     pub fn on_click(
         mut self,
         ranges: Vec<Range<usize>>,
-        listener: impl Fn(usize, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(usize, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.click_listener = Some(Box::new(move |ranges, event, window, cx| {
             for (range_ix, range) in ranges.iter().enumerate() {
@@ -575,7 +575,7 @@ impl InteractiveText {
     /// index of the hovered character, or None if the mouse leaves the text.
     pub fn on_hover(
         mut self,
-        listener: impl Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext) + 'static,
+        listener: impl Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.hover_listener = Some(Box::new(listener));
         self
@@ -584,7 +584,7 @@ impl InteractiveText {
     /// tooltip lets you specify a tooltip for a given character index in the string.
     pub fn tooltip(
         mut self,
-        builder: impl Fn(usize, &mut Window, &mut AppContext) -> Option<AnyView> + 'static,
+        builder: impl Fn(usize, &mut Window, &mut App) -> Option<AnyView> + 'static,
     ) -> Self {
         self.tooltip_builder = Some(Rc::new(builder));
         self
@@ -603,7 +603,7 @@ impl Element for InteractiveText {
         &mut self,
         _id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         self.text.request_layout(None, window, cx)
     }
@@ -614,7 +614,7 @@ impl Element for InteractiveText {
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Hitbox {
         window.with_optional_element_state::<InteractiveTextState, _>(
             global_id,
@@ -646,7 +646,7 @@ impl Element for InteractiveText {
         _: &mut Self::RequestLayoutState,
         hitbox: &mut Hitbox,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let text_layout = self.text.layout().clone();
         window.with_element_state::<InteractiveTextState, _>(
@@ -733,7 +733,7 @@ impl Element for InteractiveText {
                     let build_tooltip = Rc::new({
                         let tooltip_is_hoverable = false;
                         let text_layout = text_layout.clone();
-                        move |window: &mut Window, cx: &mut AppContext| {
+                        move |window: &mut Window, cx: &mut App| {
                             text_layout
                                 .index_for_position(window.mouse_position())
                                 .ok()

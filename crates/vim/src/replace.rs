@@ -4,14 +4,14 @@ use crate::{
     Vim,
 };
 use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
-use gpui::{actions, ModelContext, Window};
+use gpui::{actions, Context, Window};
 use language::Point;
 use std::ops::Range;
 use std::sync::Arc;
 
 actions!(vim, [ToggleReplace, UndoReplace]);
 
-pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &ToggleReplace, window, cx| {
         vim.replacements = vec![];
         vim.start_recording(cx);
@@ -32,7 +32,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -77,7 +77,7 @@ impl Vim {
         &mut self,
         maybe_times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {

@@ -1,4 +1,4 @@
-use gpui::{AnyView, DismissEvent, FocusHandle, Focusable as _, ManagedView, Model, Subscription};
+use gpui::{AnyView, DismissEvent, FocusHandle, Focusable as _, ManagedView, Entity, Subscription};
 use ui::prelude::*;
 
 pub enum DismissDecision {
@@ -10,7 +10,7 @@ pub trait ModalView: ManagedView {
     fn on_before_dismiss(
         &mut self,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) -> DismissDecision {
         DismissDecision::Dismiss(true)
     }
@@ -21,13 +21,13 @@ pub trait ModalView: ManagedView {
 }
 
 trait ModalViewHandle {
-    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut AppContext) -> DismissDecision;
+    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision;
     fn view(&self) -> AnyView;
-    fn fade_out_background(&self, cx: &mut AppContext) -> bool;
+    fn fade_out_background(&self, cx: &mut App) -> bool;
 }
 
-impl<V: ModalView> ModalViewHandle for Model<V> {
-    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut AppContext) -> DismissDecision {
+impl<V: ModalView> ModalViewHandle for Entity<V> {
+    fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut App) -> DismissDecision {
         self.update(cx, |this, cx| this.on_before_dismiss(window, cx))
     }
 
@@ -35,7 +35,7 @@ impl<V: ModalView> ModalViewHandle for Model<V> {
         self.clone().into()
     }
 
-    fn fade_out_background(&self, cx: &mut AppContext) -> bool {
+    fn fade_out_background(&self, cx: &mut App) -> bool {
         self.read(cx).fade_out_background()
     }
 }
@@ -69,11 +69,11 @@ impl ModalLayer {
     pub fn toggle_modal<V, B>(
         &mut self,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         build_view: B,
     ) where
         V: ModalView,
-        B: FnOnce(&mut Window, &mut ModelContext<V>) -> V,
+        B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
         if let Some(active_modal) = &self.active_modal {
             let is_close = active_modal.modal.view().downcast::<V>().is_ok();
@@ -82,15 +82,15 @@ impl ModalLayer {
                 return;
             }
         }
-        let new_modal = cx.new_model(|cx| build_view(window, cx));
+        let new_modal = cx.new(|cx| build_view(window, cx));
         self.show_modal(new_modal, window, cx);
     }
 
     fn show_modal<V>(
         &mut self,
-        new_modal: Model<V>,
+        new_modal: Entity<V>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) where
         V: ModalView,
     {
@@ -120,7 +120,7 @@ impl ModalLayer {
         cx.notify();
     }
 
-    fn hide_modal(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
             return false;
@@ -150,7 +150,7 @@ impl ModalLayer {
         true
     }
 
-    pub fn active_modal<V>(&self) -> Option<Model<V>>
+    pub fn active_modal<V>(&self) -> Option<Entity<V>>
     where
         V: 'static,
     {
@@ -164,7 +164,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };

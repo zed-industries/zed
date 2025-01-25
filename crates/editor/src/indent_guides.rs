@@ -1,7 +1,7 @@
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-use gpui::{AppContext, ModelContext, Task, Window};
+use gpui::{App, Context, Task, Window};
 use language::language_settings::language_settings;
 use multi_buffer::{IndentGuide, MultiBufferRow};
 use text::{LineIndent, Point};
@@ -33,7 +33,7 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<Vec<IndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
@@ -67,7 +67,7 @@ impl Editor {
         indent_guides: &[IndentGuide],
         snapshot: &DisplaySnapshot,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
         let cursor_row = MultiBufferRow(selection.head().row);
@@ -155,7 +155,7 @@ pub fn indent_guides_in_range(
     visible_buffer_range: Range<MultiBufferRow>,
     ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
-    cx: &AppContext,
+    cx: &App,
 ) -> Vec<IndentGuide> {
     let start_anchor = snapshot
         .buffer_snapshot

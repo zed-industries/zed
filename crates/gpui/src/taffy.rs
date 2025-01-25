@@ -1,5 +1,5 @@
 use crate::{
-    AbsoluteLength, AppContext, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
+    AbsoluteLength, App, Bounds, DefiniteLength, Edges, Length, Pixels, Point, Size, Style,
     Window,
 };
 use collections::{FxHashMap, FxHashSet};
@@ -17,7 +17,7 @@ type NodeMeasureFn = Box<
         Size<Option<Pixels>>,
         Size<AvailableSpace>,
         &mut Window,
-        &mut AppContext,
+        &mut App,
     ) -> Size<Pixels>,
 >;
 
@@ -81,7 +81,7 @@ impl TaffyLayoutEngine {
                 Size<Option<Pixels>>,
                 Size<AvailableSpace>,
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
@@ -152,7 +152,7 @@ impl TaffyLayoutEngine {
         id: LayoutId,
         available_space: Size<AvailableSpace>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         // Leaving this here until we have a better instrumentation approach.
         // println!("Laying out {} children", self.count_all_children(id)?);

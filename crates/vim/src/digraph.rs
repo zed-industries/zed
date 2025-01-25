@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
-use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent, ModelContext, Window};
+use gpui::{impl_actions, App, Keystroke, KeystrokeEvent, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
@@ -16,7 +16,7 @@ mod default;
 struct Literal(String, char);
 impl_actions!(vim, [Literal]);
 
-pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::literal)
 }
 
@@ -30,7 +30,7 @@ static DEFAULT_DIGRAPHS_MAP: LazyLock<HashMap<String, Arc<str>>> = LazyLock::new
     map
 });
 
-fn lookup_digraph(a: char, b: char, cx: &AppContext) -> Arc<str> {
+fn lookup_digraph(a: char, b: char, cx: &App) -> Arc<str> {
     let custom_digraphs = &VimSettings::get_global(cx).custom_digraphs;
     let input = format!("{a}{b}");
     let reversed = format!("{b}{a}");
@@ -50,7 +50,7 @@ impl Vim {
         first_char: char,
         second_char: char,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let text = lookup_digraph(first_char, second_char, cx);
 
@@ -64,7 +64,7 @@ impl Vim {
         }
     }
 
-    fn literal(&mut self, action: &Literal, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn literal(&mut self, action: &Literal, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(Operator::Literal { prefix }) = self.active_operator() {
             if let Some(prefix) = prefix {
                 if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
@@ -84,7 +84,7 @@ impl Vim {
         keystroke_event: &KeystrokeEvent,
         prefix: String,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // handled by handle_literal_input
         if keystroke_event.keystroke.key_char.is_some() {
@@ -113,7 +113,7 @@ impl Vim {
         mut prefix: String,
         text: &str,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let first = prefix.chars().next();
         let next = text.chars().next().unwrap_or(' ');
@@ -200,7 +200,7 @@ impl Vim {
         ch: Option<char>,
         suffix: &str,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.pop_operator(window, cx);
         let mut text = String::new();

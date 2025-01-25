@@ -19,9 +19,9 @@ use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
 use git_ui::repository_selector::RepositorySelector;
 use git_ui::repository_selector::RepositorySelectorPopoverMenu;
 use gpui::{
-    actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
-    Interactivity, IntoElement, Model, ModelContext, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, WeakModel, Window,
+    actions, div, px, Action, AnyElement, App, Decorations, Element, Entity, InteractiveElement,
+    Interactivity, IntoElement, Context, MouseButton, ParentElement, Render, Stateful,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window,
 };
 use project::Project;
 use rpc::proto;
@@ -57,12 +57,12 @@ actions!(
     ]
 );
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx);
 
         #[cfg(not(target_os = "macos"))]
@@ -104,19 +104,19 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
-    repository_selector: Model<RepositorySelector>,
-    project: Model<Project>,
-    user_store: Model<UserStore>,
+    repository_selector: Entity<RepositorySelector>,
+    project: Entity<Project>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
     should_move: bool,
-    application_menu: Option<Model<ApplicationMenu>>,
+    application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
     git_ui_enabled: Arc<AtomicBool>,
 }
 
 impl Render for TitleBar {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
         let height = Self::height(window);
         let supported_controls = window.window_controls();
@@ -266,7 +266,7 @@ impl TitleBar {
         id: impl Into<ElementId>,
         workspace: &Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
@@ -277,13 +277,13 @@ impl TitleBar {
         let application_menu = match platform_style {
             PlatformStyle::Mac => {
                 if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
-                    Some(cx.new_model(|cx| ApplicationMenu::new(window, cx)))
+                    Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
                 } else {
                     None
                 }
             }
             PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(cx.new_model(|cx| ApplicationMenu::new(window, cx)))
+                Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
             }
         };
 
@@ -311,8 +311,7 @@ impl TitleBar {
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
-            repository_selector: cx
-                .new_model(|cx| RepositorySelector::new(project.clone(), window, cx)),
+            repository_selector: cx.new(|cx| RepositorySelector::new(project.clone(), window, cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
@@ -329,7 +328,7 @@ impl TitleBar {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(_window: &mut Window, _cx: &mut AppContext) -> Pixels {
+    pub fn height(_window: &mut Window, _cx: &mut App) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
     }
@@ -340,7 +339,7 @@ impl TitleBar {
         self
     }
 
-    fn render_ssh_project_host(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    fn render_ssh_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
@@ -414,7 +413,7 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_host(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
+    pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.project.read(cx).is_via_ssh() {
             return self.render_ssh_project_host(cx);
         }
@@ -460,7 +459,7 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -504,7 +503,7 @@ impl TitleBar {
     // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
     pub fn render_current_repository(
         &self,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         if !self.git_ui_enabled.load(Ordering::SeqCst) {
             return None;
@@ -539,7 +538,7 @@ impl TitleBar {
         ))
     }
 
-    pub fn render_project_branch(&self, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -576,7 +575,7 @@ impl TitleBar {
         )
     }
 
-    fn window_activation_changed(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.is_window_active() {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
@@ -593,11 +592,11 @@ impl TitleBar {
             .ok();
     }
 
-    fn active_call_changed(&mut self, cx: &mut ModelContext<Self>) {
+    fn active_call_changed(&mut self, cx: &mut Context<Self>) {
         cx.notify();
     }
 
-    fn share_project(&mut self, _: &ShareProject, cx: &mut ModelContext<Self>) {
+    fn share_project(&mut self, _: &ShareProject, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -605,7 +604,7 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
-    fn unshare_project(&mut self, _: &UnshareProject, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn unshare_project(&mut self, _: &UnshareProject, _: &mut Window, cx: &mut Context<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -616,7 +615,7 @@ impl TitleBar {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         match status {
             client::Status::ConnectionError
@@ -661,7 +660,7 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(&mut self, _: &mut ModelContext<Self>) -> Button {
+    pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
             .label_size(LabelSize::Small)
@@ -678,7 +677,7 @@ impl TitleBar {
             })
     }
 
-    pub fn render_user_menu_button(&mut self, cx: &mut ModelContext<Self>) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();

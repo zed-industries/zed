@@ -1983,7 +1983,7 @@ async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,
     expected_editor_title: &str,
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
     let history_items = open_queried_buffer(
@@ -2004,7 +2004,7 @@ async fn open_queried_buffer(
     input: &str,
     expected_matches: usize,
     expected_editor_title: &str,
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
     let picker = open_file_picker(&workspace, cx);
@@ -2062,11 +2062,11 @@ fn test_path_position(test_str: &str) -> FileSearchQuery {
 }
 
 fn build_find_picker(
-    project: Model<Project>,
+    project: Entity<Project>,
     cx: &mut TestAppContext,
 ) -> (
-    Model<Picker<FileFinderDelegate>>,
-    Model<Workspace>,
+    Entity<Picker<FileFinderDelegate>>,
+    Entity<Workspace>,
     &mut VisualTestContext,
 ) {
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
@@ -2076,9 +2076,9 @@ fn build_find_picker(
 
 #[track_caller]
 fn open_file_picker(
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
-) -> Model<Picker<FileFinderDelegate>> {
+) -> Entity<Picker<FileFinderDelegate>> {
     cx.dispatch_action(ToggleFileFinder {
         separate_history: true,
     });
@@ -2087,9 +2087,9 @@ fn open_file_picker(
 
 #[track_caller]
 fn active_file_picker(
-    workspace: &Model<Workspace>,
+    workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
-) -> Model<Picker<FileFinderDelegate>> {
+) -> Entity<Picker<FileFinderDelegate>> {
     workspace.update(cx, |workspace, cx| {
         workspace
             .active_modal::<FileFinder>(cx)

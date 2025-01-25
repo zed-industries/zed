@@ -1,5 +1,5 @@
 use crate::{
-    AppContext, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit,
+    App, Bounds, Element, ElementId, GlobalElementId, IntoElement, LayoutId, ObjectFit,
     Pixels, Style, StyleRefinement, Styled, Window,
 };
 #[cfg(target_os = "macos")]
@@ -57,7 +57,7 @@ impl Element for Surface {
         &mut self,
         _global_id: Option<&GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut style = Style::default();
         style.refine(&self.style);
@@ -71,7 +71,7 @@ impl Element for Surface {
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _window: &mut Window,
-        _cx: &mut AppContext,
+        _cx: &mut App,
     ) -> Self::PrepaintState {
     }
 
@@ -82,7 +82,7 @@ impl Element for Surface {
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
-        _: &mut AppContext,
+        _: &mut App,
     ) {
         match &self.source {
             #[cfg(target_os = "macos")]

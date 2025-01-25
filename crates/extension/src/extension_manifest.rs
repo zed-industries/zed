@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
 use language::LanguageName;

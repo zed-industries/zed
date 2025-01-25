@@ -1,6 +1,6 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
-use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
@@ -19,11 +19,11 @@ pub struct CopilotCompletionProvider {
     file_extension: Option<String>,
     pending_refresh: Option<Task<Result<()>>>,
     pending_cycling_refresh: Option<Task<Result<()>>>,
-    copilot: Model<Copilot>,
+    copilot: Entity<Copilot>,
 }
 
 impl CopilotCompletionProvider {
-    pub fn new(copilot: Model<Copilot>) -> Self {
+    pub fn new(copilot: Entity<Copilot>) -> Self {
         Self {
             cycled: false,
             buffer_id: None,
@@ -73,9 +73,9 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn is_enabled(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool {
         if !self.copilot.read(cx).status().is_authorized() {
             return false;
@@ -90,10 +90,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn refresh(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
@@ -139,10 +139,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn cycle(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         direction: Direction,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.cycled {
             match direction {
@@ -194,7 +194,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         }
     }
 
-    fn accept(&mut self, cx: &mut ModelContext<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
         if let Some(completion) = self.active_completion() {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))
@@ -202,7 +202,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         }
     }
 
-    fn discard(&mut self, cx: &mut ModelContext<Self>) {
+    fn discard(&mut self, cx: &mut Context<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
 
         let copilot_enabled = settings.inline_completions_enabled(None, None, cx);
@@ -220,9 +220,9 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn suggest(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<InlineCompletion> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
@@ -280,7 +280,7 @@ mod tests {
     };
     use fs::FakeFs;
     use futures::StreamExt;
-    use gpui::{BackgroundExecutor, Context, TestAppContext, UpdateGlobal};
+    use gpui::{AppContext as _, BackgroundExecutor, Context, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -309,7 +309,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
         });
@@ -537,7 +537,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
         });
@@ -661,7 +661,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
         });
@@ -720,9 +720,9 @@ mod tests {
 
         let (copilot, copilot_lsp) = Copilot::fake(cx);
 
-        let buffer_1 = cx.new_model(|cx| Buffer::local("a = 1\nb = 2\n", cx));
-        let buffer_2 = cx.new_model(|cx| Buffer::local("c = 3\nd = 4\n", cx));
-        let multibuffer = cx.new_model(|cx| {
+        let buffer_1 = cx.new(|cx| Buffer::local("a = 1\nb = 2\n", cx));
+        let buffer_2 = cx.new(|cx| Buffer::local("c = 3\nd = 4\n", cx));
+        let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -750,7 +750,7 @@ mod tests {
                 window.focus(&editor.focus_handle(cx));
             })
             .unwrap();
-        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
@@ -845,7 +845,7 @@ mod tests {
             cx,
         )
         .await;
-        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
             editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
         });
@@ -975,7 +975,7 @@ mod tests {
             .await
             .unwrap();
 
-        let multibuffer = cx.new_model(|cx| {
+        let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
@@ -1003,7 +1003,7 @@ mod tests {
                 window.focus(&editor.focus_handle(cx))
             })
             .unwrap();
-        let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
+        let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
                 editor.set_inline_completion_provider(Some(copilot_provider), window, cx)

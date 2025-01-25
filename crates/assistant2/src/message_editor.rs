@@ -4,8 +4,8 @@ use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    pulsating_between, Animation, AnimationExt, AppContext, DismissEvent, Focusable, Model,
-    Subscription, TextStyle, WeakModel,
+    pulsating_between, Animation, AnimationExt, App, DismissEvent, Focusable, Entity,
+    Subscription, TextStyle, WeakEntity,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
@@ -27,14 +27,14 @@ use crate::thread_store::ThreadStore;
 use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
-    thread: Model<Thread>,
-    editor: Model<Editor>,
-    context_store: Model<ContextStore>,
-    context_strip: Model<ContextStrip>,
+    thread: Entity<Thread>,
+    editor: Entity<Editor>,
+    context_store: Entity<ContextStore>,
+    context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    inline_context_picker: Model<ContextPicker>,
+    inline_context_picker: Entity<ContextPicker>,
     inline_context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Model<AssistantModelSelector>,
+    model_selector: Entity<AssistantModelSelector>,
     model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     use_tools: bool,
     _subscriptions: Vec<Subscription>,
@@ -43,18 +43,18 @@ pub struct MessageEditor {
 impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
-        workspace: WeakModel<Workspace>,
-        thread_store: WeakModel<ThreadStore>,
-        thread: Model<Thread>,
+        workspace: WeakEntity<Workspace>,
+        thread_store: WeakEntity<ThreadStore>,
+        thread: Entity<Thread>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
+        let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let editor = cx.new_model(|cx| {
+        let editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
@@ -62,7 +62,7 @@ impl MessageEditor {
             editor
         });
 
-        let inline_context_picker = cx.new_model(|cx| {
+        let inline_context_picker = cx.new(|cx| {
             ContextPicker::new(
                 workspace.clone(),
                 Some(thread_store.clone()),
@@ -74,7 +74,7 @@ impl MessageEditor {
             )
         });
 
-        let context_strip = cx.new_model(|cx| {
+        let context_strip = cx.new(|cx| {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
@@ -105,7 +105,7 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            model_selector: cx.new_model(|cx| {
+            model_selector: cx.new(|cx| {
                 AssistantModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),
@@ -124,7 +124,7 @@ impl MessageEditor {
         &mut self,
         _: &ToggleModelSelector,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.model_selector_menu_handle.toggle(window, cx)
     }
@@ -133,7 +133,7 @@ impl MessageEditor {
         &mut self,
         _: &ChatMode,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.use_tools = !self.use_tools;
         cx.notify();
@@ -143,7 +143,7 @@ impl MessageEditor {
         &mut self,
         _: &ToggleContextPicker,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.context_picker_menu_handle.toggle(window, cx);
     }
@@ -152,21 +152,21 @@ impl MessageEditor {
         &mut self,
         _: &RemoveAllContext,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
     }
 
-    fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut Context<Self>) {
         self.send_to_model(RequestKind::Chat, window, cx);
     }
 
-    fn is_editor_empty(&self, cx: &AppContext) -> bool {
+    fn is_editor_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).text(cx).is_empty()
     }
 
-    fn is_model_selected(&self, cx: &AppContext) -> bool {
+    fn is_model_selected(&self, cx: &App) -> bool {
         LanguageModelRegistry::read_global(cx)
             .active_model()
             .is_some()
@@ -176,7 +176,7 @@ impl MessageEditor {
         &mut self,
         request_kind: RequestKind,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
@@ -233,10 +233,10 @@ impl MessageEditor {
 
     fn handle_editor_event(
         &mut self,
-        editor: &Model<Editor>,
+        editor: &Entity<Editor>,
         event: &EditorEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             EditorEvent::SelectionsChanged { .. } => {
@@ -258,10 +258,10 @@ impl MessageEditor {
 
     fn handle_inline_context_picker_event(
         &mut self,
-        _inline_context_picker: &Model<ContextPicker>,
+        _inline_context_picker: &Entity<ContextPicker>,
         _event: &DismissEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let editor_focus_handle = self.editor.focus_handle(cx);
         window.focus(&editor_focus_handle);
@@ -269,10 +269,10 @@ impl MessageEditor {
 
     fn handle_context_strip_event(
         &mut self,
-        _context_strip: &Model<ContextStrip>,
+        _context_strip: &Entity<ContextStrip>,
         event: &ContextStripEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             ContextStripEvent::PickerDismissed
@@ -285,7 +285,7 @@ impl MessageEditor {
         }
     }
 
-    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed()
             || self.inline_context_picker_menu_handle.is_deployed()
         {
@@ -297,13 +297,13 @@ impl MessageEditor {
 }
 
 impl Focusable for MessageEditor {
-    fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
+    fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let font_size = TextSize::Default.rems(cx);
         let line_height = font_size.to_pixels(window.rem_size()) * 1.5;
         let focus_handle = self.editor.focus_handle(cx);

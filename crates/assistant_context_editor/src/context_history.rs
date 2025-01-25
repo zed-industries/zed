@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AppContext, EventEmitter, FocusHandle, Focusable, Model, Subscription, Task, WeakModel,
+    App, EventEmitter, FocusHandle, Focusable, Entity, Subscription, Task, WeakEntity,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -25,20 +25,20 @@ enum SavedContextPickerEvent {
 }
 
 pub struct ContextHistory {
-    picker: Model<Picker<SavedContextPickerDelegate>>,
+    picker: Entity<Picker<SavedContextPickerDelegate>>,
     _subscriptions: Vec<Subscription>,
-    workspace: WeakModel<Workspace>,
+    workspace: WeakEntity<Workspace>,
 }
 
 impl ContextHistory {
     pub fn new(
-        project: Model<Project>,
-        context_store: Model<ContextStore>,
-        workspace: WeakModel<Workspace>,
+        project: Entity<Project>,
+        context_store: Entity<ContextStore>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let picker = cx.new_model(|cx| {
+        let picker = cx.new(|cx| {
             Picker::uniform_list(
                 SavedContextPickerDelegate::new(project, context_store.clone()),
                 window,
@@ -65,10 +65,10 @@ impl ContextHistory {
 
     fn handle_picker_event(
         &mut self,
-        _: &Model<Picker<SavedContextPickerDelegate>>,
+        _: &Entity<Picker<SavedContextPickerDelegate>>,
         event: &SavedContextPickerEvent,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let SavedContextPickerEvent::Confirmed(context) = event;
 
@@ -94,13 +94,13 @@ impl ContextHistory {
 }
 
 impl Render for ContextHistory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(self.picker.clone())
     }
 }
 
 impl Focusable for ContextHistory {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
@@ -110,14 +110,14 @@ impl EventEmitter<()> for ContextHistory {}
 impl Item for ContextHistory {
     type Event = ();
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("History".into())
     }
 }
 
 struct SavedContextPickerDelegate {
-    store: Model<ContextStore>,
-    project: Model<Project>,
+    store: Entity<ContextStore>,
+    project: Entity<Project>,
     matches: Vec<ContextMetadata>,
     selected_index: usize,
 }
@@ -125,7 +125,7 @@ struct SavedContextPickerDelegate {
 impl EventEmitter<SavedContextPickerEvent> for Picker<SavedContextPickerDelegate> {}
 
 impl SavedContextPickerDelegate {
-    fn new(project: Model<Project>, store: Model<ContextStore>) -> Self {
+    fn new(project: Entity<Project>, store: Entity<ContextStore>) -> Self {
         Self {
             project,
             store,
@@ -150,12 +150,12 @@ impl PickerDelegate for SavedContextPickerDelegate {
         &mut self,
         ix: usize,
         _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search...".into()
     }
 
@@ -163,7 +163,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
         &mut self,
         query: String,
         _window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let search = self.store.read(cx).search(query, cx);
         cx.spawn(|this, mut cx| async move {
@@ -187,21 +187,21 @@ impl PickerDelegate for SavedContextPickerDelegate {
         &mut self,
         _secondary: bool,
         _window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
             cx.emit(SavedContextPickerEvent::Confirmed(metadata.clone()));
         }
     }
 
-    fn dismissed(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let context = self.matches.get(ix)?;
         let item = match context {

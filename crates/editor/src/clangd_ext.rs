@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use gpui::{AppContext, Model, ModelContext, Window};
+use gpui::{App, Entity, Context, Window};
 use language::Language;
 use url::Url;
 
@@ -17,7 +17,7 @@ pub fn switch_source_header(
     editor: &mut Editor,
     _: &SwitchSourceHeader,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     let Some(project) = &editor.project else {
         return;
@@ -85,7 +85,7 @@ pub fn switch_source_header(
     .detach_and_log_err(cx);
 }
 
-pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
     if editor.update(cx, |e, cx| {
         find_specific_language_server_in_selection(e, cx, is_c_language, CLANGD_SERVER_NAME)
             .is_some()

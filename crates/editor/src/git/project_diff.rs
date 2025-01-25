@@ -11,8 +11,8 @@ use collections::{BTreeMap, HashMap};
 use feature_flags::FeatureFlagAppExt;
 use git::diff::{BufferDiff, DiffHunk};
 use gpui::{
-    actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, Model, Render, Subscription, Task, WeakModel,
+    actions, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, Render, Subscription, Task, WeakEntity,
 };
 use language::{Buffer, BufferRow};
 use multi_buffer::{ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer};
@@ -30,8 +30,8 @@ use crate::{Editor, EditorEvent, DEFAULT_MULTIBUFFER_CONTEXT};
 
 actions!(project_diff, [Deploy]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(ProjectDiffEditor::register).detach();
+pub fn init(cx: &mut App) {
+    cx.observe_new(ProjectDiffEditor::register).detach();
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -39,11 +39,11 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 struct ProjectDiffEditor {
     buffer_changes: BTreeMap<WorktreeId, HashMap<ProjectEntryId, Changes>>,
     entry_order: HashMap<WorktreeId, Vec<(ProjectPath, ProjectEntryId)>>,
-    excerpts: Model<MultiBuffer>,
-    editor: Model<Editor>,
+    excerpts: Entity<MultiBuffer>,
+    editor: Entity<Editor>,
 
-    project: Model<Project>,
-    workspace: WeakModel<Workspace>,
+    project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     worktree_rescans: HashMap<WorktreeId, Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -51,7 +51,7 @@ struct ProjectDiffEditor {
 
 #[derive(Debug)]
 struct Changes {
-    buffer: Model<Buffer>,
+    buffer: Entity<Buffer>,
     hunks: Vec<DiffHunk>,
 }
 
@@ -59,7 +59,7 @@ impl ProjectDiffEditor {
     fn register(
         workspace: &mut Workspace,
         _window: Option<&mut Window>,
-        _: &mut ModelContext<Workspace>,
+        _: &mut Context<Workspace>,
     ) {
         workspace.register_action(Self::deploy);
     }
@@ -68,7 +68,7 @@ impl ProjectDiffEditor {
         workspace: &mut Workspace,
         _: &Deploy,
         window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
+        cx: &mut Context<Workspace>,
     ) {
         if !cx.is_staff() {
             return;
@@ -78,18 +78,17 @@ impl ProjectDiffEditor {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
             let workspace_handle = cx.model().downgrade();
-            let project_diff = cx.new_model(|cx| {
-                Self::new(workspace.project().clone(), workspace_handle, window, cx)
-            });
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
             workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx);
         }
     }
 
     fn new(
-        project: Model<Project>,
-        workspace: WeakModel<Workspace>,
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         // TODO diff change subscriptions. For that, needed:
         // * `-20/+50` stats retrieval: some background process that reacts on file changes
@@ -152,9 +151,9 @@ impl ProjectDiffEditor {
                 }
             });
 
-        let excerpts = cx.new_model(|cx| MultiBuffer::new(project.read(cx).capability()));
+        let excerpts = cx.new(|cx| MultiBuffer::new(project.read(cx).capability()));
 
-        let editor = cx.new_model(|cx| {
+        let editor = cx.new(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, window, cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
@@ -176,7 +175,7 @@ impl ProjectDiffEditor {
         new_self
     }
 
-    fn schedule_rescan_all(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn schedule_rescan_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut current_worktrees = HashSet::<WorktreeId>::default();
         for worktree in self.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree_id = worktree.read(cx).id();
@@ -196,7 +195,7 @@ impl ProjectDiffEditor {
         &mut self,
         id: WorktreeId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let project = self.project.clone();
         self.worktree_rescans.insert(
@@ -245,7 +244,7 @@ impl ProjectDiffEditor {
                         let mut new_entries = Vec::new();
                         let mut buffers = HashMap::<
                             ProjectEntryId,
-                            (text::BufferSnapshot, Model<Buffer>, BufferDiff),
+                            (text::BufferSnapshot, Entity<Buffer>, BufferDiff),
                         >::default();
                         let mut change_sets = Vec::new();
                         for (entry_id, entry_path, open_task) in open_tasks {
@@ -344,7 +343,7 @@ impl ProjectDiffEditor {
         new_changes: HashMap<ProjectEntryId, Changes>,
         new_entry_order: Vec<(ProjectPath, ProjectEntryId)>,
 
-        cx: &mut ModelContext<ProjectDiffEditor>,
+        cx: &mut Context<ProjectDiffEditor>,
     ) {
         if let Some(current_order) = self.entry_order.get(&worktree_id) {
             let current_entries = self.buffer_changes.entry(worktree_id).or_default();
@@ -352,7 +351,7 @@ impl ProjectDiffEditor {
             let mut excerpts_to_remove = Vec::new();
             let mut new_excerpt_hunks = BTreeMap::<
                 ExcerptId,
-                Vec<(ProjectPath, Model<Buffer>, Vec<Range<text::Anchor>>)>,
+                Vec<(ProjectPath, Entity<Buffer>, Vec<Range<text::Anchor>>)>,
             >::new();
             let mut excerpt_to_expand =
                 HashMap::<(u32, ExpandExcerptDirection), Vec<ExcerptId>>::default();
@@ -920,7 +919,7 @@ impl ProjectDiffEditor {
 impl EventEmitter<EditorEvent> for ProjectDiffEditor {}
 
 impl Focusable for ProjectDiffEditor {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -932,7 +931,7 @@ impl Item for ProjectDiffEditor {
         Editor::to_item_events(event, f)
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| editor.deactivated(window, cx));
     }
@@ -941,22 +940,17 @@ impl Item for ProjectDiffEditor {
         &mut self,
         data: Box<dyn Any>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         self.editor
             .update(cx, |editor, cx| editor.navigate(data, window, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Project Diff".into())
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        _window: &Window,
-        _: &AppContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
         if self.buffer_changes.is_empty() {
             Label::new("No changes")
                 .color(if params.selected {
@@ -1006,13 +1000,13 @@ impl Item for ProjectDiffEditor {
 
     fn for_each_project_item(
         &self,
-        cx: &AppContext,
+        cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
     }
 
-    fn is_singleton(&self, _: &AppContext) -> bool {
+    fn is_singleton(&self, _: &App) -> bool {
         false
     }
 
@@ -1020,7 +1014,7 @@ impl Item for ProjectDiffEditor {
         &mut self,
         nav_history: ItemNavHistory,
         _: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, _| {
             editor.set_nav_history(Some(nav_history));
@@ -1031,53 +1025,53 @@ impl Item for ProjectDiffEditor {
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>>
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_model(|cx| {
+        Some(cx.new(|cx| {
             ProjectDiffEditor::new(self.project.clone(), self.workspace.clone(), window, cx)
         }))
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
+    fn is_dirty(&self, cx: &App) -> bool {
         self.excerpts.read(cx).is_dirty(cx)
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
+    fn has_conflict(&self, cx: &App) -> bool {
         self.excerpts.read(cx).has_conflict(cx)
     }
 
-    fn can_save(&self, _: &AppContext) -> bool {
+    fn can_save(&self, _: &App) -> bool {
         true
     }
 
     fn save(
         &mut self,
         format: bool,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.editor.save(format, project, window, cx)
     }
 
     fn save_as(
         &mut self,
-        _: Model<Project>,
+        _: Entity<Project>,
         _: ProjectPath,
         _window: &mut Window,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         unreachable!()
     }
 
     fn reload(
         &mut self,
-        project: Model<Project>,
+        project: Entity<Project>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.editor.reload(project, window, cx)
     }
@@ -1085,8 +1079,8 @@ impl Item for ProjectDiffEditor {
     fn act_as_type<'a>(
         &'a self,
         type_id: TypeId,
-        self_handle: &'a Model<Self>,
-        _: &'a AppContext,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
     ) -> Option<AnyView> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.to_any())
@@ -1097,11 +1091,11 @@ impl Item for ProjectDiffEditor {
         }
     }
 
-    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &App) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         self.editor.breadcrumbs(theme, cx)
     }
 
@@ -1109,7 +1103,7 @@ impl Item for ProjectDiffEditor {
         &mut self,
         workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
             editor.added_to_workspace(workspace, window, cx)
@@ -1118,7 +1112,7 @@ impl Item for ProjectDiffEditor {
 }
 
 impl Render for ProjectDiffEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let child = if self.buffer_changes.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)
@@ -1228,7 +1222,7 @@ mod tests {
             .await
             .expect("failed to save a file");
         file_a_editor.update_in(cx, |file_a_editor, _window, cx| {
-            let change_set = cx.new_model(|cx| {
+            let change_set = cx.new(|cx| {
                 BufferChangeSet::new_with_base_text(
                     old_text.clone(),
                     &file_a_editor.buffer().read(cx).as_singleton().unwrap(),

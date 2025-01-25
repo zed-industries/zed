@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, IntoElement, Model, ModelContext, ParentElement, Render, Subscription,
-    Task, WeakModel, Window,
+    div, AsyncWindowContext, IntoElement, Entity, Context, ParentElement, Render, Subscription,
+    Task, WeakEntity, Window,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
@@ -13,13 +13,13 @@ use crate::ToolchainSelector;
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
     term: SharedString,
-    workspace: WeakModel<Workspace>,
-    active_buffer: Option<(WorktreeId, WeakModel<Buffer>, Subscription)>,
+    workspace: WeakEntity<Workspace>,
+    active_buffer: Option<(WorktreeId, WeakEntity<Buffer>, Subscription)>,
     _update_toolchain_task: Task<Option<()>>,
 }
 
 impl ActiveToolchain {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             active_toolchain: None,
             active_buffer: None,
@@ -29,7 +29,7 @@ impl ActiveToolchain {
             _update_toolchain_task: Self::spawn_tracker_task(window, cx),
         }
     }
-    fn spawn_tracker_task(window: &mut Window, cx: &mut ModelContext<Self>) -> Task<Option<()>> {
+    fn spawn_tracker_task(window: &mut Window, cx: &mut Context<Self>) -> Task<Option<()>> {
         cx.spawn_in(window, |this, mut cx| async move {
             let active_file = this
                 .update(&mut cx, |this, _| {
@@ -74,9 +74,9 @@ impl ActiveToolchain {
 
     fn update_lister(
         &mut self,
-        editor: Model<Editor>,
+        editor: Entity<Editor>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
@@ -99,7 +99,7 @@ impl ActiveToolchain {
     }
 
     fn active_toolchain(
-        workspace: WeakModel<Workspace>,
+        workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
         cx: &mut AsyncWindowContext,
@@ -152,7 +152,7 @@ impl ActiveToolchain {
 }
 
 impl Render for ActiveToolchain {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
             let term = self.term.clone();
             el.child(
@@ -176,7 +176,7 @@ impl StatusItemView for ActiveToolchain {
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self.active_toolchain.take();

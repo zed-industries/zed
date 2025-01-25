@@ -5,7 +5,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::{Point, Selection};
 use multi_buffer::MultiBufferRow;
 
@@ -15,7 +15,7 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
@@ -87,7 +87,7 @@ impl Vim {
         object: Object,
         around: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

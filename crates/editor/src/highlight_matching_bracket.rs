@@ -1,5 +1,5 @@
 use crate::{Editor, RangeToAnchorExt};
-use gpui::{ModelContext, Window};
+use gpui::{Context, Window};
 use language::CursorShape;
 
 enum MatchingBracketHighlight {}
@@ -7,7 +7,7 @@ enum MatchingBracketHighlight {}
 pub fn refresh_matching_bracket_highlights(
     editor: &mut Editor,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) {
     editor.clear_background_highlights::<MatchingBracketHighlight>(cx);
 

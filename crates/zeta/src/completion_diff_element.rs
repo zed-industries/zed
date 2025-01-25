@@ -2,7 +2,7 @@ use std::cmp;
 
 use crate::InlineCompletion;
 use gpui::{
-    point, prelude::*, quad, size, AnyElement, AppContext, Bounds, Corners, Edges, HighlightStyle,
+    point, prelude::*, quad, size, AnyElement, App, Bounds, Corners, Edges, HighlightStyle,
     Hsla, StyledText, TextLayout, TextStyle,
 };
 use language::OffsetRangeExt;
@@ -17,7 +17,7 @@ pub struct CompletionDiffElement {
 }
 
 impl CompletionDiffElement {
-    pub fn new(completion: &InlineCompletion, cx: &AppContext) -> Self {
+    pub fn new(completion: &InlineCompletion, cx: &App) -> Self {
         let mut diff = completion
             .snapshot
             .text_for_range(completion.excerpt_range.clone())
@@ -109,7 +109,7 @@ impl Element for CompletionDiffElement {
         &mut self,
         _id: Option<&gpui::GlobalElementId>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         (self.element.request_layout(window, cx), ())
     }
@@ -120,7 +120,7 @@ impl Element for CompletionDiffElement {
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Self::PrepaintState {
         self.element.prepaint(window, cx);
     }
@@ -132,7 +132,7 @@ impl Element for CompletionDiffElement {
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         if let Some(position) = self.text_layout.position_for_index(self.cursor_offset) {
             let bounds = self.text_layout.bounds();

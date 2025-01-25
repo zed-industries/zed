@@ -1,7 +1,7 @@
 use crate::ItemHandle;
 use gpui::{
-    AnyView, AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, ParentElement as _,
-    Render, Styled, Window,
+    AnyView, App, Context, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,
+    Window,
 };
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
@@ -15,14 +15,14 @@ pub trait ToolbarItemView: Render + EventEmitter<ToolbarItemEvent> {
         &mut self,
         active_pane_item: Option<&dyn crate::ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation;
 
     fn pane_focus_update(
         &mut self,
         _pane_focused: bool,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
     }
 }
@@ -34,9 +34,9 @@ trait ToolbarItemViewHandle: Send {
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> ToolbarItemLocation;
-    fn focus_changed(&mut self, pane_focused: bool, window: &mut Window, cx: &mut AppContext);
+    fn focus_changed(&mut self, pane_focused: bool, window: &mut Window, cx: &mut App);
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -93,7 +93,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.has_any_visible_items() {
             return div();
         }
@@ -165,12 +165,12 @@ impl Toolbar {
         }
     }
 
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ModelContext<Self>) {
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut Context<Self>) {
         self.can_navigate = can_navigate;
         cx.notify();
     }
 
-    pub fn add_item<T>(&mut self, item: Model<T>, window: &mut Window, cx: &mut ModelContext<Self>)
+    pub fn add_item<T>(&mut self, item: Entity<T>, window: &mut Window, cx: &mut Context<Self>)
     where
         T: 'static + ToolbarItemView,
     {
@@ -200,7 +200,7 @@ impl Toolbar {
         &mut self,
         item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.active_item = item.map(|item| item.boxed_clone());
         self.hidden = self
@@ -218,18 +218,13 @@ impl Toolbar {
         }
     }
 
-    pub fn focus_changed(
-        &mut self,
-        focused: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn focus_changed(&mut self, focused: bool, window: &mut Window, cx: &mut Context<Self>) {
         for (toolbar_item, _) in self.items.iter_mut() {
             toolbar_item.focus_changed(focused, window, cx);
         }
     }
 
-    pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<Model<T>> {
+    pub fn item_of_type<T: ToolbarItemView>(&self) -> Option<Entity<T>> {
         self.items
             .iter()
             .find_map(|(item, _)| item.to_any().downcast().ok())
@@ -240,7 +235,7 @@ impl Toolbar {
     }
 }
 
-impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
+impl<T: ToolbarItemView> ToolbarItemViewHandle for Entity<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
     }
@@ -253,14 +248,14 @@ impl<T: ToolbarItemView> ToolbarItemViewHandle for Model<T> {
         &self,
         active_pane_item: Option<&dyn ItemHandle>,
         window: &mut Window,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> ToolbarItemLocation {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, window, cx)
         })
     }
 
-    fn focus_changed(&mut self, pane_focused: bool, window: &mut Window, cx: &mut AppContext) {
+    fn focus_changed(&mut self, pane_focused: bool, window: &mut Window, cx: &mut App) {
         self.update(cx, |this, cx| {
             this.pane_focus_update(pane_focused, window, cx);
             cx.notify();

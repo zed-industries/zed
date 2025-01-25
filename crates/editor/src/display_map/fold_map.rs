@@ -2,7 +2,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use gpui::{AnyElement, AppContext, ElementId, Window};
+use gpui::{AnyElement, App, ElementId, Window};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
@@ -22,7 +22,7 @@ use util::post_inc;
 pub struct FoldPlaceholder {
     /// Creates an element to represent this fold's placeholder.
     pub render: Arc<
-        dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut AppContext) -> AnyElement,
+        dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement,
     >,
     /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
@@ -1398,7 +1398,7 @@ mod tests {
     use Bias::{Left, Right};
 
     #[gpui::test]
-    fn test_basic_folds(cx: &mut gpui::AppContext) {
+    fn test_basic_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1477,7 +1477,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_adjacent_folds(cx: &mut gpui::AppContext) {
+    fn test_adjacent_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1536,7 +1536,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_overlapping_folds(cx: &mut gpui::AppContext) {
+    fn test_overlapping_folds(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
@@ -1553,7 +1553,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_merging_folds_via_edit(cx: &mut gpui::AppContext) {
+    fn test_merging_folds_via_edit(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1580,7 +1580,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_folds_in_range(cx: &mut gpui::AppContext) {
+    fn test_folds_in_range(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1611,7 +1611,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_folds(cx: &mut gpui::AppContext, mut rng: StdRng) {
+    fn test_random_folds(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1882,7 +1882,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_buffer_rows(cx: &mut gpui::AppContext) {
+    fn test_buffer_rows(cx: &mut gpui::App) {
         let text = sample_text(6, 6, 'a') + "\n";
         let buffer = MultiBuffer::build_simple(&text, cx);
 
@@ -1914,7 +1914,7 @@ mod tests {
         );
     }
 
-    fn init_test(cx: &mut gpui::AppContext) {
+    fn init_test(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
     }

@@ -2,7 +2,7 @@
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
 use gpui::{
-    fill, point, size, AnyElement, AppContext, Bounds, Hsla, Model, Point, UniformListDecoration,
+    fill, point, size, AnyElement, App, Bounds, Hsla, Entity, Point, UniformListDecoration,
 };
 use smallvec::SmallVec;
 
@@ -21,7 +21,7 @@ pub struct IndentGuideColors {
 
 impl IndentGuideColors {
     /// Returns the indent guide colors that should be used for panels.
-    pub fn panel(cx: &AppContext) -> Self {
+    pub fn panel(cx: &App) -> Self {
         Self {
             default: cx.theme().colors().panel_indent_guide,
             hover: cx.theme().colors().panel_indent_guide_hover,
@@ -34,27 +34,27 @@ pub struct IndentGuides {
     colors: IndentGuideColors,
     indent_size: Pixels,
     compute_indents_fn:
-        Box<dyn Fn(Range<usize>, &mut Window, &mut AppContext) -> SmallVec<[usize; 64]>>,
+        Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[usize; 64]>>,
     render_fn: Option<
         Box<
             dyn Fn(
                 RenderIndentGuideParams,
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> SmallVec<[RenderedIndentGuide; 12]>,
         >,
     >,
-    on_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut AppContext)>>,
+    on_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut App)>>,
 }
 
 pub fn indent_guides<V: Render>(
-    model: Model<V>,
+    model: Entity<V>,
     indent_size: Pixels,
     colors: IndentGuideColors,
-    compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut Window, &mut ModelContext<V>) -> SmallVec<[usize; 64]>
+    compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> SmallVec<[usize; 64]>
         + 'static,
 ) -> IndentGuides {
-    let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut AppContext| {
+    let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut App| {
         model.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
     });
     IndentGuides {
@@ -70,7 +70,7 @@ impl IndentGuides {
     /// Sets the callback that will be called when the user clicks on an indent guide.
     pub fn on_click(
         mut self,
-        on_click: impl Fn(&IndentGuideLayout, &mut Window, &mut AppContext) + 'static,
+        on_click: impl Fn(&IndentGuideLayout, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Rc::new(on_click));
         self
@@ -79,16 +79,16 @@ impl IndentGuides {
     /// Sets a custom callback that will be called when the indent guides need to be rendered.
     pub fn with_render_fn<V: Render>(
         mut self,
-        model: Model<V>,
+        model: Entity<V>,
         render_fn: impl Fn(
                 &mut V,
                 RenderIndentGuideParams,
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> SmallVec<[RenderedIndentGuide; 12]>
             + 'static,
     ) -> Self {
-        let render_fn = move |params, window: &mut Window, cx: &mut AppContext| {
+        let render_fn = move |params, window: &mut Window, cx: &mut App| {
             model.update(cx, |this, cx| render_fn(this, params, window, cx))
         };
         self.render_fn = Some(Box::new(render_fn));
@@ -145,7 +145,7 @@ mod uniform_list {
             item_height: Pixels,
             item_count: usize,
             window: &mut Window,
-            cx: &mut AppContext,
+            cx: &mut App,
         ) -> AnyElement {
             let mut visible_range = visible_range.clone();
             let includes_trailing_indent = visible_range.end < item_count;
@@ -205,7 +205,7 @@ mod uniform_list {
         colors: IndentGuideColors,
         indent_guides: Rc<SmallVec<[RenderedIndentGuide; 12]>>,
         on_hovered_indent_guide_click:
-            Option<Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut AppContext)>>,
+            Option<Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut App)>>,
     }
 
     enum IndentGuidesElementPrepaintState {
@@ -213,7 +213,7 @@ mod uniform_list {
         Interactive {
             hitboxes: Rc<SmallVec<[Hitbox; 12]>>,
             on_hovered_indent_guide_click:
-                Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut AppContext)>,
+                Rc<dyn Fn(&IndentGuideLayout, &mut Window, &mut App)>,
         },
     }
 
@@ -229,7 +229,7 @@ mod uniform_list {
             &mut self,
             _id: Option<&gpui::GlobalElementId>,
             window: &mut Window,
-            cx: &mut AppContext,
+            cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             (window.request_layout(gpui::Style::default(), [], cx), ())
         }
@@ -240,7 +240,7 @@ mod uniform_list {
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             window: &mut Window,
-            _cx: &mut AppContext,
+            _cx: &mut App,
         ) -> Self::PrepaintState {
             if let Some(on_hovered_indent_guide_click) = self.on_hovered_indent_guide_click.clone()
             {
@@ -266,7 +266,7 @@ mod uniform_list {
             _request_layout: &mut Self::RequestLayoutState,
             prepaint: &mut Self::PrepaintState,
             window: &mut Window,
-            _cx: &mut AppContext,
+            _cx: &mut App,
         ) {
             match prepaint {
                 IndentGuidesElementPrepaintState::Static => {

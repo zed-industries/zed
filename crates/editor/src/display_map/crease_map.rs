@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{AppContext, IconName, SharedString, Window};
+use ui::{App, IconName, SharedString, Window};
 
 use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
@@ -117,13 +117,13 @@ type RenderToggleFn = Arc<
         + Fn(
             MultiBufferRow,
             bool,
-            Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContext)>,
+            Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut App)>,
             &mut Window,
-            &mut AppContext,
+            &mut App,
         ) -> AnyElement,
 >;
 type RenderTrailerFn =
-    Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut Window, &mut AppContext) -> AnyElement>;
+    Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut Window, &mut App) -> AnyElement>;
 
 #[derive(Clone)]
 pub enum Crease<T> {
@@ -186,16 +186,16 @@ impl<T> Crease<T> {
             + Fn(
                 MultiBufferRow,
                 bool,
-                Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContext)>,
+                Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut App)>,
                 &mut Window,
-                &mut AppContext,
+                &mut App,
             ) -> ToggleElement
             + 'static,
         ToggleElement: IntoElement,
         RenderTrailer: 'static
             + Send
             + Sync
-            + Fn(MultiBufferRow, bool, &mut Window, &mut AppContext) -> TrailerElement
+            + Fn(MultiBufferRow, bool, &mut Window, &mut App) -> TrailerElement
             + 'static,
         TrailerElement: IntoElement,
     {
@@ -389,11 +389,11 @@ impl SeekTarget<'_, ItemSummary, ItemSummary> for Anchor {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{div, AppContext};
+    use gpui::{div, App};
     use multi_buffer::MultiBuffer;
 
     #[gpui::test]
-    fn test_insert_and_remove_creases(cx: &mut AppContext) {
+    fn test_insert_and_remove_creases(cx: &mut App) {
         let text = "line1\nline2\nline3\nline4\nline5";
         let buffer = MultiBuffer::build_simple(text, cx);
         let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
@@ -440,7 +440,7 @@ mod test {
     }
 
     #[gpui::test]
-    fn test_creases_in_range(cx: &mut AppContext) {
+    fn test_creases_in_range(cx: &mut App) {
         let text = "line1\nline2\nline3\nline4\nline5\nline6\nline7";
         let buffer = MultiBuffer::build_simple(text, cx);
         let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
