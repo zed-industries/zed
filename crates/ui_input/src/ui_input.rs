@@ -24,9 +24,9 @@ pub struct TextFieldStyle {
     border_color: Hsla,
 }
 
-/// A Text Field view that can be used to create text fields like search inputs, form fields, etc.
+/// A Text Field that can be used to create text fields like search inputs, form fields, etc.
 ///
-/// It wraps a single line [`Editor`] view and allows for common field properties like labels, placeholders, icons, etc.
+/// It wraps a single line [`Editor`] and allows for common field properties like labels, placeholders, icons, etc.
 pub struct TextField {
     /// An optional label for the text field.
     ///

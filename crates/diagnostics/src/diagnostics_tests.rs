@@ -150,7 +150,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Open the project diagnostics view while there are already diagnostics.
-    let view = window.build_model(cx, |window, cx| {
+    let diagnostics = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -160,9 +160,10 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let editor = view.update(cx, |view, _| view.editor.clone());
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
-    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -252,7 +253,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -371,7 +373,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
         lsp_store.disk_based_diagnostics_finished(language_server_id, cx);
     });
 
-    view.next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
+    diagnostics
+        .next_notification(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10), cx)
         .await;
     assert_eq!(
         editor_blocks(&editor, cx),
@@ -482,7 +485,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let view = window.build_model(cx, |window, cx| {
+    let diagnostics = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -492,7 +495,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let editor = view.update(cx, |view, _| view.editor.clone());
+    let editor = diagnostics.update(cx, |diagnostics, _| diagnostics.editor.clone());
 
     // Two language servers start updating diagnostics
     lsp_store.update(cx, |lsp_store, cx| {
@@ -760,7 +763,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let mutated_view = window.build_model(cx, |window, cx| {
+    let mutated_diagnostics = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -772,10 +775,10 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     });
 
     workspace.update_in(cx, |workspace, window, cx| {
-        workspace.add_item_to_center(Box::new(mutated_view.clone()), window, cx);
+        workspace.add_item_to_center(Box::new(mutated_diagnostics.clone()), window, cx);
     });
-    mutated_view.update_in(cx, |view, window, _cx| {
-        assert!(view.focus_handle.is_focused(window));
+    mutated_diagnostics.update_in(cx, |diagnostics, window, _cx| {
+        assert!(diagnostics.focus_handle.is_focused(window));
     });
 
     let mut next_group_id = 0;
@@ -861,13 +864,13 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update_in(cx, |view, window, cx| {
-        view.update_stale_excerpts(window, cx)
+    mutated_diagnostics.update_in(cx, |diagnostics, window, cx| {
+        diagnostics.update_stale_excerpts(window, cx)
     });
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
-    let reference_view = window.build_model(cx, |window, cx| {
+    let reference_diagnostics = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -881,8 +884,8 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
-    let mutated_excerpts = get_diagnostics_excerpts(&mutated_view, cx);
-    let reference_excerpts = get_diagnostics_excerpts(&reference_view, cx);
+    let mutated_excerpts = get_diagnostics_excerpts(&mutated_diagnostics, cx);
+    let reference_excerpts = get_diagnostics_excerpts(&reference_diagnostics, cx);
 
     for ((path, language_server_id), diagnostics) in current_diagnostics {
         for diagnostic in diagnostics {
@@ -923,13 +926,13 @@ struct ExcerptInfo {
 }
 
 fn get_diagnostics_excerpts(
-    view: &Model<ProjectDiagnosticsEditor>,
+    diagnostics: &Model<ProjectDiagnosticsEditor>,
     cx: &mut VisualTestContext,
 ) -> Vec<ExcerptInfo> {
-    view.update(cx, |view, cx| {
+    diagnostics.update(cx, |diagnostics, cx| {
         let mut result = vec![];
         let mut excerpt_indices_by_id = HashMap::default();
-        view.excerpts.update(cx, |multibuffer, cx| {
+        diagnostics.excerpts.update(cx, |multibuffer, cx| {
             let snapshot = multibuffer.snapshot(cx);
             for (id, buffer, range) in snapshot.excerpts() {
                 excerpt_indices_by_id.insert(id, result.len());
@@ -946,7 +949,7 @@ fn get_diagnostics_excerpts(
             }
         });
 
-        for state in &view.path_states {
+        for state in &diagnostics.path_states {
             for group in &state.diagnostic_groups {
                 for (ix, excerpt_id) in group.excerpts.iter().enumerate() {
                     let excerpt_ix = excerpt_indices_by_id[excerpt_id];

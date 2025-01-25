@@ -56,9 +56,9 @@ impl ComponentStory {
                 .into(),
             Self::ContextMenu => cx.new_model(|_| ui::ContextMenuStory).into(),
             Self::Cursor => cx.new_model(|_| crate::stories::CursorStory).into(),
-            Self::DefaultColors => DefaultColorsStory::view(cx).into(),
+            Self::DefaultColors => DefaultColorsStory::model(cx).into(),
             Self::Disclosure => cx.new_model(|_| ui::DisclosureStory).into(),
-            Self::Focus => FocusStory::view(window, cx).into(),
+            Self::Focus => FocusStory::model(window, cx).into(),
             Self::Icon => cx.new_model(|_| ui::IconStory).into(),
             Self::IconButton => cx.new_model(|_| ui::IconButtonStory).into(),
             Self::Keybinding => cx.new_model(|_| ui::KeybindingStory).into(),
@@ -68,10 +68,10 @@ impl ComponentStory {
             Self::ListItem => cx.new_model(|_| ui::ListItemStory).into(),
             Self::OverflowScroll => cx.new_model(|_| crate::stories::OverflowScrollStory).into(),
             Self::Picker => PickerStory::new(window, cx).into(),
-            Self::Scroll => ScrollStory::view(cx).into(),
+            Self::Scroll => ScrollStory::model(cx).into(),
             Self::Tab => cx.new_model(|_| ui::TabStory).into(),
             Self::TabBar => cx.new_model(|_| ui::TabBarStory).into(),
-            Self::Text => TextStory::view(cx).into(),
+            Self::Text => TextStory::model(cx).into(),
             Self::ToggleButton => cx.new_model(|_| ui::ToggleButtonStory).into(),
             Self::ToolStrip => cx.new_model(|_| ui::ToolStripStory).into(),
             Self::ViewportUnits => cx.new_model(|_| crate::stories::ViewportUnitsStory).into(),
@@ -114,7 +114,7 @@ impl StorySelector {
     pub fn story(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         match self {
             Self::Component(component_story) => component_story.story(window, cx),
-            Self::KitchenSink => KitchenSinkStory::view(cx).into(),
+            Self::KitchenSink => KitchenSinkStory::model(cx).into(),
         }
     }
 }

@@ -14,7 +14,7 @@ pub struct FocusStory {
 }
 
 impl FocusStory {
-    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
+    pub fn model(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
         cx.bind_keys([
             KeyBinding::new("cmd-a", ActionA, Some("parent")),
             KeyBinding::new("cmd-a", ActionB, Some("child-1")),

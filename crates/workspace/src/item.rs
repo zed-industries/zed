@@ -1572,8 +1572,8 @@ pub mod test {
             _window: &mut Window,
             cx: &mut AppContext,
         ) -> Task<anyhow::Result<Model<Self>>> {
-            let view = cx.new_model(|cx| Self::new_deserialized(workspace_id, cx));
-            Task::ready(Ok(view))
+            let model = cx.new_model(|cx| Self::new_deserialized(workspace_id, cx));
+            Task::ready(Ok(model))
         }
 
         fn cleanup(

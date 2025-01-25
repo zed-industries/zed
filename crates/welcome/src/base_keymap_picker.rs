@@ -68,7 +68,7 @@ impl Render for BaseKeymapSelector {
 }
 
 pub struct BaseKeymapSelectorDelegate {
-    view: WeakModel<BaseKeymapSelector>,
+    selector: WeakModel<BaseKeymapSelector>,
     matches: Vec<StringMatch>,
     selected_index: usize,
     fs: Arc<dyn Fs>,
@@ -76,7 +76,7 @@ pub struct BaseKeymapSelectorDelegate {
 
 impl BaseKeymapSelectorDelegate {
     fn new(
-        weak_view: WeakModel<BaseKeymapSelector>,
+        selector: WeakModel<BaseKeymapSelector>,
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
@@ -86,7 +86,7 @@ impl BaseKeymapSelectorDelegate {
             .position(|(_, value)| value == base)
             .unwrap_or(0);
         Self {
-            view: weak_view,
+            selector,
             matches: Vec::new(),
             selected_index,
             fs,
@@ -185,7 +185,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             });
         }
 
-        self.view
+        self.selector
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
@@ -197,7 +197,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         _: &mut Window,
         cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) {
-        self.view
+        self.selector
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })

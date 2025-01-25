@@ -291,9 +291,9 @@ impl Output {
                 display_id,
             },
             Some(MimeType::Markdown(text)) => {
-                let view = cx.new_model(|cx| MarkdownView::from(text.clone(), cx));
+                let content = cx.new_model(|cx| MarkdownView::from(text.clone(), cx));
                 Output::Markdown {
-                    content: view,
+                    content,
                     display_id,
                 }
             }

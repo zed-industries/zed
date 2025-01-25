@@ -2353,8 +2353,8 @@ mod tests {
 
         // Open a file within an existing worktree.
         window
-            .update(cx, |view, window, cx| {
-                view.open_paths(
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
                     vec!["/dir1/a.txt".into()],
                     OpenVisible::All,
                     None,
@@ -2383,8 +2383,8 @@ mod tests {
 
         // Open a file outside of any existing worktree.
         window
-            .update(cx, |view, window, cx| {
-                view.open_paths(
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
                     vec!["/dir2/b.txt".into()],
                     OpenVisible::All,
                     None,
@@ -2424,8 +2424,8 @@ mod tests {
 
         // Ensure opening a directory and one of its children only adds one worktree.
         window
-            .update(cx, |view, window, cx| {
-                view.open_paths(
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
                     vec!["/dir3".into(), "/dir3/c.txt".into()],
                     OpenVisible::All,
                     None,
@@ -2465,8 +2465,8 @@ mod tests {
 
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
-            .update(cx, |view, window, cx| {
-                view.open_paths(vec!["/d.txt".into()], OpenVisible::None, None, window, cx)
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(vec!["/d.txt".into()], OpenVisible::None, None, window, cx)
             })
             .unwrap()
             .await;
@@ -2659,8 +2659,8 @@ mod tests {
 
         // Open a file within an existing worktree.
         window
-            .update(cx, |view, window, cx| {
-                view.open_paths(
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
                     vec![PathBuf::from("/root/a.txt")],
                     OpenVisible::All,
                     None,

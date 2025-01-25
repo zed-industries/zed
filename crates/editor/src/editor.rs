@@ -601,7 +601,7 @@ pub enum IsVimMode {
     No,
 }
 
-/// Zed's primary text input `View`, allowing users to edit a [`MultiBuffer`]
+/// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
 pub struct Editor {

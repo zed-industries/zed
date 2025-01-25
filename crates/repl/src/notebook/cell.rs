@@ -127,7 +127,7 @@ impl Cell {
             } => {
                 let source = source.join("");
 
-                let view = cx.new_model(|cx| {
+                let model = cx.new_model(|cx| {
                     let markdown_parsing_task = {
                         let languages = languages.clone();
                         let source = source.clone();
@@ -159,7 +159,7 @@ impl Cell {
                     }
                 });
 
-                Cell::Markdown(view)
+                Cell::Markdown(model)
             }
             nbformat::v4::Cell::Code {
                 id,

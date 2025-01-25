@@ -97,7 +97,7 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
                 .menu
                 .borrow()
                 .as_ref()
-                .map_or(false, |view| view.focus_handle(cx).is_focused(window))
+                .map_or(false, |model| model.focus_handle(cx).is_focused(window))
         })
     }
 }

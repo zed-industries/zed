@@ -80,12 +80,12 @@ pub struct ThemeSelectorDelegate {
     original_theme: Arc<Theme>,
     selection_completed: bool,
     selected_index: usize,
-    view: WeakModel<ThemeSelector>,
+    selector: WeakModel<ThemeSelector>,
 }
 
 impl ThemeSelectorDelegate {
     fn new(
-        weak_view: WeakModel<ThemeSelector>,
+        selector: WeakModel<ThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
         cx: &mut ModelContext<ThemeSelector>,
@@ -127,7 +127,7 @@ impl ThemeSelectorDelegate {
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
-            view: weak_view,
+            selector,
         };
 
         this.select_if_matching(&original_theme.name);
@@ -196,7 +196,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             settings.set_theme(theme_name.to_string(), appearance);
         });
 
-        self.view
+        self.selector
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
@@ -209,7 +209,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
             self.selection_completed = true;
         }
 
-        self.view
+        self.selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }

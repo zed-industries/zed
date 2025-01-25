@@ -1267,7 +1267,7 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        let editor = project_diff_editor.update(cx, |view, _| view.editor.clone());
+        let editor = project_diff_editor.update(cx, |diff_editor, _| diff_editor.editor.clone());
 
         assert_state_with_diff(
             &editor,

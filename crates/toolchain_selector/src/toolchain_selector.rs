@@ -96,11 +96,11 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let view = cx.model().downgrade();
+        let toolchain_selector = cx.model().downgrade();
         let picker = cx.new_model(|cx| {
             let delegate = ToolchainSelectorDelegate::new(
                 active_toolchain,
-                view,
+                toolchain_selector,
                 workspace,
                 worktree_id,
                 worktree_root,
@@ -146,7 +146,7 @@ impl ToolchainSelectorDelegate {
     #[allow(clippy::too_many_arguments)]
     fn new(
         active_toolchain: Option<Toolchain>,
-        language_selector: WeakModel<ToolchainSelector>,
+        toolchain_selector: WeakModel<ToolchainSelector>,
         workspace: WeakModel<Workspace>,
         worktree_id: WorktreeId,
         worktree_abs_path_root: Arc<Path>,
@@ -198,7 +198,7 @@ impl ToolchainSelectorDelegate {
         });
         let placeholder_text = "Select a toolchain…".to_string().into();
         Self {
-            toolchain_selector: language_selector,
+            toolchain_selector,
             candidates: Default::default(),
             matches: vec![],
             selected_index: 0,

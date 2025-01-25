@@ -286,15 +286,16 @@ impl<D: PickerDelegate> Picker<D> {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
             }
             ContainerKind::List => {
-                let view = cx.model().downgrade();
+                let model = cx.model().downgrade();
                 ElementContainer::List(ListState::new(
                     0,
                     gpui::ListAlignment::Top,
                     px(1000.),
                     move |ix, window, cx| {
-                        view.upgrade()
-                            .map(|view| {
-                                view.update(cx, |this, cx| {
+                        model
+                            .upgrade()
+                            .map(|model| {
+                                model.update(cx, |this, cx| {
                                     this.render_element(window, cx, ix).into_any_element()
                                 })
                             })
@@ -531,10 +532,10 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut AppContext) {
         match &self.head {
-            Head::Editor(view) => {
+            Head::Editor(editor) => {
                 let placeholder = self.delegate.placeholder_text(window, cx);
-                view.update(cx, |this, cx| {
-                    this.set_placeholder_text(placeholder, cx);
+                editor.update(cx, |editor, cx| {
+                    editor.set_placeholder_text(placeholder, cx);
                     cx.notify();
                 });
             }

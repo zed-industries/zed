@@ -2,7 +2,6 @@ use std::fmt::format;
 
 use gpui::{
     colors, div, prelude::*, uniform_list, DefaultColor, DefaultThemeAppearance, Hsla, Render,
-   
 };
 use story::Story;
 use strum::IntoEnumIterator;
@@ -17,7 +16,7 @@ pub struct IndentGuidesStory {
 }
 
 impl IndentGuidesStory {
-    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
+    pub fn model(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
         let mut depths = Vec::new();
         depths.push(0);
         depths.push(1);

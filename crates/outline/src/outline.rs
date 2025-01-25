@@ -24,11 +24,11 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_models(OutlineView::register).detach();
     zed_actions::outline::TOGGLE_OUTLINE
         .set(|view, window, cx| {
-            let Ok(view) = view.downcast::<Editor>() else {
+            let Ok(editor) = view.downcast::<Editor>() else {
                 return;
             };
 
-            toggle(view, &Default::default(), window, cx);
+            toggle(editor, &Default::default(), window, cx);
         })
         .ok();
 }

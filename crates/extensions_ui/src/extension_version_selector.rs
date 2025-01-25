@@ -47,7 +47,7 @@ impl ExtensionVersionSelector {
 
 pub struct ExtensionVersionSelectorDelegate {
     fs: Arc<dyn Fs>,
-    view: WeakModel<ExtensionVersionSelector>,
+    selector: WeakModel<ExtensionVersionSelector>,
     extension_versions: Vec<ExtensionMetadata>,
     selected_index: usize,
     matches: Vec<StringMatch>,
@@ -56,7 +56,7 @@ pub struct ExtensionVersionSelectorDelegate {
 impl ExtensionVersionSelectorDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        weak_view: WeakModel<ExtensionVersionSelector>,
+        selector: WeakModel<ExtensionVersionSelector>,
         mut extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
         extension_versions.sort_unstable_by(|a, b| {
@@ -81,7 +81,7 @@ impl ExtensionVersionSelectorDelegate {
 
         Self {
             fs,
-            view: weak_view,
+            selector,
             extension_versions,
             selected_index: 0,
             matches,
@@ -199,7 +199,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
-        self.view
+        self.selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }

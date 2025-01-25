@@ -194,7 +194,7 @@ impl GitPanel {
                 current_modifiers: window.modifiers(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_view(&cx.model()),
+                    .parent_model(&cx.model()),
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,

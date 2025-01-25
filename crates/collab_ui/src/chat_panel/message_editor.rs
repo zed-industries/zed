@@ -125,8 +125,8 @@ impl MessageEditor {
 
         cx.subscribe_in(&buffer, window, Self::on_buffer_event)
             .detach();
-        cx.observe_global::<settings::SettingsStore>(|view, cx| {
-            view.editor.update(cx, |editor, cx| {
+        cx.observe_global::<settings::SettingsStore>(|this, cx| {
+            this.editor.update(cx, |editor, cx| {
                 editor.set_auto_replace_emoji_shortcode(
                     MessageEditorSettings::get_global(cx)
                         .auto_replace_emoji_shortcode

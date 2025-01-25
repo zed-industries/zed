@@ -1160,10 +1160,10 @@ impl Render for ExtensionsPage {
                     return this.py_4().child(self.render_empty_state(cx));
                 }
 
-                let view = cx.model().clone();
+                let extensions_page = cx.model().clone();
                 let scroll_handle = self.list.clone();
                 this.child(
-                    uniform_list(view, "entries", count, Self::render_extensions)
+                    uniform_list(extensions_page, "entries", count, Self::render_extensions)
                         .flex_grow()
                         .pb_4()
                         .track_scroll(scroll_handle),

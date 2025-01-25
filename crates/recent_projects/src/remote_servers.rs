@@ -1285,7 +1285,7 @@ impl RemoteServerProjects {
                 state = new_state.clone();
             }
         }
-        let scroll_state = state.scrollbar.parent_view(&cx.model());
+        let scroll_state = state.scrollbar.parent_model(&cx.model());
         let connect_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)

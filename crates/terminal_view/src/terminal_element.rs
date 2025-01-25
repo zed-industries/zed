@@ -149,7 +149,7 @@ impl LayoutRect {
 }
 
 /// The GPUI element that paints the terminal.
-/// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
+/// We need to keep a reference to the model for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
     terminal: Model<Terminal>,
     terminal_view: Model<TerminalView>,

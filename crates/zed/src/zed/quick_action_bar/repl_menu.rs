@@ -292,7 +292,9 @@ impl QuickActionBar {
         let session = repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
-            SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.clone()),
+            SessionSupport::ActiveSession(session) => {
+                Some(session.read(cx).kernel_specification.clone())
+            }
             SessionSupport::Inactive(kernel_specification) => Some(kernel_specification),
             SessionSupport::RequiresSetup(_language_name) => None,
             SessionSupport::Unsupported => None,

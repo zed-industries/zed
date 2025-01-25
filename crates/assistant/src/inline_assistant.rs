@@ -83,7 +83,7 @@ pub fn init(
         });
 
         cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
-            |is_assistant2_enabled, _view, _window, cx| {
+            |is_assistant2_enabled, _workspace, _window, cx| {
                 InlineAssistant::update_global(cx, |inline_assistant, _cx| {
                     inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
                 });

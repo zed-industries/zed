@@ -97,17 +97,18 @@ fn view_release_notes_locally(
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx)
                             });
                             let workspace_handle = workspace.weak_handle();
-                            let view: Model<MarkdownPreviewView> = MarkdownPreviewView::new(
-                                MarkdownPreviewMode::Default,
-                                editor,
-                                workspace_handle,
-                                language_registry,
-                                Some(tab_description),
-                                window,
-                                cx,
-                            );
+                            let markdown_preview: Model<MarkdownPreviewView> =
+                                MarkdownPreviewView::new(
+                                    MarkdownPreviewMode::Default,
+                                    editor,
+                                    workspace_handle,
+                                    language_registry,
+                                    Some(tab_description),
+                                    window,
+                                    cx,
+                                );
                             workspace.add_item_to_active_pane(
-                                Box::new(view.clone()),
+                                Box::new(markdown_preview.clone()),
                                 None,
                                 true,
                                 window,

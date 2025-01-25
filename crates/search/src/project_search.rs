@@ -938,13 +938,20 @@ impl ProjectSearchView {
 
             let weak_workspace = cx.model().downgrade();
 
-            let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-            let view = cx.new_model(|cx| {
-                ProjectSearchView::new(weak_workspace, model, window, cx, settings)
+            let project_search =
+                cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+            let project_search_view = cx.new_model(|cx| {
+                ProjectSearchView::new(weak_workspace, project_search, window, cx, settings)
             });
 
-            workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
-            view
+            workspace.add_item_to_active_pane(
+                Box::new(project_search_view.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            project_search_view
         };
 
         search.update(cx, |search, cx| {
@@ -1432,7 +1439,7 @@ impl ProjectSearchBar {
             let current_index = match views
                 .iter()
                 .enumerate()
-                .find(|(_, view)| view.focus_handle(cx).is_focused(window))
+                .find(|(_, editor)| editor.focus_handle(cx).is_focused(window))
             {
                 Some((index, _)) => index,
                 None => return,

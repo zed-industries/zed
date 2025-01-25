@@ -180,9 +180,9 @@ impl PickerDelegate for BranchListDelegate {
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn_in(window, move |picker, mut cx| async move {
-            let candidates = picker.update(&mut cx, |view, _| {
+            let candidates = picker.update(&mut cx, |picker, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
-                let mut branches = view.delegate.all_branches.clone();
+                let mut branches = picker.delegate.all_branches.clone();
                 if query.is_empty() {
                     if branches.len() > RECENT_BRANCHES_COUNT {
                         // Truncate list of recent branches

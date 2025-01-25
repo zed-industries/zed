@@ -401,7 +401,7 @@ impl TerminalBuilder {
             ..Config::default()
         };
 
-        //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        //Spawn a task so the Alacritty EventLoop can communicate with us
         //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
@@ -817,7 +817,6 @@ impl Terminal {
         self.selection_phase == SelectionPhase::Selecting
     }
 
-    ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
         event: &InternalEvent,

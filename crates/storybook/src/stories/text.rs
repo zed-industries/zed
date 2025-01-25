@@ -8,7 +8,7 @@ use story::*;
 pub struct TextStory;
 
 impl TextStory {
-    pub fn view(cx: &mut AppContext) -> Model<Self> {
+    pub fn model(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self)
     }
 }

@@ -9,7 +9,7 @@ use ui::{h_flex, ActiveTheme};
 pub struct DefaultColorsStory;
 
 impl DefaultColorsStory {
-    pub fn view(cx: &mut AppContext) -> Model<Self> {
+    pub fn model(cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|_| Self)
     }
 }

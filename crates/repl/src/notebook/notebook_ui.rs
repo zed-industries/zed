@@ -113,7 +113,7 @@ impl NotebookEditor {
             );
         }
 
-        let view = cx.model().downgrade();
+        let notebook_handle = cx.model().downgrade();
         let cell_count = cell_order.len();
 
         let this = cx.model();
@@ -122,7 +122,8 @@ impl NotebookEditor {
             gpui::ListAlignment::Top,
             px(1000.),
             move |ix, window, cx| {
-                view.upgrade()
+                notebook_handle
+                    .upgrade()
                     .and_then(|notebook_handle| {
                         notebook_handle.update(cx, |notebook, cx| {
                             notebook

@@ -653,7 +653,7 @@ impl TerminalPanel {
                 .await?;
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                let view = cx.new_model(|cx| {
+                let terminal_view = cx.new_model(|cx| {
                     TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
@@ -663,7 +663,7 @@ impl TerminalPanel {
                         cx,
                     )
                 });
-                workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
+                workspace.add_item_to_active_pane(Box::new(terminal_view), None, true, window, cx);
             })?;
             Ok(terminal)
         })

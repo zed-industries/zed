@@ -110,12 +110,13 @@ impl NotificationPanel {
             })
             .detach();
 
-            let view = cx.model().downgrade();
+            let model = cx.model().downgrade();
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, window, cx| {
-                    view.upgrade()
-                        .and_then(|view| {
-                            view.update(cx, |this, cx| this.render_notification(ix, window, cx))
+                    model
+                        .upgrade()
+                        .and_then(|model| {
+                            model.update(cx, |this, cx| this.render_notification(ix, window, cx))
                         })
                         .unwrap_or_else(|| div().into_any())
                 });
@@ -322,9 +323,9 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let view = cx.model().clone();
+                                                let model = cx.model().clone();
                                                 move |_, _, cx| {
-                                                    view.update(cx, |this, cx| {
+                                                    model.update(cx, |this, cx| {
                                                         this.respond_to_notification(
                                                             notification.clone(),
                                                             false,
@@ -335,9 +336,9 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let view = cx.model().clone();
+                                                let model = cx.model().clone();
                                                 move |_, _, cx| {
-                                                    view.update(cx, |this, cx| {
+                                                    model.update(cx, |this, cx| {
                                                         this.respond_to_notification(
                                                             notification.clone(),
                                                             true,
