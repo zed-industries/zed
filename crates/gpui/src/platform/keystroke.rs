@@ -94,7 +94,7 @@ impl Keystroke {
                 "alt" => alt = true,
                 "shift" => shift = true,
                 "fn" => function = true,
-                "cmd" | "super" | "win" => platform = true,
+                "cmd" | "super" | "win" | "" => platform = true,
                 _ => {
                     if let Some(next) = components.peek() {
                         if next.is_empty() && source.ends_with('-') {
