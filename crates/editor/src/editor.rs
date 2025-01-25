@@ -11999,7 +11999,7 @@ impl Editor {
 
     pub fn open_selections_in_multibuffer(
         &mut self,
-        _: &OpenSelectionsInMultiBuffer,
+        _: &OpenSelectionsInMultibuffer,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let Some(buffer) = self.buffer.read(cx).as_singleton() else {
