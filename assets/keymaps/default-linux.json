@@ -544,7 +544,7 @@
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
-      "ctrl-k enter": "editor::OpenExcerptsSplit",
+      "ctrl-alt-enter": "editor::OpenExcerptsSplit",
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
@@ -646,7 +646,7 @@
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "alt-enter": "editor::OpenExcerpts",
-      "ctrl-k enter": "editor::OpenExcerptsSplit"
+      "ctrl-alt-enter": "editor::OpenExcerptsSplit"
     }
   },
   {
