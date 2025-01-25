@@ -132,7 +132,8 @@
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
       "ctrl-f12": "editor::GoToDeclaration",
-      "alt-ctrl-f12": "editor::GoToDeclarationSplit"
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
