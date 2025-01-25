@@ -4994,22 +4994,32 @@ fn find_active_indent_guide_ix(
 }
 
 fn subscribe_for_editor_events(
-    editor: &Model<Editor>,
-    window: &mut Window,
-    cx: &mut ModelContext<OutlinePanel>,
+    editor: &View<Editor>,
+    cx: &mut ViewContext<OutlinePanel>,
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
-    cx.subscribe_in(
-        editor,
-        window,
-        move |outline_panel, editor, e: &EditorEvent, window, cx| {
-            if !outline_panel.active {
-                return;
+    cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
+        if !outline_panel.active {
+            return;
+        }
+        match e {
+            EditorEvent::SelectionsChanged { local: true } => {
+                outline_panel.reveal_entry_for_selection(editor, cx);
+                cx.notify();
             }
-            match e {
-                EditorEvent::SelectionsChanged { local: true } => {
-                    outline_panel.reveal_entry_for_selection(editor.clone(), window, cx);
-                    cx.notify();
+            EditorEvent::ExcerptsAdded { excerpts, .. } => {
+                outline_panel
+                    .new_entries_for_fs_update
+                    .extend(excerpts.iter().map(|&(excerpt_id, _)| excerpt_id));
+                outline_panel.update_fs_entries(editor, debounce, cx);
+            }
+            EditorEvent::ExcerptsRemoved { ids } => {
+                let mut ids = ids.iter().collect::<HashSet<_>>();
+                for excerpts in outline_panel.excerpts.values_mut() {
+                    excerpts.retain(|excerpt_id, _| !ids.remove(excerpt_id));
+                    if ids.is_empty() {
+                        break;
+                    }
                 }
                 outline_panel.update_fs_entries(editor, debounce, cx);
             }
@@ -5069,64 +5079,36 @@ fn subscribe_for_editor_events(
                                         } else {
                                             None
                                         }
-                                    })
-                                    .map(|buffer_id| {
-                                        if editor.read(cx).buffer_folded(*buffer_id, cx) {
-                                            latest_folded_buffer_id = Some(*buffer_id);
-                                            false
+                                    }
+                                    FsEntry::File(FsEntryFile { buffer_id, .. }) => {
+                                        if *buffer_id == toggled_buffer_id {
+                                            Some(fs_entry.clone())
                                         } else {
-                                            latest_unfolded_buffer_id = Some(*buffer_id);
-                                            true
+                                            None
                                         }
-                                    })
-                                    .unwrap_or(true)
-                            })
-                            .copied(),
-                    );
-                    if !ignore_selections_change {
-                        if let Some(entry_to_select) = latest_unfolded_buffer_id
-                            .or(latest_folded_buffer_id)
-                            .and_then(|toggled_buffer_id| {
-                                outline_panel.fs_entries.iter().find_map(
-                                    |fs_entry| match fs_entry {
-                                        FsEntry::ExternalFile(external) => {
-                                            if external.buffer_id == toggled_buffer_id {
-                                                Some(fs_entry.clone())
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        FsEntry::File(FsEntryFile { buffer_id, .. }) => {
-                                            if *buffer_id == toggled_buffer_id {
-                                                Some(fs_entry.clone())
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        FsEntry::Directory(..) => None,
-                                    },
-                                )
-                            })
-                            .map(PanelEntry::Fs)
-                        {
-                            outline_panel.select_entry(entry_to_select, true, window, cx);
-                        }
+                                    }
+                                    FsEntry::Directory(..) => None,
+                                })
+                        })
+                        .map(PanelEntry::Fs)
+                    {
+                        outline_panel.select_entry(entry_to_select, true, cx);
                     }
+                }
 
-                    outline_panel.update_fs_entries(editor.clone(), debounce, window, cx);
-                }
-                EditorEvent::Reparsed(buffer_id) => {
-                    if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
-                        for (_, excerpt) in excerpts {
-                            excerpt.invalidate_outlines();
-                        }
-                    }
-                    outline_panel.update_non_fs_items(window, cx);
-                }
-                _ => {}
+                outline_panel.update_fs_entries(editor, debounce, cx);
             }
-        },
-    )
+            EditorEvent::Reparsed(buffer_id) => {
+                if let Some(excerpts) = outline_panel.excerpts.get_mut(buffer_id) {
+                    for (_, excerpt) in excerpts {
+                        excerpt.invalidate_outlines();
+                    }
+                }
+                outline_panel.update_non_fs_items(cx);
+            }
+            _ => {}
+        }
+    })
 }
 
 fn empty_icon() -> AnyElement {
