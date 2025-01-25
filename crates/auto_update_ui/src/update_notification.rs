@@ -1,12 +1,12 @@
 use gpui::{
-    div, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
-    SemanticVersion, StatefulInteractiveElement, Styled, ViewContext, WeakView,
+    rems, DismissEvent, EventEmitter, InteractiveElement, IntoElement, ParentElement, Render,
+    SemanticVersion, Styled, ViewContext, WeakView,
 };
 use menu::Cancel;
 use release_channel::ReleaseChannel;
 use util::ResultExt;
 use workspace::{
-    ui::{h_flex, v_flex, Icon, IconName, Label, StyledExt},
+    ui::{h_flex, v_flex, Button, Clickable, IconButton, IconName, IconSize, Label, StyledExt},
     Workspace,
 };
 
@@ -22,38 +22,34 @@ impl Render for UpdateNotification {
         let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
+            .occlude()
             .on_action(cx.listener(UpdateNotification::dismiss))
             .elevation_3(cx)
             .p_4()
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Label::new(format!(
-                        "Updated to {app_name} {}",
-                        self.version
-                    )))
                     .child(
-                        div()
-                            .id("cancel")
-                            .child(Icon::new(IconName::Close))
-                            .cursor_pointer()
+                        Label::new(format!("Updated to {app_name} {}", self.version)).ml(rems(0.2)),
+                    )
+                    .child(
+                        IconButton::new("cancel", IconName::Close)
+                            .icon_size(IconSize::Small)
                             .on_click(cx.listener(|this, _, cx| this.dismiss(&menu::Cancel, cx))),
                     ),
             )
-            .child(
-                div()
-                    .id("notes")
-                    .child(Label::new("View the release notes"))
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, cx| {
+            .child(h_flex().pt(rems(0.3)).child(
+                Button::new("notes", "View the release notes").on_click(cx.listener(
+                    |this, _, cx| {
                         this.workspace
                             .update(cx, |workspace, cx| {
                                 crate::view_release_notes_locally(workspace, cx);
                             })
                             .log_err();
                         this.dismiss(&menu::Cancel, cx)
-                    })),
-            )
+                    },
+                )),
+            ))
     }
 }
 
