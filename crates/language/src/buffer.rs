@@ -588,6 +588,7 @@ pub struct Runnable {
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 #[derive(Clone)]
 pub struct EditPreview {
     applied_edits_snapshot: text::BufferSnapshot,
@@ -756,6 +757,21 @@ impl IndentGuide {
     pub fn indent_level(&self) -> u32 {
         self.depth * self.tab_size
 >>>>>>> parent of 3dee32c43d (inline completion: Add syntax highlighting for edit prediction (#23361))
+=======
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndentGuide {
+    pub buffer_id: BufferId,
+    pub start_row: BufferRow,
+    pub end_row: BufferRow,
+    pub depth: u32,
+    pub tab_size: u32,
+    pub settings: IndentGuideSettings,
+}
+
+impl IndentGuide {
+    pub fn indent_level(&self) -> u32 {
+        self.depth * self.tab_size
+>>>>>>> 83386a2291 (Revert "inline completion: Add syntax highlighting for edit prediction (#23361)")
     }
 }
 
