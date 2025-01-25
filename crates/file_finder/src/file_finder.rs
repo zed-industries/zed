@@ -1235,8 +1235,12 @@ impl PickerDelegate for FileFinderDelegate {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
                                 .downgrade()
-                                .update(&mut cx, |editor, cx| {
-                                    editor.go_to_singleton_buffer_point(Point::new(row, col), cx);
+                                .update_in(&mut cx, |editor, window, cx| {
+                                    editor.go_to_singleton_buffer_point(
+                                        Point::new(row, col),
+                                        window,
+                                        cx,
+                                    );
                                 })
                                 .log_err();
                         }

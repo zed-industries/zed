@@ -156,7 +156,7 @@ impl ProjectDiffEditor {
 
         let editor = cx.new_model(|cx| {
             let mut diff_display_editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, window, cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor
         });
@@ -323,7 +323,7 @@ impl ProjectDiffEditor {
                     .await;
 
                 project_diff_editor
-                    .update_in(&mut cx, |project_diff_editor, window, cx| {
+                    .update_in(&mut cx, |project_diff_editor, _window, cx| {
                         project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
                         project_diff_editor.editor.update(cx, |editor, cx| {
                             editor.buffer.update(cx, |buffer, cx| {
@@ -1227,7 +1227,7 @@ mod tests {
             })
             .await
             .expect("failed to save a file");
-        file_a_editor.update_in(cx, |file_a_editor, window, cx| {
+        file_a_editor.update_in(cx, |file_a_editor, _window, cx| {
             let change_set = cx.new_model(|cx| {
                 BufferChangeSet::new_with_base_text(
                     old_text.clone(),

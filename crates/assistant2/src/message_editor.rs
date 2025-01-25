@@ -55,7 +55,7 @@ impl MessageEditor {
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let editor = cx.new_model(|cx| {
-            let mut editor = Editor::auto_height(10, cx);
+            let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
 
@@ -172,7 +172,12 @@ impl MessageEditor {
             .is_some()
     }
 
-    fn send_to_model(&mut self, request_kind: RequestKind, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn send_to_model(
+        &mut self,
+        request_kind: RequestKind,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -457,14 +462,13 @@ impl Render for MessageEditor {
                                             focus_handle.dispatch_action(&Chat, window, cx);
                                         })
                                         .when(is_editor_empty, |button| {
-                                            button.tooltip(|cx| {
-                                                Tooltip::text("Type a message to submit", cx)
-                                            })
+                                            button
+                                                .tooltip(Tooltip::text("Type a message to submit"))
                                         })
                                         .when(!is_model_selected, |button| {
-                                            button.tooltip(|cx| {
-                                                Tooltip::text("Select a model to continue", cx)
-                                            })
+                                            button.tooltip(Tooltip::text(
+                                                "Select a model to continue",
+                                            ))
                                         })
                                 },
                             )),

@@ -7,7 +7,7 @@ use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
     AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
-   
+    WeakModel,
 };
 use language::{
     language_settings::{
@@ -117,7 +117,9 @@ impl Render for InlineCompletionButton {
                                         .ok();
                                 }
                             }))
-                            .tooltip(|cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)),
+                            .tooltip(|window, cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                            }),
                     );
                 }
                 let this = cx.model().clone();
@@ -135,11 +137,9 @@ impl Render for InlineCompletionButton {
                             })
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(
-                            IconButton::new("copilot-icon", icon).tooltip(|cx| {
-                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
-                            }),
-                        )
+                        .trigger(IconButton::new("copilot-icon", icon).tooltip(|window, cx| {
+                            Tooltip::for_action("GitHub Copilot", &ToggleMenu, window, cx)
+                        }))
                         .with_handle(self.popover_menu_handle.clone()),
                 )
             }
@@ -206,13 +206,20 @@ impl Render for InlineCompletionButton {
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(move |cx| {
-                            if has_menu {
-                                Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
-                            } else {
-                                Tooltip::text(tooltip_text.clone(), cx)
-                            }
-                        }))
+                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(
+                            move |window, cx| {
+                                if has_menu {
+                                    Tooltip::for_action(
+                                        tooltip_text.clone(),
+                                        &ToggleMenu,
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::text(tooltip_text.clone())(window, cx)
+                                }
+                            },
+                        ))
                         .with_handle(self.popover_menu_handle.clone()),
                 );
             }
@@ -243,11 +250,12 @@ impl Render for InlineCompletionButton {
                                 ))
                                 .into_any_element(),
                             )
-                            .tooltip(|cx| {
+                            .tooltip(|window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
                                     "Read Terms of Service",
+                                    window,
                                     cx,
                                 )
                             })
@@ -255,7 +263,7 @@ impl Render for InlineCompletionButton {
                                 let user_store = user_store.clone();
 
                                 if let Some(workspace) = workspace.upgrade() {
-                                    ZedPredictTos::toggle(workspace, user_store, cx);
+                                    ZedPredictTos::toggle(workspace, user_store, window, cx);
                                 }
                             })),
                     );
@@ -265,7 +273,9 @@ impl Render for InlineCompletionButton {
                 let button = IconButton::new("zeta", IconName::ZedPredict).when(
                     !self.popover_menu_handle.is_deployed(),
                     |button| {
-                        button.tooltip(|cx| Tooltip::for_action("Edit Prediction", &ToggleMenu, cx))
+                        button.tooltip(|window, cx| {
+                            Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                        })
                     },
                 );
 
@@ -307,7 +317,7 @@ impl InlineCompletionButton {
         fs: Arc<dyn Fs>,
         user_store: Model<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
@@ -502,7 +512,7 @@ impl InlineCompletionButton {
     }
 
     pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.popover_menu_handle.toggle(cx);
+        self.popover_menu_handle.toggle(window, cx);
     }
 }
 

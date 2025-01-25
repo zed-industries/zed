@@ -267,7 +267,7 @@ impl EditorTestContext {
                 .text
                 .line_height_in_pixels(window.rem_size());
             let snapshot = editor.snapshot(window, cx);
-            let details = editor.text_layout_details(window, cx);
+            let details = editor.text_layout_details(window);
 
             let y = pixel_position.y
                 + line_height * (display_point.row().as_f32() - newest_point.row().as_f32());
@@ -441,9 +441,9 @@ pub fn assert_state_with_diff(
     cx: &mut VisualTestContext,
     expected_diff_text: &str,
 ) {
-    let (snapshot, selections) = editor.update(cx, |editor, cx| {
+    let (snapshot, selections) = editor.update_in(cx, |editor, window, cx| {
         (
-            editor.snapshot(cx).buffer_snapshot.clone(),
+            editor.snapshot(window, cx).buffer_snapshot.clone(),
             editor.selections.ranges::<usize>(cx),
         )
     });

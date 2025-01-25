@@ -311,7 +311,8 @@ impl TitleBar {
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
-            repository_selector: cx.new_model(|cx| RepositorySelector::new(project.clone(), cx)),
+            repository_selector: cx
+                .new_model(|cx| RepositorySelector::new(project.clone(), window, cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
@@ -503,7 +504,7 @@ impl TitleBar {
     // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
     pub fn render_current_repository(
         &self,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<impl IntoElement> {
         if !self.git_ui_enabled.load(Ordering::SeqCst) {
             return None;
@@ -538,7 +539,7 @@ impl TitleBar {
         ))
     }
 
-    pub fn render_project_branch(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+    pub fn render_project_branch(&self, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -762,7 +763,7 @@ impl TitleBar {
                 .trigger(
                     IconButton::new("user-menu", IconName::ChevronDown)
                         .icon_size(IconSize::Small)
-                        .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
+                        .tooltip(Tooltip::text("Toggle User Menu")),
                 )
         }
     }

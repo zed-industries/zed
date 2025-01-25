@@ -18,8 +18,12 @@ pub struct KeyBinding {
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
-    pub fn for_action(action: &dyn Action, window: &mut Window, cx: &mut AppContext) -> Option<Self> {
-        let key_binding = cx.bindings_for_action(action).into_iter().rev().next()?;
+    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
+        let key_binding = window
+            .bindings_for_action(action)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
     }
 
@@ -29,7 +33,7 @@ impl KeyBinding {
         focus: &FocusHandle,
         window: &mut Window,
     ) -> Option<Self> {
-        let key_binding = cx
+        let key_binding = window
             .bindings_for_action_in(action, focus)
             .into_iter()
             .rev()
@@ -201,8 +205,8 @@ impl KeyIcon {
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, window: &Window, cx: &AppContext) -> Option<String> {
-    let bindings = cx.bindings_for_action(action);
+pub fn text_for_action(action: &dyn Action, window: &Window) -> Option<String> {
+    let bindings = window.bindings_for_action(action);
     let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
@@ -214,7 +218,7 @@ pub fn text_for_action_in(
     focus: &FocusHandle,
     window: &mut Window,
 ) -> Option<String> {
-    let bindings = cx.bindings_for_action_in(action, focus);
+    let bindings = window.bindings_for_action_in(action, focus);
     let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }

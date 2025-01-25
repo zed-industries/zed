@@ -775,8 +775,8 @@ impl PromptEditor {
         this
     }
 
-    fn placeholder_text(window: &Window, cx: &AppContext) -> String {
-        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, cx)
+    fn placeholder_text(window: &Window) -> String {
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, window)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

@@ -25,7 +25,7 @@ impl Vim {
         cx: &mut ModelContext<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();

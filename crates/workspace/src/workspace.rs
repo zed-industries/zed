@@ -1088,8 +1088,8 @@ impl Workspace {
             }),
         ];
 
-        cx.defer(|this, cx| {
-            this.update_window_title(cx);
+        cx.defer_in(window, |this, window, cx| {
+            this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
         Workspace {
@@ -1816,21 +1816,22 @@ impl Workspace {
     pub fn move_focused_panel_to_next_position(
         &mut self,
         _: &MoveFocusedPanelToNextPosition,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
         let active_dock = docks
             .into_iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(cx));
+            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
 
         if let Some(dock) = active_dock {
             dock.update(cx, |dock, cx| {
                 let active_panel = dock
                     .active_panel()
-                    .filter(|panel| panel.focus_handle(cx).contains_focused(cx));
+                    .filter(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx));
 
                 if let Some(panel) = active_panel {
-                    panel.move_to_next_position(cx);
+                    panel.move_to_next_position(window, cx);
                 }
             })
         }
@@ -4810,7 +4811,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
-            .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
+            .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
             }))
@@ -4829,18 +4830,22 @@ impl Workspace {
                     .save_active_item(SaveIntent::SaveAs, window, cx)
                     .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
+            .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
+                workspace.activate_next_pane(window, cx)
+            }))
             .on_action(
-                cx.listener(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx)),
+                cx.listener(|workspace, _: &ActivateNextWindow, _window, cx| {
+                    workspace.activate_next_window(cx)
+                }),
             )
-            .on_action(cx.listener(|workspace, _: &ActivateNextWindow, cx| {
-                workspace.activate_next_window(cx)
-            }))
-            .on_action(cx.listener(|workspace, _: &ActivatePreviousWindow, cx| {
-                workspace.activate_previous_window(cx)
-            }))
             .on_action(
-                cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
-                    workspace.activate_pane_in_direction(action.0, cx)
+                cx.listener(|workspace, _: &ActivatePreviousWindow, _window, cx| {
+                    workspace.activate_previous_window(cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace, action: &ActivatePaneInDirection, window, cx| {
+                    workspace.activate_pane_in_direction(action.0, window, cx)
                 }),
             )
             .on_action(cx.listener(|workspace, _: &ActivateNextPane, window, cx| {
@@ -5028,7 +5033,7 @@ impl Workspace {
         self.zoomed.as_ref()
     }
 
-    pub fn activate_next_window(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn activate_next_window(&mut self, cx: &mut ModelContext<Self>) {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
@@ -5041,10 +5046,12 @@ impl Workspace {
         else {
             return;
         };
-        next_window.update(cx, |_, cx| cx.activate_window()).ok();
+        next_window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
     }
 
-    pub fn activate_previous_window(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn activate_previous_window(&mut self, cx: &mut ModelContext<Self>) {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
@@ -5058,7 +5065,9 @@ impl Workspace {
         else {
             return;
         };
-        prev_window.update(cx, |_, cx| cx.activate_window()).ok();
+        prev_window
+            .update(cx, |_, window, _| window.activate_window())
+            .ok();
     }
 }
 
@@ -5230,7 +5239,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                         cx.new_model(|_| {
                             MessageNotification::new("Failed to load the database file.")
                                 .with_click_message("File an issue")
-                                .on_click(|cx| cx.open_url(REPORT_ISSUE_URL))
+                                .on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
                 );
@@ -7427,7 +7436,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new_model(|cx| TestPanel::new(DockPosition::Right, window, cx));
+            let panel = cx.new_model(|cx| TestPanel::new(DockPosition::Right, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -7860,10 +7869,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
-            let panel_1 = cx.new_model(|cx| TestPanel::new(DockPosition::Left, window, cx));
+            let panel_1 = cx.new_model(|cx| TestPanel::new(DockPosition::Left, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
-            let panel_2 = cx.new_model(|cx| TestPanel::new(DockPosition::Right, window, cx));
+            let panel_2 = cx.new_model(|cx| TestPanel::new(DockPosition::Right, cx));
             workspace.add_panel(panel_2.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 
@@ -8534,19 +8543,20 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Add a new panel to the right dock, opening the dock and setting the
         // focus to the new panel.
-        let panel = workspace.update(cx, |workspace, cx| {
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new_model(|cx| TestPanel::new(DockPosition::Right, cx));
-            workspace.add_panel(panel.clone(), cx);
+            workspace.add_panel(panel.clone(), window, cx);
 
             workspace
                 .right_dock()
-                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+                .update(cx, |right_dock, cx| right_dock.set_open(true, window, cx));
 
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
 
             panel
         });
@@ -8580,8 +8590,8 @@ mod tests {
         // Remove focus from the panel, ensuring that, if the panel is not
         // focused, the `MoveFocusedPanelToNextPosition` action does not update
         // the panel's position, so the panel is still in the right dock.
-        workspace.update(cx, |workspace, cx| {
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
 
         cx.dispatch_action(MoveFocusedPanelToNextPosition);

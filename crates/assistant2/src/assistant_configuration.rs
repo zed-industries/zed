@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{Action, AnyView, AppContext, EventEmitter, FocusHandle, Focusable, Subscription};
+use gpui::{AnyView, AppContext, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use ui::{prelude::*, ElevationIndex};
 use zed_actions::assistant::DeployPromptLibrary;
@@ -16,13 +16,14 @@ impl AssistantConfiguration {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let registry_subscription = cx.subscribe(
+        let registry_subscription = cx.subscribe_in(
             &LanguageModelRegistry::global(cx),
-            |this, _, event: &language_model::Event, cx| match event {
+            window,
+            |this, _, event: &language_model::Event, window, cx| match event {
                 language_model::Event::AddedProvider(provider_id) => {
                     let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
                     if let Some(provider) = provider {
-                        this.add_provider_configuration_view(&provider, cx);
+                        this.add_provider_configuration_view(&provider, window, cx);
                     }
                 }
                 language_model::Event::RemovedProvider(provider_id) => {
@@ -37,14 +38,18 @@ impl AssistantConfiguration {
             configuration_views_by_provider: HashMap::default(),
             _registry_subscription: registry_subscription,
         };
-        this.build_provider_configuration_views(cx);
+        this.build_provider_configuration_views(window, cx);
         this
     }
 
-    fn build_provider_configuration_views(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn build_provider_configuration_views(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         for provider in providers {
-            self.add_provider_configuration_view(&provider, cx);
+            self.add_provider_configuration_view(&provider, window, cx);
         }
     }
 
@@ -55,9 +60,10 @@ impl AssistantConfiguration {
     fn add_provider_configuration_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
-        let configuration_view = provider.configuration_view(cx);
+        let configuration_view = provider.configuration_view(window, cx);
         self.configuration_views_by_provider
             .insert(provider.id(), configuration_view);
     }
@@ -79,7 +85,7 @@ impl AssistantConfiguration {
     fn render_provider_configuration(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
@@ -107,7 +113,7 @@ impl AssistantConfiguration {
                                 .layer(ElevationIndex::ModalSurface)
                                 .on_click(cx.listener({
                                     let provider = provider.clone();
-                                    move |_this, _event, cx| {
+                                    move |_this, _event, _window, cx| {
                                         cx.emit(AssistantConfigurationEvent::NewThread(
                                             provider.clone(),
                                         ))
@@ -135,7 +141,7 @@ impl AssistantConfiguration {
 }
 
 impl Render for AssistantConfiguration {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()
@@ -152,9 +158,7 @@ impl Render for AssistantConfiguration {
                         .icon(IconName::Book)
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        .on_click(|_event, cx| {
-                            cx.dispatch_action(DeployPromptLibrary.boxed_clone())
-                        }),
+                        .on_click(|_event, _window, cx| cx.dispatch_action(&DeployPromptLibrary)),
                 ),
             )
             .child(

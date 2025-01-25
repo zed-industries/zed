@@ -157,7 +157,7 @@ impl Vim {
         cx: &mut ModelContext<Self>,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_with(|map, selection| {
                     let goal = selection.goal;

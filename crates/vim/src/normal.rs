@@ -29,7 +29,7 @@ use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{actions};
+use gpui::{actions, ModelContext, Window};
 use language::{Point, SelectionGoal, ToPoint};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -265,7 +265,7 @@ impl Vim {
         cx: &mut ModelContext<Self>,
     ) {
         self.update_editor(window, cx, |_, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.move_cursors_with(|map, cursor, goal| {
                     motion
@@ -400,7 +400,7 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(cx);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -469,9 +469,14 @@ impl Vim {
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }
 
-    fn show_location(&mut self, _: &ShowLocation, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn show_location(
+        &mut self,
+        _: &ShowLocation,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = Vim::take_count(cx);
-        self.update_editor(cx, |vim, editor, cx| {
+        self.update_editor(window, cx, |vim, editor, _window, cx| {
             let selection = editor.selections.newest_anchor();
             if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
                 let filename = if let Some(file) = buffer.read(cx).file() {
@@ -508,7 +513,12 @@ impl Vim {
         });
     }
 
-    fn toggle_comments(&mut self, _: &ToggleComments, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_comments(
+        &mut self,
+        _: &ToggleComments,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {

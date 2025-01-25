@@ -40,8 +40,7 @@ pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
-    AnyElement, AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels,
-    UnderlineStyle,
+    AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
@@ -78,8 +77,6 @@ pub enum FoldStatus {
     Folded,
     Foldable,
 }
-
-pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut Window, &mut AppContext) -> AnyElement>;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
@@ -1751,7 +1748,7 @@ pub mod tests {
 
         _ = cx.update_window(window, |_, window, cx| {
             let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
+                editor.update(cx, |editor, cx| editor.text_layout_details(window));
 
             let font_size = px(12.0);
             let wrap_width = Some(px(64.));

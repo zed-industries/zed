@@ -312,7 +312,6 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: Model<Buffer>,
         _: Vec<usize>,
         _: Rc<RefCell<Box<[project::Completion]>>>,
-        _window: &mut Window,
         _: &mut ModelContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))
@@ -324,7 +323,6 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);

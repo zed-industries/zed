@@ -276,7 +276,7 @@ impl<T: 'static> PromptEditor<T> {
         };
 
         let assistant_panel_keybinding =
-            ui::text_for_action(&zed_actions::assistant::ToggleFocus, cx)
+            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window)
                 .map(|keybinding| format!("{keybinding} to chat ― "))
                 .unwrap_or_default();
 

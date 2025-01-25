@@ -1344,8 +1344,8 @@ impl AppContext {
     }
 
     /// Returns key bindings that invoke the given action on the currently focused element, without
-    /// checking context. Bindings are returned returned in precedence order (reverse of the order
-    /// they were added to the keymap).
+    /// checking context. Bindings are returned in the order they were added. For display, the last
+    /// binding should take precedence.
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         RefCell::borrow(&self.keymap).all_bindings_for_input(input)
     }

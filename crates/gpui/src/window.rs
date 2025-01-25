@@ -3767,17 +3767,7 @@ impl Window {
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.rendered_frame
             .dispatch_tree
-            .bindings_for_action(
-                action,
-                &self.window.rendered_frame.dispatch_tree.context_stack,
-            )
-    }
-
-    /// Returns key bindings that invoke the given action on the currently focused element, without
-    /// checking context. Bindings are returned in the order they were added. For display, the last
-    /// binding should take precedence.
-    pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
-        RefCell::borrow(&self.keymap).all_bindings_for_input(input)
+            .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
     /// Returns any bindings that would invoke an action on the given focus handle if it were

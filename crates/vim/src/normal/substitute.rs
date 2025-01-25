@@ -35,7 +35,7 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
-                let text_layout_details = editor.text_layout_details(window, cx);
+                let text_layout_details = editor.text_layout_details(window);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.start == selection.end {

@@ -133,23 +133,23 @@ pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
         })
     });
 
-    Vim::action(editor, cx, |vim, action: &GoToLine, cx| {
-        vim.switch_mode(Mode::Normal, false, cx);
-        let result = vim.update_editor(cx, |vim, editor, cx| {
-            let snapshot = editor.snapshot(cx);
-            let buffer_row = action.range.head().buffer_row(vim, editor, cx)?;
+    Vim::action(editor, cx, |vim, action: &GoToLine, window, cx| {
+        vim.switch_mode(Mode::Normal, false, window, cx);
+        let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let buffer_row = action.range.head().buffer_row(vim, editor, window, cx)?;
             let current = editor.selections.newest::<Point>(cx);
             let target = snapshot
                 .buffer_snapshot
                 .clip_point(Point::new(buffer_row.0, current.head().column), Bias::Left);
-            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges([target..target]);
             });
 
             anyhow::Ok(())
         });
         if let Some(e @ Err(_)) = result {
-            let Some(workspace) = vim.workspace(cx) else {
+            let Some(workspace) = vim.workspace(window) else {
                 return;
             };
             workspace.update(cx, |workspace, cx| {
@@ -1189,7 +1189,7 @@ impl Vim {
         let command = self.update_editor(window, cx, |_, editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             let mut range = motion
                 .range(&snapshot, start.clone(), times, false, &text_layout_details)
                 .unwrap_or(start.range());

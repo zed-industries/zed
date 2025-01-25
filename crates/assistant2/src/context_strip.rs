@@ -36,6 +36,7 @@ pub struct ContextStrip {
 }
 
 impl ContextStrip {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         context_store: Model<ContextStore>,
         workspace: WeakModel<Workspace>,
@@ -119,7 +120,7 @@ impl ContextStrip {
         })
     }
 
-    fn suggested_thread(&self, window: &Window, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
+    fn suggested_thread(&self, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
         }

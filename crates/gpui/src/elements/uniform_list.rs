@@ -366,11 +366,11 @@ impl Element for UniformList {
                     let items = if y_flipped {
                         let flipped_range = self.item_count.saturating_sub(visible_range.end)
                             ..self.item_count.saturating_sub(visible_range.start);
-                        let mut items = (self.render_items)(flipped_range, cx);
+                        let mut items = (self.render_items)(flipped_range, window, cx);
                         items.reverse();
                         items
                     } else {
-                        (self.render_items)(visible_range.clone(), cx)
+                        (self.render_items)(visible_range.clone(), window, cx)
                     };
 
                     let content_mask = ContentMask { bounds };

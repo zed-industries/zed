@@ -153,7 +153,7 @@ impl Vim {
         cx: &mut ModelContext<Self>,
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             if vim.mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -238,7 +238,7 @@ impl Vim {
             SelectionGoal,
         ) -> Option<(DisplayPoint, SelectionGoal)>,
     ) {
-        let text_layout_details = editor.text_layout_details(window, cx);
+        let text_layout_details = editor.text_layout_details(window);
         editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             let map = &s.display_map();
             let mut head = s.newest_anchor().head().to_display_point(map);

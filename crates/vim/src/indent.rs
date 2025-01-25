@@ -81,7 +81,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {

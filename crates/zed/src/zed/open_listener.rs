@@ -235,7 +235,7 @@ pub async fn open_paths_with_positions(
             workspace
                 .update(cx, |_, window, cx| {
                     active_editor.update(cx, |editor, cx| {
-                        editor.go_to_singleton_buffer_point(point, cx);
+                        editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 })
                 .log_err();

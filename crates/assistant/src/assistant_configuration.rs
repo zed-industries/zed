@@ -16,13 +16,14 @@ impl ConfigurationView {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let registry_subscription = cx.subscribe(
+        let registry_subscription = cx.subscribe_in(
             &LanguageModelRegistry::global(cx),
-            |this, _, event: &language_model::Event, cx| match event {
+            window,
+            |this, _, event: &language_model::Event, window, cx| match event {
                 language_model::Event::AddedProvider(provider_id) => {
                     let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
                     if let Some(provider) = provider {
-                        this.add_configuration_view(&provider, cx);
+                        this.add_configuration_view(&provider, window, cx);
                     }
                 }
                 language_model::Event::RemovedProvider(provider_id) => {
@@ -37,14 +38,14 @@ impl ConfigurationView {
             configuration_views: HashMap::default(),
             _registry_subscription: registry_subscription,
         };
-        this.build_configuration_views(cx);
+        this.build_configuration_views(window, cx);
         this
     }
 
     fn build_configuration_views(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         for provider in providers {
-            self.add_configuration_view(&provider, cx);
+            self.add_configuration_view(&provider, window, cx);
         }
     }
 
@@ -55,9 +56,10 @@ impl ConfigurationView {
     fn add_configuration_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
-        let configuration_view = provider.configuration_view(cx);
+        let configuration_view = provider.configuration_view(window, cx);
         self.configuration_views
             .insert(provider.id(), configuration_view);
     }
@@ -65,7 +67,7 @@ impl ConfigurationView {
     fn render_provider_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Div {
         let provider_id = provider.id().0.clone();
         let provider_name = provider.name().0.clone();
@@ -73,7 +75,7 @@ impl ConfigurationView {
 
         let open_new_context = cx.listener({
             let provider = provider.clone();
-            move |_, _, cx| {
+            move |_, _, _window, cx| {
                 cx.emit(ConfigurationViewEvent::NewProviderContextEditor(
                     provider.clone(),
                 ))
@@ -123,7 +125,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         let provider_views = providers
             .into_iter()
@@ -163,12 +165,12 @@ impl Render for ConfigurationView {
         // We use a canvas here to get scrolling to work in the ConfigurationView. It's a workaround
         // because we couldn't the element to take up the size of the parent.
         canvas(
-            move |bounds, cx| {
-                element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+            move |bounds, window, cx| {
+                element.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
                 element
             },
-            |_, mut element, cx| {
-                element.paint(cx);
+            |_, mut element, window, cx| {
+                element.paint(window, cx);
             },
         )
         .flex_1()

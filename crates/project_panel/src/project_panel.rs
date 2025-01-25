@@ -3432,7 +3432,7 @@ impl ProjectPanel {
             };
 
         let border_hover_color =
-            if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
+            if !self.mouse_down && is_active && self.focus_handle.contains_focused(window, cx) {
                 item_colors.focused
             } else {
                 bg_hover_color

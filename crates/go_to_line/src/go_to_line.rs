@@ -5,7 +5,6 @@ use editor::{scroll::Autoscroll, Anchor, Editor, MultiBuffer, ToPoint};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     Focusable, Model, Render, SharedString, Styled, Subscription,
-    VisualContext,
 };
 use language::Buffer;
 use settings::Settings;
@@ -44,7 +43,7 @@ impl GoToLine {
     fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut ModelContext<Editor>) {
         let handle = cx.model().downgrade();
         editor
-            .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
+            .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
                 let Some(editor_handle) = handle.upgrade() else {
                     return;
                 };
@@ -56,7 +55,9 @@ impl GoToLine {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, move |cx| GoToLine::new(editor_handle, buffer, cx));
+                    workspace.toggle_modal(window, cx, move |window, cx| {
+                        GoToLine::new(editor_handle, buffer, window, cx)
+                    });
                 })
             })
             .detach();
@@ -65,7 +66,8 @@ impl GoToLine {
     pub fn new(
         active_editor: Model<Editor>,
         active_buffer: Model<Buffer>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let (cursor, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
             let cursor = editor.selections.last::<Point>(cx).head();
@@ -129,17 +131,17 @@ impl GoToLine {
         &mut self,
         _: &Model<Editor>,
         event: &editor::EditorEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         match event {
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
-            editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(window, cx),
+            editor::EditorEvent::BufferEdited { .. } => self.highlight_current_line(cx),
             _ => {}
         }
     }
 
-    fn highlight_current_line(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn highlight_current_line(&mut self, cx: &mut ModelContext<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
             let multibuffer = editor.buffer().read(cx);
@@ -164,7 +166,7 @@ impl GoToLine {
     fn anchor_from_query(
         &self,
         multibuffer: &MultiBuffer,
-        window: &Window, cx: &ModelContext<Editor>,
+        cx: &ModelContext<Editor>,
     ) -> Option<Anchor> {
         let (Some(row), column) = self.line_column_from_query(cx) else {
             return None;
@@ -194,10 +196,10 @@ impl GoToLine {
             let Some(start) = self.anchor_from_query(&multibuffer, cx) else {
                 return;
             };
-            editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
                 s.select_anchor_ranges([start..start])
             });
-            editor.focus(cx);
+            editor.focus_handle(cx).focus(window);
             cx.notify()
         });
         self.prev_scroll_position.take();

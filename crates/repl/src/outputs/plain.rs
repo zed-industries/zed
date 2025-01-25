@@ -123,8 +123,11 @@ impl TerminalOutput {
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
     pub fn new(window: &mut Window, cx: &mut AppContext) -> Self {
-        let term =
-            alacritty_terminal::Term::new(Config::default(), &terminal_size(cx), VoidListener);
+        let term = alacritty_terminal::Term::new(
+            Config::default(),
+            &terminal_size(window, cx),
+            VoidListener,
+        );
 
         Self {
             parser: Processor::new(),

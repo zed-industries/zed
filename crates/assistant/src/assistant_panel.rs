@@ -18,7 +18,7 @@ use fs::Fs;
 use gpui::{
     prelude::*, Action, AppContext, AsyncWindowContext, EventEmitter, ExternalPaths, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, Styled,
-    Subscription, Task, UpdateGlobal,
+    Subscription, Task, UpdateGlobal, WeakModel,
 };
 use language::LanguageRegistry;
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
@@ -342,17 +342,22 @@ impl AssistantPanel {
     pub fn toggle_focus(
         workspace: &mut Workspace,
         _: &ToggleFocus,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled {
             return;
         }
 
-        workspace.toggle_panel_focus::<Self>(cx);
+        workspace.toggle_panel_focus::<Self>(window, cx);
     }
 
-    fn watch_client_status(client: Arc<Client>, window: &mut Window, cx: &mut ModelContext<Self>) -> Task<()> {
+    fn watch_client_status(
+        client: Arc<Client>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<()> {
         let mut status_rx = client.status();
 
         cx.spawn_in(window, |this, mut cx| async move {
@@ -522,6 +527,7 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
+                window,
                 cx,
             );
             editor.insert_default_prompt(window, cx);
@@ -737,7 +743,7 @@ impl AssistantPanel {
                 .active_context_editor(cx)
                 .and_then(|editor| {
                     let editor = &editor.read(cx).editor().clone();
-                    if editor.read(cx).is_focused(cx) {
+                    if editor.read(cx).is_focused(window) {
                         Some(editor.clone())
                     } else {
                         None
@@ -781,7 +787,11 @@ impl AssistantPanel {
         }
     }
 
-    pub fn new_context(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Model<ContextEditor>> {
+    pub fn new_context(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Model<ContextEditor>> {
         let project = self.project.read(cx);
         if project.is_via_collab() {
             let task = self
@@ -807,6 +817,7 @@ impl AssistantPanel {
                             workspace,
                             project,
                             lsp_adapter_delegate,
+                            window,
                             cx,
                         )
                     });
@@ -834,6 +845,7 @@ impl AssistantPanel {
                     self.workspace.clone(),
                     self.project.clone(),
                     lsp_adapter_delegate,
+                    window,
                     cx,
                 );
                 editor.insert_default_prompt(window, cx);
@@ -1016,6 +1028,7 @@ impl AssistantPanel {
                     self.project.clone(),
                     self.context_store.clone(),
                     self.workspace.clone(),
+                    window,
                     cx,
                 )
             });
@@ -1095,7 +1108,7 @@ impl AssistantPanel {
 
         cx.spawn_in(window, |this, mut cx| async move {
             let context = context.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 let editor = cx.new_model(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -1103,6 +1116,7 @@ impl AssistantPanel {
                         workspace,
                         project,
                         lsp_adapter_delegate,
+                        window,
                         cx,
                     )
                 });
@@ -1143,7 +1157,7 @@ impl AssistantPanel {
 
         cx.spawn_in(window, |this, mut cx| async move {
             let context = context.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 let editor = cx.new_model(|cx| {
                     ContextEditor::for_context(
                         context,
@@ -1151,6 +1165,7 @@ impl AssistantPanel {
                         workspace,
                         this.project.clone(),
                         lsp_adapter_delegate,
+                        window,
                         cx,
                     )
                 });
@@ -1370,7 +1385,8 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_context_editor(
         &self,
         workspace: &mut Workspace,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        _window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> Option<Model<ContextEditor>> {
         let panel = workspace.panel::<AssistantPanel>(cx)?;
         panel.read(cx).active_context_editor(cx)
@@ -1380,40 +1396,45 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
         &self,
         workspace: &mut Workspace,
         path: PathBuf,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> Task<Result<()>> {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return Task::ready(Err(anyhow!("no Assistant panel found")));
         };
 
-        panel.update(cx, |panel, cx| panel.open_saved_context(path, cx))
+        panel.update(cx, |panel, cx| panel.open_saved_context(path, window, cx))
     }
 
     fn open_remote_context(
         &self,
         workspace: &mut Workspace,
         context_id: ContextId,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> Task<Result<Model<ContextEditor>>> {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return Task::ready(Err(anyhow!("no Assistant panel found")));
         };
 
-        panel.update(cx, |panel, cx| panel.open_remote_context(context_id, cx))
+        panel.update(cx, |panel, cx| {
+            panel.open_remote_context(context_id, window, cx)
+        })
     }
 
     fn quote_selection(
         &self,
         workspace: &mut Workspace,
         creases: Vec<(String, String)>,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) {
         let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
             return;
         };
 
-        if !panel.focus_handle(cx).contains_focused(cx) {
-            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        if !panel.focus_handle(cx).contains_focused(window, cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(window, cx);
         }
 
         panel.update(cx, |_, cx| {
@@ -1424,7 +1445,7 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
                     .active_context_editor(cx)
                     .or_else(|| panel.new_context(window, cx))
                 {
-                    context.update(cx, |context, cx| context.quote_creases(creases, cx));
+                    context.update(cx, |context, cx| context.quote_creases(creases, window, cx));
                 };
             });
         });

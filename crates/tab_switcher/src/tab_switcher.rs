@@ -215,7 +215,7 @@ impl TabSwitcherDelegate {
                 PaneEvent::AddItem { .. }
                 | PaneEvent::RemovedItem { .. }
                 | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    picker.delegate.update_matches(cx);
+                    picker.delegate.update_matches(window, cx);
                     cx.notify();
                 }),
                 _ => {}
@@ -224,7 +224,7 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-    fn update_matches(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn update_matches(&mut self, _window: &mut Window, cx: &mut AppContext) {
         let selected_item_id = self.selected_item_id();
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use gpui::{
-    AppContext, EventEmitter, FocusHandle, Focusable, Model, Subscription, Task,
+    AppContext, EventEmitter, FocusHandle, Focusable, Model, Subscription, Task, WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -35,11 +35,13 @@ impl ContextHistory {
         project: Model<Project>,
         context_store: Model<ContextStore>,
         workspace: WeakModel<Workspace>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let picker = cx.new_model(|cx| {
             Picker::uniform_list(
                 SavedContextPickerDelegate::new(project, context_store.clone()),
+                window,
                 cx,
             )
             .modal(false)
@@ -47,10 +49,11 @@ impl ContextHistory {
         });
 
         let subscriptions = vec![
-            cx.observe(&context_store, |this, _, cx| {
-                this.picker.update(cx, |picker, cx| picker.refresh(cx));
+            cx.observe_in(&context_store, window, |this, _, window, cx| {
+                this.picker
+                    .update(cx, |picker, cx| picker.refresh(window, cx));
             }),
-            cx.subscribe(&picker, Self::handle_picker_event),
+            cx.subscribe_in(&picker, window, Self::handle_picker_event),
         ];
 
         Self {
@@ -62,9 +65,10 @@ impl ContextHistory {
 
     fn handle_picker_event(
         &mut self,
-        _: Model<Picker<SavedContextPickerDelegate>>,
+        _: &Model<Picker<SavedContextPickerDelegate>>,
         event: &SavedContextPickerEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let SavedContextPickerEvent::Confirmed(context) = event;
 
@@ -76,12 +80,12 @@ impl ContextHistory {
             .update(cx, |workspace, cx| match context {
                 ContextMetadata::Remote(metadata) => {
                     assistant_panel_delegate
-                        .open_remote_context(workspace, metadata.id.clone(), cx)
+                        .open_remote_context(workspace, metadata.id.clone(), window, cx)
                         .detach_and_log_err(cx);
                 }
                 ContextMetadata::Saved(metadata) => {
                     assistant_panel_delegate
-                        .open_saved_context(workspace, metadata.path.clone(), cx)
+                        .open_saved_context(workspace, metadata.path.clone(), window, cx)
                         .detach_and_log_err(cx);
                 }
             })
@@ -142,7 +146,12 @@ impl PickerDelegate for SavedContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
@@ -150,7 +159,12 @@ impl PickerDelegate for SavedContextPickerDelegate {
         "Search...".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let search = self.store.read(cx).search(query, cx);
         cx.spawn(|this, mut cx| async move {
             let matches = search.await;
@@ -169,19 +183,25 @@ impl PickerDelegate for SavedContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
             cx.emit(SavedContextPickerEvent::Confirmed(metadata.clone()));
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut ModelContext<Picker<Self>>) {}
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let context = self.matches.get(ix)?;
         let item = match context {

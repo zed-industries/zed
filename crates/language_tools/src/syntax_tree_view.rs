@@ -148,7 +148,7 @@ impl SyntaxTreeView {
         let editor_state = self.editor.as_mut()?;
         let snapshot = editor_state
             .editor
-            .update(cx, |editor, cx| editor.snapshot(cx));
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor.selections.last::<usize>(cx).range();
             let multi_buffer = editor.buffer().read(cx);

@@ -1169,14 +1169,13 @@ impl Editor {
                     .cursor_pointer()
                     .child("⋯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(move |_, window, cx| {
+                    .on_click(move |_, _window, cx| {
                         editor
                             .update(cx, |editor, cx| {
                                 editor.unfold_ranges(
                                     &[fold_range.start..fold_range.end],
                                     true,
                                     false,
-                                    window,
                                     cx,
                                 );
                                 cx.stop_propagation();
@@ -1660,7 +1659,7 @@ impl Editor {
             scroll_anchor: self.scroll_manager.anchor(),
             ongoing_scroll: self.scroll_manager.ongoing_scroll(),
             placeholder_text: self.placeholder_text.clone(),
-            is_focused: self.focus_handle.is_focused(cx),
+            is_focused: self.focus_handle.is_focused(window),
             current_line_highlight: self
                 .current_line_highlight
                 .unwrap_or_else(|| EditorSettings::get_global(cx).current_line_highlight),
@@ -3387,7 +3386,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.is_completion_trigger(text, trigger_in_words, window, cx) {
+        if self.is_completion_trigger(text, trigger_in_words, cx) {
             self.show_completions(
                 &ShowCompletions {
                     trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
@@ -3404,7 +3403,6 @@ impl Editor {
         &self,
         text: &str,
         trigger_in_words: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> bool {
         let position = self.selections.newest_anchor().head();
@@ -3422,7 +3420,6 @@ impl Editor {
                 position.text_anchor,
                 text,
                 trigger_in_words,
-                window,
                 cx,
             )
         } else {
@@ -3729,11 +3726,7 @@ impl Editor {
             .collect()
     }
 
-    pub fn text_layout_details(
-        &self,
-        window: &mut Window,
-        _cx: &mut AppContext,
-    ) -> TextLayoutDetails {
+    pub fn text_layout_details(&self, window: &mut Window) -> TextLayoutDetails {
         TextLayoutDetails {
             text_system: window.text_system().clone(),
             editor_style: self.style.clone().unwrap(),
@@ -3908,11 +3901,7 @@ impl Editor {
 
                     if editor.focus_handle.is_focused(window) && menu.is_some() {
                         let mut menu = menu.unwrap();
-                        menu.resolve_visible_completions(
-                            editor.completion_provider.as_deref(),
-                            window,
-                            cx,
-                        );
+                        menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
 
                         if editor.show_inline_completions_in_menu(cx) {
                             if let Some(hint) = editor.inline_completion_menu_hint(window, cx) {
@@ -3970,7 +3959,7 @@ impl Editor {
             return;
         };
 
-        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), cx);
+        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), window, cx);
     }
 
     fn do_completion(
@@ -4002,7 +3991,7 @@ impl Editor {
                     )) => {
                         drop(entries);
                         drop(context_menu);
-                        self.toggle_zed_predict_tos(cx);
+                        self.toggle_zed_predict_tos(window, cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -4190,7 +4179,6 @@ impl Editor {
             completions_menu.completions.clone(),
             candidate_id,
             true,
-            window,
             cx,
         );
 
@@ -5172,7 +5160,8 @@ impl Editor {
 
     fn inline_completion_menu_hint(
         &self,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<InlineCompletionMenuHint> {
         let provider = self.inline_completion_provider()?;
         if self.has_active_inline_completion() {
@@ -5472,11 +5461,12 @@ impl Editor {
         style: &EditorStyle,
         max_height_in_lines: u32,
         y_flipped: bool,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
-                Some(menu.render(style, max_height_in_lines, y_flipped, cx))
+                Some(menu.render(style, max_height_in_lines, y_flipped, window, cx))
             } else {
                 None
             }
@@ -6349,7 +6339,7 @@ impl Editor {
         cx: &mut ModelContext<Self>,
     ) {
         let mut revert_changes = HashMap::default();
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.snapshot(window, cx);
         for hunk in snapshot
             .hunks_for_ranges(Some(Point::zero()..snapshot.buffer_snapshot.max_point()).into_iter())
         {
@@ -6375,18 +6365,24 @@ impl Editor {
             .detach_and_notify_err(window, cx);
     }
 
-    pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn revert_selected_hunks(
+        &mut self,
+        _: &RevertSelectedHunks,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
-        self.revert_hunks_in_ranges(selections, cx);
+        self.revert_hunks_in_ranges(selections, window, cx);
     }
 
     fn revert_hunks_in_ranges(
         &mut self,
         ranges: impl Iterator<Item = Range<Point>>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         let mut revert_changes = HashMap::default();
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.snapshot(window, cx);
         for hunk in &snapshot.hunks_for_ranges(ranges) {
             self.prepare_revert_change(&mut revert_changes, &hunk, cx);
         }
@@ -6397,7 +6393,12 @@ impl Editor {
         }
     }
 
-    pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn open_active_item_in_terminal(
+        &mut self,
+        _: &OpenInTerminal,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(working_directory) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
@@ -6418,7 +6419,7 @@ impl Editor {
         &self,
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         hunk: &MultiBufferDiffHunk,
-        window: &mut Window, cx: &mut AppContext,
+        cx: &mut AppContext,
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
         let change_set = buffer.change_set_for(hunk.buffer_id)?;
@@ -6889,7 +6890,7 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
-            this.unfold_ranges(&unfold_ranges, true, true, window, cx);
+            this.unfold_ranges(&unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
@@ -6984,7 +6985,7 @@ impl Editor {
         }
 
         self.transact(window, cx, |this, window, cx| {
-            this.unfold_ranges(&unfold_ranges, true, true, window, cx);
+            this.unfold_ranges(&unfold_ranges, true, true, cx);
             this.buffer.update(cx, |buffer, cx| {
                 for (range, text) in edits {
                     buffer.edit([(range, text)], None, cx);
@@ -6998,7 +6999,7 @@ impl Editor {
     }
 
     pub fn transpose(&mut self, _: &Transpose, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.transact(window, cx, |this, window, cx| {
             let edits = this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 let mut edits: Vec<(Range<usize>, String)> = Default::default();
@@ -7596,7 +7597,7 @@ impl Editor {
             return;
         }
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
 
@@ -7638,7 +7639,7 @@ impl Editor {
             return;
         }
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             let line_mode = s.line_mode;
@@ -7674,7 +7675,7 @@ impl Editor {
             return;
         }
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             let line_mode = s.line_mode;
@@ -7701,7 +7702,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::down_by_rows(map, head, action.lines, goal, false, text_layout_details)
@@ -7715,7 +7716,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::up_by_rows(map, head, action.lines, goal, false, text_layout_details)
@@ -7733,7 +7734,7 @@ impl Editor {
             return;
         };
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
@@ -7756,7 +7757,7 @@ impl Editor {
             .context_menu
             .borrow_mut()
             .as_mut()
-            .map(|menu| menu.select_first(self.completion_provider.as_deref(), window, cx))
+            .map(|menu| menu.select_first(self.completion_provider.as_deref(), cx))
             .unwrap_or(false)
         {
             return;
@@ -7777,7 +7778,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(autoscroll), window, cx, |s| {
             let line_mode = s.line_mode;
@@ -7799,7 +7800,7 @@ impl Editor {
     }
 
     pub fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::up(map, head, goal, false, text_layout_details)
@@ -7815,7 +7816,7 @@ impl Editor {
             return;
         }
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         let selection_count = self.selections.count();
         let first_selection = self.selections.first_anchor();
 
@@ -7852,7 +7853,7 @@ impl Editor {
             return;
         };
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
@@ -7875,7 +7876,7 @@ impl Editor {
             .context_menu
             .borrow_mut()
             .as_mut()
-            .map(|menu| menu.select_last(self.completion_provider.as_deref(), window, cx))
+            .map(|menu| menu.select_last(self.completion_provider.as_deref(), cx))
             .unwrap_or(false)
         {
             return;
@@ -7896,7 +7897,7 @@ impl Editor {
             Autoscroll::fit()
         };
 
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(autoscroll), window, cx, |s| {
             let line_mode = s.line_mode;
             s.move_with(|map, selection| {
@@ -7922,7 +7923,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.move_heads_with(|map, head, goal| {
                 movement::down(map, head, goal, false, text_layout_details)
@@ -7933,44 +7934,44 @@ impl Editor {
     pub fn context_menu_first(
         &mut self,
         _: &ContextMenuFirst,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_first(self.completion_provider.as_deref(), window, cx);
+            context_menu.select_first(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_prev(
         &mut self,
         _: &ContextMenuPrev,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_prev(self.completion_provider.as_deref(), window, cx);
+            context_menu.select_prev(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_next(
         &mut self,
         _: &ContextMenuNext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_next(self.completion_provider.as_deref(), window, cx);
+            context_menu.select_next(self.completion_provider.as_deref(), cx);
         }
     }
 
     pub fn context_menu_last(
         &mut self,
         _: &ContextMenuLast,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_last(self.completion_provider.as_deref(), window, cx);
+            context_menu.select_last(self.completion_provider.as_deref(), cx);
         }
     }
 
@@ -8530,7 +8531,7 @@ impl Editor {
                 to_unfold.push(selection.start..selection.end);
             }
         }
-        self.unfold_ranges(&to_unfold, true, true, window, cx);
+        self.unfold_ranges(&to_unfold, true, true, cx);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select_ranges(new_selection_ranges);
         });
@@ -8557,7 +8558,7 @@ impl Editor {
     fn add_selection(&mut self, above: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
-        let text_layout_details = self.text_layout_details(window, cx);
+        let text_layout_details = self.text_layout_details(window);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -8673,7 +8674,7 @@ impl Editor {
             window: &mut Window,
             cx: &mut ModelContext<Editor>,
         ) {
-            this.unfold_ranges(&[range.clone()], false, true, window, cx);
+            this.unfold_ranges(&[range.clone()], false, true, cx);
             this.change_selections(auto_scroll, window, cx, |s| {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
@@ -8899,7 +8900,6 @@ impl Editor {
                 .collect::<Vec<_>>(),
             false,
             false,
-            window,
             cx,
         );
         self.change_selections(Some(Autoscroll::fit()), window, cx, |selections| {
@@ -8973,7 +8973,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges(&[next_selected_range.clone()], false, true, window, cx);
+                    self.unfold_ranges(&[next_selected_range.clone()], false, true, cx);
                     self.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
@@ -9053,7 +9053,6 @@ impl Editor {
                     &selections.iter().map(|s| s.range()).collect::<Vec<_>>(),
                     false,
                     true,
-                    window,
                     cx,
                 );
                 self.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
@@ -9080,7 +9079,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        let text_layout_details = &self.text_layout_details(window, cx);
+        let text_layout_details = &self.text_layout_details(window);
         self.transact(window, cx, |this, window, cx| {
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
             let mut edits = Vec::new();
@@ -9817,14 +9816,20 @@ impl Editor {
         })
     }
 
-    pub fn go_to_singleton_buffer_point(&mut self, point: Point, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.go_to_singleton_buffer_range(point..point, cx);
+    pub fn go_to_singleton_buffer_point(
+        &mut self,
+        point: Point,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.go_to_singleton_buffer_range(point..point, window, cx);
     }
 
     pub fn go_to_singleton_buffer_range(
         &mut self,
         range: Range<Point>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let multibuffer = self.buffer().read(cx);
         let Some(buffer) = multibuffer.as_singleton() else {
@@ -9836,13 +9841,18 @@ impl Editor {
         let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
             return;
         };
-        self.change_selections(Some(Autoscroll::center()), cx, |s| {
+        self.change_selections(Some(Autoscroll::center()), window, cx, |s| {
             s.select_anchor_ranges([start..end])
         });
     }
 
-    fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.go_to_diagnostic_impl(Direction::Next, cx)
+    fn go_to_diagnostic(
+        &mut self,
+        _: &GoToDiagnostic,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.go_to_diagnostic_impl(Direction::Next, window, cx)
     }
 
     fn go_to_prev_diagnostic(
@@ -9872,6 +9882,7 @@ impl Editor {
                 self.activate_diagnostics(
                     buffer_id,
                     popover.local_diagnostic.diagnostic.group_id,
+                    window,
                     cx,
                 );
                 if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
@@ -9950,7 +9961,7 @@ impl Editor {
                 let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
                     return;
                 };
-                self.activate_diagnostics(buffer_id, group_id, cx);
+                self.activate_diagnostics(buffer_id, group_id, window, cx);
                 if self.active_diagnostics.is_some() {
                     self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                         s.select(vec![Selection {
@@ -10009,7 +10020,7 @@ impl Editor {
         if let Some(hunk) = &hunk {
             let destination = Point::new(hunk.row_range.start.0, 0);
             self.unfold_ranges(&[destination..destination], false, false, cx);
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(vec![destination..destination]);
             });
         }
@@ -10042,7 +10053,7 @@ impl Editor {
         if let Some(hunk) = &hunk {
             let destination = Point::new(hunk.row_range.start.0, 0);
             self.unfold_ranges(&[destination..destination], false, false, cx);
-            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_ranges(vec![destination..destination]);
             });
         }
@@ -10319,7 +10330,7 @@ impl Editor {
                     let range = collapse_multiline_range(range);
 
                     if Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref() {
-                        editor.go_to_singleton_buffer_range(range.clone(), cx);
+                        editor.go_to_singleton_buffer_range(range.clone(), window, cx);
                     } else {
                         window.defer(cx, move |window, cx| {
                             let target_editor: Model<Self> =
@@ -10343,7 +10354,7 @@ impl Editor {
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
-                                target_editor.go_to_singleton_buffer_range(range, cx);
+                                target_editor.go_to_singleton_buffer_range(range, window, cx);
                                 pane.update(cx, |pane, _| pane.enable_history());
                             });
                         });
@@ -11112,7 +11123,8 @@ impl Editor {
         &mut self,
         buffer_id: BufferId,
         group_id: usize,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
@@ -11265,9 +11277,14 @@ impl Editor {
         }
     }
 
-    pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_mark(
+        &mut self,
+        _: &actions::SetMark,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if self.selection_mark_mode {
-            self.change_selections(None, cx, |s| {
+            self.change_selections(None, window, cx, |s| {
                 s.move_with(|_, sel| {
                     sel.collapse_to(sel.head(), SelectionGoal::None);
                 });
@@ -11280,9 +11297,10 @@ impl Editor {
     pub fn swap_selection_ends(
         &mut self,
         _: &actions::SwapSelectionEnds,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
-        self.change_selections(None, cx, |s| {
+        self.change_selections(None, window, cx, |s| {
             s.move_with(|_, sel| {
                 if sel.start != sel.end {
                     sel.reversed = !sel.reversed
@@ -11293,7 +11311,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn toggle_fold(&mut self, _: &actions::ToggleFold, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn toggle_fold(
+        &mut self,
+        _: &actions::ToggleFold,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if self.is_singleton(cx) {
             let selection = self.selections.newest::<Point>(cx);
 
@@ -11562,7 +11585,7 @@ impl Editor {
     pub fn unfold_lines(
         &mut self,
         _: &UnfoldLines,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if self.is_singleton(cx) {
@@ -11581,7 +11604,7 @@ impl Editor {
                 })
                 .collect::<Vec<_>>();
 
-            self.unfold_ranges(&ranges, true, true, window, cx);
+            self.unfold_ranges(&ranges, true, true, cx);
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let buffer_ids: HashSet<_> = multi_buffer_snapshot
@@ -11597,7 +11620,7 @@ impl Editor {
     pub fn unfold_recursive(
         &mut self,
         _: &UnfoldRecursive,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -11614,13 +11637,13 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        self.unfold_ranges(&ranges, true, true, window, cx);
+        self.unfold_ranges(&ranges, true, true, cx);
     }
 
     pub fn unfold_at(
         &mut self,
         unfold_at: &UnfoldAt,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -11637,26 +11660,20 @@ impl Editor {
             .iter()
             .any(|selection| RangeExt::overlaps(&selection.range(), &intersection_range));
 
-        self.unfold_ranges(&[intersection_range], true, autoscroll, window, cx)
+        self.unfold_ranges(&[intersection_range], true, autoscroll, cx);
     }
 
     pub fn unfold_all(
         &mut self,
         _: &actions::UnfoldAll,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if self.buffer.read(cx).is_singleton() {
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-            self.unfold_ranges(
-                &[0..display_map.buffer_snapshot.len()],
-                true,
-                true,
-                window,
-                cx,
-            );
+            self.unfold_ranges(&[0..display_map.buffer_snapshot.len()], true, true, cx);
         } else {
-            self.toggle_fold_multiple_buffers = cx.spawn_in(window, |editor, mut cx| async move {
+            self.toggle_fold_multiple_buffers = cx.spawn(|editor, mut cx| async move {
                 editor
                     .update(&mut cx, |editor, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
@@ -11762,15 +11779,14 @@ impl Editor {
         ranges: &[Range<T>],
         inclusive: bool,
         auto_scroll: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.remove_folds_with(ranges, auto_scroll, window, cx, |map, cx| {
+        self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.unfold_intersecting(ranges.iter().cloned(), inclusive, cx)
         });
     }
 
-    pub fn fold_buffer(&mut self, buffer_id: BufferId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
         if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
             return;
         }
@@ -11787,7 +11803,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn unfold_buffer(&mut self, buffer_id: BufferId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
         if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
@@ -11819,10 +11835,9 @@ impl Editor {
         ranges: &[Range<T>],
         type_id: TypeId,
         auto_scroll: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.remove_folds_with(ranges, auto_scroll, window, cx, |map, cx| {
+        self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
             map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
     }
@@ -11831,7 +11846,6 @@ impl Editor {
         &mut self,
         ranges: &[Range<T>],
         auto_scroll: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
         update: impl FnOnce(&mut DisplayMap, &mut ModelContext<DisplayMap>),
     ) {
@@ -11868,7 +11882,12 @@ impl Editor {
         });
     }
 
-    pub fn expand_all_diff_hunks(&mut self, _: &ExpandAllHunkDiffs, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn expand_all_diff_hunks(
+        &mut self,
+        _: &ExpandAllHunkDiffs,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.buffer.update(cx, |buffer, cx| {
             buffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
         });
@@ -11877,19 +11896,20 @@ impl Editor {
     pub fn toggle_selected_diff_hunks(
         &mut self,
         _: &ToggleSelectedDiffHunks,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.toggle_diff_hunks_in_ranges(ranges, cx);
     }
 
-    pub fn expand_selected_diff_hunks(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn expand_selected_diff_hunks(&mut self, cx: &mut ModelContext<Self>) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.buffer
             .update(cx, |buffer, cx| buffer.expand_diff_hunks(ranges, cx))
     }
 
-    pub fn clear_expanded_diff_hunks(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    pub fn clear_expanded_diff_hunks(&mut self, cx: &mut ModelContext<Self>) -> bool {
         self.buffer.update(cx, |buffer, cx| {
             let ranges = vec![Anchor::min()..Anchor::max()];
             if !buffer.all_diff_hunks_expanded()
@@ -11906,7 +11926,7 @@ impl Editor {
     fn toggle_diff_hunks_in_ranges(
         &mut self,
         ranges: Vec<Range<Anchor>>,
-        window: &mut Window, cx: &mut ModelContext<'_, Editor>,
+        cx: &mut ModelContext<'_, Editor>,
     ) {
         self.buffer.update(cx, |buffer, cx| {
             if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
@@ -11920,7 +11940,8 @@ impl Editor {
     pub(crate) fn apply_all_diff_hunks(
         &mut self,
         _: &ApplyAllDiffHunks,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
@@ -11930,19 +11951,20 @@ impl Editor {
         }
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, cx).detach_and_log_err(cx);
+            self.save(true, project, window, cx).detach_and_log_err(cx);
         }
     }
 
     pub(crate) fn apply_selected_diff_hunks(
         &mut self,
         _: &ApplyDiffHunk,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.snapshot(window, cx);
         let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx).into_iter());
         let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
+        self.transact(window, cx, |editor, _window, cx| {
             for hunk in hunks {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                     ranges_by_buffer
@@ -11960,11 +11982,11 @@ impl Editor {
         });
 
         if let Some(project) = self.project.clone() {
-            self.save(true, project, cx).detach_and_log_err(cx);
+            self.save(true, project, window, cx).detach_and_log_err(cx);
         }
     }
 
-    pub fn set_gutter_hovered(&mut self, hovered: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ModelContext<Self>) {
         if hovered != self.gutter_hovered {
             self.gutter_hovered = hovered;
             cx.notify();
@@ -11975,7 +11997,6 @@ impl Editor {
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         autoscroll: Option<Autoscroll>,
-
         cx: &mut ModelContext<Self>,
     ) -> Vec<CustomBlockId> {
         let blocks = self
@@ -11992,7 +12013,6 @@ impl Editor {
         &mut self,
         heights: HashMap<CustomBlockId, u32>,
         autoscroll: Option<Autoscroll>,
-
         cx: &mut ModelContext<Self>,
     ) {
         self.display_map
@@ -12536,7 +12556,7 @@ impl Editor {
         self.show_git_blame_gutter
     }
 
-    pub fn render_git_blame_gutter(&self, window: &Window, cx: &AppContext) -> bool {
+    pub fn render_git_blame_gutter(&self, cx: &AppContext) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
@@ -12547,12 +12567,12 @@ impl Editor {
             && self.has_blame_entries(cx)
     }
 
-    fn has_blame_entries(&self, window: &Window, cx: &AppContext) -> bool {
+    fn has_blame_entries(&self, cx: &AppContext) -> bool {
         self.blame()
             .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
-    fn newest_selection_head_on_empty_line(&self, window: &Window, cx: &AppContext) -> bool {
+    fn newest_selection_head_on_empty_line(&self, cx: &AppContext) -> bool {
         let cursor_anchor = self.selections.newest_anchor().head();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -12561,7 +12581,7 @@ impl Editor {
         snapshot.line_len(buffer_row) == 0
     }
 
-    fn get_permalink_to_line(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Task<Result<url::Url>> {
+    fn get_permalink_to_line(&self, cx: &mut ModelContext<Self>) -> Task<Result<url::Url>> {
         let buffer_and_selection = maybe!({
             let selection = self.selections.newest::<Point>(cx);
             let selection_range = selection.range();
@@ -12868,8 +12888,12 @@ impl Editor {
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
     /// Returns a map of display rows that are highlighted and their corresponding highlight color.
     /// Allows to ignore certain kinds of highlights.
-    pub fn highlighted_display_rows(&self, window: &mut Window, cx: &mut AppContext) -> BTreeMap<DisplayRow, Hsla> {
-        let snapshot = self.snapshot(cx);
+    pub fn highlighted_display_rows(
+        &self,
+        window: &mut Window,
+        cx: &mut AppContext,
+    ) -> BTreeMap<DisplayRow, Hsla> {
+        let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
             .iter()
@@ -12983,7 +13007,8 @@ impl Editor {
     #[cfg(feature = "test-support")]
     pub fn all_text_background_highlights(
         &self,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let snapshot = self.snapshot(window, cx);
         let buffer = &snapshot.buffer_snapshot;
@@ -13828,7 +13853,12 @@ impl Editor {
 
     /// Copy the highlighted chunks to the clipboard as JSON. The format is an array of lines,
     /// with each line being an array of {text, highlight} objects.
-    fn copy_highlight_json(&mut self, _: &CopyHighlightJson, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy_highlight_json(
+        &mut self,
+        _: &CopyHighlightJson,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         #[derive(Serialize)]
         struct Chunk<'a> {
             text: String,
@@ -14081,10 +14111,9 @@ impl Editor {
         source: multi_buffer::Anchor,
         editor_snapshot: &EditorSnapshot,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
     ) -> Option<gpui::Point<Pixels>> {
         let source_point = source.to_display_point(editor_snapshot);
-        self.display_to_pixel_point(source_point, editor_snapshot, window, cx)
+        self.display_to_pixel_point(source_point, editor_snapshot, window)
     }
 
     pub fn display_to_pixel_point(
@@ -14092,10 +14121,9 @@ impl Editor {
         source: DisplayPoint,
         editor_snapshot: &EditorSnapshot,
         window: &mut Window,
-        cx: &mut AppContext,
     ) -> Option<gpui::Point<Pixels>> {
         let line_height = self.style()?.text.line_height_in_pixels(window.rem_size());
-        let text_layout_details = self.text_layout_details(window, cx);
+        let text_layout_details = self.text_layout_details(window);
         let scroll_top = text_layout_details
             .scroll_anchor
             .scroll_position(editor_snapshot)
@@ -14131,8 +14159,8 @@ impl Editor {
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
 
-    fn character_size(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> gpui::Point<Pixels> {
-        let text_layout_details = self.text_layout_details(cx);
+    fn character_size(&self, window: &mut Window) -> gpui::Point<Pixels> {
+        let text_layout_details = self.text_layout_details(window);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
@@ -14560,7 +14588,6 @@ pub trait CompletionProvider {
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Rc<RefCell<Box<[Completion]>>>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<Result<bool>>;
 
@@ -14570,7 +14597,6 @@ pub trait CompletionProvider {
         _completions: Rc<RefCell<Box<[Completion]>>>,
         _completion_index: usize,
         _push_to_history: bool,
-        _window: &mut Window,
         _cx: &mut ModelContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
@@ -14582,7 +14608,6 @@ pub trait CompletionProvider {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> bool;
 
@@ -14622,7 +14647,7 @@ impl CodeActionProvider for Model<Project> {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
@@ -14636,7 +14661,7 @@ impl CodeActionProvider for Model<Project> {
         action: CodeAction,
         _excerpt_id: ExcerptId,
         push_to_history: bool,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         self.update(cx, |project, cx| {
@@ -14808,7 +14833,6 @@ impl CompletionProvider for Model<Project> {
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Rc<RefCell<Box<[Completion]>>>,
-        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
@@ -14824,7 +14848,6 @@ impl CompletionProvider for Model<Project> {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         push_to_history: bool,
-        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
@@ -14846,7 +14869,6 @@ impl CompletionProvider for Model<Project> {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
-        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -15661,11 +15683,11 @@ impl ViewInputHandler for Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
-        let text_layout_details = self.text_layout_details(window, cx);
+        let text_layout_details = self.text_layout_details(window);
         let gpui::Point {
             x: em_width,
             y: line_height,
-        } = self.character_size(window, cx);
+        } = self.character_size(window);
 
         let snapshot = self.snapshot(window, cx);
         let scroll_position = snapshot.scroll_position();
@@ -15884,7 +15906,7 @@ fn inline_completion_edit_text(
     edits: &[(Range<Anchor>, String)],
     edit_preview: &EditPreview,
     include_deletions: bool,
-    window: &Window, cx: &AppContext,
+    cx: &AppContext,
 ) -> Option<HighlightedEdits> {
     let edits = edits
         .iter()

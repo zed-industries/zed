@@ -3,8 +3,7 @@ use anyhow::Context;
 use anyhow::{anyhow, Result};
 use gpui::{
     svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, EventEmitter,
-    Global, PromptLevel, Render, ScrollHandle, Task, VisualContext,
-   
+    Global, Model, PromptLevel, Render, ScrollHandle, Task,
 };
 use std::rc::Rc;
 use std::{any::TypeId, time::Duration};
@@ -83,8 +82,8 @@ impl Workspace {
     pub(crate) fn show_notification_without_handling_dismiss_events(
         &mut self,
         id: &NotificationId,
-        window: &mut Window, cx: &mut ModelContext<Self>,
-        build_notification: impl FnOnce(&mut Window, &mut ModelContext<Self>) -> AnyView,
+        cx: &mut ModelContext<Self>,
+        build_notification: impl FnOnce(&mut ModelContext<Self>) -> AnyView,
     ) {
         self.dismiss_notification(id, cx);
         self.notifications
@@ -97,7 +96,7 @@ impl Workspace {
         E: std::fmt::Debug + std::fmt::Display,
     {
         self.show_notification(workspace_error_notification_id(), cx, |cx| {
-            cx.new_model(|_cx| ErrorMessagePrompt::new(format!("Error: {err}")))
+            cx.new_model(|_| ErrorMessagePrompt::new(format!("Error: {err}")))
         });
     }
 
@@ -114,7 +113,7 @@ impl Workspace {
         });
     }
 
-    pub fn dismiss_notification(&mut self, id: &NotificationId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn dismiss_notification(&mut self, id: &NotificationId, cx: &mut ModelContext<Self>) {
         self.notifications.retain(|(existing_id, _)| {
             if existing_id == id {
                 cx.notify();
@@ -162,7 +161,7 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn show_initial_notifications(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn show_initial_notifications(&mut self, cx: &mut ModelContext<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = cx
             .try_global::<GlobalAppNotifications>()
@@ -381,10 +380,6 @@ pub mod simple_message_notification {
     };
     use ui::prelude::*;
 
-    use crate::Workspace;
-
-    use super::NotificationId;
-
     pub struct MessageNotification {
         build_content: Box<dyn Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement>,
         on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
@@ -452,15 +447,6 @@ pub mod simple_message_notification {
         pub fn dismiss(&mut self, cx: &mut ModelContext<Self>) {
             cx.emit(DismissEvent);
         }
-
-        pub fn show(
-            self,
-            id: NotificationId,
-            workspace: &mut Workspace,
-            cx: &mut ModelContext<Workspace>,
-        ) {
-            workspace.show_notification_once(id, cx, |cx| cx.new_model(|_| self));
-        }
     }
 
     impl Render for MessageNotification {
@@ -520,7 +506,7 @@ pub mod simple_message_notification {
 struct GlobalAppNotifications {
     app_notifications: Vec<(
         NotificationId,
-        Rc<dyn Fn(&mut Window, &mut ModelContext<Workspace>) -> AnyView>,
+        Rc<dyn Fn(&mut ModelContext<Workspace>) -> AnyView>,
     )>,
 }
 
@@ -530,7 +516,7 @@ impl GlobalAppNotifications {
     pub fn insert(
         &mut self,
         id: NotificationId,
-        build_notification: Rc<dyn Fn(&mut Window, &mut ModelContext<Workspace>) -> AnyView>,
+        build_notification: Rc<dyn Fn(&mut ModelContext<Workspace>) -> AnyView>,
     ) {
         self.remove(&id);
         self.app_notifications.push((id, build_notification))
@@ -548,10 +534,10 @@ impl GlobalAppNotifications {
 pub fn show_app_notification<V: Notification + 'static>(
     id: NotificationId,
     cx: &mut AppContext,
-    build_notification: impl Fn(&mut Window, &mut ModelContext<Workspace>) -> Model<V> + 'static,
+    build_notification: impl Fn(&mut ModelContext<Workspace>) -> Model<V> + 'static,
 ) -> Result<()> {
     // Handle dismiss events by removing the notification from all workspaces.
-    let build_notification: Rc<dyn Fn(&mut Window, &mut ModelContext<Workspace>) -> AnyView> = Rc::new({
+    let build_notification: Rc<dyn Fn(&mut ModelContext<Workspace>) -> AnyView> = Rc::new({
         let id = id.clone();
         move |cx| {
             let notification = build_notification(cx);
@@ -574,7 +560,7 @@ pub fn show_app_notification<V: Notification + 'static>(
 
     for window in cx.windows() {
         if let Some(workspace_window) = window.downcast::<Workspace>() {
-            let notify_result = workspace_window.update(cx, |workspace, cx| {
+            let notify_result = workspace_window.update(cx, |workspace, _window, cx| {
                 workspace.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
                     build_notification(cx)
                 });
@@ -608,7 +594,7 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut AppContext) {
             // This spawn is necessary in order to dismiss the notification on which the click
             // occurred, because in that case we're already in the middle of an update.
             cx.spawn(move |mut cx| async move {
-                workspace_window.update(&mut cx, |workspace, cx| {
+                workspace_window.update(&mut cx, |workspace, _window, cx| {
                     workspace.dismiss_notification(&id, cx)
                 })
             })

@@ -627,15 +627,21 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                         {
                             // Local settings will be displayed by the projects
                         } else {
-                            MessageNotification::new(format!(
-                                "Invalid user settings file\n{error}"
-                            ))
-                            .with_click_message("Open settings file")
-                            .on_click(|window, cx| {
-                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
-                                cx.emit(DismissEvent);
-                            })
-                            .show(id.clone(), workspace, cx);
+                            workspace.show_notification(id.clone(), cx, |cx| {
+                                cx.new_model(|_cx| {
+                                    MessageNotification::new(format!(
+                                        "Invalid user settings file\n{error}"
+                                    ))
+                                    .with_click_message("Open settings file")
+                                    .on_click(|window, cx| {
+                                        window.dispatch_action(
+                                            zed_actions::OpenSettings.boxed_clone(),
+                                            cx,
+                                        );
+                                        cx.emit(DismissEvent);
+                                    })
+                                })
+                            });
                         }
                     }
                     None => workspace.dismiss_notification(&id, cx),

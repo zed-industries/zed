@@ -13,7 +13,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 // TODO: Add updated status colors to theme
-pub fn git_status_icon(status: FileStatus, window: &Window, cx: &AppContext) -> impl IntoElement {
+pub fn git_status_icon(status: FileStatus, cx: &AppContext) -> impl IntoElement {
     let (icon_name, color) = if status.is_conflicted() {
         (
             IconName::Warning,

@@ -497,8 +497,7 @@ async fn test_basic_following(
         });
 
         // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-        let panel =
-            cx_b.new_window_model(|window, cx| TestPanel::new(DockPosition::Left, window, cx));
+        let panel = cx_b.new_model(|cx| TestPanel::new(DockPosition::Left, cx));
         workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.add_panel(panel, window, cx);
             workspace.toggle_panel_focus::<TestPanel>(window, cx);

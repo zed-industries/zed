@@ -58,7 +58,7 @@ impl ContextMenuEntry {
             icon_position: IconPosition::Start,
             icon_size: IconSize::Small,
             icon_color: None,
-            handler: Rc::new(|_, _| {}),
+            handler: Rc::new(|_, _, _| {}),
             action: None,
             disabled: false,
         }

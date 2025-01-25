@@ -166,7 +166,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().when_some(self.position, |el, (position, is_main_buffer)| {
             let mut text = format!(
                 "{}{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -190,8 +190,8 @@ impl Render for CursorPosition {
                                 {
                                     if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
                                     {
-                                        workspace.toggle_modal(cx, |cx| {
-                                            crate::GoToLine::new(editor, buffer, cx)
+                                        workspace.toggle_modal(window, cx, |window, cx| {
+                                            crate::GoToLine::new(editor, buffer, window, cx)
                                         })
                                     }
                                 }

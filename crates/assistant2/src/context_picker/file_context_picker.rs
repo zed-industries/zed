@@ -11,7 +11,7 @@ use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, Focusable, Stateful, Task,
+    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, Focusable, Model, Stateful, Task,
     WeakModel,
 };
 use multi_buffer::{MultiBufferPoint, MultiBufferRow};
@@ -248,7 +248,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
 
         editor.update(cx, |editor, cx| {
-            editor.transact(cx, |editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
                 {
                     let mut selections = editor.selections.all::<MultiBufferPoint>(cx);
@@ -264,7 +264,9 @@ impl PickerDelegate for FileContextPickerDelegate {
                         }
                     }
 
-                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.select(selections)
+                    });
                 }
 
                 let start_anchors = {
@@ -277,7 +279,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                         .collect::<Vec<_>>()
                 };
 
-                editor.insert(&full_path, cx);
+                editor.insert(&full_path, window, cx);
 
                 let end_anchors = {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -289,14 +291,17 @@ impl PickerDelegate for FileContextPickerDelegate {
                         .collect::<Vec<_>>()
                 };
 
-                editor.insert("\n", cx); // Needed to end the fold
+                editor.insert("\n", window, cx); // Needed to end the fold
 
                 let placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(IconName::File, file_name.into()),
                     ..Default::default()
                 };
 
-                let render_trailer = move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+                let render_trailer =
+                    move |_row, _unfold, _window: &mut Window, _cx: &mut AppContext| {
+                        Empty.into_any()
+                    };
 
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let mut rows_to_fold = BTreeSet::new();
@@ -317,7 +322,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 editor.insert_creases(crease_iter, cx);
 
                 for buffer_row in rows_to_fold {
-                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                    editor.fold_at(&FoldAt { buffer_row }, window, cx);
                 }
             });
         });
@@ -464,7 +469,7 @@ fn render_fold_icon_button(
     icon: IconName,
     label: SharedString,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut AppContext) -> AnyElement> {
-    Arc::new(move |fold_id, _fold_range, _cx| {
+    Arc::new(move |fold_id, _fold_range, _window, _cx| {
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
@@ -480,12 +485,13 @@ fn fold_toggle(
     MultiBufferRow,
     bool,
     Arc<dyn Fn(bool, &mut Window, &mut AppContext) + Send + Sync>,
-    &mut
+    &mut Window,
+    &mut AppContext,
 ) -> AnyElement {
-    move |row, is_folded, fold, _cx| {
+    move |row, is_folded, fold, _window, _cx| {
         Disclosure::new((name, row.0 as u64), !is_folded)
             .toggle_state(is_folded)
-            .on_click(move |_e, cx| fold(!is_folded, cx))
+            .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
             .into_any_element()
     }
 }

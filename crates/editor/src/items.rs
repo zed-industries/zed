@@ -1362,7 +1362,7 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.unfold_ranges(&[matches[index].clone()], false, true, window, cx);
+        self.unfold_ranges(&[matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select_ranges([range]);
@@ -1375,7 +1375,7 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.unfold_ranges(matches, false, false, window, cx);
+        self.unfold_ranges(matches, false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
             ranges.push(self.range_for_match(m))

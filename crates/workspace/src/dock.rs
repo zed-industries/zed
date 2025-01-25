@@ -82,7 +82,7 @@ pub trait PanelHandle: Send + Sync {
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &AppContext) -> u32;
     fn move_to_next_position(&self, window: &mut Window, cx: &mut AppContext) {
-        let current_position = self.position(cx);
+        let current_position = self.position(window, cx);
         let next_position = [
             DockPosition::Left,
             DockPosition::Bottom,
@@ -94,7 +94,7 @@ pub trait PanelHandle: Send + Sync {
         .nth(1)
         .unwrap_or(DockPosition::Left);
 
-        self.set_position(next_position, cx);
+        self.set_position(next_position, window, cx);
     }
 }
 
@@ -928,7 +928,7 @@ pub mod test {
     impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
-        pub fn new(position: DockPosition, _window: &mut Window, cx: &mut AppContext) -> Self {
+        pub fn new(position: DockPosition, cx: &mut AppContext) -> Self {
             Self {
                 position,
                 zoomed: false,

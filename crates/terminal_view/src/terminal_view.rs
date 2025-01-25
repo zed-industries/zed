@@ -944,12 +944,13 @@ fn subscribe_for_terminal_events(
                                     if let Some(active_editor) = opened_item.downcast::<Editor>() {
                                         active_editor
                                             .downgrade()
-                                            .update(&mut cx, |editor, cx| {
+                                            .update_in(&mut cx, |editor, window, cx| {
                                                 editor.go_to_singleton_buffer_point(
                                                     language::Point::new(
                                                         row.saturating_sub(1),
                                                         col.saturating_sub(1),
                                                     ),
+                                                    window,
                                                     cx,
                                                 )
                                             })

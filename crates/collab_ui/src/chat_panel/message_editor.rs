@@ -5,8 +5,8 @@ use collections::HashSet;
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AsyncWindowContext, Focusable, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
-    ModelContext, Render, Task, TextStyle, WeakModel, Window,
+    AsyncAppContext, AsyncWindowContext, Focusable, FontStyle, FontWeight, HighlightStyle,
+    IntoElement, Model, ModelContext, Render, Task, TextStyle, WeakModel, Window,
 };
 use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
@@ -59,14 +59,14 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         buffer: &Model<Buffer>,
         buffer_position: language::Anchor,
         _: editor::CompletionContext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<anyhow::Result<Vec<Completion>>> {
         let Some(handle) = self.0.upgrade() else {
             return Task::ready(Ok(Vec::new()));
         };
         handle.update(cx, |message_editor, cx| {
-            message_editor.completions(buffer, buffer_position, window, cx)
+            message_editor.completions(buffer, buffer_position, cx)
         })
     }
 
@@ -75,7 +75,6 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
-        _window: &mut Window,
         _cx: &mut ModelContext<Editor>,
     ) -> Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))
@@ -87,7 +86,6 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         _position: language::Anchor,
         text: &str,
         _trigger_in_words: bool,
-        _window: &mut Window,
         _cx: &mut ModelContext<Editor>,
     ) -> bool {
         text == "@"
@@ -251,14 +249,13 @@ impl MessageEditor {
         &mut self,
         buffer: &Model<Buffer>,
         end_anchor: Anchor,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         if let Some((start_anchor, query, candidates)) =
             self.collect_mention_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn_in(window, |_, cx| async move {
+                return cx.spawn(|_, cx| async move {
                     Ok(Self::resolve_completions_for_candidates(
                         &cx,
                         query.as_str(),
@@ -275,7 +272,7 @@ impl MessageEditor {
             self.collect_emoji_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
-                return cx.spawn_in(window, |_, cx| async move {
+                return cx.spawn(|_, cx| async move {
                     Ok(Self::resolve_completions_for_candidates(
                         &cx,
                         query.as_str(),
@@ -292,7 +289,7 @@ impl MessageEditor {
     }
 
     async fn resolve_completions_for_candidates(
-        cx: &AsyncWindowContext,
+        cx: &AsyncAppContext,
         query: &str,
         candidates: &[StringMatchCandidate],
         range: Range<Anchor>,

@@ -32,7 +32,12 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_prev(
+        &mut self,
+        _: &menu::SelectPrev,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             if self.selected_index == 0 {
@@ -43,7 +48,12 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             if self.selected_index == count - 1 {
@@ -54,14 +64,24 @@ impl ThreadHistory {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             self.set_selected_index(0, window, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(
+        &mut self,
+        _: &menu::SelectLast,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             self.set_selected_index(count - 1, window, cx);
@@ -85,14 +105,19 @@ impl ThreadHistory {
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
-                .update(cx, move |this, cx| this.open_thread(&thread.id, cx))
+                .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
                 .ok();
 
             cx.notify();
         }
     }
 
-    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
@@ -114,7 +139,7 @@ impl Focusable for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
         let selected_index = self.selected_index;
 
@@ -191,7 +216,7 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let summary = self.thread.summary;
 
         let thread_timestamp = time_format::format_localized_timestamp(
@@ -229,7 +254,7 @@ impl RenderOnce for PastThread {
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
                                 let id = self.thread.id.clone();
-                                move |_event, cx| {
+                                move |_event, _window, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
                                             this.delete_thread(&id, cx);
@@ -242,10 +267,10 @@ impl RenderOnce for PastThread {
             .on_click({
                 let assistant_panel = self.assistant_panel.clone();
                 let id = self.thread.id.clone();
-                move |_event, cx| {
+                move |_event, window, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
-                            this.open_thread(&id, cx).detach_and_log_err(cx);
+                            this.open_thread(&id, window, cx).detach_and_log_err(cx);
                         })
                         .ok();
                 }

@@ -10,8 +10,7 @@ use anyhow::{anyhow, Result};
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Task, WeakModel,
-   
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, Task, WeakModel,
 };
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
@@ -87,7 +86,7 @@ impl ContextPicker {
     ) -> Model<ContextMenu> {
         let context_picker = cx.model().clone();
 
-        let menu = ContextMenu::build(cx, move |menu, cx| {
+        let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
@@ -106,7 +105,7 @@ impl ContextPicker {
 
             let menu = menu
                 .when(has_recent, |menu| {
-                    menu.custom_row(|_| {
+                    menu.custom_row(|_, _| {
                         div()
                             .mb_1()
                             .child(
@@ -126,8 +125,8 @@ impl ContextPicker {
                         .icon(kind.icon())
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .handler(move |cx| {
-                            context_picker.update(cx, |this, cx| this.select_kind(kind, cx))
+                        .handler(move |window, cx| {
+                            context_picker.update(cx, |this, cx| this.select_kind(kind, window, cx))
                         })
                 }));
 
@@ -288,7 +287,7 @@ impl ContextPicker {
     fn add_recent_thread(
         &self,
         thread: ThreadContextEntry,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(context_store) = self.context_store.upgrade() else {
             return Task::ready(Err(anyhow!("context store not available")));

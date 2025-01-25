@@ -104,7 +104,12 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         "Search threads…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let Ok(threads) = self.thread_store.update(cx, |this, _cx| {
             this.threads()
                 .into_iter()
@@ -171,9 +176,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         let open_thread_task = thread_store.update(cx, |this, cx| this.open_thread(&entry.id, cx));
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let thread = open_thread_task.await?;
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
@@ -181,14 +186,14 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
                 match this.delegate.confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }
             })
         })
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);

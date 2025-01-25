@@ -20,7 +20,7 @@ impl ZedPredictTos {
     fn new(
         workspace: Model<Workspace>,
         user_store: Model<UserStore>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         ZedPredictTos {
             viewed: false,
@@ -32,21 +32,24 @@ impl ZedPredictTos {
     pub fn toggle(
         workspace: Model<Workspace>,
         user_store: Model<UserStore>,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) {
         workspace.update(cx, |this, cx| {
             let workspace = cx.model().clone();
-            this.toggle_modal(cx, |cx| ZedPredictTos::new(workspace, user_store, cx));
+            this.toggle_modal(window, cx, |_window, cx| {
+                ZedPredictTos::new(workspace, user_store, cx)
+            });
         });
     }
 
-    fn view_terms(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn view_terms(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut ModelContext<Self>) {
         self.viewed = true;
         cx.open_url("https://zed.dev/terms-of-service");
         cx.notify();
     }
 
-    fn accept_terms(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn accept_terms(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let task = self
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
@@ -66,7 +69,7 @@ impl ZedPredictTos {
         .detach_and_log_err(cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent);
     }
 }
@@ -82,7 +85,7 @@ impl Focusable for ZedPredictTos {
 impl ModalView for ZedPredictTos {}
 
 impl Render for ZedPredictTos {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
@@ -93,11 +96,11 @@ impl Render for ZedPredictTos {
             .items_center()
             .p_4()
             .gap_2()
-            .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
+            .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
-                cx.focus(&this.focus_handle);
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
+                this.focus_handle.focus(window);
             }))
             .child(
                 h_flex()
@@ -143,7 +146,7 @@ impl Render for ZedPredictTos {
                     .child(
                         Button::new("cancel", "Cancel")
                             .full_width()
-                            .on_click(cx.listener(|_, _: &ClickEvent, cx| {
+                            .on_click(cx.listener(|_, _: &ClickEvent, _window, cx| {
                                 cx.emit(DismissEvent);
                             })),
                     ),

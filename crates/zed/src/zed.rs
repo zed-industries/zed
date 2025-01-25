@@ -183,8 +183,8 @@ pub fn initialize_workspace(
         });
 
         workspace.register_action({
-            move |_, _: &inline_completion_button::ToggleMenu, cx| {
-                popover_menu_handle.toggle(cx);
+            move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
+                popover_menu_handle.toggle(window, cx);
             }
         });
 
@@ -396,13 +396,13 @@ fn initialize_panels(
             notification_panel,
         )?;
 
-        workspace_handle.update(&mut cx, |workspace, cx| {
-            workspace.add_panel(project_panel, cx);
-            workspace.add_panel(outline_panel, cx);
-            workspace.add_panel(terminal_panel, cx);
-            workspace.add_panel(channels_panel, cx);
-            workspace.add_panel(chat_panel, cx);
-            workspace.add_panel(notification_panel, cx);
+        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(project_panel, window, cx);
+            workspace.add_panel(outline_panel, window, cx);
+            workspace.add_panel(terminal_panel, window, cx);
+            workspace.add_panel(channels_panel, window, cx);
+            workspace.add_panel(chat_panel, window, cx);
+            workspace.add_panel(notification_panel, window, cx);
         })?;
 
         let git_ui_enabled = {
@@ -460,13 +460,13 @@ fn initialize_panels(
             (Some(assistant_panel), None)
         };
 
-        workspace_handle.update(&mut cx, |workspace, cx| {
+        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
                 workspace.add_panel(assistant2_panel, window, cx);
             }
 
             if let Some(assistant_panel) = assistant_panel {
-                workspace.add_panel(assistant_panel, cx);
+                workspace.add_panel(assistant_panel, window, cx);
             }
 
             // Register the actions that are shared between `assistant` and `assistant2`.

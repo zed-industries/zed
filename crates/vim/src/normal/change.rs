@@ -31,7 +31,7 @@ impl Vim {
                 | Motion::StartOfLine { .. }
         );
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
+            let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
                 editor.set_clip_at_line_ends(false, cx);

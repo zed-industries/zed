@@ -251,7 +251,8 @@ async fn test_close_preserves_selected_position(cx: &mut gpui::TestAppContext) {
         .await;
 
     let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
-    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+    let (workspace, cx) =
+        cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
     let tab_1 = open_buffer("1.txt", &workspace, cx).await;
     let tab_2 = open_buffer("2.txt", &workspace, cx).await;
