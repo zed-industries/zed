@@ -2612,9 +2612,9 @@ impl EditorElement {
         let filename = path
             .as_ref()
             .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-        let parent_path = path
-            .as_ref()
-            .and_then(|path| Some(path.parent()?.to_string_lossy().to_string() + "/"));
+        let parent_path = path.as_ref().and_then(|path| {
+            Some(path.parent()?.to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR)
+        });
         let focus_handle = self.editor.focus_handle(cx);
         let colors = cx.theme().colors();
 
