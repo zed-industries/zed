@@ -1313,6 +1313,14 @@ impl Workspace {
         self.window_edited
     }
 
+    pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
+        match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        }
+    }
+
     pub fn add_panel<T: Panel>(
         &mut self,
         panel: Entity<T>,
@@ -1323,11 +1331,8 @@ impl Workspace {
         cx.on_focus_in(&focus_handle, window, Self::handle_panel_focused)
             .detach();
 
-        let dock = match panel.position(window, cx) {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
+        let dock_position = panel.position(window, cx);
+        let dock = self.dock_at_position(dock_position);
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
@@ -2401,12 +2406,7 @@ impl Workspace {
     }
 
     pub fn is_dock_at_position_open(&self, position: DockPosition, cx: &mut Context<Self>) -> bool {
-        let dock = match position {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
-        dock.read(cx).is_open()
+        self.dock_at_position(position).read(cx).is_open()
     }
 
     pub fn toggle_dock(
@@ -2415,11 +2415,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let dock = match dock_side {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
+        let dock = self.dock_at_position(dock_side);
         let mut focus_center = false;
         let mut reveal_dock = false;
         dock.update(cx, |dock, cx| {
