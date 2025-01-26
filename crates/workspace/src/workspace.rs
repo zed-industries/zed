@@ -2457,9 +2457,7 @@ impl Workspace {
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let docks = self.all_docks();
-
-        for dock in docks {
+        for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
