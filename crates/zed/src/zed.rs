@@ -300,13 +300,13 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut Context<Workspace>) {
             e
         );
         let prompt = window.prompt(
-            cx,
             PromptLevel::Critical,
             "Could not start ReadDirectoryChangesW",
             Some(&message),
             &["Troubleshoot and Quit"],
+            cx,
         );
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|_, cx| async move {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/windows");

@@ -5,7 +5,7 @@ use crate::{
 use call::{RemoteVideoTrack, RemoteVideoTrackView};
 use client::{proto::PeerId, User};
 use gpui::{
-    div, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement, Model,
+    div, AppContext, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     ParentElement, Render, SharedString, Styled,
 };
 use std::sync::Arc;
@@ -19,7 +19,7 @@ pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
-    view: Model<RemoteVideoTrackView>,
+    view: Entity<RemoteVideoTrackView>,
     focus: FocusHandle,
 }
 
@@ -29,7 +29,7 @@ impl SharedScreen {
         peer_id: PeerId,
         user: Arc<User>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let view = cx.new(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
@@ -49,12 +49,12 @@ impl SharedScreen {
 impl EventEmitter<Event> for SharedScreen {}
 
 impl Focusable for SharedScreen {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -67,21 +67,21 @@ impl Render for SharedScreen {
 impl Item for SharedScreen {
     type Event = Event;
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }
     }
 
-    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
@@ -93,7 +93,7 @@ impl Item for SharedScreen {
         &mut self,
         history: ItemNavHistory,
         _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         self.nav_history = Some(history);
     }
@@ -102,8 +102,8 @@ impl Item for SharedScreen {
         &self,
         _workspace_id: Option<WorkspaceId>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Self>> {
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
         Some(cx.new(|cx| Self {
             view: self.view.update(cx, |view, cx| view.clone(window, cx)),
             peer_id: self.peer_id,
