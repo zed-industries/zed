@@ -2987,7 +2987,7 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
         .unwrap();
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "the old contents");
-        buffer.edit([(0..0, "a line of text.\n".repeat(10))], None, cx);
+        buffer.edit([(0..0, "a line of text.\n".repeat(10 * 1024))], None, cx);
     });
 
     project
