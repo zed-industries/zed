@@ -1230,7 +1230,7 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         } else if let project::Event::LanguageServerAdded(_, _, _)
-                        | project::Event::LanguageServerRemoved(_) = event
+                        | project::Event::LanguageServerRemoved(_)
                         | project::Event::RefreshDocumentsDiagnostics = event
                         {
                             editor.refresh_diagnostics(cx);
@@ -12080,8 +12080,8 @@ impl Editor {
         });
     }
 
-    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
-        let project = self.project.as_ref().map(Model::downgrade);
+    fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) -> Option<()> {
+        let project = self.project.as_ref().map(Entity::downgrade);
         let buffer = self.buffer.read(cx);
         let cursor_position = self.selections.newest_anchor().clone();
         let (cursor_buffer, _) = buffer.text_anchor_for_position(cursor_position.start, cx)?;
@@ -15951,14 +15951,14 @@ pub trait CodeActionProvider {
 pub trait DiagnosticsProvider {
     fn pull_diagnostics(
         &self,
-        buffer: &Model<Buffer>,
-        cx: &mut AppContext,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
     ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>>;
 
     fn update_diagnostics(
         &self,
         diagnostics: Vec<Option<LspDiagnostics>>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<()>;
 }
 
@@ -16335,11 +16335,11 @@ impl SemanticsProvider for Entity<Project> {
     }
 }
 
-impl DiagnosticsProvider for Model<Project> {
+impl DiagnosticsProvider for Entity<Project> {
     fn pull_diagnostics(
         &self,
-        buffer: &Model<Buffer>,
-        cx: &mut AppContext,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
     ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>> {
         Some(self.update(cx, |project, cx| {
             project.document_diagnostics(buffer.clone(), cx)
@@ -16349,7 +16349,7 @@ impl DiagnosticsProvider for Model<Project> {
     fn update_diagnostics(
         &self,
         diagnostics: Vec<Option<LspDiagnostics>>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Result<()> {
         self.update(cx, |project, cx| {
             diagnostics
