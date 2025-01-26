@@ -6644,11 +6644,9 @@ impl Element for EditorElement {
                             let blame = editor.blame.as_ref()?;
                             let blame_entry = blame
                                 .update(cx, |blame, cx| {
-                                    let buffer_row = snapshot
-                                        .buffer_rows(snapshot.longest_row())
-                                        .next()
-                                        .flatten()?;
-                                    blame.blame_for_rows([Some(buffer_row)], cx).next()
+                                    let row_infos =
+                                        snapshot.row_infos(snapshot.longest_row()).next()?;
+                                    blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
                             let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
@@ -6661,7 +6659,9 @@ impl Element for EditorElement {
                             );
                             let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
                             Some(
-                                element.layout_as_root(AvailableSpace::min_size(), cx).width
+                                element
+                                    .layout_as_root(AvailableSpace::min_size(), window, cx)
+                                    .width
                                     + inline_blame_padding,
                             )
                         })
