@@ -456,7 +456,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 }
 
 // todo(windows)
-// Disable this test on Windows for now. Because this test runs forever on Windows.
+// Disable this test on Windows for now. Because this test hangs at
+// `let fake_server = fake_servers.next().await.unwrap();`.
 // Reenable this test when we figure out why.
 #[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
@@ -638,6 +639,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
+    // todo(windows)
+    // This test hangs here on Windows.
     let fake_server = fake_servers.next().await.unwrap();
     let expected_server_path =
         extensions_dir.join(format!("work/{test_extension_id}/gleam-v1.2.3/gleam"));
