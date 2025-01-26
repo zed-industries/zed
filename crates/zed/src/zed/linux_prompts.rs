@@ -1,6 +1,6 @@
 use gpui::{
-    div, AppContext, Context, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement,
-    IntoElement, Model, ModelContext, ParentElement, PromptHandle, PromptLevel, PromptResponse,
+    div, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
     Refineable, Render, RenderablePromptHandle, Styled, TextStyleRefinement, Window,
 };
 use markdown::{Markdown, MarkdownStyle};
@@ -12,7 +12,7 @@ use ui::{
 };
 use workspace::ui::StyledExt;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     cx.set_prompt_builder(fallback_prompt_renderer)
 }
 /// Use this function in conjunction with [AppContext::set_prompt_renderer] to force
@@ -24,7 +24,7 @@ pub fn fallback_prompt_renderer(
     actions: &[&str],
     handle: PromptHandle,
     window: &mut Window,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> RenderablePromptHandle {
     let renderer = cx.new({
         |cx| FallbackPromptRenderer {
@@ -64,15 +64,15 @@ pub struct FallbackPromptRenderer {
     actions: Vec<String>,
     focus: FocusHandle,
     active_action_id: usize,
-    detail: Option<Model<Markdown>>,
+    detail: Option<Entity<Markdown>>,
 }
 
 impl FallbackPromptRenderer {
-    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(PromptResponse(self.active_action_id));
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
             cx.emit(PromptResponse(ix));
         }
@@ -82,28 +82,18 @@ impl FallbackPromptRenderer {
         &mut self,
         _: &menu::SelectFirst,
         _window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.active_action_id = self.actions.len().saturating_sub(1);
         cx.notify();
     }
 
-    fn select_last(
-        &mut self,
-        _: &menu::SelectLast,
-        _window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         self.active_action_id = 0;
         cx.notify();
     }
 
-    fn select_next(
-        &mut self,
-        _: &menu::SelectNext,
-        _window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         if self.active_action_id > 0 {
             self.active_action_id -= 1;
         } else {
@@ -112,19 +102,14 @@ impl FallbackPromptRenderer {
         cx.notify();
     }
 
-    fn select_prev(
-        &mut self,
-        _: &menu::SelectPrev,
-        _window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, _window: &mut Window, cx: &mut Context<Self>) {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
         let prompt = v_flex()
@@ -194,7 +179,7 @@ impl Render for FallbackPromptRenderer {
 impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
 impl Focusable for FallbackPromptRenderer {
-    fn focus_handle(&self, _: &crate::AppContext) -> FocusHandle {
+    fn focus_handle(&self, _: &crate::App) -> FocusHandle {
         self.focus.clone()
     }
 }

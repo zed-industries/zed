@@ -497,7 +497,7 @@ async fn test_basic_following(
         });
 
         // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-        let panel = cx_b.new_model(|cx| TestPanel::new(DockPosition::Left, cx));
+        let panel = cx_b.new(|cx| TestPanel::new(DockPosition::Left, cx));
         workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.add_panel(panel, window, cx);
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
@@ -525,7 +525,7 @@ async fn test_basic_following(
 
         // Client B activates an item that doesn't implement following,
         // so the previously-opened screen-sharing item gets activated.
-        let unfollowable_item = cx_b.new_model(TestItem::new);
+        let unfollowable_item = cx_b.new(TestItem::new);
         workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.add_item(Box::new(unfollowable_item), true, true, None, window, cx)
