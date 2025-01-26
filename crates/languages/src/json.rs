@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext};
+use gpui::{App, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
@@ -74,7 +74,7 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
+    fn get_workspace_config(language_names: Vec<String>, cx: &mut App) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(

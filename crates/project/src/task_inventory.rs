@@ -8,9 +8,9 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use gpui::{AppContext, Context as _, Model, Task};
+use gpui::{App, AppContext as _, Entity, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
 use settings::{parse_json_with_comments, SettingsLocation};
@@ -76,8 +76,8 @@ impl TaskSourceKind {
 }
 
 impl Inventory {
-    pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self::default())
+    pub fn new(cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self::default())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -88,7 +88,7 @@ impl Inventory {
         file: Option<Arc<dyn File>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().0,
@@ -115,7 +115,7 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         location: Option<Location>,
         task_context: &TaskContext,
-        cx: &AppContext,
+        cx: &App,
     ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
@@ -371,7 +371,7 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 
 #[cfg(test)]
 mod test_inventory {
-    use gpui::{Model, TestAppContext};
+    use gpui::{Entity, TestAppContext};
     use itertools::Itertools;
     use task::TaskContext;
     use worktree::WorktreeId;
@@ -381,7 +381,7 @@ mod test_inventory {
     use super::TaskSourceKind;
 
     pub(super) fn task_template_names(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
@@ -396,7 +396,7 @@ mod test_inventory {
     }
 
     pub(super) fn register_task_used(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         task_name: &str,
         cx: &mut TestAppContext,
     ) {
@@ -416,7 +416,7 @@ mod test_inventory {
     }
 
     pub(super) async fn list_tasks(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
@@ -438,11 +438,11 @@ mod test_inventory {
 /// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
-    worktree_store: Model<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(worktree_store: Model<WorktreeStore>) -> Self {
+    pub fn new(worktree_store: Entity<WorktreeStore>) -> Self {
         Self { worktree_store }
     }
 }
@@ -453,7 +453,7 @@ impl ContextProvider for BasicContextProvider {
         location: &Location,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Task<Result<TaskVariables>> {
         let buffer = location.buffer.read(cx);
         let buffer_snapshot = buffer.snapshot();
@@ -553,7 +553,7 @@ impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn language::File>>,
-        _: &AppContext,
+        _: &App,
     ) -> Option<TaskTemplates> {
         Some(self.templates.clone())
     }
@@ -859,7 +859,7 @@ mod tests {
     }
 
     async fn resolved_task_names(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
@@ -888,7 +888,7 @@ mod tests {
     }
 
     async fn list_tasks_sorted_by_last_used(
-        inventory: &Model<Inventory>,
+        inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {

@@ -9,7 +9,7 @@ use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
-use gpui::{prelude::*, AppContext, BackgroundExecutor, Model, ModelContext, SharedString, Task};
+use gpui::{prelude::*, App, BackgroundExecutor, Context, Entity, SharedString, Task};
 use heed::types::SerdeBincode;
 use heed::Database;
 use language_model::Role;
@@ -21,9 +21,9 @@ use crate::thread::{MessageId, Thread, ThreadId};
 
 pub struct ThreadStore {
     #[allow(unused)]
-    project: Model<Project>,
+    project: Entity<Project>,
     tools: Arc<ToolWorkingSet>,
-    context_server_manager: Model<ContextServerManager>,
+    context_server_manager: Entity<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<SavedThreadMetadata>,
     database_future: Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
@@ -31,15 +31,15 @@ pub struct ThreadStore {
 
 impl ThreadStore {
     pub fn new(
-        project: Model<Project>,
+        project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut AppContext,
-    ) -> Task<Result<Model<Self>>> {
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
-            let this = cx.new_model(|cx: &mut ModelContext<Self>| {
+            let this = cx.new(|cx: &mut Context<Self>| {
                 let context_server_factory_registry =
                     ContextServerFactoryRegistry::default_global(cx);
-                let context_server_manager = cx.new_model(|cx| {
+                let context_server_manager = cx.new(|cx| {
                     ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
                 });
 
@@ -88,15 +88,15 @@ impl ThreadStore {
         self.threads().into_iter().take(limit).collect()
     }
 
-    pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
-        cx.new_model(|cx| Thread::new(self.tools.clone(), cx))
+    pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
+        cx.new(|cx| Thread::new(self.tools.clone(), cx))
     }
 
     pub fn open_thread(
         &self,
         id: &ThreadId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Thread>>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Thread>>> {
         let id = id.clone();
         let database_future = self.database_future.clone();
         cx.spawn(|this, mut cx| async move {
@@ -107,16 +107,12 @@ impl ThreadStore {
                 .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
 
             this.update(&mut cx, |this, cx| {
-                cx.new_model(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
+                cx.new(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
             })
         })
     }
 
-    pub fn save_thread(
-        &self,
-        thread: &Model<Thread>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
             let thread = SavedThread {
@@ -144,11 +140,7 @@ impl ThreadStore {
         })
     }
 
-    pub fn delete_thread(
-        &mut self,
-        id: &ThreadId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut Context<Self>) -> Task<Result<()>> {
         let id = id.clone();
         let database_future = self.database_future.clone();
         cx.spawn(|this, mut cx| async move {
@@ -161,7 +153,7 @@ impl ThreadStore {
         })
     }
 
-    fn reload(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reload(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let database_future = self.database_future.clone();
         cx.spawn(|this, mut cx| async move {
             let threads = database_future
@@ -177,7 +169,7 @@ impl ThreadStore {
         })
     }
 
-    fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
+    fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
         cx.subscribe(
             &self.context_server_manager.clone(),
             Self::handle_context_server_event,
@@ -187,9 +179,9 @@ impl ThreadStore {
 
     fn handle_context_server_event(
         &mut self,
-        context_server_manager: Model<ContextServerManager>,
+        context_server_manager: Entity<ContextServerManager>,
         event: &context_server::manager::Event,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let tool_working_set = self.tools.clone();
         match event {

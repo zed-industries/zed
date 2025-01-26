@@ -19,7 +19,7 @@ use futures::{
     channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
 };
-use gpui::{actions, AppContext, AsyncAppContext, Global, Model, Task, WeakModel};
+use gpui::{actions, App, AsyncAppContext, Entity, Global, Task, WeakEntity};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -104,7 +104,7 @@ impl Settings for ClientSettings {
 
     type FileContent = ClientSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
         if let Some(server_url) = &*ZED_SERVER_URL {
             result.server_url.clone_from(server_url)
@@ -128,7 +128,7 @@ impl Settings for ProxySettings {
 
     type FileContent = ProxySettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self {
             proxy: sources
                 .user
@@ -139,13 +139,13 @@ impl Settings for ProxySettings {
     }
 }
 
-pub fn init_settings(cx: &mut AppContext) {
+pub fn init_settings(cx: &mut App) {
     TelemetrySettings::register(cx);
     ClientSettings::register(cx);
     ProxySettings::register(cx);
 }
 
-pub fn init(client: &Arc<Client>, cx: &mut AppContext) {
+pub fn init(client: &Arc<Client>, cx: &mut App) {
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
@@ -380,7 +380,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Model<T>, cx: &AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Entity<T>, cx: &AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -456,7 +456,7 @@ impl settings::Settings for TelemetrySettings {
 
     type FileContent = TelemetrySettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self {
             diagnostics: sources
                 .user
@@ -483,7 +483,7 @@ impl Client {
     pub fn new(
         clock: Arc<dyn SystemClock>,
         http: Arc<HttpClientWithUrl>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Arc<Self> {
         let use_zed_development_auth = match ReleaseChannel::try_global(cx) {
             Some(ReleaseChannel::Dev) => *ZED_DEVELOPMENT_AUTH,
@@ -518,7 +518,7 @@ impl Client {
         })
     }
 
-    pub fn production(cx: &mut AppContext) -> Arc<Self> {
+    pub fn production(cx: &mut App) -> Arc<Self> {
         let clock = Arc::new(clock::RealSystemClock);
         let http = Arc::new(HttpClientWithUrl::new_uri(
             cx.http_client(),
@@ -576,10 +576,10 @@ impl Client {
         self
     }
 
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalClient>().0.clone()
     }
-    pub fn set_global(client: Arc<Client>, cx: &mut AppContext) {
+    pub fn set_global(client: Arc<Client>, cx: &mut App) {
         cx.set_global(GlobalClient(client))
     }
 
@@ -678,13 +678,13 @@ impl Client {
     #[track_caller]
     pub fn add_message_handler<M, E, H, F>(
         self: &Arc<Self>,
-        entity: WeakModel<E>,
+        entity: WeakEntity<E>,
         handler: H,
     ) -> Subscription
     where
         M: EnvelopedMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         self.add_message_handler_impl(entity, move |model, message, _, cx| {
@@ -694,7 +694,7 @@ impl Client {
 
     fn add_message_handler_impl<M, E, H, F>(
         self: &Arc<Self>,
-        entity: WeakModel<E>,
+        entity: WeakEntity<E>,
         handler: H,
     ) -> Subscription
     where
@@ -702,7 +702,7 @@ impl Client {
         E: 'static,
         H: 'static
             + Sync
-            + Fn(Model<E>, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
+            + Fn(Entity<E>, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
             + Send
             + Sync,
         F: 'static + Future<Output = Result<()>>,
@@ -739,13 +739,13 @@ impl Client {
 
     pub fn add_request_handler<M, E, H, F>(
         self: &Arc<Self>,
-        model: WeakModel<E>,
+        model: WeakEntity<E>,
         handler: H,
     ) -> Subscription
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Model<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
         self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
@@ -1751,7 +1751,7 @@ pub const ZED_URL_SCHEME: &str = "zed";
 ///
 /// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
 /// Returns [`None`] otherwise.
-pub fn parse_zed_link<'a>(link: &'a str, cx: &AppContext) -> Option<&'a str> {
+pub fn parse_zed_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
     let server_url = &ClientSettings::get_global(cx).server_url;
     if let Some(stripped) = link
         .strip_prefix(server_url)
@@ -1775,7 +1775,7 @@ mod tests {
     use crate::test::FakeServer;
 
     use clock::FakeSystemClock;
-    use gpui::{BackgroundExecutor, Context, TestAppContext};
+    use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
     use http_client::FakeHttpClient;
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
@@ -1961,7 +1961,7 @@ mod tests {
         let (done_tx1, done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_model_message_handler(
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
+            move |model: Entity<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
@@ -1970,15 +1970,15 @@ mod tests {
                 async { Ok(()) }
             },
         );
-        let model1 = cx.new_model(|_| TestModel {
+        let model1 = cx.new(|_| TestModel {
             id: 1,
             subscription: None,
         });
-        let model2 = cx.new_model(|_| TestModel {
+        let model2 = cx.new(|_| TestModel {
             id: 2,
             subscription: None,
         });
-        let model3 = cx.new_model(|_| TestModel {
+        let model3 = cx.new(|_| TestModel {
             id: 3,
             subscription: None,
         });
@@ -2018,7 +2018,7 @@ mod tests {
         });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.new_model(|_| TestModel::default());
+        let model = cx.new(|_| TestModel::default());
         let (done_tx1, _done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
@@ -2053,11 +2053,11 @@ mod tests {
         });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.new_model(|_| TestModel::default());
+        let model = cx.new(|_| TestModel::default());
         let (done_tx, done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
-            move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
+            move |model: Entity<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
                 model
                     .update(&mut cx, |model, _| model.subscription.take())
                     .unwrap();

@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{Context, Model, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
@@ -186,7 +186,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     cx.run_until_parked();
 
-    async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
+    async fn do_search(project: &Entity<Project>, mut cx: TestAppContext) -> Entity<Buffer> {
         let receiver = project.update(&mut cx, |project, cx| {
             project.search(
                 SearchQuery::text(
@@ -1275,7 +1275,7 @@ pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
-) -> (Model<Project>, Model<HeadlessProject>) {
+) -> (Entity<Project>, Entity<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
@@ -1291,7 +1291,7 @@ pub async fn init_test(
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| {
+    let headless = server_cx.new(|cx| {
         client::init_settings(cx);
 
         HeadlessProject::new(
@@ -1324,7 +1324,7 @@ fn init_logger() {
     }
 }
 
-fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
     cx.update(|cx| {
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -1341,7 +1341,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
     });
 
     let node = NodeRuntime::unavailable();
-    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 

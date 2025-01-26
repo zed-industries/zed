@@ -1,13 +1,13 @@
 use editor::{Editor, MultiBufferSnapshot};
-use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
+use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
-    div, Button, ButtonCommon, Clickable, FluentBuilder, IntoElement, LabelSize, ParentElement,
-    Render, Tooltip, ViewContext,
+    div, Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize,
+    ParentElement, Render, Tooltip, Window,
 };
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -23,7 +23,7 @@ pub struct CursorPosition {
     position: Option<UserCaretPosition>,
     selected_count: SelectionStats,
     context: Option<FocusHandle>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
 }
@@ -66,12 +66,13 @@ impl CursorPosition {
 
     fn update_position(
         &mut self,
-        editor: View<Editor>,
+        editor: Entity<Editor>,
         debounce: Option<Duration>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let editor = editor.downgrade();
-        self.update_position = cx.spawn(|cursor_position, mut cx| async move {
+        self.update_position = cx.spawn_in(window, |cursor_position, mut cx| async move {
             let is_singleton = editor
                 .update(&mut cx, |editor, cx| {
                     editor.buffer().read(cx).is_singleton()
@@ -137,7 +138,7 @@ impl CursorPosition {
         });
     }
 
-    fn write_position(&self, text: &mut String, cx: &AppContext) {
+    fn write_position(&self, text: &mut String, cx: &App) {
         if self.selected_count
             <= (SelectionStats {
                 selections: 1,
@@ -191,7 +192,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",
@@ -204,7 +205,7 @@ impl Render for CursorPosition {
             el.child(
                 Button::new("go-to-line-column", text)
                     .label_size(LabelSize::Small)
-                    .on_click(cx.listener(|this, _, cx| {
+                    .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
                                 if let Some(editor) = workspace
@@ -213,24 +214,26 @@ impl Render for CursorPosition {
                                 {
                                     if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
                                     {
-                                        workspace.toggle_modal(cx, |cx| {
-                                            crate::GoToLine::new(editor, buffer, cx)
+                                        workspace.toggle_modal(window, cx, |window, cx| {
+                                            crate::GoToLine::new(editor, buffer, window, cx)
                                         })
                                     }
                                 }
                             });
                         }
                     }))
-                    .tooltip(move |cx| match context.as_ref() {
+                    .tooltip(move |window, cx| match context.as_ref() {
                         Some(context) => Tooltip::for_action_in(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             context,
+                            window,
                             cx,
                         ),
                         None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
+                            window,
                             cx,
                         ),
                     }),
@@ -245,14 +248,23 @@ impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self._observe_active_editor =
-                Some(cx.observe(&editor, |cursor_position, editor, cx| {
-                    Self::update_position(cursor_position, editor, Some(UPDATE_DEBOUNCE), cx)
-                }));
-            self.update_position(editor, None, cx);
+                Some(
+                    cx.observe_in(&editor, window, |cursor_position, editor, window, cx| {
+                        Self::update_position(
+                            cursor_position,
+                            editor,
+                            Some(UPDATE_DEBOUNCE),
+                            window,
+                            cx,
+                        )
+                    }),
+                );
+            self.update_position(editor, None, window, cx);
         } else {
             self.position = None;
             self._observe_active_editor = None;
@@ -283,10 +295,7 @@ impl Settings for LineIndicatorFormat {
 
     type FileContent = Option<LineIndicatorFormatContent>;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let format = [sources.release_channel, sources.user]
             .into_iter()
             .find_map(|value| value.copied().flatten())

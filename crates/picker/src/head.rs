@@ -1,39 +1,43 @@
 use std::sync::Arc;
 
 use editor::{Editor, EditorEvent};
-use gpui::{prelude::*, AppContext, FocusHandle, FocusableView, View};
+use gpui::{prelude::*, App, Entity, FocusHandle, Focusable};
 use ui::prelude::*;
 
 /// The head of a [`Picker`](crate::Picker).
 pub(crate) enum Head {
     /// Picker has an editor that allows the user to filter the list.
-    Editor(View<Editor>),
+    Editor(Entity<Editor>),
 
     /// Picker has no head, it's just a list of items.
-    Empty(View<EmptyHead>),
+    Empty(Entity<EmptyHead>),
 }
 
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent, &mut ViewContext<V>) + 'static,
-        cx: &mut ViewContext<V>,
+        edit_handler: impl FnMut(&mut V, &Entity<Editor>, &EditorEvent, &mut Window, &mut Context<V>)
+            + 'static,
+        window: &mut Window,
+        cx: &mut Context<V>,
     ) -> Self {
-        let editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(placeholder_text, cx);
             editor
         });
-        cx.subscribe(&editor, edit_handler).detach();
+        cx.subscribe_in(&editor, window, edit_handler).detach();
         Self::Editor(editor)
     }
 
     pub fn empty<V: 'static>(
-        blur_handler: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
-        cx: &mut ViewContext<V>,
+        blur_handler: impl FnMut(&mut V, &mut Window, &mut Context<V>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<V>,
     ) -> Self {
-        let head = cx.new_view(EmptyHead::new);
-        cx.on_blur(&head.focus_handle(cx), blur_handler).detach();
+        let head = cx.new(EmptyHead::new);
+        cx.on_blur(&head.focus_handle(cx), window, blur_handler)
+            .detach();
         Self::Empty(head)
     }
 }
@@ -44,7 +48,7 @@ pub(crate) struct EmptyHead {
 }
 
 impl EmptyHead {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
         }
@@ -52,13 +56,13 @@ impl EmptyHead {
 }
 
 impl Render for EmptyHead {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().track_focus(&self.focus_handle(cx))
     }
 }
 
-impl FocusableView for EmptyHead {
-    fn focus_handle(&self, _: &AppContext) -> FocusHandle {
+impl Focusable for EmptyHead {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }

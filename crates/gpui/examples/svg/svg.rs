@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use gpui::{
-    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, SharedString,
-    ViewContext, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, svg, App, Application, AssetSource, Bounds, Context,
+    SharedString, Window, WindowBounds, WindowOptions,
 };
 
 struct Assets {
@@ -37,7 +37,7 @@ impl AssetSource for Assets {
 struct SvgExample;
 
 impl Render for SvgExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -68,18 +68,18 @@ impl Render for SvgExample {
 }
 
 fn main() {
-    App::new()
+    Application::new()
         .with_assets(Assets {
             base: PathBuf::from("crates/gpui/examples"),
         })
-        .run(|cx: &mut AppContext| {
+        .run(|cx: &mut App| {
             let bounds = Bounds::centered(None, size(px(300.0), px(300.0)), cx);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(|_cx| SvgExample),
+                |_, cx| cx.new(|_| SvgExample),
             )
             .unwrap();
         });

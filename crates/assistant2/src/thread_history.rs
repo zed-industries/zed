@@ -1,6 +1,6 @@
 use gpui::{
-    uniform_list, AppContext, FocusHandle, FocusableView, Model, ScrollStrategy,
-    UniformListScrollHandle, WeakView,
+    uniform_list, App, Entity, FocusHandle, Focusable, ScrollStrategy, UniformListScrollHandle,
+    WeakEntity,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -10,17 +10,18 @@ use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
-    assistant_panel: WeakView<AssistantPanel>,
-    thread_store: Model<ThreadStore>,
+    assistant_panel: WeakEntity<AssistantPanel>,
+    thread_store: Entity<ThreadStore>,
     scroll_handle: UniformListScrollHandle,
     selected_index: usize,
 }
 
 impl ThreadHistory {
     pub(crate) fn new(
-        assistant_panel: WeakView<AssistantPanel>,
-        thread_store: Model<ThreadStore>,
-        cx: &mut ViewContext<Self>,
+        assistant_panel: WeakEntity<AssistantPanel>,
+        thread_store: Entity<ThreadStore>,
+
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -31,62 +32,77 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    pub fn select_prev(
+        &mut self,
+        _: &menu::SelectPrev,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             if self.selected_index == 0 {
-                self.set_selected_index(count - 1, cx);
+                self.set_selected_index(count - 1, window, cx);
             } else {
-                self.set_selected_index(self.selected_index - 1, cx);
+                self.set_selected_index(self.selected_index - 1, window, cx);
             }
         }
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             if self.selected_index == count - 1 {
-                self.set_selected_index(0, cx);
+                self.set_selected_index(0, window, cx);
             } else {
-                self.set_selected_index(self.selected_index + 1, cx);
+                self.set_selected_index(self.selected_index + 1, window, cx);
             }
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
-            self.set_selected_index(0, cx);
+            self.set_selected_index(0, window, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
-            self.set_selected_index(count - 1, cx);
+            self.set_selected_index(count - 1, window, cx);
         }
     }
 
-    fn set_selected_index(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, index: usize, _window: &mut Window, cx: &mut Context<Self>) {
         self.selected_index = index;
         self.scroll_handle
             .scroll_to_item(index, ScrollStrategy::Top);
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
-                .update(cx, move |this, cx| this.open_thread(&thread.id, cx))
+                .update(cx, move |this, cx| this.open_thread(&thread.id, window, cx))
                 .ok();
 
             cx.notify();
         }
     }
 
-    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, cx: &mut ViewContext<Self>) {
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
@@ -101,14 +117,14 @@ impl ThreadHistory {
     }
 }
 
-impl FocusableView for ThreadHistory {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+impl Focusable for ThreadHistory {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, _cx| this.threads());
         let selected_index = self.selected_index;
 
@@ -138,10 +154,10 @@ impl Render for ThreadHistory {
                 } else {
                     history.child(
                         uniform_list(
-                            cx.view().clone(),
+                            cx.model().clone(),
                             "thread-history",
                             threads.len(),
-                            move |history, range, _cx| {
+                            move |history, range, _window, _cx| {
                                 threads[range]
                                     .iter()
                                     .enumerate()
@@ -166,14 +182,14 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: SavedThreadMetadata,
-    assistant_panel: WeakView<AssistantPanel>,
+    assistant_panel: WeakEntity<AssistantPanel>,
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
         thread: SavedThreadMetadata,
-        assistant_panel: WeakView<AssistantPanel>,
+        assistant_panel: WeakEntity<AssistantPanel>,
         selected: bool,
     ) -> Self {
         Self {
@@ -185,7 +201,7 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let summary = self.thread.summary;
 
         let thread_timestamp = time_format::format_localized_timestamp(
@@ -219,11 +235,11 @@ impl RenderOnce for PastThread {
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
-                            .tooltip(|cx| Tooltip::text("Delete Thread", cx))
+                            .tooltip(Tooltip::text("Delete Thread"))
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
                                 let id = self.thread.id.clone();
-                                move |_event, cx| {
+                                move |_event, _window, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
                                             this.delete_thread(&id, cx);
@@ -236,10 +252,10 @@ impl RenderOnce for PastThread {
             .on_click({
                 let assistant_panel = self.assistant_panel.clone();
                 let id = self.thread.id.clone();
-                move |_event, cx| {
+                move |_event, window, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
-                            this.open_thread(&id, cx).detach_and_log_err(cx);
+                            this.open_thread(&id, window, cx).detach_and_log_err(cx);
                         })
                         .ok();
                 }

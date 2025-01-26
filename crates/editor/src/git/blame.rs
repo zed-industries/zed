@@ -4,7 +4,7 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
-use gpui::{AppContext, Model, ModelContext, Subscription, Task};
+use gpui::{App, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::RowInfo;
@@ -96,8 +96,8 @@ pub struct CommitDetails {
 }
 
 pub struct GitBlame {
-    project: Model<Project>,
-    buffer: Model<Buffer>,
+    project: Entity<Project>,
+    buffer: Entity<Buffer>,
     entries: SumTree<GitBlameEntry>,
     commit_details: HashMap<Oid, CommitDetails>,
     buffer_snapshot: BufferSnapshot,
@@ -113,11 +113,11 @@ pub struct GitBlame {
 
 impl GitBlame {
     pub fn new(
-        buffer: Model<Buffer>,
-        project: Model<Project>,
+        buffer: Entity<Buffer>,
+        project: Entity<Project>,
         user_triggered: bool,
         focused: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let entries = SumTree::from_item(
             GitBlameEntry {
@@ -194,7 +194,7 @@ impl GitBlame {
     pub fn blame_for_rows<'a>(
         &'a mut self,
         rows: &'a [RowInfo],
-        cx: &AppContext,
+        cx: &App,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
@@ -206,7 +206,7 @@ impl GitBlame {
         })
     }
 
-    pub fn max_author_length(&mut self, cx: &AppContext) -> usize {
+    pub fn max_author_length(&mut self, cx: &App) -> usize {
         self.sync(cx);
 
         let mut max_author_length = 0;
@@ -227,11 +227,11 @@ impl GitBlame {
         max_author_length
     }
 
-    pub fn blur(&mut self, _: &mut ModelContext<Self>) {
+    pub fn blur(&mut self, _: &mut Context<Self>) {
         self.focused = false;
     }
 
-    pub fn focus(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn focus(&mut self, cx: &mut Context<Self>) {
         self.focused = true;
         if self.changed_while_blurred {
             self.changed_while_blurred = false;
@@ -239,7 +239,7 @@ impl GitBlame {
         }
     }
 
-    fn sync(&mut self, cx: &AppContext) {
+    fn sync(&mut self, cx: &App) {
         let edits = self.buffer_edits.consume();
         let new_snapshot = self.buffer.read(cx).snapshot();
 
@@ -342,7 +342,7 @@ impl GitBlame {
     }
 
     #[cfg(test)]
-    fn check_invariants(&mut self, cx: &mut ModelContext<Self>) {
+    fn check_invariants(&mut self, cx: &mut Context<Self>) {
         self.sync(cx);
         assert_eq!(
             self.entries.summary().rows,
@@ -350,7 +350,7 @@ impl GitBlame {
         );
     }
 
-    fn generate(&mut self, cx: &mut ModelContext<Self>) {
+    fn generate(&mut self, cx: &mut Context<Self>) {
         if !self.focused {
             self.changed_while_blurred = true;
             return;
@@ -422,7 +422,7 @@ impl GitBlame {
         });
     }
 
-    fn regenerate_on_edit(&mut self, cx: &mut ModelContext<Self>) {
+    fn regenerate_on_edit(&mut self, cx: &mut Context<Self>) {
         self.regenerate_on_edit_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL)
@@ -552,7 +552,7 @@ async fn parse_markdown(text: &str, language_registry: &Arc<LanguageRegistry>) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Context;
+    use gpui::{AppContext as _, Context};
     use language::{Point, Rope};
     use project::FakeFs;
     use rand::prelude::*;
@@ -578,7 +578,7 @@ mod tests {
         blame: &mut GitBlame,
         rows: Range<u32>,
         expected: Vec<Option<BlameEntry>>,
-        cx: &mut ModelContext<GitBlame>,
+        cx: &mut Context<GitBlame>,
     ) {
         assert_eq!(
             blame
@@ -640,8 +640,7 @@ mod tests {
             .await
             .unwrap();
 
-        let blame =
-            cx.new_model(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
+        let blame = cx.new(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
 
         let event = project.next_event(cx).await;
         assert_eq!(
@@ -720,7 +719,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -826,7 +825,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
         cx.executor().run_until_parked();
 
@@ -975,7 +974,7 @@ mod tests {
             .await
             .unwrap();
 
-        let git_blame = cx.new_model(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 

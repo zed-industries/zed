@@ -13,11 +13,11 @@ use collections::{BTreeMap, BTreeSet, HashMap};
 use format::VSSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Task, WeakEntity};
 pub use registry::*;
 use util::ResultExt;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     SnippetRegistry::init_global(cx);
     extension_snippet::init(cx);
 }
@@ -62,7 +62,7 @@ pub struct Snippet {
 }
 
 async fn process_updates(
-    this: WeakModel<SnippetProvider>,
+    this: WeakEntity<SnippetProvider>,
     entries: Vec<PathBuf>,
     mut cx: AsyncAppContext,
 ) -> Result<()> {
@@ -112,7 +112,7 @@ async fn process_updates(
 }
 
 async fn initial_scan(
-    this: WeakModel<SnippetProvider>,
+    this: WeakEntity<SnippetProvider>,
     path: Arc<Path>,
     mut cx: AsyncAppContext,
 ) -> Result<()> {
@@ -136,12 +136,12 @@ pub struct SnippetProvider {
 }
 
 // Watches global snippet directory, is created just once and reused across multiple projects
-struct GlobalSnippetWatcher(Model<SnippetProvider>);
+struct GlobalSnippetWatcher(Entity<SnippetProvider>);
 
 impl GlobalSnippetWatcher {
-    fn new(fs: Arc<dyn Fs>, cx: &mut AppContext) -> Self {
+    fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Self {
         let global_snippets_dir = paths::config_dir().join("snippets");
-        let provider = cx.new_model(|_cx| SnippetProvider {
+        let provider = cx.new(|_cx| SnippetProvider {
             fs,
             snippets: Default::default(),
             watch_tasks: vec![],
@@ -156,12 +156,8 @@ impl GlobalSnippetWatcher {
 impl gpui::Global for GlobalSnippetWatcher {}
 
 impl SnippetProvider {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        dirs_to_watch: BTreeSet<PathBuf>,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(move |cx| {
+    pub fn new(fs: Arc<dyn Fs>, dirs_to_watch: BTreeSet<PathBuf>, cx: &mut App) -> Entity<Self> {
+        cx.new(move |cx| {
             if !cx.has_global::<GlobalSnippetWatcher>() {
                 let global_watcher = GlobalSnippetWatcher::new(fs.clone(), cx);
                 cx.set_global(global_watcher);
@@ -181,7 +177,7 @@ impl SnippetProvider {
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, cx: &ModelContext<Self>) {
+    fn watch_directory(&mut self, path: &Path, cx: &Context<Self>) {
         let path: Arc<Path> = Arc::from(path);
 
         self.watch_tasks.push(cx.spawn(|this, mut cx| async move {
@@ -206,7 +202,7 @@ impl SnippetProvider {
     fn lookup_snippets<'a, const LOOKUP_GLOBALS: bool>(
         &'a self,
         language: &'a SnippetKind,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<Arc<Snippet>> {
         let mut user_snippets: Vec<_> = self
             .snippets
@@ -237,7 +233,7 @@ impl SnippetProvider {
         user_snippets
     }
 
-    pub fn snippets_for(&self, language: SnippetKind, cx: &AppContext) -> Vec<Arc<Snippet>> {
+    pub fn snippets_for(&self, language: SnippetKind, cx: &App) -> Vec<Arc<Snippet>> {
         let mut requested_snippets = self.lookup_snippets::<true>(&language, cx);
 
         if language.is_some() {

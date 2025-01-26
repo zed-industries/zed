@@ -11,7 +11,7 @@ use git::{
     },
     GITIGNORE,
 };
-use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
+use gpui::{BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -1882,9 +1882,9 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
 // The worktree's `UpdatedEntries` event can be used to follow along with
 // all changes to the worktree's snapshot.
-fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Worktree>) {
+fn check_worktree_change_events(tree: &mut Worktree, cx: &mut Context<Worktree>) {
     let mut entries = tree.entries(true, 0).cloned().collect::<Vec<_>>();
-    cx.subscribe(&cx.handle(), move |tree, _, event, _| {
+    cx.subscribe(&cx.model(), move |tree, _, event, _| {
         if let Event::UpdatedEntries(changes) = event {
             for (path, _, change_type) in changes.iter() {
                 let entry = tree.entry_for_path(path).cloned();
@@ -1921,7 +1921,7 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
 fn randomly_mutate_worktree(
     worktree: &mut Worktree,
     rng: &mut impl Rng,
-    cx: &mut ModelContext<Worktree>,
+    cx: &mut Context<Worktree>,
 ) -> Task<Result<()>> {
     log::info!("mutating worktree");
     let worktree = worktree.as_local_mut().unwrap();

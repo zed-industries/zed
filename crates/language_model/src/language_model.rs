@@ -10,7 +10,7 @@ pub mod fake_provider;
 use anyhow::Result;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{AnyElement, AnyView, AppContext, AsyncAppContext, SharedString, Task, WindowContext};
+use gpui::{AnyElement, AnyView, App, AsyncAppContext, SharedString, Task, Window};
 pub use model::*;
 use proto::Plan;
 pub use rate_limiter::*;
@@ -25,7 +25,7 @@ use ui::IconName;
 
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     registry::init(cx);
 }
 
@@ -113,7 +113,7 @@ pub trait LanguageModel: Send + Sync {
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
 
-    fn api_key(&self, _cx: &AppContext) -> Option<String> {
+    fn api_key(&self, _cx: &App) -> Option<String> {
         None
     }
 
@@ -130,7 +130,7 @@ pub trait LanguageModel: Send + Sync {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>>;
 
     fn stream_completion(
@@ -237,22 +237,22 @@ pub trait LanguageModelProvider: 'static {
     fn icon(&self) -> IconName {
         IconName::ZedAssistant
     }
-    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>>;
-    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &AppContext) {}
-    fn is_authenticated(&self, cx: &AppContext) -> bool;
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>>;
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView;
-    fn must_accept_terms(&self, _cx: &AppContext) -> bool {
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>>;
+    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
+    fn is_authenticated(&self, cx: &App) -> bool;
+    fn authenticate(&self, cx: &mut App) -> Task<Result<()>>;
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
+    fn must_accept_terms(&self, _cx: &App) -> bool {
         false
     }
     fn render_accept_terms(
         &self,
         _view: LanguageModelProviderTosView,
-        _cx: &mut WindowContext,
+        _cx: &mut App,
     ) -> Option<AnyElement> {
         None
     }
-    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>>;
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 }
 
 #[derive(PartialEq, Eq)]
@@ -265,12 +265,12 @@ pub enum LanguageModelProviderTosView {
 pub trait LanguageModelProviderState: 'static {
     type ObservableEntity;
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>>;
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>>;
 
     fn subscribe<T: 'static>(
         &self,
-        cx: &mut gpui::ModelContext<T>,
-        callback: impl Fn(&mut T, &mut gpui::ModelContext<T>) + 'static,
+        cx: &mut gpui::Context<T>,
+        callback: impl Fn(&mut T, &mut gpui::Context<T>) + 'static,
     ) -> Option<gpui::Subscription> {
         let entity = self.observable_entity()?;
         Some(cx.observe(&entity, move |this, _, cx| {

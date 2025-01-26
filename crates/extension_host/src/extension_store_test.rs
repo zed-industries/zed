@@ -8,7 +8,7 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{Context, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
 use lsp::LanguageServerName;
@@ -270,7 +270,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
-    let store = cx.new_model(|cx| {
+    let store = cx.new(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
@@ -396,7 +396,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     // Create new extension store, as if Zed were restarting.
     drop(store);
-    let store = cx.new_model(|cx| {
+    let store = cx.new(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
@@ -577,7 +577,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let builder_client =
         Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
-    let extension_store = cx.new_model(|cx| {
+    let extension_store = cx.new(|cx| {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),

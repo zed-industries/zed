@@ -2,8 +2,8 @@
 
 use client::UserStore;
 use gpui::{
-    AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    MouseDownEvent, Render, View,
+    App, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
+    Render,
 };
 use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};
@@ -11,16 +11,16 @@ use workspace::{ModalView, Workspace};
 /// Terms of acceptance for AI inline prediction.
 pub struct ZedPredictTos {
     focus_handle: FocusHandle,
-    user_store: Model<UserStore>,
-    workspace: View<Workspace>,
+    user_store: Entity<UserStore>,
+    workspace: Entity<Workspace>,
     viewed: bool,
 }
 
 impl ZedPredictTos {
     fn new(
-        workspace: View<Workspace>,
-        user_store: Model<UserStore>,
-        cx: &mut ViewContext<Self>,
+        workspace: Entity<Workspace>,
+        user_store: Entity<UserStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
         ZedPredictTos {
             viewed: false,
@@ -30,23 +30,26 @@ impl ZedPredictTos {
         }
     }
     pub fn toggle(
-        workspace: View<Workspace>,
-        user_store: Model<UserStore>,
-        cx: &mut WindowContext,
+        workspace: Entity<Workspace>,
+        user_store: Entity<UserStore>,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         workspace.update(cx, |this, cx| {
-            let workspace = cx.view().clone();
-            this.toggle_modal(cx, |cx| ZedPredictTos::new(workspace, user_store, cx));
+            let workspace = cx.model().clone();
+            this.toggle_modal(window, cx, |_window, cx| {
+                ZedPredictTos::new(workspace, user_store, cx)
+            });
         });
     }
 
-    fn view_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn view_terms(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.viewed = true;
         cx.open_url("https://zed.dev/terms-of-service");
         cx.notify();
     }
 
-    fn accept_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn accept_terms(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
@@ -66,15 +69,15 @@ impl ZedPredictTos {
         .detach_and_log_err(cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 }
 
 impl EventEmitter<DismissEvent> for ZedPredictTos {}
 
-impl FocusableView for ZedPredictTos {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+impl Focusable for ZedPredictTos {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -82,7 +85,7 @@ impl FocusableView for ZedPredictTos {
 impl ModalView for ZedPredictTos {}
 
 impl Render for ZedPredictTos {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
@@ -93,11 +96,11 @@ impl Render for ZedPredictTos {
             .items_center()
             .p_4()
             .gap_2()
-            .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
+            .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
-                cx.focus(&this.focus_handle);
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
+                this.focus_handle.focus(window);
             }))
             .child(
                 h_flex()
@@ -143,7 +146,7 @@ impl Render for ZedPredictTos {
                     .child(
                         Button::new("cancel", "Cancel")
                             .full_width()
-                            .on_click(cx.listener(|_, _: &ClickEvent, cx| {
+                            .on_click(cx.listener(|_, _: &ClickEvent, _window, cx| {
                                 cx.emit(DismissEvent);
                             })),
                     ),

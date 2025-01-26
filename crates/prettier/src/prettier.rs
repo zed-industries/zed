@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui::{AsyncAppContext, Model};
+use gpui::{AsyncAppContext, Entity};
 use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -302,7 +302,7 @@ impl Prettier {
 
     pub async fn format(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
         cx: &mut AsyncAppContext,

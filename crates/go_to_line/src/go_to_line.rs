@@ -5,9 +5,8 @@ use editor::{
     actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use gpui::{
-    div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, Render, SharedString, Styled, Subscription, View, ViewContext,
-    VisualContext,
+    div, prelude::*, AnyWindowHandle, App, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, Render, SharedString, Styled, Subscription,
 };
 use language::Buffer;
 use settings::Settings;
@@ -17,14 +16,14 @@ use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     LineIndicatorFormat::register(cx);
-    cx.observe_new_views(GoToLine::register).detach();
+    cx.observe_new(GoToLine::register).detach();
 }
 
 pub struct GoToLine {
-    line_editor: View<Editor>,
-    active_editor: View<Editor>,
+    line_editor: Entity<Editor>,
+    active_editor: Entity<Editor>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<f32>>,
     _subscriptions: Vec<Subscription>,
@@ -32,8 +31,8 @@ pub struct GoToLine {
 
 impl ModalView for GoToLine {}
 
-impl FocusableView for GoToLine {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+impl Focusable for GoToLine {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.line_editor.focus_handle(cx)
     }
 }
@@ -42,10 +41,10 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
-    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
-        let handle = cx.view().downgrade();
+    fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
+        let handle = cx.model().downgrade();
         editor
-            .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
+            .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
                 let Some(editor_handle) = handle.upgrade() else {
                     return;
                 };
@@ -57,16 +56,19 @@ impl GoToLine {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, move |cx| GoToLine::new(editor_handle, buffer, cx));
+                    workspace.toggle_modal(window, cx, move |window, cx| {
+                        GoToLine::new(editor_handle, buffer, window, cx)
+                    });
                 })
             })
             .detach();
     }
 
     pub fn new(
-        active_editor: View<Editor>,
-        active_buffer: Model<Buffer>,
-        cx: &mut ViewContext<Self>,
+        active_editor: Entity<Editor>,
+        active_buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let (user_caret, last_line, scroll_position) = active_editor.update(cx, |editor, cx| {
             let user_caret = UserCaretPosition::at_selection_end(
@@ -90,20 +92,20 @@ impl GoToLine {
         let line = user_caret.line.get();
         let column = user_caret.character.get();
 
-        let line_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            let editor_handle = cx.view().downgrade();
+        let line_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            let editor_handle = cx.model().downgrade();
             editor
                 .register_action::<Tab>({
-                    move |_, cx| {
+                    move |_, window, cx| {
                         let Some(editor) = editor_handle.upgrade() else {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            if let Some(placeholder_text) = editor.placeholder_text(cx) {
+                            if let Some(placeholder_text) = editor.placeholder_text() {
                                 if editor.text(cx).is_empty() {
                                     let placeholder_text = placeholder_text.to_string();
-                                    editor.set_text(placeholder_text, cx);
+                                    editor.set_text(placeholder_text, window, cx);
                                 }
                             }
                         });
@@ -113,7 +115,7 @@ impl GoToLine {
             editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
         });
-        let line_editor_change = cx.subscribe(&line_editor, Self::on_line_editor_event);
+        let line_editor_change = cx.subscribe_in(&line_editor, window, Self::on_line_editor_event);
 
         let current_text = format!(
             "Current Line: {} of {} (column {})",
@@ -127,18 +129,18 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
-            _subscriptions: vec![line_editor_change, cx.on_release(Self::release)],
+            _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
     }
 
-    fn release(&mut self, window: AnyWindowHandle, cx: &mut AppContext) {
+    fn release(&mut self, window: AnyWindowHandle, cx: &mut App) {
         window
-            .update(cx, |_, cx| {
+            .update(cx, |_, window, cx| {
                 let scroll_position = self.prev_scroll_position.take();
                 self.active_editor.update(cx, |editor, cx| {
                     editor.clear_row_highlights::<GoToLineRowHighlights>();
                     if let Some(scroll_position) = scroll_position {
-                        editor.set_scroll_position(scroll_position, cx);
+                        editor.set_scroll_position(scroll_position, window, cx);
                     }
                     cx.notify();
                 })
@@ -148,9 +150,10 @@ impl GoToLine {
 
     fn on_line_editor_event(
         &mut self,
-        _: View<Editor>,
+        _: &Entity<Editor>,
         event: &editor::EditorEvent,
-        cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         match event {
             editor::EditorEvent::Blurred => cx.emit(DismissEvent),
@@ -159,7 +162,7 @@ impl GoToLine {
         }
     }
 
-    fn highlight_current_line(&mut self, cx: &mut ViewContext<Self>) {
+    fn highlight_current_line(&mut self, cx: &mut Context<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -189,7 +192,7 @@ impl GoToLine {
     fn anchor_from_query(
         &self,
         snapshot: &MultiBufferSnapshot,
-        cx: &ViewContext<Editor>,
+        cx: &Context<Editor>,
     ) -> Option<Anchor> {
         let (query_row, query_char) = self.line_and_char_from_query(cx)?;
         let row = query_row.saturating_sub(1);
@@ -222,7 +225,7 @@ impl GoToLine {
         Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
     }
 
-    fn line_and_char_from_query(&self, cx: &AppContext) -> Option<(u32, Option<u32>)> {
+    fn line_and_char_from_query(&self, cx: &App) -> Option<(u32, Option<u32>)> {
         let input = self.line_editor.read(cx).text(cx);
         let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
@@ -233,20 +236,20 @@ impl GoToLine {
         Some((row, column))
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         self.active_editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let Some(start) = self.anchor_from_query(&snapshot, cx) else {
                 return;
             };
-            editor.change_selections(Some(Autoscroll::center()), cx, |s| {
+            editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
                 s.select_anchor_ranges([start..start])
             });
-            editor.focus(cx);
+            editor.focus_handle(cx).focus(window);
             cx.notify()
         });
         self.prev_scroll_position.take();
@@ -256,7 +259,7 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let help_text = match self.line_and_char_from_query(cx) {
             Some((line, Some(character))) => {
                 format!("Go to line {line}, character {character}").into()
@@ -328,7 +331,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -339,8 +343,8 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
             .unwrap()
@@ -422,11 +426,12 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        workspace.update(cx, |workspace, cx| {
-            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
-                status_bar.add_right_item(cursor_position, cx);
+                status_bar.add_right_item(cursor_position, window, cx);
             });
         });
 
@@ -440,8 +445,8 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
             .unwrap()
@@ -466,7 +471,9 @@ mod tests {
                 "No selections should be initially"
             );
         });
-        editor.update(cx, |editor, cx| editor.select_all(&SelectAll, cx));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.select_all(&SelectAll, window, cx)
+        });
         cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
@@ -502,11 +509,12 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        workspace.update(cx, |workspace, cx| {
-            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
-                status_bar.add_right_item(cursor_position, cx);
+                status_bar.add_right_item(cursor_position, window, cx);
             });
         });
 
@@ -520,16 +528,16 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
 
-        editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&MoveToBeginning, cx)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx)
         });
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
@@ -540,7 +548,9 @@ mod tests {
 
         for (i, c) in text.chars().enumerate() {
             let i = i as u32 + 1;
-            editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+            editor.update_in(cx, |editor, window, cx| {
+                editor.move_right(&MoveRight, window, cx)
+            });
             cx.executor().advance_clock(Duration::from_millis(200));
             assert_eq!(
                 user_caret_position(1, i + 1),
@@ -549,7 +559,9 @@ mod tests {
             );
         }
 
-        editor.update(cx, |editor, cx| editor.move_right(&MoveRight, cx));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_right(&MoveRight, window, cx)
+        });
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(
             user_caret_position(1, text.chars().count() as u32 + 1),
@@ -573,11 +585,12 @@ mod tests {
         .await;
 
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
-        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
-        workspace.update(cx, |workspace, cx| {
-            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
-                status_bar.add_right_item(cursor_position, cx);
+                status_bar.add_right_item(cursor_position, window, cx);
             });
         });
 
@@ -591,16 +604,16 @@ mod tests {
             .await
             .unwrap();
         let editor = workspace
-            .update(cx, |workspace, cx| {
-                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
             })
             .await
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
 
-        editor.update(cx, |editor, cx| {
-            editor.move_to_beginning(&MoveToBeginning, cx)
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx)
         });
         cx.executor().advance_clock(Duration::from_millis(200));
         assert_eq!(user_caret_position(1, 1), current_position(&workspace, cx));
@@ -632,7 +645,7 @@ mod tests {
     }
 
     fn current_position(
-        workspace: &View<Workspace>,
+        workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
     ) -> UserCaretPosition {
         workspace.update(cx, |workspace, cx| {
@@ -657,7 +670,7 @@ mod tests {
     fn go_to_point(
         new_point: UserCaretPosition,
         expected_placeholder: UserCaretPosition,
-        workspace: &View<Workspace>,
+        workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
     ) {
         let go_to_line_view = open_go_to_line_view(workspace, cx);
@@ -666,7 +679,7 @@ mod tests {
                 go_to_line_view
                     .line_editor
                     .read(cx)
-                    .placeholder_text(cx)
+                    .placeholder_text()
                     .expect("No placeholder text"),
                 format!(
                     "{}:{}",
@@ -679,19 +692,19 @@ mod tests {
     }
 
     fn open_go_to_line_view(
-        workspace: &View<Workspace>,
+        workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
-    ) -> View<GoToLine> {
+    ) -> Entity<GoToLine> {
         cx.dispatch_action(editor::actions::ToggleGoToLine);
         workspace.update(cx, |workspace, cx| {
             workspace.active_modal::<GoToLine>(cx).unwrap().clone()
         })
     }
 
-    fn highlighted_display_rows(editor: &View<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
-        editor.update(cx, |editor, cx| {
+    fn highlighted_display_rows(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
+        editor.update_in(cx, |editor, window, cx| {
             editor
-                .highlighted_display_rows(cx)
+                .highlighted_display_rows(window, cx)
                 .into_keys()
                 .map(|r| r.0)
                 .collect()
@@ -700,7 +713,7 @@ mod tests {
 
     #[track_caller]
     fn assert_single_caret_at_row(
-        editor: &View<Editor>,
+        editor: &Entity<Editor>,
         buffer_row: u32,
         cx: &mut VisualTestContext,
     ) {

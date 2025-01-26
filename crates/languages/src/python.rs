@@ -2,7 +2,7 @@ use anyhow::ensure;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::{AppContext, Task};
+use gpui::{App, Task};
 use gpui::{AsyncAppContext, SharedString};
 use language::language_settings::language_settings;
 use language::LanguageName;
@@ -317,7 +317,7 @@ impl ContextProvider for PythonContextProvider {
         location: &project::Location,
         _: Option<HashMap<String, String>>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
         let test_target = {
             let test_runner = selected_test_runner(location.buffer.read(cx).file(), cx);
@@ -350,7 +350,7 @@ impl ContextProvider for PythonContextProvider {
     fn associated_tasks(
         &self,
         file: Option<Arc<dyn language::File>>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<TaskTemplates> {
         let test_runner = selected_test_runner(file.as_ref(), cx);
 
@@ -441,7 +441,7 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &AppContext) -> TestRunner {
+fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
     language_settings(Some(LanguageName::new("Python")), location, cx)
         .tasks
@@ -1005,7 +1005,7 @@ impl LspAdapter for PyLspAdapter {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -1025,9 +1025,9 @@ mod tests {
             });
         });
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
-            let append = |buffer: &mut Buffer, text: &str, cx: &mut ModelContext<Buffer>| {
+            let append = |buffer: &mut Buffer, text: &str, cx: &mut Context<Buffer>| {
                 let ix = buffer.len();
                 buffer.edit([(ix..ix, text)], Some(AutoindentMode::EachLine), cx);
             };

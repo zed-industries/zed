@@ -8,7 +8,7 @@ use reqwest_client::ReqwestClient;
 use smol::stream::StreamExt;
 
 fn main() {
-    let app = gpui::App::new();
+    let app = gpui::Application::new();
     app.run(|cx| {
         cx.spawn(|cx| async move {
             let client = ReqwestClient::new();

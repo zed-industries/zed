@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use client::{proto, ParticipantIndex, User};
 use collections::HashMap;
-use gpui::WeakModel;
+use gpui::WeakEntity;
 use livekit_client::AudioStream;
 use project::Project;
 use std::sync::Arc;
@@ -36,7 +36,7 @@ impl ParticipantLocation {
 #[derive(Clone, Default)]
 pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
-    pub active_project: Option<WeakModel<Project>>,
+    pub active_project: Option<WeakEntity<Project>>,
     pub role: proto::ChannelRole,
 }
 

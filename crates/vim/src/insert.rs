@@ -1,44 +1,54 @@
 use crate::{state::Mode, Vim};
 use editor::{scroll::Autoscroll, Bias, Editor};
-use gpui::{actions, Action, ViewContext};
+use gpui::{actions, Action, Context, Window};
 use language::SelectionGoal;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::normal_before);
     Vim::action(editor, cx, Vim::temporary_normal);
 }
 
 impl Vim {
-    fn normal_before(&mut self, action: &NormalBefore, cx: &mut ViewContext<Self>) {
+    fn normal_before(
+        &mut self,
+        action: &NormalBefore,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.active_operator().is_some() {
             self.operator_stack.clear();
-            self.sync_vim_settings(cx);
+            self.sync_vim_settings(window, cx);
             return;
         }
         let count = Vim::take_count(cx).unwrap_or(1);
         self.stop_recording_immediately(action.boxed_clone(), cx);
         if count <= 1 || Vim::globals(cx).dot_replaying {
-            self.create_mark("^".into(), false, cx);
-            self.update_editor(cx, |_, editor, cx| {
-                editor.dismiss_menus_and_popups(false, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            self.create_mark("^".into(), false, window, cx);
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.dismiss_menus_and_popups(false, window, cx);
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_cursors_with(|map, mut cursor, _| {
                         *cursor.column_mut() = cursor.column().saturating_sub(1);
                         (map.clip_point(cursor, Bias::Left), SelectionGoal::None)
                     });
                 });
             });
-            self.switch_mode(Mode::Normal, false, cx);
+            self.switch_mode(Mode::Normal, false, window, cx);
             return;
         }
 
-        self.repeat(true, cx)
+        self.repeat(true, window, cx)
     }
 
-    fn temporary_normal(&mut self, _: &TemporaryNormal, cx: &mut ViewContext<Self>) {
-        self.switch_mode(Mode::Normal, true, cx);
+    fn temporary_normal(
+        &mut self,
+        _: &TemporaryNormal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.switch_mode(Mode::Normal, true, window, cx);
         self.temp_mode = true;
     }
 }

@@ -311,7 +311,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -331,7 +331,7 @@ mod tests {
         });
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // empty function

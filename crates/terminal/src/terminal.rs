@@ -58,9 +58,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
-    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    actions, black, px, AnyWindowHandle, App, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -156,7 +156,7 @@ impl EventListener for ZedListener {
     }
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     TerminalSettings::register(cx);
 }
 
@@ -334,7 +334,7 @@ impl TerminalBuilder {
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
         // (As is the case when launched from a .app on MacOS),
@@ -401,7 +401,7 @@ impl TerminalBuilder {
             ..Config::default()
         };
 
-        //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        //Spawn a task so the Alacritty EventLoop can communicate with us
         //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
@@ -482,7 +482,7 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
             while let Some(event) = self.events_rx.next().await {
@@ -674,7 +674,7 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut ModelContext<Self>) {
+    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
@@ -743,12 +743,11 @@ impl Terminal {
         self.selection_phase == SelectionPhase::Selecting
     }
 
-    ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
         event: &InternalEvent,
         term: &mut Term<ZedListener>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             InternalEvent::Resize(mut new_size) => {
@@ -1002,7 +1001,7 @@ impl Terminal {
         word_match: RangeInclusive<AlacPoint>,
         word: String,
         navigation_target: MaybeNavigationTarget,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(prev_word) = prev_word {
             if prev_word.word == word && prev_word.word_match == word_match {
@@ -1303,7 +1302,7 @@ impl Terminal {
         self.input(paste_text);
     }
 
-    pub fn sync(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn sync(&mut self, cx: &mut Context<Self>) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
@@ -1479,7 +1478,7 @@ impl Terminal {
         &mut self,
         e: &MouseDownEvent,
         origin: Point<Pixels>,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let position = e.position - origin;
         let point = grid_point(
@@ -1532,7 +1531,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &ModelContext<Self>) {
+    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &Context<Self>) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - origin;
@@ -1636,7 +1635,7 @@ impl Terminal {
     pub fn find_matches(
         &self,
         mut searcher: RegexSearch,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
         cx.background_executor().spawn(async move {
@@ -1728,7 +1727,7 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
+    pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
@@ -1740,11 +1739,7 @@ impl Terminal {
         Task::ready(())
     }
 
-    fn register_task_finished(
-        &mut self,
-        error_code: Option<i32>,
-        cx: &mut ModelContext<'_, Terminal>,
-    ) {
+    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
         self.completion_tx.try_send(()).ok();
         let task = match &mut self.task {
             Some(task) => task,

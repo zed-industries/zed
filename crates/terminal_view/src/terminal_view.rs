@@ -8,10 +8,9 @@ use collections::HashSet;
 use editor::{actions::SelectAll, scroll::ScrollbarAutoHide, Editor, EditorSettings};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, View,
-    VisualContext, WeakModel, WeakView,
+    anchored, deferred, div, impl_actions, AnyElement, App, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity,
 };
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
@@ -47,7 +46,7 @@ use workspace::{
     WorkspaceId,
 };
 
-use anyhow::Context;
+use anyhow::Context as _;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
@@ -82,13 +81,13 @@ pub struct SendKeystroke(String);
 
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     terminal_panel::init(cx);
     terminal::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
@@ -100,19 +99,20 @@ pub struct BlockProperties {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    pub window: &'a mut Window,
+    pub context: &'b mut App,
     pub dimensions: TerminalSize,
 }
 
 ///A terminal view, maintains the PTY's file handles and communicates with the terminal
 pub struct TerminalView {
-    terminal: Model<Terminal>,
-    workspace: WeakView<Workspace>,
-    project: WeakModel<Project>,
+    terminal: Entity<Terminal>,
+    workspace: WeakEntity<Workspace>,
+    project: WeakEntity<Project>,
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
-    context_menu: Option<(View<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
+    context_menu: Option<(Entity<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
     blink_state: bool,
     blinking_terminal_enabled: bool,
@@ -135,8 +135,8 @@ impl EventEmitter<Event> for TerminalView {}
 impl EventEmitter<ItemEvent> for TerminalView {}
 impl EventEmitter<SearchEvent> for TerminalView {}
 
-impl FocusableView for TerminalView {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+impl Focusable for TerminalView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -146,30 +146,42 @@ impl TerminalView {
     pub fn deploy(
         workspace: &mut Workspace,
         _: &NewCenterTerminal,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-        TerminalPanel::add_center_terminal(workspace, TerminalKind::Shell(working_directory), cx)
-            .detach_and_log_err(cx);
+        TerminalPanel::add_center_terminal(
+            workspace,
+            TerminalKind::Shell(working_directory),
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     pub fn new(
-        terminal: Model<Terminal>,
-        workspace: WeakView<Workspace>,
+        terminal: Entity<Terminal>,
+        workspace: WeakEntity<Workspace>,
         workspace_id: Option<WorkspaceId>,
-        project: WeakModel<Project>,
-        cx: &mut ViewContext<Self>,
+        project: WeakEntity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
         let workspace_handle = workspace.clone();
-        let terminal_subscriptions = subscribe_for_terminal_events(&terminal, workspace, cx);
+        let terminal_subscriptions =
+            subscribe_for_terminal_events(&terminal, workspace, window, cx);
 
         let focus_handle = cx.focus_handle();
-        let focus_in = cx.on_focus_in(&focus_handle, |terminal_view, cx| {
-            terminal_view.focus_in(cx);
+        let focus_in = cx.on_focus_in(&focus_handle, window, |terminal_view, window, cx| {
+            terminal_view.focus_in(window, cx);
         });
-        let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, _event, cx| {
-            terminal_view.focus_out(cx);
-        });
+        let focus_out = cx.on_focus_out(
+            &focus_handle,
+            window,
+            |terminal_view, _event, window, cx| {
+                terminal_view.focus_out(window, cx);
+            },
+        );
         let cursor_shape = TerminalSettings::get_global(cx)
             .cursor_shape
             .unwrap_or_default();
@@ -206,7 +218,7 @@ impl TerminalView {
         }
     }
 
-    pub fn model(&self) -> &Model<Terminal> {
+    pub fn model(&self) -> &Entity<Terminal> {
         &self.terminal
     }
 
@@ -214,7 +226,7 @@ impl TerminalView {
         self.has_bell
     }
 
-    pub fn clear_bell(&mut self, cx: &mut ViewContext<TerminalView>) {
+    pub fn clear_bell(&mut self, cx: &mut Context<TerminalView>) {
         self.has_bell = false;
         cx.emit(Event::Wakeup);
     }
@@ -222,7 +234,8 @@ impl TerminalView {
     pub fn deploy_context_menu(
         &mut self,
         position: gpui::Point<Pixels>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let assistant_enabled = self
             .workspace
@@ -231,7 +244,7 @@ impl TerminalView {
             .map_or(false, |terminal_panel| {
                 terminal_panel.read(cx).assistant_enabled()
             });
-        let context_menu = ContextMenu::build(cx, |menu, _| {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal))
                 .separator()
@@ -247,22 +260,25 @@ impl TerminalView {
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
 
-        cx.focus_view(&context_menu);
-        let subscription =
-            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+        window.focus(&context_menu.focus_handle(cx));
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
                 if this.context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self();
+                    cx.focus_self(window);
                 }
                 this.context_menu.take();
                 cx.notify();
-            });
+            },
+        );
 
         self.context_menu = Some((context_menu, position, subscription));
     }
 
-    fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let settings = TerminalSettings::get_global(cx);
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
@@ -278,7 +294,12 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn show_character_palette(&mut self, _: &ShowCharacterPalette, cx: &mut ViewContext<Self>) {
+    fn show_character_palette(
+        &mut self,
+        _: &ShowCharacterPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self
             .terminal
             .read(cx)
@@ -293,22 +314,22 @@ impl TerminalView {
                 )
             });
         } else {
-            cx.show_character_palette();
+            window.show_character_palette();
         }
     }
 
-    fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
+    fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.select_all());
         cx.notify();
     }
 
-    fn clear(&mut self, _: &Clear, cx: &mut ViewContext<Self>) {
+    fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
         self.scroll_top = px(0.);
         self.terminal.update(cx, |term, _| term.clear());
         cx.notify();
     }
 
-    fn max_scroll_top(&self, cx: &AppContext) -> Pixels {
+    fn max_scroll_top(&self, cx: &App) -> Pixels {
         let terminal = self.terminal.read(cx);
 
         let Some(block) = self.block_below_cursor.as_ref() else {
@@ -343,7 +364,7 @@ impl TerminalView {
         &mut self,
         event: &ScrollWheelEvent,
         origin: gpui::Point<Pixels>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let terminal_content = self.terminal.read(cx).last_content();
 
@@ -364,7 +385,7 @@ impl TerminalView {
             .update(cx, |term, _| term.scroll_wheel(event, origin));
     }
 
-    fn scroll_line_up(&mut self, _: &ScrollLineUp, cx: &mut ViewContext<Self>) {
+    fn scroll_line_up(&mut self, _: &ScrollLineUp, _: &mut Window, cx: &mut Context<Self>) {
         let terminal_content = self.terminal.read(cx).last_content();
         if self.block_below_cursor.is_some()
             && terminal_content.display_offset == 0
@@ -379,7 +400,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn scroll_line_down(&mut self, _: &ScrollLineDown, cx: &mut ViewContext<Self>) {
+    fn scroll_line_down(&mut self, _: &ScrollLineDown, _: &mut Window, cx: &mut Context<Self>) {
         let terminal_content = self.terminal.read(cx).last_content();
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
             let max_scroll_top = self.max_scroll_top(cx);
@@ -394,7 +415,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn scroll_page_up(&mut self, _: &ScrollPageUp, cx: &mut ViewContext<Self>) {
+    fn scroll_page_up(&mut self, _: &ScrollPageUp, _: &mut Window, cx: &mut Context<Self>) {
         if self.scroll_top == Pixels::ZERO {
             self.terminal.update(cx, |term, _| term.scroll_page_up());
         } else {
@@ -414,7 +435,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn scroll_page_down(&mut self, _: &ScrollPageDown, cx: &mut ViewContext<Self>) {
+    fn scroll_page_down(&mut self, _: &ScrollPageDown, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.scroll_page_down());
         let terminal = self.terminal.read(cx);
         if terminal.last_content().display_offset < terminal.viewport_lines() {
@@ -423,12 +444,12 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn scroll_to_top(&mut self, _: &ScrollToTop, cx: &mut ViewContext<Self>) {
+    fn scroll_to_top(&mut self, _: &ScrollToTop, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.scroll_to_top());
         cx.notify();
     }
 
-    fn scroll_to_bottom(&mut self, _: &ScrollToBottom, cx: &mut ViewContext<Self>) {
+    fn scroll_to_bottom(&mut self, _: &ScrollToBottom, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.scroll_to_bottom());
         if self.block_below_cursor.is_some() {
             self.scroll_top = self.max_scroll_top(cx);
@@ -436,12 +457,12 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn toggle_vi_mode(&mut self, _: &ToggleViMode, cx: &mut ViewContext<Self>) {
+    fn toggle_vi_mode(&mut self, _: &ToggleViMode, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.toggle_vi_mode());
         cx.notify();
     }
 
-    pub fn should_show_cursor(&self, focused: bool, cx: &mut ViewContext<Self>) -> bool {
+    pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
             || self.blinking_paused
@@ -466,45 +487,54 @@ impl TerminalView {
         }
     }
 
-    fn blink_cursors(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
+    fn blink_cursors(&mut self, epoch: usize, window: &mut Window, cx: &mut Context<Self>) {
         if epoch == self.blink_epoch && !self.blinking_paused {
             self.blink_state = !self.blink_state;
             cx.notify();
 
             let epoch = self.next_blink_epoch();
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn_in(window, |this, mut cx| async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
-                this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx))
-                    .ok();
+                this.update_in(&mut cx, |this, window, cx| {
+                    this.blink_cursors(epoch, window, cx)
+                })
+                .ok();
             })
             .detach();
         }
     }
 
-    pub fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn pause_cursor_blinking(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.blink_state = true;
         cx.notify();
 
         let epoch = self.next_blink_epoch();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             Timer::after(CURSOR_BLINK_INTERVAL).await;
-            this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
-                .ok();
+            this.update_in(&mut cx, |this, window, cx| {
+                this.resume_cursor_blinking(epoch, window, cx)
+            })
+            .ok();
         })
         .detach();
     }
 
-    pub fn terminal(&self) -> &Model<Terminal> {
+    pub fn terminal(&self) -> &Entity<Terminal> {
         &self.terminal
     }
 
-    pub fn set_block_below_cursor(&mut self, block: BlockProperties, cx: &mut ViewContext<Self>) {
+    pub fn set_block_below_cursor(
+        &mut self,
+        block: BlockProperties,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.block_below_cursor = Some(Rc::new(block));
-        self.scroll_to_bottom(&ScrollToBottom, cx);
+        self.scroll_to_bottom(&ScrollToBottom, window, cx);
         cx.notify();
     }
 
-    pub fn clear_block_below_cursor(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn clear_block_below_cursor(&mut self, cx: &mut Context<Self>) {
         self.block_below_cursor = None;
         self.scroll_top = Pixels::ZERO;
         cx.notify();
@@ -515,35 +545,40 @@ impl TerminalView {
         self.blink_epoch
     }
 
-    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut ViewContext<Self>) {
+    fn resume_cursor_blinking(
+        &mut self,
+        epoch: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if epoch == self.blink_epoch {
             self.blinking_paused = false;
-            self.blink_cursors(epoch, cx);
+            self.blink_cursors(epoch, window, cx);
         }
     }
 
     ///Attempt to paste the clipboard into the terminal
-    fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |term, _| term.copy());
         cx.notify();
     }
 
     ///Attempt to paste the clipboard into the terminal
-    fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(clipboard_string) = cx.read_from_clipboard().and_then(|item| item.text()) {
             self.terminal
                 .update(cx, |terminal, _cx| terminal.paste(&clipboard_string));
         }
     }
 
-    fn send_text(&mut self, text: &SendText, cx: &mut ViewContext<Self>) {
+    fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
         self.terminal.update(cx, |term, _| {
             term.input(text.0.to_string());
         });
     }
 
-    fn send_keystroke(&mut self, text: &SendKeystroke, cx: &mut ViewContext<Self>) {
+    fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
@@ -552,7 +587,7 @@ impl TerminalView {
         }
     }
 
-    fn dispatch_context(&self, cx: &AppContext) -> KeyContext {
+    fn dispatch_context(&self, cx: &App) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("Terminal");
 
@@ -627,9 +662,14 @@ impl TerminalView {
         dispatch_context
     }
 
-    fn set_terminal(&mut self, terminal: Model<Terminal>, cx: &mut ViewContext<TerminalView>) {
+    fn set_terminal(
+        &mut self,
+        terminal: Entity<Terminal>,
+        window: &mut Window,
+        cx: &mut Context<TerminalView>,
+    ) {
         self._terminal_subscriptions =
-            subscribe_for_terminal_events(&terminal, self.workspace.clone(), cx);
+            subscribe_for_terminal_events(&terminal, self.workspace.clone(), window, cx);
         self.terminal = terminal;
     }
 
@@ -645,7 +685,7 @@ impl TerminalView {
         }
     }
 
-    fn should_show_scrollbar(cx: &AppContext) -> bool {
+    fn should_show_scrollbar(cx: &App) -> bool {
         let show = TerminalSettings::get_global(cx)
             .scrollbar
             .show
@@ -662,7 +702,7 @@ impl TerminalView {
         }
     }
 
-    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+    fn should_autohide_scrollbar(cx: &App) -> bool {
         let show = TerminalSettings::get_global(cx)
             .scrollbar
             .show
@@ -681,7 +721,7 @@ impl TerminalView {
         }
     }
 
-    fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
+    fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         if !Self::should_autohide_scrollbar(cx) {
             return;
@@ -699,7 +739,7 @@ impl TerminalView {
         }))
     }
 
-    fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
@@ -727,21 +767,21 @@ impl TerminalView {
             div()
                 .occlude()
                 .id("terminal-view-scroll")
-                .on_mouse_move(cx.listener(|_, _, cx| {
+                .on_mouse_move(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
-                .on_hover(|_, cx| {
+                .on_hover(|_, _window, cx| {
                     cx.stop_propagation();
                 })
-                .on_any_mouse_down(|_, cx| {
+                .on_any_mouse_down(|_, _window, cx| {
                     cx.stop_propagation();
                 })
                 .on_mouse_up(
                     MouseButton::Left,
-                    cx.listener(|terminal_view, _, cx| {
+                    cx.listener(|terminal_view, _, window, cx| {
                         if !terminal_view.scrollbar_state.is_dragging()
-                            && !terminal_view.focus_handle.contains_focused(cx)
+                            && !terminal_view.focus_handle.contains_focused(window, cx)
                         {
                             terminal_view.hide_scrollbar(cx);
                             cx.notify();
@@ -749,7 +789,7 @@ impl TerminalView {
                         cx.stop_propagation();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                 }))
                 .h_full()
@@ -765,13 +805,16 @@ impl TerminalView {
 }
 
 fn subscribe_for_terminal_events(
-    terminal: &Model<Terminal>,
-    workspace: WeakView<Workspace>,
-    cx: &mut ViewContext<TerminalView>,
+    terminal: &Entity<Terminal>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut Context<TerminalView>,
 ) -> Vec<Subscription> {
     let terminal_subscription = cx.observe(terminal, |_, _, cx| cx.notify());
-    let terminal_events_subscription =
-        cx.subscribe(terminal, move |this, _, event, cx| match event {
+    let terminal_events_subscription = cx.subscribe_in(
+        terminal,
+        window,
+        move |this, _, event, window, cx| match event {
             Event::Wakeup => {
                 cx.notify();
                 cx.emit(Event::Wakeup);
@@ -838,7 +881,7 @@ fn subscribe_for_terminal_events(
                     };
 
                     let path_like_target = path_like_target.clone();
-                    cx.spawn(|terminal_view, mut cx| async move {
+                    cx.spawn_in(window, |terminal_view, mut cx| async move {
                         let valid_files_to_open = terminal_view
                             .update(&mut cx, |_, cx| {
                                 possible_open_targets(
@@ -855,11 +898,12 @@ fn subscribe_for_terminal_events(
                             .map(|(p, _)| p.path.clone())
                             .collect();
                         let opened_items = task_workspace
-                            .update(&mut cx, |workspace, cx| {
+                            .update_in(&mut cx, |workspace, window, cx| {
                                 workspace.open_paths(
                                     paths_to_open,
                                     OpenVisible::OnlyDirectories,
                                     None,
+                                    window,
                                     cx,
                                 )
                             })
@@ -879,12 +923,13 @@ fn subscribe_for_terminal_events(
                                     if let Some(active_editor) = opened_item.downcast::<Editor>() {
                                         active_editor
                                             .downgrade()
-                                            .update(&mut cx, |editor, cx| {
+                                            .update_in(&mut cx, |editor, window, cx| {
                                                 editor.go_to_singleton_buffer_point(
                                                     language::Point::new(
                                                         row.saturating_sub(1),
                                                         col.saturating_sub(1),
                                                     ),
+                                                    window,
                                                     cx,
                                                 )
                                             })
@@ -910,10 +955,11 @@ fn subscribe_for_terminal_events(
             Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
             Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
             Event::SelectionsChanged => {
-                cx.invalidate_character_coordinates();
+                window.invalidate_character_coordinates();
                 cx.emit(SearchEvent::ActiveMatchChanged)
             }
-        });
+        },
+    );
     vec![terminal_subscription, terminal_events_subscription]
 }
 
@@ -922,7 +968,7 @@ fn possible_open_paths_metadata(
     row: Option<u32>,
     column: Option<u32>,
     potential_paths: HashSet<PathBuf>,
-    cx: &mut ViewContext<TerminalView>,
+    cx: &mut Context<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
     cx.background_executor().spawn(async move {
         let mut canonical_paths = HashSet::default();
@@ -964,10 +1010,11 @@ fn possible_open_paths_metadata(
 
 fn possible_open_targets(
     fs: Arc<dyn Fs>,
-    workspace: &WeakView<Workspace>,
+    workspace: &WeakEntity<Workspace>,
     cwd: &Option<PathBuf>,
     maybe_path: &String,
-    cx: &mut ViewContext<TerminalView>,
+
+    cx: &mut Context<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
     let path_position = PathWithPosition::parse_str(maybe_path.as_str());
     let row = path_position.row;
@@ -1040,9 +1087,9 @@ pub fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<Re
 }
 
 impl TerminalView {
-    fn key_down(&mut self, event: &KeyDownEvent, cx: &mut ViewContext<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
-        self.pause_cursor_blinking(cx);
+        self.pause_cursor_blinking(window, cx);
 
         self.terminal.update(cx, |term, cx| {
             let handled = term.try_keystroke(
@@ -1055,17 +1102,17 @@ impl TerminalView {
         });
     }
 
-    fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.set_cursor_shape(self.cursor_shape);
             terminal.focus_in();
         });
-        self.blink_cursors(self.blink_epoch, cx);
-        cx.invalidate_character_coordinates();
+        self.blink_cursors(self.blink_epoch, window, cx);
+        window.invalidate_character_coordinates();
         cx.notify();
     }
 
-    fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_out(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
             terminal.set_cursor_shape(CursorShape::Hollow);
@@ -1076,11 +1123,11 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal_handle = self.terminal.clone();
-        let terminal_view_handle = cx.view().clone();
+        let terminal_view_handle = cx.model().clone();
 
-        let focused = self.focus_handle.is_focused(cx);
+        let focused = self.focus_handle.is_focused(window);
 
         div()
             .occlude()
@@ -1106,19 +1153,19 @@ impl Render for TerminalView {
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(|this, event: &MouseDownEvent, cx| {
+                cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
-                        this.deploy_context_menu(event.position, cx);
+                        this.deploy_context_menu(event.position, window, cx);
                         cx.notify();
                     }
                 }),
             )
-            .on_hover(cx.listener(|this, hovered, cx| {
+            .on_hover(cx.listener(|this, hovered, window, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
                     this.hide_scrollbar_task.take();
                     cx.notify();
-                } else if !this.focus_handle.contains_focused(cx) {
+                } else if !this.focus_handle.contains_focused(window, cx) {
                     this.hide_scrollbar(cx);
                 }
             }))
@@ -1155,20 +1202,17 @@ impl Render for TerminalView {
 impl Item for TerminalView {
     type Event = ItemEvent;
 
-    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+    fn tab_tooltip_content(&self, cx: &App) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
         let pid = terminal.pty_info.pid_getter().fallback_pid();
 
-        Some(TabTooltipContent::Custom(Box::new(
-            move |cx: &mut WindowContext| {
-                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid))
-                    .into()
-            },
-        )))
+        Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
+            cx.new(|_| TerminalTooltip::new(title.clone(), pid)).into()
+        })))
     }
 
-    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(true);
         let rerun_button = |task_id: task::TaskId| {
@@ -1177,14 +1221,17 @@ impl Item for TerminalView {
                 .size(ButtonSize::Compact)
                 .icon_color(Color::Default)
                 .shape(ui::IconButtonShape::Square)
-                .tooltip(|cx| Tooltip::text("Rerun task", cx))
-                .on_click(move |_, cx| {
-                    cx.dispatch_action(Box::new(zed_actions::Rerun {
-                        task_id: Some(task_id.0.clone()),
-                        allow_concurrent_runs: Some(true),
-                        use_new_terminal: Some(false),
-                        reevaluate_context: false,
-                    }));
+                .tooltip(Tooltip::text("Rerun task"))
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::Rerun {
+                            task_id: Some(task_id.0.clone()),
+                            allow_concurrent_runs: Some(true),
+                            use_new_terminal: Some(false),
+                            reevaluate_context: false,
+                        }),
+                        cx,
+                    );
                 })
         };
 
@@ -1245,9 +1292,10 @@ impl Item for TerminalView {
     fn clone_on_split(
         &self,
         workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<Self>> {
-        let window = cx.window_handle();
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>> {
+        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1259,44 +1307,45 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window,
+                    window_handle,
                     cx,
                 )
             })
             .ok()?
             .log_err()?;
 
-        Some(cx.new_view(|cx| {
+        Some(cx.new(|cx| {
             TerminalView::new(
                 terminal,
                 self.workspace.clone(),
                 workspace_id,
                 self.project.clone(),
+                window,
                 cx,
             )
         }))
     }
 
-    fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
+    fn is_dirty(&self, cx: &gpui::App) -> bool {
         match self.terminal.read(cx).task() {
             Some(task) => task.status == TaskStatus::Running,
             None => self.has_bell(),
         }
     }
 
-    fn has_conflict(&self, _cx: &AppContext) -> bool {
+    fn has_conflict(&self, _cx: &App) -> bool {
         false
     }
 
-    fn is_singleton(&self, _cx: &AppContext) -> bool {
+    fn is_singleton(&self, _cx: &App) -> bool {
         true
     }
 
-    fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+    fn as_searchable(&self, handle: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
 
-    fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
         if self.show_breadcrumbs && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
             ToolbarItemLocation::PrimaryLeft
         } else {
@@ -1304,7 +1353,7 @@ impl Item for TerminalView {
         }
     }
 
-    fn breadcrumbs(&self, _: &theme::Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
         Some(vec![BreadcrumbText {
             text: self.terminal().read(cx).breadcrumb_text.clone(),
             highlights: None,
@@ -1312,7 +1361,12 @@ impl Item for TerminalView {
         }])
     }
 
-    fn added_to_workspace(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+    fn added_to_workspace(
+        &mut self,
+        workspace: &mut Workspace,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.terminal().read(cx).task().is_none() {
             if let Some((new_id, old_id)) = workspace.database_id().zip(self.workspace_id) {
                 cx.background_executor()
@@ -1336,9 +1390,12 @@ impl SerializableItem for TerminalView {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<workspace::ItemId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<gpui::Result<()>> {
-        cx.spawn(|_| TERMINAL_DB.delete_unloaded_items(workspace_id, alive_items))
+        window.spawn(cx, |_| {
+            TERMINAL_DB.delete_unloaded_items(workspace_id, alive_items)
+        })
     }
 
     fn serialize(
@@ -1346,7 +1403,8 @@ impl SerializableItem for TerminalView {
         _workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        cx: &mut ViewContext<Self>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let terminal = self.terminal().read(cx);
         if terminal.task().is_some() {
@@ -1369,16 +1427,17 @@ impl SerializableItem for TerminalView {
     }
 
     fn deserialize(
-        project: Model<Project>,
-        workspace: WeakView<Workspace>,
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        cx: &mut WindowContext,
-    ) -> Task<anyhow::Result<View<Self>>> {
-        let window = cx.window_handle();
-        cx.spawn(|mut cx| async move {
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        let window_handle = window.window_handle();
+        window.spawn(cx, |mut cx| async move {
             let cwd = cx
-                .update(|cx| {
+                .update(|_window, cx| {
                     let from_db = TERMINAL_DB
                         .get_working_directory(item_id, workspace_id)
                         .log_err()
@@ -1399,16 +1458,17 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(&mut cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
                 })?
                 .await?;
-            cx.update(|cx| {
-                cx.new_view(|cx| {
+            cx.update(|window, cx| {
+                cx.new(|cx| {
                     TerminalView::new(
                         terminal,
                         workspace,
                         Some(workspace_id),
                         project.downgrade(),
+                        window,
                         cx,
                     )
                 })
@@ -1431,18 +1491,23 @@ impl SearchableItem for TerminalView {
     }
 
     /// Clear stored matches
-    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+    fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.terminal().update(cx, |term, _| term.matches.clear())
     }
 
     /// Store matches returned from find_matches somewhere for rendering
-    fn update_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+    fn update_matches(
+        &mut self,
+        matches: &[Self::Match],
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal()
             .update(cx, |term, _| term.matches = matches.to_vec())
     }
 
     /// Returns the selection content to pre-load into this search
-    fn query_suggestion(&mut self, cx: &mut ViewContext<Self>) -> String {
+    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
         self.terminal()
             .read(cx)
             .last_content
@@ -1452,14 +1517,20 @@ impl SearchableItem for TerminalView {
     }
 
     /// Focus match at given index into the Vec of matches
-    fn activate_match(&mut self, index: usize, _: &[Self::Match], cx: &mut ViewContext<Self>) {
+    fn activate_match(
+        &mut self,
+        index: usize,
+        _: &[Self::Match],
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.terminal()
             .update(cx, |term, _| term.activate_match(index));
         cx.notify();
     }
 
     /// Add selections for all matches given.
-    fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
+    fn select_matches(&mut self, matches: &[Self::Match], _: &mut Window, cx: &mut Context<Self>) {
         self.terminal()
             .update(cx, |term, _| term.select_matches(matches));
         cx.notify();
@@ -1469,7 +1540,8 @@ impl SearchableItem for TerminalView {
     fn find_matches(
         &mut self,
         query: Arc<SearchQuery>,
-        cx: &mut ViewContext<Self>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {
         let searcher = match &*query {
             SearchQuery::Text { .. } => regex_search_for_query(
@@ -1499,7 +1571,8 @@ impl SearchableItem for TerminalView {
     fn active_match_index(
         &mut self,
         matches: &[Self::Match],
-        cx: &mut ViewContext<Self>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Option<usize> {
         // Selection head might have a value if there's a selection that isn't
         // associated with a match. Therefore, if there are no matches, we should
@@ -1531,14 +1604,20 @@ impl SearchableItem for TerminalView {
 
         res
     }
-    fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {
+    fn replace(
+        &mut self,
+        _: &Self::Match,
+        _: &SearchQuery,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
         // Replacement is not supported in terminal view, so this is a no-op.
     }
 }
 
 ///Gets the working directory for the given workspace, respecting the user's settings.
 /// None implies "~" on whichever machine we end up on.
-pub(crate) fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => workspace
             .project()
@@ -1557,7 +1636,7 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &AppContext) 
     }
 }
 ///Gets the first project's home directory, or the home directory
-fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
     if !worktree.root_entry()?.is_dir() {
         return None;
@@ -1680,7 +1759,7 @@ mod tests {
     }
 
     /// Creates a worktree with 1 file: /root.txt
-    pub async fn init_test(cx: &mut TestAppContext) -> (Model<Project>, View<Workspace>) {
+    pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
             terminal::init(cx);
@@ -1691,8 +1770,8 @@ mod tests {
 
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
-            .add_window(|cx| Workspace::test_new(project.clone(), cx))
-            .root_view(cx)
+            .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
+            .root_model(cx)
             .unwrap();
 
         (project, workspace)
@@ -1700,28 +1779,28 @@ mod tests {
 
     /// Creates a worktree with 1 folder: /root{suffix}/
     async fn create_folder_wt(
-        project: Model<Project>,
+        project: Entity<Project>,
         path: impl AsRef<Path>,
         cx: &mut TestAppContext,
-    ) -> (Model<Worktree>, Entry) {
+    ) -> (Entity<Worktree>, Entry) {
         create_wt(project, true, path, cx).await
     }
 
     /// Creates a worktree with 1 file: /root{suffix}.txt
     async fn create_file_wt(
-        project: Model<Project>,
+        project: Entity<Project>,
         path: impl AsRef<Path>,
         cx: &mut TestAppContext,
-    ) -> (Model<Worktree>, Entry) {
+    ) -> (Entity<Worktree>, Entry) {
         create_wt(project, false, path, cx).await
     }
 
     async fn create_wt(
-        project: Model<Project>,
+        project: Entity<Project>,
         is_dir: bool,
         path: impl AsRef<Path>,
         cx: &mut TestAppContext,
-    ) -> (Model<Worktree>, Entry) {
+    ) -> (Entity<Worktree>, Entry) {
         let (wt, _) = project
             .update(cx, |project, cx| {
                 project.find_or_create_worktree(path, true, cx)
@@ -1740,9 +1819,9 @@ mod tests {
     }
 
     pub fn insert_active_entry_for(
-        wt: Model<Worktree>,
+        wt: Entity<Worktree>,
         entry: Entry,
-        project: Model<Project>,
+        project: Entity<Project>,
         cx: &mut TestAppContext,
     ) {
         cx.update(|cx| {

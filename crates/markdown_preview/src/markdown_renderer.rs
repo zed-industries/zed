@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
-    ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length,
-    Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText, TextStyle, View,
-    WeakView, WindowContext,
+    div, img, px, rems, AbsoluteLength, AnyElement, App, AppContext as _, ClipboardItem, Context,
+    DefiniteLength, Div, Element, ElementId, Entity, HighlightStyle, Hsla, ImageSource,
+    InteractiveText, IntoElement, Keystroke, Length, Modifiers, ParentElement, Render, Resource,
+    SharedString, Styled, StyledText, TextStyle, WeakEntity, Window,
 };
 use settings::Settings;
 use std::{
@@ -21,15 +21,15 @@ use ui::{
     h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
     FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
     LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
-    Tooltip, ViewContext, VisibleOnHover, VisualContext as _,
+    Tooltip, VisibleOnHover,
 };
 use workspace::Workspace;
 
-type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut WindowContext)>>;
+type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
 
 #[derive(Clone)]
 pub struct RenderContext {
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     next_id: usize,
     buffer_font_family: SharedString,
     buffer_text_style: TextStyle,
@@ -45,12 +45,16 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    pub fn new(workspace: Option<WeakView<Workspace>>, cx: &WindowContext) -> RenderContext {
+    pub fn new(
+        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> RenderContext {
         let theme = cx.theme().clone();
 
         let settings = ThemeSettings::get_global(cx);
         let buffer_font_family = settings.buffer_font.family.clone();
-        let mut buffer_text_style = cx.text_style();
+        let mut buffer_text_style = window.text_style();
         buffer_text_style.font_family = buffer_font_family.clone();
 
         RenderContext {
@@ -59,7 +63,7 @@ impl RenderContext {
             indent: 0,
             buffer_font_family,
             buffer_text_style,
-            text_style: cx.text_style(),
+            text_style: window.text_style(),
             syntax_theme: theme.syntax().clone(),
             border_color: theme.colors().border,
             text_color: theme.colors().text,
@@ -72,7 +76,7 @@ impl RenderContext {
 
     pub fn with_checkbox_clicked_callback(
         mut self,
-        callback: impl Fn(bool, Range<usize>, &mut WindowContext) + 'static,
+        callback: impl Fn(bool, Range<usize>, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
         self
@@ -108,10 +112,11 @@ impl RenderContext {
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
-    workspace: Option<WeakView<Workspace>>,
-    cx: &WindowContext,
+    workspace: Option<WeakEntity<Workspace>>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Div {
-    let mut cx = RenderContext::new(workspace, cx);
+    let mut cx = RenderContext::new(workspace, window, cx);
 
     v_flex().gap_3().children(
         parsed
@@ -190,15 +195,15 @@ fn render_markdown_list_item(
                     |this, callback| {
                         this.on_click({
                             let range = range.clone();
-                            move |selection, cx| {
+                            move |selection, window, cx| {
                                 let checked = match selection {
                                     ToggleState::Selected => true,
                                     ToggleState::Unselected => false,
                                     _ => return,
                                 };
 
-                                if cx.modifiers().secondary() {
-                                    callback(checked, range.clone(), cx);
+                                if window.modifiers().secondary() {
+                                    callback(checked, range.clone(), window, cx);
                                 }
                             }
                         })
@@ -206,7 +211,7 @@ fn render_markdown_list_item(
                 ),
             )
             .hover(|s| s.cursor_pointer())
-            .tooltip(|cx| {
+            .tooltip(|_, cx| {
                 InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
@@ -381,11 +386,11 @@ fn render_markdown_code_block(
         .icon_size(IconSize::Small)
         .on_click({
             let contents = parsed.contents.clone();
-            move |_, cx| {
+            move |_, _window, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
             }
         })
-        .tooltip(|cx| Tooltip::text("Copy code block", cx))
+        .tooltip(Tooltip::text("Copy code block"))
         .visible_on_hover("markdown-block");
 
     cx.with_common_p(div())
@@ -468,7 +473,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         .tooltip({
                             let links = links.clone();
                             let link_ranges = link_ranges.clone();
-                            move |idx, cx| {
+                            move |idx, _, cx| {
                                 for (ix, range) in link_ranges.iter().enumerate() {
                                     if range.contains(&idx) {
                                         return Some(LinkPreview::new(&links[ix].to_string(), cx));
@@ -479,13 +484,13 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         })
                         .on_click(
                             link_ranges,
-                            move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-                                Link::Web { url } => window_cx.open_url(url),
+                            move |clicked_range_ix, window, cx| match &links[clicked_range_ix] {
+                                Link::Web { url } => cx.open_url(url),
                                 Link::Path { path, .. } => {
                                     if let Some(workspace) = &workspace {
-                                        _ = workspace.update(window_cx, |workspace, cx| {
+                                        _ = workspace.update(cx, |workspace, cx| {
                                             workspace
-                                                .open_abs_path(path.clone(), false, cx)
+                                                .open_abs_path(path.clone(), false, window, cx)
                                                 .detach();
                                         });
                                     }
@@ -516,7 +521,7 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     }))
                     .tooltip({
                         let link = image.link.clone();
-                        move |cx| {
+                        move |_, cx| {
                             InteractiveMarkdownElementTooltip::new(
                                 Some(link.to_string()),
                                 "open image",
@@ -528,15 +533,15 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     .on_click({
                         let workspace = workspace_clone.clone();
                         let link = image.link.clone();
-                        move |_, cx| {
-                            if cx.modifiers().secondary() {
+                        move |_, window, cx| {
+                            if window.modifiers().secondary() {
                                 match &link {
                                     Link::Web { url } => cx.open_url(url),
                                     Link::Path { path, .. } => {
                                         if let Some(workspace) = &workspace {
                                             _ = workspace.update(cx, |workspace, cx| {
                                                 workspace
-                                                    .open_abs_path(path.clone(), false, cx)
+                                                    .open_abs_path(path.clone(), false, window, cx)
                                                     .detach();
                                             });
                                         }
@@ -565,14 +570,10 @@ struct InteractiveMarkdownElementTooltip {
 }
 
 impl InteractiveMarkdownElementTooltip {
-    pub fn new(
-        tooltip_text: Option<String>,
-        action_text: &str,
-        cx: &mut WindowContext,
-    ) -> View<Self> {
+    pub fn new(tooltip_text: Option<String>, action_text: &str, cx: &mut App) -> Entity<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
-        cx.new_view(|_| Self {
+        cx.new(|_cx| Self {
             tooltip_text,
             action_text: action_text.to_string(),
         })
@@ -580,8 +581,8 @@ impl InteractiveMarkdownElementTooltip {
 }
 
 impl Render for InteractiveMarkdownElementTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        tooltip_container(cx, |el, _| {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        tooltip_container(window, cx, |el, _, _| {
             let secondary_modifier = Keystroke {
                 modifiers: Modifiers::secondary_key(),
                 ..Default::default()

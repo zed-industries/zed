@@ -7,7 +7,7 @@ use call::ActiveCall;
 use channel::{ChannelMembership, ChannelStore};
 use client::{ChannelId, User};
 use futures::future::try_join_all;
-use gpui::{BackgroundExecutor, Model, SharedString, TestAppContext};
+use gpui::{BackgroundExecutor, Entity, SharedString, TestAppContext};
 use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
@@ -1401,7 +1401,7 @@ struct ExpectedChannel {
 
 #[track_caller]
 fn assert_channel_invitations(
-    channel_store: &Model<ChannelStore>,
+    channel_store: &Entity<ChannelStore>,
     cx: &TestAppContext,
     expected_channels: &[ExpectedChannel],
 ) {
@@ -1423,7 +1423,7 @@ fn assert_channel_invitations(
 
 #[track_caller]
 fn assert_channels(
-    channel_store: &Model<ChannelStore>,
+    channel_store: &Entity<ChannelStore>,
     cx: &TestAppContext,
     expected_channels: &[ExpectedChannel],
 ) {
@@ -1444,7 +1444,7 @@ fn assert_channels(
 
 #[track_caller]
 fn assert_channels_list_shape(
-    channel_store: &Model<ChannelStore>,
+    channel_store: &Entity<ChannelStore>,
     cx: &TestAppContext,
     expected_channels: &[(ChannelId, usize)],
 ) {

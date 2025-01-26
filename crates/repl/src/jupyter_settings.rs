@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use editor::EditorSettings;
-use gpui::AppContext;
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -12,7 +12,7 @@ pub struct JupyterSettings {
 }
 
 impl JupyterSettings {
-    pub fn enabled(cx: &AppContext) -> bool {
+    pub fn enabled(cx: &App) -> bool {
         // In order to avoid a circular dependency between `editor` and `repl` crates,
         // we put the `enable` flag on its settings.
         // This allows the editor to set up context for key bindings/actions.
@@ -43,7 +43,7 @@ impl Settings for JupyterSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _cx: &mut gpui::AppContext,
+        _cx: &mut gpui::App,
     ) -> anyhow::Result<Self>
     where
         Self: Sized,
