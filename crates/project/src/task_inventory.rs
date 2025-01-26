@@ -137,7 +137,7 @@ impl Inventory {
             task.resolved_label == base_task.resolved_label && source == task_source
         }) {
             return Err(anyhow::anyhow!(
-                "couldn't find with label {} in available tasks",
+                "Couldn't find task with label '{}' in tasks",
                 base_task.resolved_label
             ));
         }
@@ -171,13 +171,15 @@ impl Inventory {
 
         let mut dep_graph = Graph::new();
 
+        let global_source = Self::global_task_source();
+
         for ((source, _), (node_idx, _, pre, _)) in &nodes {
             dep_graph.add_node(*node_idx);
 
             for pre_label in pre {
                 if let Some(node) = nodes.get(&(*source, *pre_label)) {
                     dep_graph.add_edge(*node_idx, node.0);
-                } else if let Some(node) = nodes.get(&(&Self::global_task_source(), *pre_label)) {
+                } else if let Some(node) = nodes.get(&(&global_source, *pre_label)) {
                     dep_graph.add_edge(*node_idx, node.0)
                 }
             }
