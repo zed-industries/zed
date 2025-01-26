@@ -18,9 +18,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    Action, App, AppContext as _, Application, AsyncApp, DismissEvent, UpdateGlobal as _,
-};
+use gpui::{Action, App, AppContext as _, Application, AsyncApp, DismissEvent, UpdateGlobal as _};
 
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
@@ -815,10 +813,7 @@ async fn installation_id() -> Result<IdType> {
     Ok(IdType::New(installation_id))
 }
 
-async fn restore_or_create_workspace(
-    app_state: Arc<AppState>,
-    cx: &mut AsyncApp,
-) -> Result<()> {
+async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         for location in locations {
             match location {

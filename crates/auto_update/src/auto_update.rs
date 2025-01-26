@@ -3,8 +3,7 @@ use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
-    actions, App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task,
-    Window,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;

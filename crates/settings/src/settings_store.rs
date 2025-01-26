@@ -178,9 +178,8 @@ pub struct SettingsStore {
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
     )>,
     _setting_file_updates: Task<()>,
-    setting_file_updates_tx: mpsc::UnboundedSender<
-        Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>,
-    >,
+    setting_file_updates_tx:
+        mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
 }
 
 #[derive(Clone)]

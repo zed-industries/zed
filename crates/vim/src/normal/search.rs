@@ -573,6 +573,7 @@ mod test {
     };
     use editor::EditorSettings;
     use editor::{display_map::DisplayRow, DisplayPoint};
+
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;

@@ -7,12 +7,8 @@ use project::Project;
 
 use crate::ServerCommand;
 
-pub type ContextServerFactory = Arc<
-    dyn Fn(Entity<Project>, &AsyncApp) -> Task<Result<ServerCommand>>
-        + Send
-        + Sync
-        + 'static,
->;
+pub type ContextServerFactory =
+    Arc<dyn Fn(Entity<Project>, &AsyncApp) -> Task<Result<ServerCommand>> + Send + Sync + 'static>;
 
 struct GlobalContextServerFactoryRegistry(Entity<ContextServerFactoryRegistry>);
 

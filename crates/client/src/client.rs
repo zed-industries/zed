@@ -199,9 +199,8 @@ pub struct Client {
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
-    authenticate: RwLock<
-        Option<Box<dyn 'static + Send + Sync + Fn(&AsyncApp) -> Task<Result<Credentials>>>>,
-    >,
+    authenticate:
+        RwLock<Option<Box<dyn 'static + Send + Sync + Fn(&AsyncApp) -> Task<Result<Credentials>>>>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -883,11 +882,7 @@ impl Client {
         }
     }
 
-    async fn set_connection(
-        self: &Arc<Self>,
-        conn: Connection,
-        cx: &AsyncApp,
-    ) -> Result<()> {
+    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncApp) -> Result<()> {
         let executor = cx.background_executor();
         log::debug!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
@@ -1174,10 +1169,7 @@ impl Client {
         })
     }
 
-    pub fn authenticate_with_browser(
-        self: &Arc<Self>,
-        cx: &AsyncApp,
-    ) -> Task<Result<Credentials>> {
+    pub fn authenticate_with_browser(self: &Arc<Self>, cx: &AsyncApp) -> Task<Result<Credentials>> {
         let http = self.http.clone();
         let this = self.clone();
         cx.spawn(|cx| async move {
@@ -1528,11 +1520,7 @@ impl Client {
         }
     }
 
-    fn handle_message(
-        self: &Arc<Client>,
-        message: Box<dyn AnyTypedEnvelope>,
-        cx: &AsyncApp,
-    ) {
+    fn handle_message(self: &Arc<Client>, message: Box<dyn AnyTypedEnvelope>, cx: &AsyncApp) {
         let sender_id = message.sender_id();
         let request_id = message.message_id();
         let type_name = message.payload_type_name();

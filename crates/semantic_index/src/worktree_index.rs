@@ -6,9 +6,7 @@ use anyhow::Result;
 use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
-use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Subscription, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::LanguageRegistry;
 use log;
 use project::{UpdatedEntriesSet, Worktree};

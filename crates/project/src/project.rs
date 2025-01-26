@@ -48,8 +48,8 @@ use ::git::{
     status::FileStatus,
 };
 use gpui::{
-    AnyEntity, App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity,
-    EventEmitter, Hsla, SharedString, Task, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter,
+    Hsla, SharedString, Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{

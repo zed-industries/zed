@@ -7,8 +7,8 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent,
-    Entity, EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
+    percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity,
+    EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
     SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, WeakEntity,
 };
 
@@ -425,11 +425,7 @@ pub struct SshClientDelegate {
 }
 
 impl remote::SshClientDelegate for SshClientDelegate {
-    fn ask_password(
-        &self,
-        prompt: String,
-        cx: &mut AsyncApp,
-    ) -> oneshot::Receiver<Result<String>> {
+    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
         let (tx, rx) = oneshot::channel();
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {

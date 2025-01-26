@@ -421,11 +421,7 @@ impl AssistantEditKind {
 }
 
 impl AssistantPatch {
-    pub async fn resolve(
-        &self,
-        project: Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> ResolvedPatch {
+    pub async fn resolve(&self, project: Entity<Project>, cx: &mut AsyncApp) -> ResolvedPatch {
         let mut resolve_tasks = Vec::new();
         for (ix, edit) in self.edits.iter().enumerate() {
             if let Ok(edit) = edit.as_ref() {

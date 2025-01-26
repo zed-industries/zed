@@ -7,9 +7,7 @@ use client::{
 };
 use collections::HashSet;
 use futures::lock::Mutex;
-use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use rand::prelude::*;
 use rpc::AnyProtoClient;
 use std::{

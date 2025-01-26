@@ -1581,10 +1581,7 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub async fn update_ssh_clients(
-        this: &WeakEntity<Self>,
-        cx: &mut AsyncApp,
-    ) -> Result<()> {
+    pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
             this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
             this.ssh_clients.values().cloned().collect::<Vec<_>>()
