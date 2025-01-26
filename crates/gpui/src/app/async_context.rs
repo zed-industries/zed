@@ -190,7 +190,7 @@ impl AsyncApp {
 
     /// Reads the global state of the specified type, passing it to the given callback.
     ///
-    /// Similar to [`AsyncAppContext::read_global`], but returns an error instead of panicking
+    /// Similar to [`AsyncApp::read_global`], but returns an error instead of panicking
     /// if no state of the specified type has been assigned.
     ///
     /// Returns an error if no state of the specified type has been assigned the `AppContext` has been dropped.

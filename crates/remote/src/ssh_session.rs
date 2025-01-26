@@ -2382,7 +2382,7 @@ mod fake {
             Self(cx.to_async())
         }
 
-        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncAppContext
+        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncApp
         fn get(&self, _: &AsyncApp) -> AsyncApp {
             self.0.clone()
         }

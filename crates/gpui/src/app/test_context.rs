@@ -341,7 +341,7 @@ impl TestAppContext {
         lock.update(|cx| cx.update_global(update))
     }
 
-    /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
+    /// Returns an `AsyncApp` which can be used to run tasks that expect to be on a background
     /// thread on the current thread in tests.
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {

@@ -1018,7 +1018,7 @@ impl App {
             Ok(result)
         })
     }
-    /// Creates an `AsyncAppContext`, which can be cloned and has a static lifetime
+    /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncApp {
         AsyncApp {
@@ -1039,7 +1039,7 @@ impl App {
     }
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
-    /// with [AsyncAppContext], which allows the application state to be accessed across await points.
+    /// with [AsyncApp], which allows the application state to be accessed across await points.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
