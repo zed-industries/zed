@@ -5713,8 +5713,8 @@ impl LspStore {
 
     pub fn document_diagnostic(
         &mut self,
-        buffer_handle: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
@@ -6162,58 +6162,7 @@ impl LspStore {
         }
     }
 
-fn pull_diagnostic(
-        &mut self,
-        language_server_id: LanguageServerId,
-        buffer_handle: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-        const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
-
-        let previous_result_id = match self.as_local()?.language_servers.get(&language_server_id) {
-            Some(LanguageServerState::Running {
-                previous_document_diagnostic_result_id,
-                ..
-            }) => previous_document_diagnostic_result_id.clone(),
-            _ => None,
-        };
-
-        let lsp_request_task = self.request_lsp(
-            buffer_handle.clone(),
-            LanguageServerToQuery::Other(language_server_id),
-            GetDocumentDiagnostics {
-                language_server_id,
-                previous_result_id,
-            },
-            cx,
-        );
-
-        let snapshot =
-            self.buffer_snapshot_for_lsp_version(&buffer_handle, language_server_id, None, cx);
-
-        cx.spawn(move |_, mut cx| async move {
-            let snapshot = snapshot?;
-
-            cx.background_executor()
-                .timer(PULL_DIAGNOSTICS_DEBOUNCE)
-                .await;
-
-            let diagnostics = lsp_request_task
-                .await
-                .context("Unable to pull document diagnostic")
-                .unwrap_or_default();
-
-            buffer_handle.update(&mut cx, |buffer, cx| {
-                let set = DiagnosticSet::from_sorted_entries(diagnostics, &snapshot);
-                buffer.update_diagnostics(language_server_id, set, cx);
-            })
-        })
-        .detach();
-
-        None
-    }
-    
-    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &AppContext) -> DiagnosticSummary {
+    pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
         for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {
             summary.error_count += path_summary.error_count;
@@ -8204,9 +8153,9 @@ fn pull_diagnostic(
     }
 
     async fn handle_refresh_documents_diagnostics(
-        this: Model<Self>,
+        this: Entity<Self>,
         _: TypedEnvelope<proto::RefreshDocumentsDiagnostics>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
             cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);

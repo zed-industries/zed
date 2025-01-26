@@ -3666,20 +3666,20 @@ impl Project {
 
     pub fn document_diagnostics(
         &mut self,
-        buffer_handle: Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.document_diagnostic(buffer_handle, cx)
         })
     }
-    
+
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,
         params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Result<(), anyhow::Error> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.update_diagnostics(language_server_id, params, disk_based_sources, cx)

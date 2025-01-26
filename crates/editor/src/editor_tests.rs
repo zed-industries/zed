@@ -20493,7 +20493,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     );
 
     // Editing should trigger diagnostics
-    cx.update_editor(|editor, cx| editor.handle_input("2", cx));
+    cx.update_editor(|editor, window, cx| editor.handle_input("2", window, cx));
     cx.executor().run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(300));
     cx.executor().run_until_parked();
@@ -20504,8 +20504,8 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     );
 
     // Moving cursor should not trigger diagnostic request
-    cx.update_editor(|editor, cx| {
-        editor.change_selections(None, cx, |s| {
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(None, window, cx, |s| {
             s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
         });
     });
@@ -20520,7 +20520,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
 
     // Multiple rapid edits should be debounced
     for _ in 0..5 {
-        cx.update_editor(|editor, cx| editor.handle_input("x", cx));
+        cx.update_editor(|editor, window, cx| editor.handle_input("x", window, cx));
     }
     cx.executor().run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(300));

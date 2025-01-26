@@ -3813,7 +3813,7 @@ impl LspCommand for GetDocumentDiagnostics {
         path: &Path,
         _: &Buffer,
         language_server: &Arc<LanguageServer>,
-        _: &AppContext,
+        _: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
         let identifier = match language_server.capabilities().diagnostic_provider {
             Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier.clone(),
@@ -3837,10 +3837,10 @@ impl LspCommand for GetDocumentDiagnostics {
     async fn response_from_lsp(
         self,
         message: lsp::DocumentDiagnosticReportResult,
-        lsp_store: Model<LspStore>,
-        buffer: Model<Buffer>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let uri = buffer.read_with(&cx, |buffer, cx| {
             buffer
@@ -3906,9 +3906,9 @@ impl LspCommand for GetDocumentDiagnostics {
 
     async fn from_proto(
         message: proto::GetDocumentDiagnostics,
-        _: Model<LspStore>,
-        buffer: Model<Buffer>,
-        mut cx: AsyncAppContext,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         buffer
             .update(&mut cx, |buffer, _| {
@@ -3923,7 +3923,7 @@ impl LspCommand for GetDocumentDiagnostics {
         _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> proto::GetDocumentDiagnosticsResponse {
         if let Some(response) = response {
             let diagnostics = response
@@ -3961,9 +3961,9 @@ impl LspCommand for GetDocumentDiagnostics {
     async fn response_from_proto(
         self,
         response: proto::GetDocumentDiagnosticsResponse,
-        _: Model<LspStore>,
-        _: Model<Buffer>,
-        _: AsyncAppContext,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
     ) -> Result<Self::Response> {
         let uri = lsp::Url::from_str(response.uri.as_str())
             .with_context(|| format!("Failed to parse URI: {}", response.uri))?;
