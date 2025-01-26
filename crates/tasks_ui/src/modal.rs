@@ -603,7 +603,7 @@ mod tests {
     use project::{ContextProviderWithTasks, FakeFs, Project};
     use serde_json::json;
     use task::TaskTemplates;
-    use util::{path, separator};
+    use util::path;
     use workspace::CloseInactiveTabsAndPanes;
 
     use crate::{modal::Spawn, tests::init_test};

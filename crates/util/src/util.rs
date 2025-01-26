@@ -50,7 +50,7 @@ macro_rules! debug_panic {
 ///
 /// # Examples
 /// ```rust
-/// use util::{path, separator};
+/// use util::path;
 ///
 /// let path = path!("/Users/user/file.txt");
 /// assert_eq!(path, "C:/Users/user/file.txt");
@@ -66,7 +66,7 @@ macro_rules! path {
         concat!("C:", $path)
     };
     ($path:literal, $index:expr) => {
-        concat!("C:", separator!($path, $index))
+        concat!("C:", util::separator!($path, $index))
     };
 }
 
@@ -77,7 +77,7 @@ macro_rules! path {
 ///
 /// # Examples
 /// ```rust
-/// use util::{path, separator};
+/// use util::path;
 ///
 /// let path = path!("/Users/user/file.txt");
 /// assert_eq!(path, "C:/Users/user/file.txt");
