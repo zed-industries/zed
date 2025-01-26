@@ -746,6 +746,10 @@ impl LanguageServer {
                         related_information: Some(true),
                         ..Default::default()
                     }),
+                    diagnostic: Some(DiagnosticClientCapabilities {
+                        related_document_support: Some(true),
+                        dynamic_registration: Some(false)
+                    }),
                     formatting: Some(DynamicRegistrationClientCapabilities {
                         dynamic_registration: Some(true),
                     }),

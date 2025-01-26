@@ -5001,14 +5001,14 @@ impl LspStore {
         let uri = lsp::Url::from_file_path(abs_path).unwrap();
         let next_snapshot = buffer.text_snapshot();
 
-        let language_servers: Vec<_> = self
+        let language_servers = self
             .as_local()
             .unwrap()
             .language_servers_for_buffer(buffer, cx)
             .map(|i| i.1.clone())
-            .collect();
+            .collect_vec();
 
-        for language_server in language_servers {
+        for language_server in &language_servers {
             let language_server = language_server.clone();
 
             let buffer_snapshots = self
@@ -5090,7 +5090,105 @@ impl LspStore {
                 .log_err();
         }
 
+        for server in language_servers {
+            self.update_document_diagnostics(
+                server,
+                uri.clone(),
+                cx
+            );
+        }
+
         None
+    }
+
+    pub fn update_document_diagnostics(
+        &mut self,
+        server: Arc<LanguageServer>,
+        uri: Url,
+        cx: &mut Context<Self>
+    ) {
+        cx.spawn(|lsp_store, mut cx| async move {
+            let Some(capabilities) = server.capabilities().diagnostic_provider else {
+                return
+            };
+
+            let identifier = match capabilities {
+                lsp::DiagnosticServerCapabilities::Options(options) => options.identifier,
+                lsp::DiagnosticServerCapabilities::RegistrationOptions(options) => {
+                    options.diagnostic_options.identifier
+                }
+            };
+
+            let scoped_diagnostic_req = server
+                .request::<lsp::request::DocumentDiagnosticRequest>(
+                    lsp::DocumentDiagnosticParams {
+                        identifier,
+                        text_document: lsp::TextDocumentIdentifier { uri: uri.clone() },
+                        previous_result_id: None,
+                        partial_result_params: lsp::PartialResultParams::default(),
+                        work_done_progress_params: lsp::WorkDoneProgressParams::default()
+                    }
+                )
+                .await
+                .log_err();
+
+            let Some(diagnostic_result) = scoped_diagnostic_req else {
+                return
+            };
+
+
+            let mut diagnostics = vec![];
+
+            use lsp::DocumentDiagnosticReportResult::*;
+            use lsp::DocumentDiagnosticReport::*;
+            match diagnostic_result {
+                Report(Full(report)) => {
+                    diagnostics.push((uri, report.full_document_diagnostic_report.items));
+                    if let Some(related) = report.related_documents {
+                        for (uri, kind) in related {
+                            let lsp::DocumentDiagnosticReportKind::Full(report) = kind else {
+                                continue;
+                            };
+
+                            diagnostics.push((uri, report.items));
+                        }
+                    }
+                }
+                Report(Unchanged(related)) => {
+                    if let Some(other_docs) = related.related_documents {
+                        for (uri, kind) in other_docs {
+                            match kind {
+                                lsp::DocumentDiagnosticReportKind::Full(report) => {
+                                    diagnostics.push((uri, report.items));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => ()
+            }
+
+            for (uri, diagnostics) in diagnostics {
+                let params = lsp::PublishDiagnosticsParams {
+                    diagnostics,
+                    uri: uri.clone(),
+                    version: None
+                };
+
+                let server_id = server.server_id();
+
+                lsp_store.update(&mut cx, |this, cx| {
+                    let disk_sources = if let Some(adapter) = this.language_server_adapter_for_id(server_id) {
+                        adapter.disk_based_diagnostic_sources.clone()
+                    } else {
+                        vec![]
+                    };
+                    this.update_diagnostics(server_id, params, &disk_sources, cx)
+                }).log_err();
+            }
+
+        }).detach();
     }
 
     pub fn on_buffer_saved(
@@ -5101,9 +5199,8 @@ impl LspStore {
         let file = File::from_dyn(buffer.read(cx).file())?;
         let worktree_id = file.worktree_id(cx);
         let abs_path = file.as_local()?.abs_path(cx);
-        let text_document = lsp::TextDocumentIdentifier {
-            uri: lsp::Url::from_file_path(abs_path).log_err()?,
-        };
+        let uri = lsp::Url::from_file_path(abs_path).log_err()?;
+        let text_document = lsp::TextDocumentIdentifier { uri: uri.clone() };
         let local = self.as_local()?;
 
         for server in local.language_servers_for_worktree(worktree_id) {
@@ -5124,8 +5221,16 @@ impl LspStore {
             }
         }
 
-        for language_server_id in local.language_server_ids_for_buffer(buffer.read(cx), cx) {
-            self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
+        let language_servers = buffer.update(cx, |buffer, cx| {
+            local
+                .language_servers_for_buffer(buffer, cx)
+                .map(|(_, adapter)| adapter.clone())
+                .collect_vec()
+        });
+
+        for server in language_servers {
+            self.simulate_disk_based_diagnostics_events_if_needed(server.server_id(), cx);
+            self.update_document_diagnostics(server.clone(), uri.clone(), cx);
         }
 
         None
