@@ -675,7 +675,7 @@ impl EventEmitter<()> for NotebookEditor {}
 // impl EventEmitter<ToolbarItemEvent> for NotebookControls {}
 
 // impl Render for NotebookControls {
-//     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+//     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 //         div().child("notebook controls")
 //     }
 // }
@@ -684,7 +684,7 @@ impl EventEmitter<()> for NotebookEditor {}
 //     fn set_active_pane_item(
 //         &mut self,
 //         active_pane_item: Option<&dyn workspace::ItemHandle>,
-//         window: &mut Window, cx: &mut ModelContext<Self>,
+//         window: &mut Window, cx: &mut Context<Self>,
 //     ) -> workspace::ToolbarItemLocation {
 //         cx.notify();
 //         self.active_item = None;
@@ -696,7 +696,7 @@ impl EventEmitter<()> for NotebookEditor {}
 //         ToolbarItemLocation::PrimaryLeft
 //     }
 
-//     fn pane_focus_update(&mut self, pane_focused: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {
+//     fn pane_focus_update(&mut self, pane_focused: bool, _window: &mut Window, _cx: &mut Context<Self>) {
 //         self.pane_focused = pane_focused;
 //     }
 // }

@@ -3,7 +3,7 @@ use anyhow::Result;
 use client::Client;
 use collections::{HashMap, HashSet};
 use futures::{FutureExt, StreamExt};
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Global, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task, WeakEntity};
 use postage::stream::Stream;
 use rpc::proto;
 use std::{sync::Arc, time::Duration};
@@ -133,7 +133,7 @@ impl Manager {
     async fn maintain_connection(
         this: WeakEntity<Self>,
         client: Arc<Client>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {

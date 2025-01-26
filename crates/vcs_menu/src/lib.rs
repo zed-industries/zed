@@ -2,9 +2,9 @@ use anyhow::{anyhow, Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    rems, AnyElement, App, AsyncAppContext, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    Styled, Subscription, Task, WeakEntity, Window,
+    rems, AnyElement, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -117,7 +117,7 @@ impl BranchListDelegate {
     async fn new(
         workspace: Entity<Workspace>,
         branch_name_trailoff_after: usize,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Result<Self> {
         let all_branches_request = cx.update(|cx| {
             let project = workspace.read(cx).project().read(cx);

@@ -18,9 +18,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    Action, App, AppContext as _, Application, AsyncAppContext, DismissEvent, UpdateGlobal as _,
-};
+use gpui::{Action, App, AppContext as _, Application, AsyncApp, DismissEvent, UpdateGlobal as _};
 
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
@@ -129,7 +127,7 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     })
 }
 
-fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncAppContext) {
+fn fail_to_open_window_async(e: anyhow::Error, cx: &mut AsyncApp) {
     cx.update(|cx| fail_to_open_window(e, cx)).log_err();
 }
 
@@ -760,7 +758,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncAppContext) -> Result<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
         if *client::ZED_DEVELOPMENT_AUTH {
             client.authenticate_and_connect(true, cx).await?;
@@ -815,10 +813,7 @@ async fn installation_id() -> Result<IdType> {
     Ok(IdType::New(installation_id))
 }
 
-async fn restore_or_create_workspace(
-    app_state: Arc<AppState>,
-    cx: &mut AsyncAppContext,
-) -> Result<()> {
+async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         for location in locations {
             match location {
@@ -874,7 +869,7 @@ async fn restore_or_create_workspace(
 }
 
 pub(crate) async fn restorable_workspace_locations(
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
     app_state: &Arc<AppState>,
 ) -> Option<Vec<SerializedWorkspaceLocation>> {
     let mut restore_behavior = cx

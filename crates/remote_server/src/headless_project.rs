@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, PromptLevel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -308,7 +308,7 @@ impl HeadlessProject {
     pub async fn handle_add_worktree(
         this: Entity<Self>,
         message: TypedEnvelope<proto::AddWorktree>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
         let path = shellexpand::tilde(&message.payload.path).to_string();
@@ -381,7 +381,7 @@ impl HeadlessProject {
     pub async fn handle_remove_worktree(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RemoveWorktree>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         this.update(&mut cx, |this, cx| {
@@ -395,7 +395,7 @@ impl HeadlessProject {
     pub async fn handle_open_buffer_by_path(
         this: Entity<Self>,
         message: TypedEnvelope<proto::OpenBufferByPath>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
@@ -428,7 +428,7 @@ impl HeadlessProject {
     pub async fn handle_open_new_buffer(
         this: Entity<Self>,
         _message: TypedEnvelope<proto::OpenNewBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
@@ -454,7 +454,7 @@ impl HeadlessProject {
     pub async fn handle_open_server_settings(
         this: Entity<Self>,
         _: TypedEnvelope<proto::OpenServerSettings>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let settings_path = paths::settings_file();
         let (worktree, path) = this
@@ -507,7 +507,7 @@ impl HeadlessProject {
     pub async fn handle_find_search_candidates(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
@@ -543,10 +543,10 @@ impl HeadlessProject {
     pub async fn handle_list_remote_directory(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
-        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
 
         let mut entries = Vec::new();
         let mut response = fs.read_dir(Path::new(&expanded)).await?;
@@ -561,9 +561,9 @@ impl HeadlessProject {
     pub async fn handle_get_path_metadata(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetPathMetadata>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
-        let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
+        let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
 
         let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
@@ -579,7 +579,7 @@ impl HeadlessProject {
     pub async fn handle_shutdown_remote_server(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::ShutdownRemoteServer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         cx.spawn(|cx| async move {
             cx.update(|cx| {
@@ -597,7 +597,7 @@ impl HeadlessProject {
     pub async fn handle_ping(
         _this: Entity<Self>,
         _envelope: TypedEnvelope<proto::Ping>,
-        _cx: AsyncAppContext,
+        _cx: AsyncApp,
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})

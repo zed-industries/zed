@@ -12,7 +12,7 @@ use futures::{
     TryStreamExt as _,
 };
 use gpui::{
-    AnyElement, AnyView, App, AsyncAppContext, Context, Entity, EventEmitter, Global, ReadGlobal,
+    AnyElement, AnyView, App, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal,
     Subscription, Task,
 };
 use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
@@ -131,7 +131,7 @@ impl RefreshLlmTokenListener {
     async fn handle_refresh_llm_token(
         this: Entity<Self>,
         _: TypedEnvelope<proto::RefreshLlmToken>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
     }
@@ -621,7 +621,7 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _cx: &AsyncAppContext,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         match &self.model {
             CloudModel::Anthropic(model) => {
@@ -716,7 +716,7 @@ impl LanguageModel for CloudLanguageModel {
         tool_name: String,
         tool_description: String,
         input_schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();

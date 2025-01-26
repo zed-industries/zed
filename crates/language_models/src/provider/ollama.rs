@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, App, AsyncAppContext, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::LanguageModelCompletionEvent;
 use language_model::{
@@ -263,7 +263,7 @@ impl OllamaLanguageModel {
     fn request_completion(
         &self,
         request: ChatRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
         let http_client = self.http_client.clone();
 
@@ -323,7 +323,7 @@ impl LanguageModel for OllamaLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = self.to_ollama_request(request);
 
@@ -370,7 +370,7 @@ impl LanguageModel for OllamaLanguageModel {
         tool_name: String,
         tool_description: String,
         schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         use ollama::{OllamaFunctionTool, OllamaTool};
         let function = OllamaFunctionTool {

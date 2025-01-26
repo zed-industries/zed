@@ -33,7 +33,7 @@ impl IndentGuidesStory {
 }
 
 impl Render for IndentGuidesStory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title("Indent guides"))
             .child(

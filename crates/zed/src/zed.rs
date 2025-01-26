@@ -23,10 +23,9 @@ use feature_flags::FeatureFlagAppExt;
 use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, Action, App, AppContext as _, AsyncAppContext, Context, DismissEvent,
-    Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions,
-    PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind,
-    WindowOptions,
+    actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
+    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
+    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -1534,7 +1533,7 @@ fn open_settings_file(
     .detach_and_log_err(cx);
 }
 
-async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
+async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
         .await
 }

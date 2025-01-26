@@ -1018,10 +1018,10 @@ impl App {
             Ok(result)
         })
     }
-    /// Creates an `AsyncAppContext`, which can be cloned and has a static lifetime
+    /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
-    pub fn to_async(&self) -> AsyncAppContext {
-        AsyncAppContext {
+    pub fn to_async(&self) -> AsyncApp {
+        AsyncApp {
             app: self.this.clone(),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
@@ -1039,8 +1039,8 @@ impl App {
     }
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
-    /// with [AsyncAppContext], which allows the application state to be accessed across await points.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
+    /// with [AsyncApp], which allows the application state to be accessed across await points.
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
@@ -1598,11 +1598,11 @@ impl AppContext for App {
         })
     }
 
-    fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
         Reservation(self.entities.reserve())
     }
 
-    fn insert_model<T: 'static>(
+    fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
         build_model: impl FnOnce(&mut Context<'_, T>) -> T,
@@ -1616,7 +1616,7 @@ impl AppContext for App {
 
     /// Updates the entity referenced by the given model. The function is passed a mutable reference to the
     /// entity along with a `ModelContext` for the entity.
-    fn update_model<T: 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         model: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
@@ -1632,7 +1632,7 @@ impl AppContext for App {
         })
     }
 
-    fn read_model<T, R>(
+    fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
         read: impl FnOnce(&T, &App) -> R,

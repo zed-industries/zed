@@ -573,6 +573,7 @@ mod test {
     };
     use editor::EditorSettings;
     use editor::{display_map::DisplayRow, DisplayPoint};
+
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
@@ -669,7 +670,7 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        cx.update_model(search_bar, |bar, _window, cx| {
+        cx.update_entity(search_bar, |bar, _window, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 

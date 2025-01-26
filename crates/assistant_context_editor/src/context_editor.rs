@@ -1217,7 +1217,7 @@ impl ContextEditor {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
-        let editor = cx.new_window_model(|window, cx| {
+        let editor = cx.new_window_entity(|window, cx| {
             let editor = ProposedChangesEditor::new(
                 patch.title.clone(),
                 resolved_patch

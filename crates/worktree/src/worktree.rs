@@ -26,7 +26,7 @@ use git::{
     GitHostingProviderRegistry, COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
 };
 use gpui::{
-    App, AppContext as _, AsyncAppContext, BackgroundExecutor, Context, Entity, EventEmitter, Task,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Task,
 };
 use ignore::IgnoreStack;
 use language::DiskState;
@@ -544,7 +544,7 @@ impl Worktree {
         visible: bool,
         fs: Arc<dyn Fs>,
         next_entry_id: Arc<AtomicUsize>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Entity<Self>> {
         let abs_path = path.into();
         let metadata = fs
@@ -1100,7 +1100,7 @@ impl Worktree {
     pub async fn handle_create_entry(
         this: Entity<Self>,
         request: proto::CreateProjectEntry,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
             (
@@ -1120,7 +1120,7 @@ impl Worktree {
     pub async fn handle_delete_entry(
         this: Entity<Self>,
         request: proto::DeleteProjectEntry,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             (
@@ -1142,7 +1142,7 @@ impl Worktree {
     pub async fn handle_expand_entry(
         this: Entity<Self>,
         request: proto::ExpandProjectEntry,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx)
@@ -1157,7 +1157,7 @@ impl Worktree {
     pub async fn handle_rename_entry(
         this: Entity<Self>,
         request: proto::RenameProjectEntry,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             (
@@ -1181,7 +1181,7 @@ impl Worktree {
     pub async fn handle_copy_entry(
         this: Entity<Self>,
         request: proto::CopyProjectEntry,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             let relative_worktree_source_path =
@@ -1919,7 +1919,7 @@ impl LocalWorktree {
                 })
                 .await
                 .log_err();
-            let mut refresh = cx.read_model(
+            let mut refresh = cx.read_entity(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
                 |this, _| {
                     Ok::<postage::barrier::Receiver, anyhow::Error>(
@@ -1939,7 +1939,7 @@ impl LocalWorktree {
                 .log_err();
 
             let this = this.upgrade().with_context(|| "Dropped worktree")?;
-            cx.read_model(&this, |this, _| {
+            cx.read_entity(&this, |this, _| {
                 paths_to_refresh
                     .iter()
                     .filter_map(|path| Some(this.entry_for_path(path)?.id))

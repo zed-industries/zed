@@ -3,7 +3,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
-use gpui::{AsyncAppContext, SharedString};
+use gpui::{AsyncApp, SharedString};
 use language::language_settings::language_settings;
 use language::LanguageName;
 use language::LanguageToolchainStore;
@@ -81,7 +81,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let node = delegate.which("node".as_ref()).await?;
         let (node_modules_path, _) = delegate
@@ -254,7 +254,7 @@ impl LspAdapter for PythonLspAdapter {
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
             .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
@@ -789,7 +789,7 @@ impl LspAdapter for PyLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let venv = toolchains
             .active_toolchain(
@@ -936,7 +936,7 @@ impl LspAdapter for PyLspAdapter {
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let toolchain = toolchains
             .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)

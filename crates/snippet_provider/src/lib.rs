@@ -13,7 +13,7 @@ use collections::{BTreeMap, BTreeSet, HashMap};
 use format::VSSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 pub use registry::*;
 use util::ResultExt;
 
@@ -64,7 +64,7 @@ pub struct Snippet {
 async fn process_updates(
     this: WeakEntity<SnippetProvider>,
     entries: Vec<PathBuf>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> Result<()> {
     let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
     for entry_path in entries {
@@ -114,7 +114,7 @@ async fn process_updates(
 async fn initial_scan(
     this: WeakEntity<SnippetProvider>,
     path: Arc<Path>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> Result<()> {
     let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
     let entries = fs.read_dir(&path).await;

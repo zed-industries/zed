@@ -126,7 +126,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    cx.update_model(search_bar, |bar, _, cx| {
+    cx.update_entity(search_bar, |bar, _, cx| {
         assert_eq!(bar.query(cx), "");
     })
 }
@@ -265,7 +265,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    cx.update_model(search_bar, |bar, _, cx| {
+    cx.update_entity(search_bar, |bar, _, cx| {
         assert_eq!(bar.query(cx), "cc");
     });
 

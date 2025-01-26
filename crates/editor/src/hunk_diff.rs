@@ -14,8 +14,8 @@ use std::{ops::Range, sync::Arc};
 use sum_tree::TreeMap;
 use text::OffsetRangeExt;
 use ui::{
-    prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
-    ModelContext, ParentElement, PopoverMenu, Styled, Tooltip, Window,
+    prelude::*, ActiveTheme, Context, Context, ContextMenu, IconButtonShape, InteractiveElement,
+    IntoElement, ParentElement, PopoverMenu, Styled, Tooltip, Window,
 };
 use util::RangeExt;
 use workspace::Item;
@@ -84,7 +84,7 @@ impl DiffMap {
         &mut self,
         change_set: Model<BufferChangeSet>,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.snapshot
@@ -216,7 +216,7 @@ impl Editor {
         &mut self,
         hovered_hunk: &HoveredHunk,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         let editor_snapshot = self.snapshot(window, cx);
         if let Some(diff_hunk) = to_diff_hunk(hovered_hunk, &editor_snapshot.buffer_snapshot) {
@@ -229,7 +229,7 @@ impl Editor {
         &mut self,
         _: &ToggleHunkDiff,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
         let selections = self.selections.all(cx);
@@ -240,7 +240,7 @@ impl Editor {
         &mut self,
         _: &ExpandAllHunkDiffs,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
         let display_rows_with_expanded_hunks = self
@@ -280,7 +280,7 @@ impl Editor {
         &mut self,
         hunks_to_toggle: Vec<MultiBufferDiffHunk>,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if self.diff_map.expand_all {
             return;
@@ -389,7 +389,7 @@ impl Editor {
         diff_base_buffer: Option<Model<Buffer>>,
         hunk: &HoveredHunk,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<()> {
         let buffer = self.buffer.clone();
         let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -491,7 +491,7 @@ impl Editor {
         &mut self,
         range: Range<Anchor>,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<()> {
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -518,7 +518,7 @@ impl Editor {
         &mut self,
         _: &ApplyAllDiffHunks,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
@@ -536,7 +536,7 @@ impl Editor {
         &mut self,
         _: &ApplyDiffHunk,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
         let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
@@ -572,7 +572,7 @@ impl Editor {
     fn hunk_header_block(
         &self,
         hunk: &HoveredHunk,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> BlockProperties<Anchor> {
         let is_branch_buffer = self
             .buffer
@@ -860,7 +860,7 @@ impl Editor {
         diff_base_buffer: Model<Buffer>,
         deleted_text_height: u32,
         window: &mut Window,
-        cx: &mut ModelContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> BlockProperties<Anchor> {
         let gutter_color = match hunk.status {
             DiffHunkStatus::Added => unreachable!(),
@@ -923,7 +923,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ModelContext<Editor>) -> bool {
+    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut Context<Editor>) -> bool {
         if self.diff_map.expand_all {
             return false;
         }
@@ -947,7 +947,7 @@ impl Editor {
         diff_map: &mut DiffMap,
         buffer_id: BufferId,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let diff_base_state = diff_map.diff_bases.get_mut(&buffer_id);
         let mut diff_base_buffer = None;
@@ -1119,7 +1119,7 @@ impl Editor {
         &mut self,
         position: Anchor,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
         let position = position.to_point(&snapshot.buffer_snapshot);
@@ -1147,7 +1147,7 @@ impl Editor {
         &mut self,
         position: Anchor,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let snapshot = self.snapshot(window, cx);
         let position = position.to_point(&snapshot.buffer_snapshot);
@@ -1212,7 +1212,7 @@ fn editor_with_deleted_text(
     deleted_color: Hsla,
     hunk: &HoveredHunk,
     window: &mut Window,
-    cx: &mut ModelContext<Editor>,
+    cx: &mut Context<Editor>,
 ) -> (u32, Model<Editor>) {
     let parent_editor = cx.model().downgrade();
     let editor = cx.new(|cx| {

@@ -306,7 +306,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
 
                 let parsed_content = cx
-                    .new_window_model(|window, cx| {
+                    .new_window_entity(|window, cx| {
                         let status_colors = cx.theme().status();
 
                         match local_diagnostic.diagnostic.severity {
@@ -556,7 +556,7 @@ async fn parse_blocks(
         .join("\n\n");
 
     let rendered_block = cx
-        .new_window_model(|window, cx| {
+        .new_window_entity(|window, cx| {
             let settings = ThemeSettings::get_global(cx);
             let ui_font_family = settings.ui_font.family.clone();
             let ui_font_fallbacks = settings.ui_font.fallbacks.clone();

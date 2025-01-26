@@ -11,9 +11,7 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
 use livekit_client_macos::{LocalAudioTrack, LocalTrackPublication, LocalVideoTrack, RoomUpdate};
 use postage::{sink::Sink, stream::Stream, watch};
@@ -276,7 +274,7 @@ impl Room {
         channel_id: ChannelId,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client
@@ -294,7 +292,7 @@ impl Room {
         room_id: u64,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client.request(proto::JoinRoom { id: room_id }).await?,
@@ -335,7 +333,7 @@ impl Room {
         response: proto::JoinRoomResponse,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
         let room = cx.new(|cx| {
@@ -416,7 +414,7 @@ impl Room {
     async fn maintain_connection(
         this: WeakEntity<Self>,
         client: Arc<Client>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {
@@ -697,7 +695,7 @@ impl Room {
     async fn handle_room_updated(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let room = envelope
             .payload

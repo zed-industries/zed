@@ -349,7 +349,7 @@ mod test {
     use futures::StreamExt;
     use indoc::indoc;
 
-    use gpui::ViewInputHandler;
+    use gpui::EntityInputHandler;
 
     use crate::{
         state::Mode,

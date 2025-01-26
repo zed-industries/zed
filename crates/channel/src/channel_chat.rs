@@ -7,9 +7,7 @@ use client::{
 };
 use collections::HashSet;
 use futures::lock::Mutex;
-use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use rand::prelude::*;
 use rpc::AnyProtoClient;
 use std::{
@@ -108,7 +106,7 @@ impl ChannelChat {
         channel_store: Entity<ChannelStore>,
         user_store: Entity<UserStore>,
         client: Arc<Client>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let channel_id = channel.id;
         let subscription = client.subscribe_to_entity(channel_id.0).unwrap();
@@ -325,7 +323,7 @@ impl ChannelChat {
     pub async fn load_history_since_message(
         chat: Entity<Self>,
         message_id: u64,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Option<usize> {
         loop {
             let step = chat
@@ -383,7 +381,7 @@ impl ChannelChat {
         rpc: Arc<Client>,
         proto_messages: Vec<proto::ChannelMessage>,
         loaded_all_messages: bool,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let loaded_messages = messages_from_proto(proto_messages, &user_store, cx).await?;
 
@@ -529,7 +527,7 @@ impl ChannelChat {
     async fn handle_message_sent(
         this: Entity<Self>,
         message: TypedEnvelope<proto::ChannelMessageSent>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
         let message = message
@@ -553,7 +551,7 @@ impl ChannelChat {
     async fn handle_message_removed(
         this: Entity<Self>,
         message: TypedEnvelope<proto::RemoveChannelMessage>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.message_removed(message.payload.message_id, cx)
@@ -564,7 +562,7 @@ impl ChannelChat {
     async fn handle_message_updated(
         this: Entity<Self>,
         message: TypedEnvelope<proto::ChannelMessageUpdate>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
         let message = message
@@ -713,7 +711,7 @@ impl ChannelChat {
 async fn messages_from_proto(
     proto_messages: Vec<proto::ChannelMessage>,
     user_store: &Entity<UserStore>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<SumTree<ChannelMessage>> {
     let messages = ChannelMessage::from_proto_vec(proto_messages, user_store, cx).await?;
     let mut result = SumTree::default();
@@ -725,7 +723,7 @@ impl ChannelMessage {
     pub async fn from_proto(
         message: proto::ChannelMessage,
         user_store: &Entity<UserStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let sender = user_store
             .update(cx, |user_store, cx| {
@@ -770,7 +768,7 @@ impl ChannelMessage {
     pub async fn from_proto_vec(
         proto_messages: Vec<proto::ChannelMessage>,
         user_store: &Entity<UserStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Vec<Self>> {
         let unique_user_ids = proto_messages
             .iter()

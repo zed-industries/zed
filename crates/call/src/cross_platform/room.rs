@@ -13,7 +13,7 @@ use client::{
 use collections::{BTreeMap, HashMap, HashSet};
 use fs::Fs;
 use futures::{FutureExt, StreamExt};
-use gpui::{App, AppContext, AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
 #[cfg(not(all(target_os = "windows", target_env = "gnu")))]
 use livekit::{
@@ -218,7 +218,7 @@ impl Room {
         channel_id: ChannelId,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client
@@ -236,7 +236,7 @@ impl Room {
         room_id: u64,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client.request(proto::JoinRoom { id: room_id }).await?,
@@ -277,7 +277,7 @@ impl Room {
         response: proto::JoinRoomResponse,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
         let room = cx.new(|cx| {
@@ -358,7 +358,7 @@ impl Room {
     async fn maintain_connection(
         this: WeakEntity<Self>,
         client: Arc<Client>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {
@@ -639,7 +639,7 @@ impl Room {
     async fn handle_room_updated(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RoomUpdated>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let room = envelope
             .payload
@@ -1318,7 +1318,7 @@ impl Room {
     }
 
     #[cfg(all(target_os = "windows", target_env = "gnu"))]
-    pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn share_microphone(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("MinGW is not supported yet")))
     }
 
@@ -1626,7 +1626,7 @@ impl Room {
 #[cfg(all(target_os = "windows", target_env = "gnu"))]
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    cx: &mut ModelContext<'_, Room>,
+    cx: &mut Context<'_, Room>,
 ) {
 }
 

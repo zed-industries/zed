@@ -1,5 +1,5 @@
 use crate::{
-    Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncAppContext, AvailableSpace,
+    Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, DrawPhase, Drawable, Element,
     Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
@@ -40,30 +40,30 @@ impl AppContext for TestAppContext {
         app.new(build_model)
     }
 
-    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
         let mut app = self.app.borrow_mut();
-        app.reserve_model()
+        app.reserve_entity()
     }
 
-    fn insert_model<T: 'static>(
+    fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
         build_model: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
-        app.insert_model(reservation, build_model)
+        app.insert_entity(reservation, build_model)
     }
 
-    fn update_model<T: 'static, R>(
+    fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
-        app.update_model(handle, update)
+        app.update_entity(handle, update)
     }
 
-    fn read_model<T, R>(
+    fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
         read: impl FnOnce(&T, &App) -> R,
@@ -72,7 +72,7 @@ impl AppContext for TestAppContext {
         T: 'static,
     {
         let app = self.app.borrow();
-        app.read_model(handle, read)
+        app.read_entity(handle, read)
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
@@ -302,7 +302,7 @@ impl TestAppContext {
     }
 
     /// Run the given task on the main thread.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncAppContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
@@ -341,10 +341,10 @@ impl TestAppContext {
         lock.update(|cx| cx.update_global(update))
     }
 
-    /// Returns an `AsyncAppContext` which can be used to run tasks that expect to be on a background
+    /// Returns an `AsyncApp` which can be used to run tasks that expect to be on a background
     /// thread on the current thread in tests.
-    pub fn to_async(&self) -> AsyncAppContext {
-        AsyncAppContext {
+    pub fn to_async(&self) -> AsyncApp {
+        AsyncApp {
             app: Rc::downgrade(&self.app),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
@@ -855,19 +855,19 @@ impl AppContext for VisualTestContext {
         self.cx.new(build_model)
     }
 
-    fn reserve_model<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
-        self.cx.reserve_model()
+    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
+        self.cx.reserve_entity()
     }
 
-    fn insert_model<T: 'static>(
+    fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
         build_model: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
-        self.cx.insert_model(reservation, build_model)
+        self.cx.insert_entity(reservation, build_model)
     }
 
-    fn update_model<T, R>(
+    fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
@@ -875,10 +875,10 @@ impl AppContext for VisualTestContext {
     where
         T: 'static,
     {
-        self.cx.update_model(handle, update)
+        self.cx.update_entity(handle, update)
     }
 
-    fn read_model<T, R>(
+    fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
         read: impl FnOnce(&T, &App) -> R,
@@ -886,7 +886,7 @@ impl AppContext for VisualTestContext {
     where
         T: 'static,
     {
-        self.cx.read_model(handle, read)
+        self.cx.read_entity(handle, read)
     }
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
@@ -914,7 +914,7 @@ impl VisualContext for VisualTestContext {
         self.window
     }
 
-    fn new_window_model<T: 'static>(
+    fn new_window_entity<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
@@ -925,7 +925,7 @@ impl VisualContext for VisualTestContext {
             .unwrap()
     }
 
-    fn update_window_model<V: 'static, R>(
+    fn update_window_entity<V: 'static, R>(
         &mut self,
         view: &Entity<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut Context<V>) -> R,

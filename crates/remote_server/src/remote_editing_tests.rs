@@ -401,7 +401,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     )
     .await;
 
-    cx.update_model(&project, |project, _| {
+    cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -578,7 +578,7 @@ async fn test_remote_cancel_language_server_work(
     )
     .await;
 
-    cx.update_model(&project, |project, _| {
+    cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {

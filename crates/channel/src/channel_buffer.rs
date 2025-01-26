@@ -2,7 +2,7 @@ use crate::{Channel, ChannelStore};
 use anyhow::Result;
 use client::{ChannelId, Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task};
 use language::proto::serialize_version;
 use rpc::{
     proto::{self, PeerId},
@@ -47,7 +47,7 @@ impl ChannelBuffer {
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         channel_store: Entity<ChannelStore>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let response = client
             .request(proto::JoinChannelBuffer {
@@ -138,7 +138,7 @@ impl ChannelBuffer {
     async fn handle_update_channel_buffer(
         this: Entity<Self>,
         update_channel_buffer: TypedEnvelope<proto::UpdateChannelBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let ops = update_channel_buffer
             .payload
@@ -159,7 +159,7 @@ impl ChannelBuffer {
     async fn handle_update_channel_buffer_collaborators(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateChannelBufferCollaborators>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.replace_collaborators(message.payload.collaborators, cx);

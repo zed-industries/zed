@@ -13,9 +13,7 @@ use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
-use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
@@ -165,7 +163,7 @@ impl ContextStore {
     async fn handle_advertise_contexts(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::AdvertiseContexts>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.host_contexts = envelope
@@ -184,7 +182,7 @@ impl ContextStore {
     async fn handle_open_context(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenContext>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenContextResponse> {
         let context_id = ContextId::from_proto(envelope.payload.context_id);
         let operations = this.update(&mut cx, |this, cx| {
@@ -214,7 +212,7 @@ impl ContextStore {
     async fn handle_create_context(
         this: Entity<Self>,
         _: TypedEnvelope<proto::CreateContext>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::CreateContextResponse> {
         let (context_id, operations) = this.update(&mut cx, |this, cx| {
             if this.project.read(cx).is_via_collab() {
@@ -242,7 +240,7 @@ impl ContextStore {
     async fn handle_update_context(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateContext>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let context_id = ContextId::from_proto(envelope.payload.context_id);
@@ -258,7 +256,7 @@ impl ContextStore {
     async fn handle_synchronize_contexts(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::SynchronizeContexts>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::SynchronizeContextsResponse> {
         this.update(&mut cx, |this, cx| {
             if this.project.read(cx).is_via_collab() {
@@ -791,7 +789,7 @@ impl ContextStore {
     }
 
     pub fn restart_context_servers(&mut self, cx: &mut Context<Self>) {
-        cx.update_model(
+        cx.update_entity(
             &self.context_server_manager,
             |context_server_manager, cx| {
                 for server in context_server_manager.servers() {

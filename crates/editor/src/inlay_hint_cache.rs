@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context as _;
 use clock::Global;
 use futures::future;
-use gpui::{AsyncAppContext, Context, Entity, Task, Window};
+use gpui::{AsyncApp, Context, Entity, Task, Window};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -840,7 +840,7 @@ fn new_update_task(
         ));
 
         let query_range_failed =
-            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncAppContext| {
+            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncApp| {
                 log::error!("inlay hint update task for range failed: {e:#?}");
                 editor
                     .update(cx, |editor, cx| {
