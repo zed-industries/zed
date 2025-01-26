@@ -11,8 +11,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    PromptLevel, Render, Task, View, ViewContext,
+    div, rems, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    PromptLevel, Render, Task, Window,
 };
 use http_client::HttpClient;
 use language::Buffer;
@@ -76,23 +76,27 @@ enum SubmissionState {
 
 pub struct FeedbackModal {
     system_specs: SystemSpecs,
-    feedback_editor: View<Editor>,
-    email_address_editor: View<Editor>,
+    feedback_editor: Entity<Editor>,
+    email_address_editor: Entity<Editor>,
     submission_state: Option<SubmissionState>,
     dismiss_modal: bool,
     character_count: i32,
 }
 
-impl FocusableView for FeedbackModal {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+impl Focusable for FeedbackModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.feedback_editor.focus_handle(cx)
     }
 }
 impl EventEmitter<DismissEvent> for FeedbackModal {}
 
 impl ModalView for FeedbackModal {
-    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> DismissDecision {
-        self.update_email_in_store(cx);
+    fn on_before_dismiss(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        self.update_email_in_store(window, cx);
 
         if self.dismiss_modal {
             return DismissDecision::Dismiss(true);
@@ -103,9 +107,15 @@ impl ModalView for FeedbackModal {
             return DismissDecision::Dismiss(true);
         }
 
-        let answer = cx.prompt(PromptLevel::Info, "Discard feedback?", None, &["Yes", "No"]);
+        let answer = window.prompt(
+            PromptLevel::Info,
+            "Discard feedback?",
+            None,
+            &["Yes", "No"],
+            cx,
+        );
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn_in(window, move |this, mut cx| async move {
             if answer.await.ok() == Some(0) {
                 this.update(&mut cx, |this, cx| {
                     this.dismiss_modal = true;
@@ -121,11 +131,11 @@ impl ModalView for FeedbackModal {
 }
 
 impl FeedbackModal {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        let _handle = cx.view().downgrade();
-        workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
+    pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
+        let _handle = cx.model().downgrade();
+        workspace.register_action(move |workspace, _: &GiveFeedback, window, cx| {
             workspace
-                .with_local_workspace(cx, |workspace, cx| {
+                .with_local_workspace(window, cx, |workspace, window, cx| {
                     let markdown = workspace
                         .app_state()
                         .languages
@@ -133,17 +143,17 @@ impl FeedbackModal {
 
                     let project = workspace.project().clone();
 
-                    let system_specs = SystemSpecs::new(cx);
-                    cx.spawn(|workspace, mut cx| async move {
+                    let system_specs = SystemSpecs::new(window, cx);
+                    cx.spawn_in(window, |workspace, mut cx| async move {
                         let markdown = markdown.await.log_err();
                         let buffer = project.update(&mut cx, |project, cx| {
                             project.create_local_buffer("", markdown, cx)
                         })?;
                         let system_specs = system_specs.await;
 
-                        workspace.update(&mut cx, |workspace, cx| {
-                            workspace.toggle_modal(cx, move |cx| {
-                                FeedbackModal::new(system_specs, project, buffer, cx)
+                        workspace.update_in(&mut cx, |workspace, window, cx| {
+                            workspace.toggle_modal(window, cx, move |window, cx| {
+                                FeedbackModal::new(system_specs, project, buffer, window, cx)
                             });
                         })?;
 
@@ -157,30 +167,31 @@ impl FeedbackModal {
 
     pub fn new(
         system_specs: SystemSpecs,
-        project: Model<Project>,
-        buffer: Model<Buffer>,
-        cx: &mut ViewContext<Self>,
+        project: Entity<Project>,
+        buffer: Entity<Buffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let email_address_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
+        let email_address_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Email address (optional)", cx);
 
             if let Ok(Some(email_address)) = KEY_VALUE_STORE.read_kvp(DATABASE_KEY_NAME) {
-                editor.set_text(email_address, cx)
+                editor.set_text(email_address, window, cx)
             }
 
             editor
         });
 
-        let feedback_editor = cx.new_view(|cx| {
-            let mut editor = Editor::for_buffer(buffer, Some(project.clone()), cx);
+        let feedback_editor = cx.new(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project.clone()), window, cx);
             editor.set_placeholder_text(
                 "You can use markdown to organize your feedback with code and links.",
                 cx,
             );
             editor.set_show_gutter(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_show_inline_completions(Some(false), cx);
+            editor.set_show_inline_completions(Some(false), window, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
             editor
@@ -211,19 +222,24 @@ impl FeedbackModal {
         }
     }
 
-    pub fn submit(&mut self, cx: &mut ViewContext<Self>) -> Task<anyhow::Result<()>> {
+    pub fn submit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         let feedback_text = self.feedback_editor.read(cx).text(cx).trim().to_string();
         let email = self.email_address_editor.read(cx).text_option(cx);
 
-        let answer = cx.prompt(
+        let answer = window.prompt(
             PromptLevel::Info,
             "Ready to submit your feedback?",
             None,
             &["Yes, Submit!", "No"],
+            cx,
         );
         let client = Client::global(cx).clone();
         let specs = self.system_specs.clone();
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let answer = answer.await.ok();
             if answer == Some(0) {
                 this.update(&mut cx, |this, cx| {
@@ -248,14 +264,15 @@ impl FeedbackModal {
                     }
                     Err(error) => {
                         log::error!("{}", error);
-                        this.update(&mut cx, |this, cx| {
-                            let prompt = cx.prompt(
+                        this.update_in(&mut cx, |this, window, cx| {
+                            let prompt = window.prompt(
                                 PromptLevel::Critical,
                                 FEEDBACK_SUBMISSION_ERROR_TEXT,
                                 None,
                                 &["OK"],
+                                cx,
                             );
-                            cx.spawn(|_, _cx| async move {
+                            cx.spawn_in(window, |_, _cx| async move {
                                 prompt.await.ok();
                             })
                             .detach();
@@ -317,7 +334,7 @@ impl FeedbackModal {
         Ok(())
     }
 
-    fn update_submission_state(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_submission_state(&mut self, cx: &mut Context<Self>) {
         if self.awaiting_submission() {
             return;
         }
@@ -348,10 +365,10 @@ impl FeedbackModal {
         }
     }
 
-    fn update_email_in_store(&self, cx: &mut ViewContext<Self>) {
+    fn update_email_in_store(&self, window: &mut Window, cx: &mut Context<Self>) {
         let email = self.email_address_editor.read(cx).text_option(cx);
 
-        cx.spawn(|_, _| async move {
+        cx.spawn_in(window, |_, _| async move {
             match email {
                 Some(email) => {
                     KEY_VALUE_STORE
@@ -400,13 +417,13 @@ impl FeedbackModal {
         matches!(self.submission_state, Some(SubmissionState::CanSubmit))
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent)
     }
 }
 
 impl Render for FeedbackModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {
@@ -415,7 +432,8 @@ impl Render for FeedbackModal {
             "Submit"
         };
 
-        let open_zed_repo = cx.listener(|_, _, cx| cx.dispatch_action(Box::new(OpenZedRepo)));
+        let open_zed_repo =
+            cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(OpenZedRepo), cx));
 
         v_flex()
             .elevation_3(cx)
@@ -496,8 +514,8 @@ impl Render for FeedbackModal {
                                 Button::new("cancel_feedback", "Cancel")
                                     .style(ButtonStyle::Subtle)
                                     .color(Color::Muted)
-                                    .on_click(cx.listener(move |_, _, cx| {
-                                        cx.spawn(|this, mut cx| async move {
+                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                        cx.spawn_in(window, |this, mut cx| async move {
                                             this.update(&mut cx, |_, cx| cx.emit(DismissEvent))
                                                 .ok();
                                         })
@@ -508,11 +526,11 @@ impl Render for FeedbackModal {
                                 Button::new("submit_feedback", submit_button_text)
                                     .color(Color::Accent)
                                     .style(ButtonStyle::Filled)
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.submit(cx).detach();
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.submit(window, cx).detach();
                                     }))
-                                    .tooltip(move |cx| {
-                                        Tooltip::text("Submit feedback to the Zed team.", cx)
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::simple("Submit feedback to the Zed team.", cx)
                                     })
                                     .when(!self.can_submit(), |this| this.disabled(true)),
                             ),

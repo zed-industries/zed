@@ -22,11 +22,12 @@ pub mod buffer_tests;
 pub mod markdown;
 
 use crate::language_settings::SoftWrap;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use fs::Fs;
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
+use gpui::{App, AsyncAppContext, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
@@ -85,7 +86,7 @@ pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 /// Initializes the `language` crate.
 ///
 /// This should be called before making use of items from the create.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     language_settings::init(cx);
 }
 
@@ -148,7 +149,7 @@ pub trait ToLspPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
 }
 
@@ -265,7 +266,7 @@ impl CachedLspAdapter {
 // e.g. to display a notification or fetch data from the web.
 #[async_trait]
 pub trait LspAdapterDelegate: Send + Sync {
-    fn show_notification(&self, message: &str, cx: &mut AppContext);
+    fn show_notification(&self, message: &str, cx: &mut App);
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
@@ -464,6 +465,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -471,6 +473,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncAppContext,
@@ -763,6 +766,14 @@ pub struct FakeLspAdapter {
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub label_for_completion: Option<
+        Box<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(&lsp::CompletionItem, &Arc<Language>) -> Option<CodeLabel>,
+        >,
+    >,
 }
 
 /// Configuration of handling bracket pairs for a given language.
@@ -1778,6 +1789,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            label_for_completion: None,
         }
     }
 }
@@ -1845,9 +1857,19 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
+    }
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        let label_for_completion = self.label_for_completion.as_ref()?;
+        label_for_completion(item, language)
     }
 }
 

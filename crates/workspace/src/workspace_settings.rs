@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::AppContext;
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -208,7 +208,7 @@ impl Settings for WorkspaceSettings {
 
     type FileContent = WorkspaceSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
@@ -218,7 +218,7 @@ impl Settings for TabBarSettings {
 
     type FileContent = TabBarSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }

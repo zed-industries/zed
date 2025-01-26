@@ -49,7 +49,7 @@ impl From<AnimationElement<Icon>> for AnyIcon {
 }
 
 impl RenderOnce for AnyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         match self {
             Self::Icon(icon) => icon.into_any_element(),
             Self::AnimatedIcon(animated_icon) => animated_icon.into_any_element(),
@@ -88,8 +88,8 @@ impl IconSize {
     /// The returned tuple contains:
     ///   1. The length of one side of the square
     ///   2. The padding of one side of the square
-    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
-        let icon_size = self.rems() * cx.rem_size();
+    pub fn square_components(&self, window: &mut Window, cx: &mut App) -> (Pixels, Pixels) {
+        let icon_size = self.rems() * window.rem_size();
         let padding = match self {
             IconSize::Indicator => DynamicSpacing::Base00.px(cx),
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
@@ -102,8 +102,8 @@ impl IconSize {
     }
 
     /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
-        let (icon_size, padding) = self.square_components(cx);
+    pub fn square(&self, window: &mut Window, cx: &mut App) -> Pixels {
+        let (icon_size, padding) = self.square_components(window, cx);
 
         icon_size + padding * 2.
     }
@@ -408,7 +408,7 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         match self.source {
             IconSource::Svg(path) => svg()
                 .with_transformation(self.transformation)
@@ -461,7 +461,7 @@ impl IconWithIndicator {
 }
 
 impl RenderOnce for IconWithIndicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let indicator_border_color = self
             .indicator_border_color
             .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
@@ -486,7 +486,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,

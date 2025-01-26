@@ -1,10 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
+    rems, AnyElement, App, AsyncAppContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    Styled, Subscription, Task, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -15,37 +15,49 @@ use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 use zed_actions::branches::OpenRecent;
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(BranchList::open);
     })
     .detach();
 }
 
 pub struct BranchList {
-    pub picker: View<Picker<BranchListDelegate>>,
+    pub picker: Entity<Picker<BranchListDelegate>>,
     rem_width: f32,
     _subscription: Subscription,
 }
 
 impl BranchList {
-    pub fn open(_: &mut Workspace, _: &OpenRecent, cx: &mut ViewContext<Workspace>) {
-        let this = cx.view().clone();
-        cx.spawn(|_, mut cx| async move {
+    pub fn open(
+        _: &mut Workspace,
+        _: &OpenRecent,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let this = cx.model().clone();
+        cx.spawn_in(window, |_, mut cx| async move {
             // Modal branch picker has a longer trailoff than a popover one.
             let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
 
-            this.update(&mut cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| BranchList::new(delegate, 34., cx))
+            this.update_in(&mut cx, |workspace, window, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    BranchList::new(delegate, 34., window, cx)
+                })
             })?;
 
             Ok(())
         })
-        .detach_and_prompt_err("Failed to read branches", cx, |_, _| None)
+        .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
     }
 
-    fn new(delegate: BranchListDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+    fn new(
+        delegate: BranchListDelegate,
+        rem_width: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
             picker,
@@ -57,20 +69,20 @@ impl BranchList {
 impl ModalView for BranchList {}
 impl EventEmitter<DismissEvent> for BranchList {}
 
-impl FocusableView for BranchList {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+impl Focusable for BranchList {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for BranchList {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
-            .on_mouse_down_out(cx.listener(|this, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 this.picker.update(cx, |this, cx| {
-                    this.cancel(&Default::default(), cx);
+                    this.cancel(&Default::default(), window, cx);
                 })
             }))
     }
@@ -94,7 +106,7 @@ impl BranchEntry {
 pub struct BranchListDelegate {
     matches: Vec<BranchEntry>,
     all_branches: Vec<Branch>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
     selected_index: usize,
     last_query: String,
     /// Max length of branch name before we truncate it and add a trailing `...`.
@@ -103,7 +115,7 @@ pub struct BranchListDelegate {
 
 impl BranchListDelegate {
     async fn new(
-        workspace: View<Workspace>,
+        workspace: Entity<Workspace>,
         branch_name_trailoff_after: usize,
         cx: &AsyncAppContext,
     ) -> Result<Self> {
@@ -140,7 +152,7 @@ impl BranchListDelegate {
 impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select branch...".into()
     }
 
@@ -152,15 +164,25 @@ impl PickerDelegate for BranchListDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        cx.spawn(move |picker, mut cx| async move {
-            let candidates = picker.update(&mut cx, |view, _| {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        cx.spawn_in(window, move |picker, mut cx| async move {
+            let candidates = picker.update(&mut cx, |picker, _| {
                 const RECENT_BRANCHES_COUNT: usize = 10;
-                let mut branches = view.delegate.all_branches.clone();
+                let mut branches = picker.delegate.all_branches.clone();
                 if query.is_empty() {
                     if branches.len() > RECENT_BRANCHES_COUNT {
                         // Truncate list of recent branches
@@ -229,11 +251,11 @@ impl PickerDelegate for BranchListDelegate {
         })
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(branch) = self.matches.get(self.selected_index()) else {
             return;
         };
-        cx.spawn({
+        cx.spawn_in(window, {
             let branch = branch.clone();
             |picker, mut cx| async move {
                 let branch_change_task = picker.update(&mut cx, |this, cx| {
@@ -266,10 +288,10 @@ impl PickerDelegate for BranchListDelegate {
                 })
             }
         })
-        .detach_and_prompt_err("Failed to change branch", cx, |_, _| None);
+        .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         cx.emit(DismissEvent);
     }
 
@@ -277,7 +299,8 @@ impl PickerDelegate for BranchListDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
@@ -306,7 +329,11 @@ impl PickerDelegate for BranchListDelegate {
         )
     }
 
-    fn render_header(&self, _: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
         let label = if self.last_query.is_empty() {
             Label::new("Recent Branches")
                 .size(LabelSize::Small)

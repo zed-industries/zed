@@ -3,25 +3,25 @@ use anyhow::Result;
 use client::Client;
 use collections::{HashMap, HashSet};
 use futures::{FutureExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Context, Global, Model, ModelContext, Task, WeakModel};
+use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Global, Task, WeakEntity};
 use postage::stream::Stream;
 use rpc::proto;
 use std::{sync::Arc, time::Duration};
 use util::{ResultExt, TryFutureExt};
 
 impl Global for GlobalManager {}
-struct GlobalManager(Model<Manager>);
+struct GlobalManager(Entity<Manager>);
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct Manager {
     client: Arc<Client>,
     maintain_connection: Option<Task<Option<()>>>,
-    projects: HashSet<WeakModel<Project>>,
+    projects: HashSet<WeakEntity<Project>>,
 }
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let manager = cx.new_model(|_| Manager {
+pub fn init(client: Arc<Client>, cx: &mut App) {
+    let manager = cx.new(|_| Manager {
         client,
         maintain_connection: None,
         projects: HashSet::default(),
@@ -30,14 +30,14 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 }
 
 impl Manager {
-    pub fn global(cx: &AppContext) -> Model<Manager> {
+    pub fn global(cx: &App) -> Entity<Manager> {
         cx.global::<GlobalManager>().0.clone()
     }
 
     pub fn maintain_project_connection(
         &mut self,
-        project: &Model<Project>,
-        cx: &mut ModelContext<Self>,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
     ) {
         let manager = cx.weak_model();
         project.update(cx, |_, cx| {
@@ -70,7 +70,7 @@ impl Manager {
         }
     }
 
-    fn reconnected(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reconnected(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let mut projects = HashMap::default();
 
         let request = self.client.request_envelope(proto::RejoinRemoteProjects {
@@ -118,7 +118,7 @@ impl Manager {
         })
     }
 
-    fn connection_lost(&mut self, cx: &mut ModelContext<Self>) {
+    fn connection_lost(&mut self, cx: &mut Context<Self>) {
         for project in self.projects.drain() {
             if let Some(project) = project.upgrade() {
                 project.update(cx, |project, cx| {
@@ -131,7 +131,7 @@ impl Manager {
     }
 
     async fn maintain_connection(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         client: Arc<Client>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {

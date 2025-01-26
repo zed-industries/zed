@@ -4,8 +4,8 @@ use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::anyhow;
 use collections::{HashMap, IndexMap};
 use gpui::{
-    Action, ActionBuildError, AppContext, InvalidKeystrokeError, KeyBinding,
-    KeyBindingContextPredicate, NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
+    NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
@@ -119,9 +119,6 @@ pub enum KeymapFileLoadResult {
         key_bindings: Vec<KeyBinding>,
         error_message: MarkdownString,
     },
-    AllFailedToLoad {
-        error_message: MarkdownString,
-    },
     JsonParseFailure {
         error: anyhow::Error,
     },
@@ -132,11 +129,10 @@ impl KeymapFile {
         parse_json_with_comments::<Self>(content)
     }
 
-    pub fn load_asset(asset_path: &str, cx: &AppContext) -> anyhow::Result<Vec<KeyBinding>> {
+    pub fn load_asset(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::Success { key_bindings, .. } => Ok(key_bindings),
-            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. }
-            | KeymapFileLoadResult::AllFailedToLoad { error_message } => Err(anyhow!(
+            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
             KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
@@ -148,14 +144,17 @@ impl KeymapFile {
     #[cfg(feature = "test-support")]
     pub fn load_asset_allow_partial_failure(
         asset_path: &str,
-        cx: &AppContext,
+        cx: &App,
     ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { key_bindings, .. }
-            | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
-            KeymapFileLoadResult::AllFailedToLoad { error_message } => Err(anyhow!(
+            KeymapFileLoadResult::SomeFailedToLoad {
+                key_bindings,
+                error_message,
+            } if key_bindings.is_empty() => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
+            KeymapFileLoadResult::Success { key_bindings, .. }
+            | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
             KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
                 "JSON parse error in built-in keymap \"{asset_path}\": {error}"
             )),
@@ -163,11 +162,10 @@ impl KeymapFile {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn load_panic_on_failure(content: &str, cx: &AppContext) -> Vec<KeyBinding> {
+    pub fn load_panic_on_failure(content: &str, cx: &App) -> Vec<KeyBinding> {
         match Self::load(content, cx) {
             KeymapFileLoadResult::Success { key_bindings } => key_bindings,
-            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. }
-            | KeymapFileLoadResult::AllFailedToLoad { error_message, .. } => {
+            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 panic!("{error_message}");
             }
             KeymapFileLoadResult::JsonParseFailure { error } => {
@@ -176,7 +174,7 @@ impl KeymapFile {
         }
     }
 
-    pub fn load(content: &str, cx: &AppContext) -> KeymapFileLoadResult {
+    pub fn load(content: &str, cx: &App) -> KeymapFileLoadResult {
         let key_equivalents = crate::key_equivalents::get_key_equivalents(&cx.keyboard_layout());
 
         if content.is_empty() {
@@ -296,7 +294,7 @@ impl KeymapFile {
         action: &KeymapAction,
         context: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
-        cx: &AppContext,
+        cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
             Value::Array(items) => {
@@ -369,7 +367,7 @@ impl KeymapFile {
         }
     }
 
-    pub fn generate_json_schema_for_registered_actions(cx: &mut AppContext) -> Value {
+    pub fn generate_json_schema_for_registered_actions(cx: &mut App) -> Value {
         let mut generator = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
             .into_generator();

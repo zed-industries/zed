@@ -9,9 +9,7 @@ use client::{proto, Client};
 use collections::BTreeMap;
 
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{
-    actions, AppContext, AsyncAppContext, EntityId, Global, Model, ModelContext, Task, WeakModel,
-};
+use gpui::{actions, App, AsyncAppContext, Context, Entity, EntityId, Global, Task, WeakEntity};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };
@@ -29,8 +27,8 @@ use util::ResultExt;
 
 actions!(supermaven, [SignOut]);
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let supermaven = cx.new_model(|_| Supermaven::Starting);
+pub fn init(client: Arc<Client>, cx: &mut App) {
+    let supermaven = cx.new(|_| Supermaven::Starting);
     Supermaven::set_global(supermaven.clone(), cx);
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
@@ -73,21 +71,21 @@ pub enum AccountStatus {
 }
 
 #[derive(Clone)]
-struct SupermavenGlobal(Model<Supermaven>);
+struct SupermavenGlobal(Entity<Supermaven>);
 
 impl Global for SupermavenGlobal {}
 
 impl Supermaven {
-    pub fn global(cx: &AppContext) -> Option<Model<Self>> {
+    pub fn global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<SupermavenGlobal>()
             .map(|model| model.0.clone())
     }
 
-    pub fn set_global(supermaven: Model<Self>, cx: &mut AppContext) {
+    pub fn set_global(supermaven: Entity<Self>, cx: &mut App) {
         cx.set_global(SupermavenGlobal(supermaven));
     }
 
-    pub fn start(&mut self, client: Arc<Client>, cx: &mut ModelContext<Self>) {
+    pub fn start(&mut self, client: Arc<Client>, cx: &mut Context<Self>) {
         if let Self::Starting = self {
             cx.spawn(|this, mut cx| async move {
                 let binary_path =
@@ -115,9 +113,9 @@ impl Supermaven {
 
     pub fn complete(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: Anchor,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<SupermavenCompletion> {
         if let Self::Spawned(agent) = self {
             let buffer_id = buffer.entity_id();
@@ -179,9 +177,9 @@ impl Supermaven {
 
     pub fn completion(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: Anchor,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<&str> {
         if let Self::Spawned(agent) = self {
             find_relevant_completion(
@@ -267,7 +265,7 @@ impl SupermavenAgent {
     fn new(
         binary_path: PathBuf,
         client: Arc<Client>,
-        cx: &mut ModelContext<Supermaven>,
+        cx: &mut Context<Supermaven>,
     ) -> Result<Self> {
         let mut process = util::command::new_smol_command(&binary_path)
             .arg("stdio")
@@ -342,7 +340,7 @@ impl SupermavenAgent {
     }
 
     async fn handle_incoming_messages(
-        this: WeakModel<Supermaven>,
+        this: WeakEntity<Supermaven>,
         stdout: ChildStdout,
         mut cx: AsyncAppContext,
     ) -> Result<()> {

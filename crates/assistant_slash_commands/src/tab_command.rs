@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -6,13 +6,13 @@ use assistant_slash_command::{
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
-use gpui::{Entity, Task, WeakView};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{prelude::*, ActiveTheme, WindowContext};
+use ui::{prelude::*, ActiveTheme, App, Window};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -51,8 +51,9 @@ impl SlashCommand for TabSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let mut has_all_tabs_completion_item = false;
         let argument_set = arguments
@@ -82,10 +83,10 @@ impl SlashCommand for TabSlashCommand {
         });
         let current_query = arguments.last().cloned().unwrap_or_default();
         let tab_items_search =
-            tab_items_for_queries(workspace, &[current_query], cancel, false, cx);
+            tab_items_for_queries(workspace, &[current_query], cancel, false, window, cx);
 
         let comment_id = cx.theme().syntax().highlight_id("comment").map(HighlightId);
-        cx.spawn(|_| async move {
+        window.spawn(cx, |_| async move {
             let tab_items = tab_items_search.await?;
             let run_command = tab_items.len() == 1;
             let tab_completion_items = tab_items.into_iter().filter_map(|(path, ..)| {
@@ -137,15 +138,17 @@ impl SlashCommand for TabSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
             arguments,
             Arc::new(AtomicBool::new(false)),
             true,
+            window,
             cx,
         );
 
@@ -160,15 +163,16 @@ impl SlashCommand for TabSlashCommand {
 }
 
 fn tab_items_for_queries(
-    workspace: Option<WeakView<Workspace>>,
+    workspace: Option<WeakEntity<Workspace>>,
     queries: &[String],
     cancel: Arc<AtomicBool>,
     strict_match: bool,
-    cx: &mut WindowContext,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Task<anyhow::Result<Vec<(Option<PathBuf>, BufferSnapshot, usize)>>> {
     let empty_query = queries.is_empty() || queries.iter().all(|query| query.trim().is_empty());
     let queries = queries.to_owned();
-    cx.spawn(|mut cx| async move {
+    window.spawn(cx, |mut cx| async move {
         let mut open_buffers =
             workspace
                 .context("no workspace")?
@@ -281,7 +285,7 @@ fn tab_items_for_queries(
 
 fn active_item_buffer(
     workspace: &mut Workspace,
-    cx: &mut ViewContext<Workspace>,
+    cx: &mut Context<Workspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace
         .active_item(cx)

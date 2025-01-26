@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use ::util::ResultExt;
-use anyhow::Context;
+use anyhow::Context as _;
 use windows::Win32::{
     Foundation::*,
     Graphics::Gdi::*,

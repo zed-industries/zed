@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 
-use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakView};
+use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakEntity};
 use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use ui::{
-    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder,
-    Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
-    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, ViewContext,
+    div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex,
+    FluentBuilder, Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement,
+    Label, Modal, ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window,
 };
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
@@ -19,20 +19,24 @@ enum Host {
 }
 
 pub struct DisconnectedOverlay {
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
     host: Host,
     focus_handle: FocusHandle,
     finished: bool,
 }
 
 impl EventEmitter<DismissEvent> for DisconnectedOverlay {}
-impl FocusableView for DisconnectedOverlay {
-    fn focus_handle(&self, _cx: &gpui::AppContext) -> gpui::FocusHandle {
+impl Focusable for DisconnectedOverlay {
+    fn focus_handle(&self, _cx: &gpui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 impl ModalView for DisconnectedOverlay {
-    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> workspace::DismissDecision {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
         return workspace::DismissDecision::Dismiss(self.finished);
     }
     fn fade_out_background(&self) -> bool {
@@ -41,40 +45,52 @@ impl ModalView for DisconnectedOverlay {
 }
 
 impl DisconnectedOverlay {
-    pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        cx.subscribe(workspace.project(), |workspace, project, event, cx| {
-            if !matches!(
-                event,
-                project::Event::DisconnectedFromHost | project::Event::DisconnectedFromSshRemote
-            ) {
-                return;
-            }
-            let handle = cx.view().downgrade();
+    pub fn register(
+        workspace: &mut Workspace,
+        window: Option<&mut Window>,
+        cx: &mut Context<Workspace>,
+    ) {
+        let Some(window) = window else {
+            return;
+        };
+        cx.subscribe_in(
+            workspace.project(),
+            window,
+            |workspace, project, event, window, cx| {
+                if !matches!(
+                    event,
+                    project::Event::DisconnectedFromHost
+                        | project::Event::DisconnectedFromSshRemote
+                ) {
+                    return;
+                }
+                let handle = cx.model().downgrade();
 
-            let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
-            let host = if let Some(ssh_connection_options) = ssh_connection_options {
-                Host::SshRemoteProject(ssh_connection_options)
-            } else {
-                Host::RemoteProject
-            };
+                let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
+                let host = if let Some(ssh_connection_options) = ssh_connection_options {
+                    Host::SshRemoteProject(ssh_connection_options)
+                } else {
+                    Host::RemoteProject
+                };
 
-            workspace.toggle_modal(cx, |cx| DisconnectedOverlay {
-                finished: false,
-                workspace: handle,
-                host,
-                focus_handle: cx.focus_handle(),
-            });
-        })
+                workspace.toggle_modal(window, cx, |_, cx| DisconnectedOverlay {
+                    finished: false,
+                    workspace: handle,
+                    host,
+                    focus_handle: cx.focus_handle(),
+                });
+            },
+        )
         .detach();
     }
 
-    fn handle_reconnect(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn handle_reconnect(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.finished = true;
         cx.emit(DismissEvent);
 
         match &self.host {
             Host::SshRemoteProject(ssh_connection_options) => {
-                self.reconnect_to_ssh_remote(ssh_connection_options.clone(), cx);
+                self.reconnect_to_ssh_remote(ssh_connection_options.clone(), window, cx);
             }
             _ => {}
         }
@@ -83,7 +99,8 @@ impl DisconnectedOverlay {
     fn reconnect_to_ssh_remote(
         &self,
         connection_options: SshConnectionOptions,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -93,7 +110,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(window) = cx.window_handle().downcast::<Workspace>() else {
+        let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
             return;
         };
 
@@ -101,13 +118,13 @@ impl DisconnectedOverlay {
 
         let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
-        cx.spawn(move |_, mut cx| async move {
+        cx.spawn_in(window, move |_, mut cx| async move {
             open_ssh_project(
                 connection_options,
                 paths,
                 app_state,
                 OpenOptions {
-                    replace_window: Some(window),
+                    replace_window: Some(window_handle),
                     ..Default::default()
                 },
                 &mut cx,
@@ -115,17 +132,17 @@ impl DisconnectedOverlay {
             .await?;
             Ok(())
         })
-        .detach_and_prompt_err("Failed to reconnect", cx, |_, _| None);
+        .detach_and_prompt_err("Failed to reconnect", window, cx, |_, _, _| None);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         self.finished = true;
         cx.emit(DismissEvent)
     }
 }
 
 impl Render for DisconnectedOverlay {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let can_reconnect = matches!(self.host, Host::SshRemoteProject(_));
 
         let message = match &self.host {
@@ -171,8 +188,8 @@ impl Render for DisconnectedOverlay {
                                     Button::new("close-window", "Close Window")
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
-                                        .on_click(cx.listener(move |_, _, cx| {
-                                            cx.remove_window();
+                                        .on_click(cx.listener(move |_, _, window, _| {
+                                            window.remove_window();
                                         })),
                                 )
                                 .when(can_reconnect, |el| {

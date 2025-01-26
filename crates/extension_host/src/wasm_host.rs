@@ -17,7 +17,7 @@ use futures::{
     future::BoxFuture,
     Future, FutureExt, StreamExt as _,
 };
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
+use gpui::{App, AsyncAppContext, BackgroundExecutor, Task};
 use http_client::HttpClient;
 use language::LanguageName;
 use lsp::LanguageServerName;
@@ -332,7 +332,7 @@ impl WasmHost {
         node_runtime: NodeRuntime,
         proxy: Arc<ExtensionHostProxy>,
         work_dir: PathBuf,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Arc<Self> {
         let (tx, mut rx) = mpsc::unbounded::<MainThreadCall>();
         let task = cx.spawn(|mut cx| async move {
