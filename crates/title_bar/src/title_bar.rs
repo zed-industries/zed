@@ -118,7 +118,7 @@ pub struct TitleBar {
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
-        let height = Self::height(window, cx);
+        let height = Self::height(window);
         let supported_controls = window.window_controls();
         let decorations = window.window_decorations();
         let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -328,7 +328,7 @@ impl TitleBar {
     }
 
     #[cfg(target_os = "windows")]
-    pub fn height(_window: &mut Window, _cx: &mut App) -> Pixels {
+    pub fn height(_window: &mut Window) -> Pixels {
         // todo(windows) instead of hard coded size report the actual size to the Windows platform API
         px(32.)
     }
