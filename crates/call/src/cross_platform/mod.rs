@@ -8,8 +8,8 @@ use client::{proto, ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAY
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Subscription,
-    Task, WeakModel,
+    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Global, Subscription,
+    Task, WeakEntity,
 };
 use postage::watch;
 use project::Project;
@@ -23,18 +23,18 @@ pub use livekit_client::{
 pub use participant::ParticipantLocation;
 pub use room::Room;
 
-struct GlobalActiveCall(Model<ActiveCall>);
+struct GlobalActiveCall(Entity<ActiveCall>);
 
 impl Global for GlobalActiveCall {}
 
-pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     livekit_client::init(
         cx.background_executor().dispatcher.clone(),
         cx.http_client(),
     );
     CallSettings::register(cx);
 
-    let active_call = cx.new_model(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
     cx.set_global(GlobalActiveCall(active_call));
 }
 
@@ -46,7 +46,7 @@ impl OneAtATime {
     /// spawn a task in the given context.
     /// if another task is spawned before that resolves, or if the OneAtATime itself is dropped, the first task will be cancelled and return Ok(None)
     /// otherwise you'll see the result of the task.
-    fn spawn<F, Fut, R>(&mut self, cx: &mut AppContext, f: F) -> Task<Result<Option<R>>>
+    fn spawn<F, Fut, R>(&mut self, cx: &mut App, f: F) -> Task<Result<Option<R>>>
     where
         F: 'static + FnOnce(AsyncAppContext) -> Fut,
         Fut: Future<Output = Result<R>>,
@@ -79,9 +79,9 @@ pub struct IncomingCall {
 
 /// Singleton global maintaining the user's participation in a room across workspaces.
 pub struct ActiveCall {
-    room: Option<(Model<Room>, Vec<Subscription>)>,
-    pending_room_creation: Option<Shared<Task<Result<Model<Room>, Arc<anyhow::Error>>>>>,
-    location: Option<WeakModel<Project>>,
+    room: Option<(Entity<Room>, Vec<Subscription>)>,
+    pending_room_creation: Option<Shared<Task<Result<Entity<Room>, Arc<anyhow::Error>>>>>,
+    location: Option<WeakEntity<Project>>,
     _join_debouncer: OneAtATime,
     pending_invites: HashSet<u64>,
     incoming_call: (
@@ -89,14 +89,14 @@ pub struct ActiveCall {
         watch::Receiver<Option<IncomingCall>>,
     ),
     client: Arc<Client>,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     _subscriptions: Vec<client::Subscription>,
 }
 
 impl EventEmitter<Event> for ActiveCall {}
 
 impl ActiveCall {
-    fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         Self {
             room: None,
             pending_room_creation: None,
@@ -113,12 +113,12 @@ impl ActiveCall {
         }
     }
 
-    pub fn channel_id(&self, cx: &AppContext) -> Option<ChannelId> {
+    pub fn channel_id(&self, cx: &App) -> Option<ChannelId> {
         self.room()?.read(cx).channel_id()
     }
 
     async fn handle_incoming_call(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::IncomingCall>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
@@ -145,7 +145,7 @@ impl ActiveCall {
     }
 
     async fn handle_call_canceled(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::CallCanceled>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
@@ -161,11 +161,11 @@ impl ActiveCall {
         Ok(())
     }
 
-    pub fn global(cx: &AppContext) -> Model<Self> {
+    pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalActiveCall>().0.clone()
     }
 
-    pub fn try_global(cx: &AppContext) -> Option<Model<Self>> {
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalActiveCall>()
             .map(|call| call.0.clone())
     }
@@ -173,8 +173,8 @@ impl ActiveCall {
     pub fn invite(
         &mut self,
         called_user_id: u64,
-        initial_project: Option<Model<Project>>,
-        cx: &mut ModelContext<Self>,
+        initial_project: Option<Entity<Project>>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if !self.pending_invites.insert(called_user_id) {
             return Task::ready(Err(anyhow!("user was already invited")));
@@ -269,7 +269,7 @@ impl ActiveCall {
     pub fn cancel_invite(
         &mut self,
         called_user_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let room_id = if let Some(room) = self.room() {
             room.read(cx).id()
@@ -293,7 +293,7 @@ impl ActiveCall {
         self.incoming_call.1.clone()
     }
 
-    pub fn accept_incoming(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn accept_incoming(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if self.room.is_some() {
             return Task::ready(Err(anyhow!("cannot join while on another call")));
         }
@@ -326,7 +326,7 @@ impl ActiveCall {
         })
     }
 
-    pub fn decline_incoming(&mut self, _: &mut ModelContext<Self>) -> Result<()> {
+    pub fn decline_incoming(&mut self, _: &mut Context<Self>) -> Result<()> {
         let call = self
             .incoming_call
             .0
@@ -343,8 +343,8 @@ impl ActiveCall {
     pub fn join_channel(
         &mut self,
         channel_id: ChannelId,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Model<Room>>>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Entity<Room>>>> {
         if let Some(room) = self.room().cloned() {
             if room.read(cx).channel_id() == Some(channel_id) {
                 return Task::ready(Ok(Some(room)));
@@ -374,7 +374,7 @@ impl ActiveCall {
         })
     }
 
-    pub fn hang_up(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn hang_up(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         cx.notify();
         self.report_call_event("Call Ended", cx);
 
@@ -391,8 +391,8 @@ impl ActiveCall {
 
     pub fn share_project(
         &mut self,
-        project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<u64>> {
         if let Some((room, _)) = self.room.as_ref() {
             self.report_call_event("Project Shared", cx);
@@ -404,8 +404,8 @@ impl ActiveCall {
 
     pub fn unshare_project(
         &mut self,
-        project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
     ) -> Result<()> {
         if let Some((room, _)) = self.room.as_ref() {
             self.report_call_event("Project Unshared", cx);
@@ -415,14 +415,14 @@ impl ActiveCall {
         }
     }
 
-    pub fn location(&self) -> Option<&WeakModel<Project>> {
+    pub fn location(&self) -> Option<&WeakEntity<Project>> {
         self.location.as_ref()
     }
 
     pub fn set_location(
         &mut self,
-        project: Option<&Model<Project>>,
-        cx: &mut ModelContext<Self>,
+        project: Option<&Entity<Project>>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if project.is_some() || !*ZED_ALWAYS_ACTIVE {
             self.location = project.map(|project| project.downgrade());
@@ -433,11 +433,7 @@ impl ActiveCall {
         Task::ready(Ok(()))
     }
 
-    fn set_room(
-        &mut self,
-        room: Option<Model<Room>>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    fn set_room(&mut self, room: Option<Entity<Room>>, cx: &mut Context<Self>) -> Task<Result<()>> {
         if room.as_ref() == self.room.as_ref().map(|room| &room.0) {
             Task::ready(Ok(()))
         } else {
@@ -473,7 +469,7 @@ impl ActiveCall {
         }
     }
 
-    pub fn room(&self) -> Option<&Model<Room>> {
+    pub fn room(&self) -> Option<&Entity<Room>> {
         self.room.as_ref().map(|(room, _)| room)
     }
 
@@ -485,7 +481,7 @@ impl ActiveCall {
         &self.pending_invites
     }
 
-    pub fn report_call_event(&self, operation: &'static str, cx: &mut AppContext) {
+    pub fn report_call_event(&self, operation: &'static str, cx: &mut App) {
         if let Some(room) = self.room() {
             let room = room.read(cx);
             telemetry::event!(

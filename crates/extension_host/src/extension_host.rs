@@ -27,8 +27,8 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
-    WeakModel,
+    actions, App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Global, Task,
+    WeakEntity,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -113,7 +113,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub ssh_clients: HashMap<String, WeakModel<SshRemoteClient>>,
+    pub ssh_clients: HashMap<String, WeakEntity<SshRemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -134,7 +134,7 @@ pub enum Event {
 
 impl EventEmitter<Event> for ExtensionStore {}
 
-struct GlobalExtensionStore(Model<ExtensionStore>);
+struct GlobalExtensionStore(Entity<ExtensionStore>);
 
 impl Global for GlobalExtensionStore {}
 
@@ -181,11 +181,11 @@ pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     ExtensionSettings::register(cx);
 
-    let store = cx.new_model(move |cx| {
+    let store = cx.new(move |cx| {
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
@@ -208,12 +208,12 @@ pub fn init(
 }
 
 impl ExtensionStore {
-    pub fn try_global(cx: &AppContext) -> Option<Model<Self>> {
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalExtensionStore>()
             .map(|store| store.0.clone())
     }
 
-    pub fn global(cx: &AppContext) -> Model<Self> {
+    pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalExtensionStore>().0.clone()
     }
 
@@ -227,7 +227,7 @@ impl ExtensionStore {
         builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
         let build_dir = build_dir.unwrap_or_else(|| extensions_dir.join("build"));
@@ -400,7 +400,7 @@ impl ExtensionStore {
     pub fn reload(
         &mut self,
         modified_extension: Option<Arc<str>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> impl Future<Output = ()> {
         let (tx, rx) = oneshot::channel();
         self.reload_complete_senders.push(tx);
@@ -447,7 +447,7 @@ impl ExtensionStore {
     pub fn fetch_extensions(
         &self,
         search: Option<&str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let version = CURRENT_SCHEMA_VERSION.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
@@ -460,7 +460,7 @@ impl ExtensionStore {
 
     pub fn fetch_extensions_with_update_available(
         &mut self,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let schema_versions = schema_version_range();
         let wasm_api_versions = wasm_api_version_range(ReleaseChannel::global(cx));
@@ -508,7 +508,7 @@ impl ExtensionStore {
     pub fn fetch_extension_versions(
         &self,
         extension_id: &str,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         self.fetch_extensions_from_api(&format!("/extensions/{extension_id}"), &[], cx)
     }
@@ -517,7 +517,7 @@ impl ExtensionStore {
     ///
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
-    pub fn auto_install_extensions(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
         let extension_settings = ExtensionSettings::get_global(cx);
 
         let extensions_to_install = extension_settings
@@ -545,7 +545,7 @@ impl ExtensionStore {
         .detach();
     }
 
-    pub fn check_for_updates(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
         let task = self.fetch_extensions_with_update_available(cx);
         cx.spawn(move |this, mut cx| async move {
             Self::upgrade_extensions(this, task.await?, &mut cx).await
@@ -554,7 +554,7 @@ impl ExtensionStore {
     }
 
     async fn upgrade_extensions(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         extensions: Vec<ExtensionMetadata>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
@@ -587,7 +587,7 @@ impl ExtensionStore {
         &self,
         path: &str,
         query: &[(&str, &str)],
-        cx: &mut ModelContext<'_, ExtensionStore>,
+        cx: &mut Context<'_, ExtensionStore>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let url = self.http_client.build_zed_api_url(path, query);
         let http_client = self.http_client.clone();
@@ -620,7 +620,7 @@ impl ExtensionStore {
         &mut self,
         extension_id: Arc<str>,
         version: Arc<str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Install, cx)
             .detach_and_log_err(cx);
@@ -631,7 +631,7 @@ impl ExtensionStore {
         extension_id: Arc<str>,
         url: Url,
         operation: ExtensionOperation,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let http_client = self.http_client.clone();
@@ -705,11 +705,7 @@ impl ExtensionStore {
         })
     }
 
-    pub fn install_latest_extension(
-        &mut self,
-        extension_id: Arc<str>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn install_latest_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         log::info!("installing extension {extension_id} latest version");
 
         let schema_versions = schema_version_range();
@@ -747,7 +743,7 @@ impl ExtensionStore {
         &mut self,
         extension_id: Arc<str>,
         version: Arc<str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.install_or_upgrade_extension(extension_id, version, ExtensionOperation::Upgrade, cx)
     }
@@ -757,7 +753,7 @@ impl ExtensionStore {
         extension_id: Arc<str>,
         version: Arc<str>,
         operation: ExtensionOperation,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         log::info!("installing extension {extension_id} {version}");
         let Some(url) = self
@@ -774,7 +770,7 @@ impl ExtensionStore {
         self.install_or_upgrade_extension_at_endpoint(extension_id, url, operation, cx)
     }
 
-    pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
+    pub fn uninstall_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         let extension_dir = self.installed_dir.join(extension_id.as_ref());
         let work_dir = self.wasm_host.work_dir.join(extension_id.as_ref());
         let fs = self.fs.clone();
@@ -826,7 +822,7 @@ impl ExtensionStore {
     pub fn install_dev_extension(
         &mut self,
         extension_source_path: PathBuf,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let extensions_dir = self.extensions_dir();
         let fs = self.fs.clone();
@@ -901,7 +897,7 @@ impl ExtensionStore {
         })
     }
 
-    pub fn rebuild_dev_extension(&mut self, extension_id: Arc<str>, cx: &mut ModelContext<Self>) {
+    pub fn rebuild_dev_extension(&mut self, extension_id: Arc<str>, cx: &mut Context<Self>) {
         let path = self.installed_dir.join(extension_id.as_ref());
         let builder = self.builder.clone();
         let fs = self.fs.clone();
@@ -950,7 +946,7 @@ impl ExtensionStore {
     fn extensions_updated(
         &mut self,
         new_index: ExtensionIndex,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<()> {
         let old_index = &self.extension_index;
 
@@ -1271,7 +1267,7 @@ impl ExtensionStore {
         })
     }
 
-    fn rebuild_extension_index(&self, cx: &mut ModelContext<Self>) -> Task<ExtensionIndex> {
+    fn rebuild_extension_index(&self, cx: &mut Context<Self>) -> Task<ExtensionIndex> {
         let fs = self.fs.clone();
         let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.installed_dir.clone();
@@ -1459,7 +1455,7 @@ impl ExtensionStore {
         extension_id: Arc<str>,
         is_dev: bool,
         tmp_dir: PathBuf,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let src_dir = self.extensions_dir().join(extension_id.as_ref());
         let Some(loaded_extension) = self.extension_index.extensions.get(&extension_id).cloned()
@@ -1518,8 +1514,8 @@ impl ExtensionStore {
     }
 
     async fn sync_extensions_over_ssh(
-        this: &WeakModel<Self>,
-        client: WeakModel<SshRemoteClient>,
+        this: &WeakEntity<Self>,
+        client: WeakEntity<SshRemoteClient>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
@@ -1586,7 +1582,7 @@ impl ExtensionStore {
     }
 
     pub async fn update_ssh_clients(
-        this: &WeakModel<Self>,
+        this: &WeakEntity<Self>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
@@ -1603,11 +1599,7 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_ssh_client(
-        &mut self,
-        client: Model<SshRemoteClient>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
         let connection_options = client.read(cx).connection_options();
         if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
             return;

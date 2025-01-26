@@ -86,6 +86,7 @@
       "ctrl-[": ["vim::SwitchMode", "Normal"],
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
+      "ctrl-g": "vim::ShowLocation",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
       "shift-k": "editor::Hover",
@@ -435,7 +436,7 @@
     "bindings": {
       "d": "vim::CurrentLine",
       "s": ["vim::PushOperator", "DeleteSurrounds"],
-      "o": "editor::ToggleHunkDiff", // "d o"
+      "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "p": "editor::RevertSelectedHunks" // "d p"
     }
   },

@@ -1,13 +1,13 @@
 use gpui::{
-    div, prelude::*, px, rgb, size, App, AppContext, Bounds, SharedString, Timer, ViewContext,
-    WindowBounds, WindowContext, WindowKind, WindowOptions,
+    div, prelude::*, px, rgb, size, App, Application, Bounds, Context, SharedString, Timer, Window,
+    WindowBounds, WindowKind, WindowOptions,
 };
 
 struct SubWindow {
     custom_titlebar: bool,
 }
 
-fn button(text: &str, on_click: impl Fn(&mut WindowContext) + 'static) -> impl IntoElement {
+fn button(text: &str, on_click: impl Fn(&mut Window, &mut App) + 'static) -> impl IntoElement {
     div()
         .id(SharedString::from(text.to_string()))
         .flex_none()
@@ -19,11 +19,11 @@ fn button(text: &str, on_click: impl Fn(&mut WindowContext) + 'static) -> impl I
         .rounded_md()
         .cursor_pointer()
         .child(text.to_string())
-        .on_click(move |_, cx| on_click(cx))
+        .on_click(move |_, window, cx| on_click(window, cx))
 }
 
 impl Render for SubWindow {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -54,8 +54,8 @@ impl Render for SubWindow {
                     .p_8()
                     .gap_2()
                     .child("SubWindow")
-                    .child(button("Close", |cx| {
-                        cx.remove_window();
+                    .child(button("Close", |window, _| {
+                        window.remove_window();
                     })),
             )
     }
@@ -64,7 +64,7 @@ impl Render for SubWindow {
 struct WindowDemo {}
 
 impl Render for WindowDemo {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_bounds =
             WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
@@ -77,66 +77,66 @@ impl Render for WindowDemo {
             .justify_center()
             .items_center()
             .gap_2()
-            .child(button("Normal", move |cx| {
+            .child(button("Normal", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Popup", move |cx| {
+            .child(button("Popup", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
                         kind: WindowKind::PopUp,
                         ..Default::default()
                     },
-                    |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Custom Titlebar", move |cx| {
+            .child(button("Custom Titlebar", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         titlebar: None,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: true,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Invisible", move |cx| {
+            .child(button("Invisible", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         show: false,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Unmovable", move |cx| {
+            .child(button("Unmovable", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         is_movable: false,
@@ -144,38 +144,39 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |cx| {
-                        cx.new_view(|_cx| SubWindow {
+                    |_, cx| {
+                        cx.new(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Hide Application", |cx| {
+            .child(button("Hide Application", |window, cx| {
                 cx.hide();
 
                 // Restore the application after 3 seconds
-                cx.spawn(|mut cx| async move {
-                    Timer::after(std::time::Duration::from_secs(3)).await;
-                    cx.update(|cx| {
-                        cx.activate(false);
+                window
+                    .spawn(cx, |mut cx| async move {
+                        Timer::after(std::time::Duration::from_secs(3)).await;
+                        cx.update(|_, cx| {
+                            cx.activate(false);
+                        })
                     })
-                })
-                .detach();
+                    .detach();
             }))
     }
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| cx.new_view(|_cx| WindowDemo {}),
+            |_, cx| cx.new(|_| WindowDemo {}),
         )
         .unwrap();
     });

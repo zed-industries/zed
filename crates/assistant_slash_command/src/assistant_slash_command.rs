@@ -8,7 +8,7 @@ pub use crate::slash_command_working_set::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use gpui::{AppContext, SharedString, Task, WeakView, WindowContext};
+use gpui::{App, SharedString, Task, WeakEntity, Window};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use std::{
 };
 use workspace::{ui::IconName, Workspace};
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     SlashCommandRegistry::default_global(cx);
     extension_slash_command::init(cx);
 }
@@ -71,7 +71,7 @@ pub trait SlashCommand: 'static + Send + Sync {
     fn icon(&self) -> IconName {
         IconName::Slash
     }
-    fn label(&self, _cx: &AppContext) -> CodeLabel {
+    fn label(&self, _cx: &App) -> CodeLabel {
         CodeLabel::plain(self.name(), None)
     }
     fn description(&self) -> String;
@@ -80,26 +80,29 @@ pub trait SlashCommand: 'static + Send + Sync {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
     fn accepts_arguments(&self) -> bool {
         self.requires_argument()
     }
+    #[allow(clippy::too_many_arguments)]
     fn run(
         self: Arc<Self>,
         arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //
         // It may be that `LspAdapterDelegate` needs a more general name, or
         // perhaps another kind of delegate is needed here.
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult>;
 }
 

@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::ProposedChangesEditor;
 use futures::{future, TryFutureExt as _};
-use gpui::{AppContext, AsyncAppContext, Model, SharedString};
+use gpui::{App, AsyncAppContext, Entity, SharedString};
 use language::{AutoindentMode, Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
@@ -56,7 +56,7 @@ pub enum AssistantEditKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedPatch {
-    pub edit_groups: HashMap<Model<Buffer>, Vec<ResolvedEditGroup>>,
+    pub edit_groups: HashMap<Entity<Buffer>, Vec<ResolvedEditGroup>>,
     pub errors: Vec<AssistantPatchResolutionError>,
 }
 
@@ -121,7 +121,7 @@ impl SearchMatrix {
 }
 
 impl ResolvedPatch {
-    pub fn apply(&self, editor: &ProposedChangesEditor, cx: &mut AppContext) {
+    pub fn apply(&self, editor: &ProposedChangesEditor, cx: &mut App) {
         for (buffer, groups) in &self.edit_groups {
             let branch = editor.branch_buffer_for_base(buffer).unwrap();
             Self::apply_edit_groups(groups, &branch, cx);
@@ -129,11 +129,7 @@ impl ResolvedPatch {
         editor.recalculate_all_buffer_diffs();
     }
 
-    fn apply_edit_groups(
-        groups: &Vec<ResolvedEditGroup>,
-        buffer: &Model<Buffer>,
-        cx: &mut AppContext,
-    ) {
+    fn apply_edit_groups(groups: &Vec<ResolvedEditGroup>, buffer: &Entity<Buffer>, cx: &mut App) {
         let mut edits = Vec::new();
         for group in groups {
             for suggestion in &group.edits {
@@ -232,9 +228,9 @@ impl AssistantEdit {
 
     pub async fn resolve(
         &self,
-        project: Model<Project>,
+        project: Entity<Project>,
         mut cx: AsyncAppContext,
-    ) -> Result<(Model<Buffer>, ResolvedEdit)> {
+    ) -> Result<(Entity<Buffer>, ResolvedEdit)> {
         let path = self.path.clone();
         let kind = self.kind.clone();
         let buffer = project
@@ -427,7 +423,7 @@ impl AssistantEditKind {
 impl AssistantPatch {
     pub async fn resolve(
         &self,
-        project: Model<Project>,
+        project: Entity<Project>,
         cx: &mut AsyncAppContext,
     ) -> ResolvedPatch {
         let mut resolve_tasks = Vec::new();
@@ -555,7 +551,7 @@ impl Eq for AssistantPatch {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext, Context};
+    use gpui::{App, AppContext as _};
     use language::{
         language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
     };
@@ -565,7 +561,7 @@ mod tests {
     use util::test::{generate_marked_text, marked_text_ranges};
 
     #[gpui::test]
-    fn test_resolve_location(cx: &mut AppContext) {
+    fn test_resolve_location(cx: &mut App) {
         assert_location_resolution(
             concat!(
                 "    Lorem\n",
@@ -636,7 +632,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_resolve_edits(cx: &mut AppContext) {
+    fn test_resolve_edits(cx: &mut App) {
         init_test(cx);
 
         assert_edits(
@@ -902,7 +898,7 @@ mod tests {
         );
     }
 
-    fn init_test(cx: &mut AppContext) {
+    fn init_test(cx: &mut App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         language::init(cx);
@@ -912,13 +908,9 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_location_resolution(
-        text_with_expected_range: &str,
-        query: &str,
-        cx: &mut AppContext,
-    ) {
+    fn assert_location_resolution(text_with_expected_range: &str, query: &str, cx: &mut App) {
         let (text, _) = marked_text_ranges(text_with_expected_range, false);
-        let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
+        let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
         let snapshot = buffer.read(cx).snapshot();
         let range = AssistantEditKind::resolve_location(&snapshot, query).to_offset(&snapshot);
         let text_with_actual_range = generate_marked_text(&text, &[range], false);
@@ -930,10 +922,10 @@ mod tests {
         old_text: String,
         edits: Vec<AssistantEditKind>,
         new_text: String,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let buffer =
-            cx.new_model(|cx| Buffer::local(old_text, cx).with_language(Arc::new(rust_lang()), cx));
+            cx.new(|cx| Buffer::local(old_text, cx).with_language(Arc::new(rust_lang()), cx));
         let snapshot = buffer.read(cx).snapshot();
         let resolved_edits = edits
             .into_iter()

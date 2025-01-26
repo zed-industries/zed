@@ -55,7 +55,7 @@ impl Indicator {
 }
 
 impl RenderOnce for Indicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let container = div().flex_none();
         let container = if let Some(border_color) = self.border_color {
             if matches!(self.kind, IndicatorKind::Dot | IndicatorKind::Bar) {
@@ -89,7 +89,7 @@ impl ComponentPreview for Indicator {
         "An indicator visually represents a status or state."
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Types",

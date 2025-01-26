@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, Global, ReadGlobal, UpdateGlobal};
+use gpui::{App, Global, ReadGlobal, UpdateGlobal};
 use parking_lot::RwLock;
 
 use crate::{file_stem_to_key, Snippet, SnippetKind};
@@ -17,16 +17,16 @@ pub struct SnippetRegistry {
 }
 
 impl SnippetRegistry {
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalSnippetRegistry::global(cx).0.clone()
     }
 
-    pub fn try_global(cx: &AppContext) -> Option<Arc<Self>> {
+    pub fn try_global(cx: &App) -> Option<Arc<Self>> {
         cx.try_global::<GlobalSnippetRegistry>()
             .map(|registry| registry.0.clone())
     }
 
-    pub fn init_global(cx: &mut AppContext) {
+    pub fn init_global(cx: &mut App) {
         GlobalSnippetRegistry::set_global(cx, GlobalSnippetRegistry(Arc::new(Self::new())))
     }
 

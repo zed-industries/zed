@@ -58,7 +58,7 @@ There a number of actions/shortcuts available to interact with inline completion
 
 - `editor: accept inline completion` (`tab`): To accept the current inline completion
 - `editor: accept partial inline completion` (`cmd-right`): To accept the current inline completion up to the next word boundary
-- `editor: show inline completion` (`alt-\\`): Trigger a inline completion request manually
+- `editor: show inline completion` (`alt-\`): Trigger a inline completion request manually
 - `editor: next inline completion` (`alt-]`): To cycle to the next inline completion
 - `editor: previous inline completion` (`alt-[`): To cycle to the previous inline completion
 

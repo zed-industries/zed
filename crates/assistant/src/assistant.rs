@@ -15,7 +15,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{actions, AppContext, Global, UpdateGlobal};
+use gpui::{actions, App, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
@@ -67,7 +67,7 @@ impl Global for Assistant {}
 impl Assistant {
     const NAMESPACE: &'static str = "assistant";
 
-    fn set_enabled(&mut self, enabled: bool, cx: &mut AppContext) {
+    fn set_enabled(&mut self, enabled: bool, cx: &mut App) {
         if self.enabled == enabled {
             return;
         }
@@ -92,7 +92,7 @@ pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
@@ -165,7 +165,7 @@ pub fn init(
     .detach();
 }
 
-fn init_language_model_settings(cx: &mut AppContext) {
+fn init_language_model_settings(cx: &mut App) {
     update_active_language_model_from_settings(cx);
 
     cx.observe_global::<SettingsStore>(update_active_language_model_from_settings)
@@ -184,7 +184,7 @@ fn init_language_model_settings(cx: &mut AppContext) {
     .detach();
 }
 
-fn update_active_language_model_from_settings(cx: &mut AppContext) {
+fn update_active_language_model_from_settings(cx: &mut App) {
     let settings = AssistantSettings::get_global(cx);
     let provider_name = LanguageModelProviderId::from(settings.default_model.provider.clone());
     let model_id = LanguageModelId::from(settings.default_model.model.clone());
@@ -204,7 +204,7 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
     });
 }
 
-fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
+fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
 
     slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
@@ -278,7 +278,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     .detach();
 }
 
-fn update_slash_commands_from_settings(cx: &mut AppContext) {
+fn update_slash_commands_from_settings(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     let settings = SlashCommandSettings::get_global(cx);
 

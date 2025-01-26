@@ -1,6 +1,6 @@
 mod supported_countries;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::{
     io::BufReader,
     stream::{self, BoxStream},

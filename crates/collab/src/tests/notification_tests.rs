@@ -21,14 +21,14 @@ async fn test_notifications(
     let notification_events_b = Arc::new(Mutex::new(Vec::new()));
     client_a.notification_store().update(cx_a, |_, cx| {
         let events = notification_events_a.clone();
-        cx.subscribe(&cx.handle(), move |_, _, event, _| {
+        cx.subscribe(&cx.model(), move |_, _, event, _| {
             events.lock().push(event.clone());
         })
         .detach()
     });
     client_b.notification_store().update(cx_b, |_, cx| {
         let events = notification_events_b.clone();
-        cx.subscribe(&cx.handle(), move |_, _, event, _| {
+        cx.subscribe(&cx.model(), move |_, _, event, _| {
             events.lock().push(event.clone());
         })
         .detach()

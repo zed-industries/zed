@@ -3,7 +3,7 @@ use crate::{
     rpc::Principal,
     AppState, Error, Result,
 };
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,

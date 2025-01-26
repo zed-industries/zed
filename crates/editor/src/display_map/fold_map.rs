@@ -2,9 +2,11 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use gpui::{AnyElement, ElementId, WindowContext};
+use gpui::{AnyElement, App, ElementId, Window};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{
+    Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
+};
 use std::{
     any::TypeId,
     cmp::{self, Ordering},
@@ -19,7 +21,8 @@ use util::post_inc;
 #[derive(Clone)]
 pub struct FoldPlaceholder {
     /// Creates an element to represent this fold's placeholder.
-    pub render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement>,
+    pub render:
+        Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut App) -> AnyElement>,
     /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
     /// If true, merges the fold with an adjacent one.
@@ -31,7 +34,7 @@ pub struct FoldPlaceholder {
 impl Default for FoldPlaceholder {
     fn default() -> Self {
         Self {
-            render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
+            render: Arc::new(|_, _, _, _| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -43,7 +46,7 @@ impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
-            render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
+            render: Arc::new(|_id, _range, _window, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -336,9 +339,7 @@ impl FoldMap {
             let mut folds = self.snapshot.folds.iter().peekable();
             while let Some(fold) = folds.next() {
                 if let Some(next_fold) = folds.peek() {
-                    let comparison = fold
-                        .range
-                        .cmp(&next_fold.range, &self.snapshot.inlay_snapshot.buffer);
+                    let comparison = fold.range.cmp(&next_fold.range, self.snapshot.buffer());
                     assert!(comparison.is_le());
                 }
             }
@@ -485,7 +486,8 @@ impl FoldMap {
                                             (fold.placeholder.render)(
                                                 fold_id,
                                                 fold.range.0.clone(),
-                                                cx,
+                                                cx.window,
+                                                cx.context,
                                             )
                                         }),
                                         constrain_width: fold.placeholder.constrain_width,
@@ -578,6 +580,10 @@ pub struct FoldSnapshot {
 }
 
 impl FoldSnapshot {
+    pub fn buffer(&self) -> &MultiBufferSnapshot {
+        &self.inlay_snapshot.buffer
+    }
+
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(FoldOffset(0)..self.len(), false, Highlights::default())
@@ -673,7 +679,7 @@ impl FoldSnapshot {
         (line_end - line_start) as u32
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> FoldBufferRows {
+    pub fn row_infos(&self, start_row: u32) -> FoldRows {
         if start_row > self.transforms.summary().output.lines.row {
             panic!("invalid display row {}", start_row);
         }
@@ -684,11 +690,11 @@ impl FoldSnapshot {
 
         let overshoot = fold_point.0 - cursor.start().0 .0;
         let inlay_point = InlayPoint(cursor.start().1 .0 + overshoot);
-        let input_buffer_rows = self.inlay_snapshot.buffer_rows(inlay_point.row());
+        let input_rows = self.inlay_snapshot.row_infos(inlay_point.row());
 
-        FoldBufferRows {
+        FoldRows {
             fold_point,
-            input_buffer_rows,
+            input_rows,
             cursor,
         }
     }
@@ -843,8 +849,8 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
     transforms.update_last(
         |last| {
             if !last.is_fold() {
-                last.summary.input += summary.clone();
-                last.summary.output += summary.clone();
+                last.summary.input += summary;
+                last.summary.output += summary;
                 did_merge = true;
             }
         },
@@ -854,7 +860,7 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
         transforms.push(
             Transform {
                 summary: TransformSummary {
-                    input: summary.clone(),
+                    input: summary,
                     output: summary,
                 },
                 placeholder: None,
@@ -1134,25 +1140,25 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 }
 
 #[derive(Clone)]
-pub struct FoldBufferRows<'a> {
+pub struct FoldRows<'a> {
     cursor: Cursor<'a, Transform, (FoldPoint, InlayPoint)>,
-    input_buffer_rows: InlayBufferRows<'a>,
+    input_rows: InlayBufferRows<'a>,
     fold_point: FoldPoint,
 }
 
-impl<'a> FoldBufferRows<'a> {
+impl<'a> FoldRows<'a> {
     pub(crate) fn seek(&mut self, row: u32) {
         let fold_point = FoldPoint::new(row, 0);
         self.cursor.seek(&fold_point, Bias::Left, &());
         let overshoot = fold_point.0 - self.cursor.start().0 .0;
         let inlay_point = InlayPoint(self.cursor.start().1 .0 + overshoot);
-        self.input_buffer_rows.seek(inlay_point.row());
+        self.input_rows.seek(inlay_point.row());
         self.fold_point = fold_point;
     }
 }
 
-impl<'a> Iterator for FoldBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> Iterator for FoldRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut traversed_fold = false;
@@ -1166,11 +1172,11 @@ impl<'a> Iterator for FoldBufferRows<'a> {
 
         if self.cursor.item().is_some() {
             if traversed_fold {
-                self.input_buffer_rows.seek(self.cursor.start().1.row());
-                self.input_buffer_rows.next();
+                self.input_rows.seek(self.cursor.start().1 .0.row);
+                self.input_rows.next();
             }
             *self.fold_point.row_mut() += 1;
-            self.input_buffer_rows.next()
+            self.input_rows.next()
         } else {
             None
         }
@@ -1391,7 +1397,7 @@ mod tests {
     use Bias::{Left, Right};
 
     #[gpui::test]
-    fn test_basic_folds(cx: &mut gpui::AppContext) {
+    fn test_basic_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1470,7 +1476,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_adjacent_folds(cx: &mut gpui::AppContext) {
+    fn test_adjacent_folds(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1529,7 +1535,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_overlapping_folds(cx: &mut gpui::AppContext) {
+    fn test_overlapping_folds(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
@@ -1546,7 +1552,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_merging_folds_via_edit(cx: &mut gpui::AppContext) {
+    fn test_merging_folds_via_edit(cx: &mut gpui::App) {
         init_test(cx);
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -1573,7 +1579,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_folds_in_range(cx: &mut gpui::AppContext) {
+    fn test_folds_in_range(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1604,7 +1610,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_folds(cx: &mut gpui::AppContext, mut rng: StdRng) {
+    fn test_random_folds(cx: &mut gpui::App, mut rng: StdRng) {
         init_test(cx);
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
@@ -1683,12 +1689,12 @@ mod tests {
                     .row();
                 expected_buffer_rows.extend(
                     inlay_snapshot
-                        .buffer_rows(prev_row)
+                        .row_infos(prev_row)
                         .take((1 + fold_start - prev_row) as usize),
                 );
                 prev_row = 1 + fold_end;
             }
-            expected_buffer_rows.extend(inlay_snapshot.buffer_rows(prev_row));
+            expected_buffer_rows.extend(inlay_snapshot.row_infos(prev_row));
 
             assert_eq!(
                 expected_buffer_rows.len(),
@@ -1777,7 +1783,7 @@ mod tests {
             let mut fold_row = 0;
             while fold_row < expected_buffer_rows.len() as u32 {
                 assert_eq!(
-                    snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
+                    snapshot.row_infos(fold_row).collect::<Vec<_>>(),
                     expected_buffer_rows[(fold_row as usize)..],
                     "wrong buffer rows starting at fold row {}",
                     fold_row,
@@ -1875,7 +1881,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_buffer_rows(cx: &mut gpui::AppContext) {
+    fn test_buffer_rows(cx: &mut gpui::App) {
         let text = sample_text(6, 6, 'a') + "\n";
         let buffer = MultiBuffer::build_simple(&text, cx);
 
@@ -1892,13 +1898,22 @@ mod tests {
         let (snapshot, _) = map.read(inlay_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aa⋯cccc\nd⋯eeeee\nffffff\n");
         assert_eq!(
-            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
             [Some(0), Some(3), Some(5), Some(6)]
         );
-        assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [Some(6)]);
+        assert_eq!(
+            snapshot
+                .row_infos(3)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
+            [Some(6)]
+        );
     }
 
-    fn init_test(cx: &mut gpui::AppContext) {
+    fn init_test(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
     }

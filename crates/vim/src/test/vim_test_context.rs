@@ -2,7 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use assets::Assets;
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, SemanticVersion, UpdateGlobal, View, VisualContext};
+use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -57,7 +57,7 @@ impl VimTestContext {
     }
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
-        cx.update(|cx| {
+        cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
@@ -75,44 +75,46 @@ impl VimTestContext {
         });
 
         // Setup search toolbars and keypress hook
-        cx.update_workspace(|workspace, cx| {
+        cx.update_workspace(|workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = cx.new_view(BufferSearchBar::new);
-                    toolbar.add_item(buffer_search_bar, cx);
+                    let buffer_search_bar = cx.new(|cx| BufferSearchBar::new(window, cx));
+                    toolbar.add_item(buffer_search_bar, window, cx);
 
-                    let project_search_bar = cx.new_view(|_| ProjectSearchBar::new());
-                    toolbar.add_item(project_search_bar, cx);
+                    let project_search_bar = cx.new(|_| ProjectSearchBar::new());
+                    toolbar.add_item(project_search_bar, window, cx);
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = cx.new_view(ModeIndicator::new);
-                status_bar.add_right_item(vim_mode_indicator, cx);
+                let vim_mode_indicator = cx.new(|cx| ModeIndicator::new(window, cx));
+                status_bar.add_right_item(vim_mode_indicator, window, cx);
             });
         });
 
         Self { cx }
     }
 
-    pub fn update_view<F, T, R>(&mut self, view: View<T>, update: F) -> R
+    pub fn update_model<F, T, R>(&mut self, model: Entity<T>, update: F) -> R
     where
         T: 'static,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> R + 'static,
+        F: FnOnce(&mut T, &mut Window, &mut Context<T>) -> R + 'static,
     {
         let window = self.window;
-        self.update_window(window, move |_, cx| view.update(cx, update))
-            .unwrap()
+        self.update_window(window, move |_, window, cx| {
+            model.update(cx, |t, cx| update(t, window, cx))
+        })
+        .unwrap()
     }
 
     pub fn workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
         self.cx.update_workspace(update)
     }
 
     pub fn enable_vim(&mut self) {
-        self.cx.update(|cx| {
+        self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
@@ -120,7 +122,7 @@ impl VimTestContext {
     }
 
     pub fn disable_vim(&mut self) {
-        self.cx.update(|cx| {
+        self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
@@ -128,15 +130,15 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.update_editor(|editor, cx| editor.addon::<VimAddon>().unwrap().view.read(cx).mode)
+        self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().model.read(cx).mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
-        self.update_editor(|editor, cx| {
+        self.update_editor(|editor, _, cx| {
             editor
                 .addon::<VimAddon>()
                 .unwrap()
-                .view
+                .model
                 .read(cx)
                 .operator_stack
                 .last()
@@ -146,11 +148,12 @@ impl VimTestContext {
 
     pub fn set_state(&mut self, text: &str, mode: Mode) {
         self.cx.set_state(text);
-        let vim = self.update_editor(|editor, _cx| editor.addon::<VimAddon>().cloned().unwrap());
+        let vim =
+            self.update_editor(|editor, _window, _cx| editor.addon::<VimAddon>().cloned().unwrap());
 
-        self.update(|cx| {
-            vim.view.update(cx, |vim, cx| {
-                vim.switch_mode(mode, true, cx);
+        self.update(|window, cx| {
+            vim.model.update(cx, |vim, cx| {
+                vim.switch_mode(mode, true, window, cx);
             });
         });
         self.cx.cx.cx.run_until_parked();

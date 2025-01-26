@@ -1,7 +1,7 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 use collections::{HashMap, HashSet};
 use fs::Fs;
-use gpui::{AsyncAppContext, Model};
+use gpui::{AsyncAppContext, Entity};
 use language::{language_settings::language_settings, Buffer, Diff};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
@@ -283,13 +283,13 @@ impl Prettier {
         )
         .context("prettier server creation")?;
 
+        let initialize_params = None;
+        let configuration = lsp::DidChangeConfigurationParams {
+            settings: Default::default(),
+        };
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(cx);
-                let configuration = lsp::DidChangeConfigurationParams {
-                    settings: Default::default(),
-                };
-                executor.spawn(server.initialize(params, configuration.into(), cx))
+                executor.spawn(server.initialize(initialize_params, configuration.into(), cx))
             })?
             .await
             .context("prettier server initialization")?;
@@ -302,7 +302,7 @@ impl Prettier {
 
     pub async fn format(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
         cx: &mut AsyncAppContext,

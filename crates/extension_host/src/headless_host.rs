@@ -8,7 +8,7 @@ use extension::{
     ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Task, WeakEntity};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
@@ -40,9 +40,9 @@ impl HeadlessExtensionStore {
         extension_dir: PathBuf,
         extension_host_proxy: Arc<ExtensionHostProxy>,
         node_runtime: NodeRuntime,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(|cx| Self {
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| Self {
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
@@ -63,7 +63,7 @@ impl HeadlessExtensionStore {
     pub fn sync_extensions(
         &mut self,
         extensions: Vec<ExtensionVersion>,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Result<Vec<ExtensionVersion>>> {
         let on_client = HashSet::from_iter(extensions.iter().map(|e| e.id.as_str()));
         let to_remove: Vec<Arc<str>> = self
@@ -111,7 +111,7 @@ impl HeadlessExtensionStore {
     }
 
     pub async fn load_extension(
-        this: WeakModel<Self>,
+        this: WeakEntity<Self>,
         extension: ExtensionVersion,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
@@ -198,7 +198,7 @@ impl HeadlessExtensionStore {
     fn uninstall_extension(
         &mut self,
         extension_id: &Arc<str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.loaded_extensions.remove(extension_id);
 
@@ -235,7 +235,7 @@ impl HeadlessExtensionStore {
         &mut self,
         extension: ExtensionVersion,
         tmp_path: PathBuf,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
@@ -256,7 +256,7 @@ impl HeadlessExtensionStore {
     }
 
     pub async fn handle_sync_extensions(
-        extension_store: Model<HeadlessExtensionStore>,
+        extension_store: Entity<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::SyncExtensions>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SyncExtensionsResponse> {
@@ -292,7 +292,7 @@ impl HeadlessExtensionStore {
     }
 
     pub async fn handle_install_extension(
-        extensions: Model<HeadlessExtensionStore>,
+        extensions: Entity<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::InstallExtension>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {

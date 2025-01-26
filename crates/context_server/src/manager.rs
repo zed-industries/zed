@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel};
+use gpui::{AsyncAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use log;
 use parking_lot::RwLock;
 use project::Project;
@@ -104,8 +104,8 @@ impl ContextServer {
 
 pub struct ContextServerManager {
     servers: HashMap<Arc<str>, Arc<ContextServer>>,
-    project: Model<Project>,
-    registry: Model<ContextServerFactoryRegistry>,
+    project: Entity<Project>,
+    registry: Entity<ContextServerFactoryRegistry>,
     update_servers_task: Option<Task<Result<()>>>,
     needs_server_update: bool,
     _subscriptions: Vec<Subscription>,
@@ -120,9 +120,9 @@ impl EventEmitter<Event> for ContextServerManager {}
 
 impl ContextServerManager {
     pub fn new(
-        registry: Model<ContextServerFactoryRegistry>,
-        project: Model<Project>,
-        cx: &mut ModelContext<Self>,
+        registry: Entity<ContextServerFactoryRegistry>,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self {
             _subscriptions: vec![
@@ -143,7 +143,7 @@ impl ContextServerManager {
         this
     }
 
-    fn available_context_servers_changed(&mut self, cx: &mut ModelContext<Self>) {
+    fn available_context_servers_changed(&mut self, cx: &mut Context<Self>) {
         if self.update_servers_task.is_some() {
             self.needs_server_update = true;
         } else {
@@ -183,7 +183,7 @@ impl ContextServerManager {
     pub fn restart_server(
         &mut self,
         id: &Arc<str>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = id.clone();
         cx.spawn(|this, mut cx| async move {
@@ -214,7 +214,7 @@ impl ContextServerManager {
             .collect()
     }
 
-    async fn maintain_servers(this: WeakModel<Self>, mut cx: AsyncAppContext) -> Result<()> {
+    async fn maintain_servers(this: WeakEntity<Self>, mut cx: AsyncAppContext) -> Result<()> {
         let mut desired_servers = HashMap::default();
 
         let (registry, project) = this.update(&mut cx, |this, cx| {
