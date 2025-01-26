@@ -6149,10 +6149,15 @@ impl<'a> Iterator for ChildEntriesGitIter<'a> {
 
 impl<'a> From<&'a Entry> for proto::Entry {
     fn from(entry: &'a Entry) -> Self {
+        let path = entry
+            .path
+            .components()
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: entry.path.to_string_lossy().into(),
+            path,
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
@@ -6178,7 +6183,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
         } else {
             EntryKind::File
         };
-        let path: Arc<Path> = PathBuf::from(entry.path).into();
+        let path: Arc<Path> = entry.path.iter().collect::<PathBuf>().into();
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
