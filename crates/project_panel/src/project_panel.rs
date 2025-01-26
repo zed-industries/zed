@@ -3724,15 +3724,15 @@ impl ProjectPanel {
                                                 let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - delimiter_target_index).cloned();
                                                 this = this.child(
                                                     div()
-                                                    .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
+                                                    .on_drop(cx.listener(move |this, selections: &DraggedSelection, window, cx| {
                                                         this.hover_scroll_task.take();
                                                         this.folded_directory_drag_target = None;
                                                         if let Some(target_entry_id) = target_entry_id {
-                                                            this.drag_onto(selections, target_entry_id, kind.is_file(), cx);
+                                                            this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
                                                         }
                                                     }))
                                                     .on_drag_move(cx.listener(
-                                                        move |this, event: &DragMoveEvent<DraggedSelection>, _| {
+                                                        move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
                                                             if event.bounds.contains(&event.event.position) {
                                                                 this.folded_directory_drag_target = Some(
                                                                     FoldedDirectoryDragTarget {
@@ -3783,7 +3783,7 @@ impl ProjectPanel {
                                                 let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
                                                 div
                                                 .on_drag_move(cx.listener(
-                                                    move |this, event: &DragMoveEvent<DraggedSelection>, _| {
+                                                    move |this, event: &DragMoveEvent<DraggedSelection>, _, _| {
                                                     if event.bounds.contains(&event.event.position) {
                                                             this.folded_directory_drag_target = Some(
                                                                 FoldedDirectoryDragTarget {
@@ -3806,11 +3806,11 @@ impl ProjectPanel {
                                                         }
                                                     },
                                                 ))
-                                                .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
+                                                .on_drop(cx.listener(move |this, selections: &DraggedSelection, window,cx| {
                                                     this.hover_scroll_task.take();
                                                     this.folded_directory_drag_target = None;
                                                     if let Some(target_entry_id) = target_entry_id {
-                                                        this.drag_onto(selections, target_entry_id, kind.is_file(), cx);
+                                                        this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
                                                     }
                                                 }))
                                                 .when(folded_directory_drag_target.map_or(false, |target|
@@ -4508,7 +4508,6 @@ impl Render for ProjectPanel {
 
 impl Render for DraggedProjectEntryView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
         h_flex()
             .font(ui_font)
