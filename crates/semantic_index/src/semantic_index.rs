@@ -11,7 +11,9 @@ mod worktree_index;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
+use gpui::{
+    App, AppContext as _, AsyncAppContext, BorrowAppContext, Context, Entity, Global, WeakEntity,
+};
 use language::LineEnding;
 use project::{Project, Worktree};
 use std::{
@@ -19,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::ViewContext;
 use util::ResultExt as _;
 use workspace::Workspace;
 
@@ -31,7 +32,7 @@ pub use summary_index::FileSummary;
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     db_connection: Option<heed::Env>,
-    project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
+    project_indices: HashMap<WeakEntity<Project>, Entity<ProjectIndex>>,
 }
 
 impl Global for SemanticDb {}
@@ -57,8 +58,8 @@ impl SemanticDb {
             .context("opening database connection")?;
 
         cx.update(|cx| {
-            cx.observe_new_views(
-                |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+            cx.observe_new(
+                |workspace: &mut Workspace, _window, cx: &mut Context<Workspace>| {
                     let project = workspace.project().clone();
 
                     if cx.has_global::<SemanticDb>() {
@@ -108,7 +109,7 @@ impl SemanticDb {
                 .then_with(|| a.range.start.cmp(&b.range.start))
         });
 
-        let mut last_loaded_file: Option<(Model<Worktree>, Arc<Path>, PathBuf, String)> = None;
+        let mut last_loaded_file: Option<(Entity<Worktree>, Arc<Path>, PathBuf, String)> = None;
         let mut loaded_results = Vec::<LoadedSearchResult>::new();
         for result in results {
             let full_path;
@@ -208,16 +209,16 @@ impl SemanticDb {
 
     pub fn project_index(
         &mut self,
-        project: Model<Project>,
-        _cx: &mut AppContext,
-    ) -> Option<Model<ProjectIndex>> {
+        project: Entity<Project>,
+        _cx: &mut App,
+    ) -> Option<Entity<ProjectIndex>> {
         self.project_indices.get(&project.downgrade()).cloned()
     }
 
     pub fn remaining_summaries(
         &self,
-        project: &WeakModel<Project>,
-        cx: &mut AppContext,
+        project: &WeakEntity<Project>,
+        cx: &mut App,
     ) -> Option<usize> {
         self.project_indices.get(project).map(|project_index| {
             project_index.update(cx, |project_index, cx| {
@@ -228,10 +229,10 @@ impl SemanticDb {
 
     pub fn create_project_index(
         &mut self,
-        project: Model<Project>,
-        cx: &mut AppContext,
-    ) -> Model<ProjectIndex> {
-        let project_index = cx.new_model(|cx| {
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Entity<ProjectIndex> {
+        let project_index = cx.new(|cx| {
             ProjectIndex::new(
                 project.clone(),
                 self.db_connection.clone().unwrap(),

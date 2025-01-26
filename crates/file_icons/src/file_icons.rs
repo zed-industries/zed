@@ -1,11 +1,12 @@
+use std::sync::Arc;
 use std::{path::Path, str};
 
 use collections::HashMap;
 
-use gpui::{AppContext, AssetSource, Global, SharedString};
+use gpui::{App, AssetSource, Global, SharedString};
 use serde_derive::Deserialize;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme::{IconTheme, ThemeRegistry, ThemeSettings};
 use util::{maybe, paths::PathExt};
 
 #[derive(Deserialize, Debug)]
@@ -18,12 +19,12 @@ impl Global for FileIcons {}
 
 pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
 
-pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
+pub fn init(assets: impl AssetSource, cx: &mut App) {
     cx.set_global(FileIcons::new(assets))
 }
 
 impl FileIcons {
-    pub fn get(cx: &AppContext) -> &Self {
+    pub fn get(cx: &App) -> &Self {
         cx.global::<FileIcons>()
     }
 
@@ -39,7 +40,7 @@ impl FileIcons {
             })
     }
 
-    pub fn get_icon(path: &Path, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_icon(path: &Path, cx: &App) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
         // TODO: Associate a type with the languages and have the file's language
@@ -58,33 +59,51 @@ impl FileIcons {
         .or_else(|| this.get_icon_for_type("default", cx))
     }
 
-    pub fn get_icon_for_type(&self, typ: &str, cx: &AppContext) -> Option<SharedString> {
-        let theme_settings = ThemeSettings::get_global(cx);
-
-        theme_settings
-            .active_icon_theme
-            .file_icons
-            .get(typ)
-            .map(|icon_definition| icon_definition.path.clone())
+    fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {
+        let theme_registry = ThemeRegistry::global(cx);
+        theme_registry.default_icon_theme().ok()
     }
 
-    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
-        let icon_theme = &ThemeSettings::get_global(cx).active_icon_theme;
-
-        if expanded {
-            icon_theme.directory_icons.expanded.clone()
-        } else {
-            icon_theme.directory_icons.collapsed.clone()
+    pub fn get_icon_for_type(&self, typ: &str, cx: &App) -> Option<SharedString> {
+        fn get_icon_for_type(icon_theme: &Arc<IconTheme>, typ: &str) -> Option<SharedString> {
+            icon_theme
+                .file_icons
+                .get(typ)
+                .map(|icon_definition| icon_definition.path.clone())
         }
+
+        get_icon_for_type(&ThemeSettings::get_global(cx).active_icon_theme, typ).or_else(|| {
+            Self::default_icon_theme(cx).and_then(|icon_theme| get_icon_for_type(&icon_theme, typ))
+        })
     }
 
-    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
-        let icon_theme = &ThemeSettings::get_global(cx).active_icon_theme;
-
-        if expanded {
-            icon_theme.chevron_icons.expanded.clone()
-        } else {
-            icon_theme.chevron_icons.collapsed.clone()
+    pub fn get_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
+        fn get_folder_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
+            if expanded {
+                icon_theme.directory_icons.expanded.clone()
+            } else {
+                icon_theme.directory_icons.collapsed.clone()
+            }
         }
+
+        get_folder_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(|| {
+            Self::default_icon_theme(cx)
+                .and_then(|icon_theme| get_folder_icon(&icon_theme, expanded))
+        })
+    }
+
+    pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {
+        fn get_chevron_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
+            if expanded {
+                icon_theme.chevron_icons.expanded.clone()
+            } else {
+                icon_theme.chevron_icons.collapsed.clone()
+            }
+        }
+
+        get_chevron_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(|| {
+            Self::default_icon_theme(cx)
+                .and_then(|icon_theme| get_chevron_icon(&icon_theme, expanded))
+        })
     }
 }

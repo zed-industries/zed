@@ -24,7 +24,7 @@ pub enum DividerColor {
 }
 
 impl DividerColor {
-    pub fn hsla(self, cx: &WindowContext) -> Hsla {
+    pub fn hsla(self, cx: &mut App) -> Hsla {
         match self {
             DividerColor::Border => cx.theme().colors().border,
             DividerColor::BorderVariant => cx.theme().colors().border_variant,
@@ -41,7 +41,7 @@ pub struct Divider {
 }
 
 impl RenderOnce for Divider {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         match self.style {
             DividerStyle::Solid => self.render_solid(cx).into_any_element(),
             DividerStyle::Dashed => self.render_dashed(cx).into_any_element(),
@@ -96,7 +96,7 @@ impl Divider {
         self
     }
 
-    pub fn render_solid(self, cx: &WindowContext) -> impl IntoElement {
+    pub fn render_solid(self, cx: &mut App) -> impl IntoElement {
         div()
             .map(|this| match self.direction {
                 DividerDirection::Horizontal => {
@@ -111,7 +111,7 @@ impl Divider {
 
     // TODO: Use canvas or a shader here
     // This obviously is a short term approach
-    pub fn render_dashed(self, cx: &WindowContext) -> impl IntoElement {
+    pub fn render_dashed(self, cx: &mut App) -> impl IntoElement {
         let segment_count = 128;
         let segment_count_f = segment_count as f32;
         let segment_min_w = 6.;

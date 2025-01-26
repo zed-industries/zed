@@ -292,6 +292,7 @@ impl MacPlatform {
             } => {
                 let keystrokes = keymap
                     .bindings_for_action(action.as_ref())
+                    .rev()
                     .next()
                     .map(|binding| binding.keystrokes());
 

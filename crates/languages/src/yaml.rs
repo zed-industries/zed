@@ -7,7 +7,7 @@ use language::{
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use smol::fs;
@@ -128,6 +128,7 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
@@ -142,7 +143,11 @@ impl LspAdapter for YamlLspAdapter {
                 .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
         })?;
-        let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});
+
+        let mut options = serde_json::json!({
+            "[yaml]": {"editor.tabSize": tab_size},
+            "yaml": {"format": {"enable": true}}
+        });
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)

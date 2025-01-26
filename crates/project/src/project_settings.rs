@@ -1,7 +1,7 @@
-use anyhow::Context;
+use anyhow::Context as _;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use gpui::{App, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter};
 use lsp::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
@@ -208,10 +208,7 @@ impl Settings for ProjectSettings {
 
     type FileContent = Self;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
 }
@@ -231,9 +228,9 @@ impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
 pub struct SettingsObserver {
     mode: SettingsObserverMode,
     downstream_client: Option<AnyProtoClient>,
-    worktree_store: Model<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
     project_id: u64,
-    task_store: Model<TaskStore>,
+    task_store: Entity<TaskStore>,
 }
 
 /// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
@@ -248,9 +245,9 @@ impl SettingsObserver {
 
     pub fn new_local(
         fs: Arc<dyn Fs>,
-        worktree_store: Model<WorktreeStore>,
-        task_store: Model<TaskStore>,
-        cx: &mut ModelContext<Self>,
+        worktree_store: Entity<WorktreeStore>,
+        task_store: Entity<TaskStore>,
+        cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
@@ -265,9 +262,9 @@ impl SettingsObserver {
     }
 
     pub fn new_remote(
-        worktree_store: Model<WorktreeStore>,
-        task_store: Model<TaskStore>,
-        _: &mut ModelContext<Self>,
+        worktree_store: Entity<WorktreeStore>,
+        task_store: Entity<TaskStore>,
+        _: &mut Context<Self>,
     ) -> Self {
         Self {
             worktree_store,
@@ -282,7 +279,7 @@ impl SettingsObserver {
         &mut self,
         project_id: u64,
         downstream_client: AnyProtoClient,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.project_id = project_id;
         self.downstream_client = Some(downstream_client.clone());
@@ -319,12 +316,12 @@ impl SettingsObserver {
         }
     }
 
-    pub fn unshared(&mut self, _: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, _: &mut Context<Self>) {
         self.downstream_client = None;
     }
 
     async fn handle_update_worktree_settings(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<()> {
@@ -358,9 +355,9 @@ impl SettingsObserver {
 
     fn on_worktree_store_event(
         &mut self,
-        _: Model<WorktreeStore>,
+        _: Entity<WorktreeStore>,
         event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let WorktreeStoreEvent::WorktreeAdded(worktree) = event {
             cx.subscribe(worktree, |this, worktree, event, cx| {
@@ -374,9 +371,9 @@ impl SettingsObserver {
 
     fn update_local_worktree_settings(
         &mut self,
-        worktree: &Model<Worktree>,
+        worktree: &Entity<Worktree>,
         changes: &UpdatedEntriesSet,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let SettingsObserverMode::Local(fs) = &self.mode else {
             return;
@@ -496,9 +493,9 @@ impl SettingsObserver {
 
     fn update_settings(
         &mut self,
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         settings_contents: impl IntoIterator<Item = (Arc<Path>, LocalSettingsKind, Option<String>)>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
         let remote_worktree_id = worktree.read(cx).id();

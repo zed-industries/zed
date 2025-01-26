@@ -69,8 +69,8 @@ objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
 objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
 objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
-gzip "${target_dir}/${target_triple}/release/zed.dbg"
-gzip "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
+gzip -f "${target_dir}/${target_triple}/release/zed.dbg"
+gzip -f "${target_dir}/${remote_server_triple}/release/remote_server.dbg"
 
 if [[ -n "${DIGITALOCEAN_SPACES_SECRET_KEY:-}" && -n "${DIGITALOCEAN_SPACES_ACCESS_KEY:-}" ]]; then
     upload_to_blob_store_public \
@@ -155,4 +155,4 @@ remove_match="zed(-[a-zA-Z0-9]+)?-linux-$(uname -m)\.tar\.gz"
 ls "${target_dir}/release" | grep -E ${remove_match} | xargs -d "\n" -I {} rm -f "${target_dir}/release/{}" || true
 tar -czvf "${target_dir}/release/$archive" -C ${temp_dir} "zed$suffix.app"
 
-gzip --stdout --best "${target_dir}/${remote_server_triple}/release/remote_server" > "${target_dir}/zed-remote-server-linux-${arch}.gz"
+gzip -f --stdout --best "${target_dir}/${remote_server_triple}/release/remote_server" > "${target_dir}/zed-remote-server-linux-${arch}.gz"

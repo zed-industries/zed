@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{prelude::*, AppContext, AsyncAppContext, Global};
+use gpui::{prelude::*, App, AsyncAppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
@@ -181,7 +181,7 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     }
 }
 
-struct GlobalCopilotChat(gpui::Model<CopilotChat>);
+struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
 
@@ -191,8 +191,8 @@ pub struct CopilotChat {
     client: Arc<dyn HttpClient>,
 }
 
-pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let copilot_chat = cx.new_model(|cx| CopilotChat::new(fs, client, cx));
+pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
+    let copilot_chat = cx.new(|cx| CopilotChat::new(fs, client, cx));
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
@@ -215,12 +215,12 @@ fn copilot_chat_config_paths() -> [PathBuf; 2] {
 }
 
 impl CopilotChat {
-    pub fn global(cx: &AppContext) -> Option<gpui::Model<Self>> {
+    pub fn global(cx: &App) -> Option<gpui::Entity<Self>> {
         cx.try_global::<GlobalCopilotChat>()
             .map(|model| model.0.clone())
     }
 
-    pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
         let config_paths = copilot_chat_config_paths();
 
         let resolve_config_path = {

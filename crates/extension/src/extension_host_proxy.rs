@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use fs::Fs;
-use gpui::{AppContext, Global, ReadGlobal, SharedString, Task};
+use gpui::{App, Global, ReadGlobal, SharedString, Task};
 use language::{LanguageMatcher, LanguageName, LanguageServerBinaryStatus, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
@@ -33,14 +33,14 @@ pub struct ExtensionHostProxy {
 
 impl ExtensionHostProxy {
     /// Returns the global [`ExtensionHostProxy`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         GlobalExtensionHostProxy::global(cx).0.clone()
     }
 
     /// Returns the global [`ExtensionHostProxy`].
     ///
     /// Inserts a default [`ExtensionHostProxy`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+    pub fn default_global(cx: &mut App) -> Arc<Self> {
         cx.default_global::<GlobalExtensionHostProxy>().0.clone()
     }
 
@@ -102,7 +102,22 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
 
     fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
 
-    fn reload_current_theme(&self, cx: &mut AppContext);
+    fn reload_current_theme(&self, cx: &mut App);
+
+    fn list_icon_theme_names(
+        &self,
+        icon_theme_path: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<Vec<String>>>;
+
+    fn remove_icon_themes(&self, icon_themes: Vec<SharedString>);
+
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>>;
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
@@ -130,12 +145,45 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         proxy.load_user_theme(theme_path, fs)
     }
 
-    fn reload_current_theme(&self, cx: &mut AppContext) {
+    fn reload_current_theme(&self, cx: &mut App) {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return;
         };
 
         proxy.reload_current_theme(cx)
+    }
+
+    fn list_icon_theme_names(
+        &self,
+        icon_theme_path: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<Vec<String>>> {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        proxy.list_icon_theme_names(icon_theme_path, fs)
+    }
+
+    fn remove_icon_themes(&self, icon_themes: Vec<SharedString>) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.remove_icon_themes(icon_themes)
+    }
+
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>> {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return Task::ready(Ok(()));
+        };
+
+        proxy.load_icon_theme(icon_theme_path, icons_root_dir, fs)
     }
 }
 
@@ -292,7 +340,7 @@ pub trait ExtensionContextServerProxy: Send + Sync + 'static {
         &self,
         extension: Arc<dyn Extension>,
         server_id: Arc<str>,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
 }
 
@@ -301,7 +349,7 @@ impl ExtensionContextServerProxy for ExtensionHostProxy {
         &self,
         extension: Arc<dyn Extension>,
         server_id: Arc<str>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         let Some(proxy) = self.context_server_proxy.read().clone() else {
             return;

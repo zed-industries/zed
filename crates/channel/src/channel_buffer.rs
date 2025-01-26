@@ -2,7 +2,7 @@ use crate::{Channel, ChannelStore};
 use anyhow::Result;
 use client::{ChannelId, Client, Collaborator, UserStore, ZED_ALWAYS_ACTIVE};
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
+use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Task};
 use language::proto::serialize_version;
 use rpc::{
     proto::{self, PeerId},
@@ -23,9 +23,9 @@ pub struct ChannelBuffer {
     pub channel_id: ChannelId,
     connected: bool,
     collaborators: HashMap<PeerId, Collaborator>,
-    user_store: Model<UserStore>,
-    channel_store: Model<ChannelStore>,
-    buffer: Model<language::Buffer>,
+    user_store: Entity<UserStore>,
+    channel_store: Entity<ChannelStore>,
+    buffer: Entity<language::Buffer>,
     buffer_epoch: u64,
     client: Arc<Client>,
     subscription: Option<client::Subscription>,
@@ -45,10 +45,10 @@ impl ChannelBuffer {
     pub(crate) async fn new(
         channel: Arc<Channel>,
         client: Arc<Client>,
-        user_store: Model<UserStore>,
-        channel_store: Model<ChannelStore>,
+        user_store: Entity<UserStore>,
+        channel_store: Entity<ChannelStore>,
         mut cx: AsyncAppContext,
-    ) -> Result<Model<Self>> {
+    ) -> Result<Entity<Self>> {
         let response = client
             .request(proto::JoinChannelBuffer {
                 channel_id: channel.id.0,
@@ -62,7 +62,7 @@ impl ChannelBuffer {
             .map(language::proto::deserialize_operation)
             .collect::<Result<Vec<_>, _>>()?;
 
-        let buffer = cx.new_model(|cx| {
+        let buffer = cx.new(|cx| {
             let capability = channel_store.read(cx).channel_capability(channel.id);
             language::Buffer::remote(buffer_id, response.replica_id as u16, capability, base_text)
         })?;
@@ -70,7 +70,7 @@ impl ChannelBuffer {
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
-        anyhow::Ok(cx.new_model(|cx| {
+        anyhow::Ok(cx.new(|cx| {
             cx.subscribe(&buffer, Self::on_buffer_update).detach();
             cx.on_release(Self::release).detach();
             let mut this = Self {
@@ -81,7 +81,7 @@ impl ChannelBuffer {
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
-                subscription: Some(subscription.set_model(&cx.handle(), &mut cx.to_async())),
+                subscription: Some(subscription.set_model(&cx.model(), &mut cx.to_async())),
                 user_store,
                 channel_store,
             };
@@ -90,7 +90,7 @@ impl ChannelBuffer {
         })?)
     }
 
-    fn release(&mut self, _: &mut AppContext) {
+    fn release(&mut self, _: &mut App) {
         if self.connected {
             if let Some(task) = self.acknowledge_task.take() {
                 task.detach();
@@ -103,18 +103,18 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn remote_id(&self, cx: &AppContext) -> BufferId {
+    pub fn remote_id(&self, cx: &App) -> BufferId {
         self.buffer.read(cx).remote_id()
     }
 
-    pub fn user_store(&self) -> &Model<UserStore> {
+    pub fn user_store(&self) -> &Entity<UserStore> {
         &self.user_store
     }
 
     pub(crate) fn replace_collaborators(
         &mut self,
         collaborators: Vec<proto::Collaborator>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut new_collaborators = HashMap::default();
         for collaborator in collaborators {
@@ -136,7 +136,7 @@ impl ChannelBuffer {
     }
 
     async fn handle_update_channel_buffer(
-        this: Model<Self>,
+        this: Entity<Self>,
         update_channel_buffer: TypedEnvelope<proto::UpdateChannelBuffer>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
@@ -157,7 +157,7 @@ impl ChannelBuffer {
     }
 
     async fn handle_update_channel_buffer_collaborators(
-        this: Model<Self>,
+        this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateChannelBufferCollaborators>,
         mut cx: AsyncAppContext,
     ) -> Result<()> {
@@ -170,9 +170,9 @@ impl ChannelBuffer {
 
     fn on_buffer_update(
         &mut self,
-        _: Model<language::Buffer>,
+        _: Entity<language::Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             language::BufferEvent::Operation {
@@ -201,7 +201,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<'_, ChannelBuffer>) {
+    pub fn acknowledge_buffer_version(&mut self, cx: &mut Context<'_, ChannelBuffer>) {
         let buffer = self.buffer.read(cx);
         let version = buffer.version();
         let buffer_id = buffer.remote_id().into();
@@ -227,7 +227,7 @@ impl ChannelBuffer {
         self.buffer_epoch
     }
 
-    pub fn buffer(&self) -> Model<language::Buffer> {
+    pub fn buffer(&self) -> Entity<language::Buffer> {
         self.buffer.clone()
     }
 
@@ -235,14 +235,14 @@ impl ChannelBuffer {
         &self.collaborators
     }
 
-    pub fn channel(&self, cx: &AppContext) -> Option<Arc<Channel>> {
+    pub fn channel(&self, cx: &App) -> Option<Arc<Channel>> {
         self.channel_store
             .read(cx)
             .channel_for_id(self.channel_id)
             .cloned()
     }
 
-    pub(crate) fn disconnect(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn disconnect(&mut self, cx: &mut Context<Self>) {
         log::info!("channel buffer {} disconnected", self.channel_id);
         if self.connected {
             self.connected = false;
@@ -252,7 +252,7 @@ impl ChannelBuffer {
         }
     }
 
-    pub(crate) fn channel_changed(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn channel_changed(&mut self, cx: &mut Context<Self>) {
         cx.emit(ChannelBufferEvent::ChannelChanged);
         cx.notify()
     }
@@ -261,7 +261,7 @@ impl ChannelBuffer {
         self.connected
     }
 
-    pub fn replica_id(&self, cx: &AppContext) -> u16 {
+    pub fn replica_id(&self, cx: &App) -> u16 {
         self.buffer.read(cx).replica_id()
     }
 }

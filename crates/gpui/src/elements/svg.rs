@@ -1,7 +1,7 @@
 use crate::{
-    geometry::Negate as _, point, px, radians, size, Bounds, Element, GlobalElementId, Hitbox,
+    geometry::Negate as _, point, px, radians, size, App, Bounds, Element, GlobalElementId, Hitbox,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString,
-    Size, StyleRefinement, Styled, TransformationMatrix, WindowContext,
+    Size, StyleRefinement, Styled, TransformationMatrix, Window,
 };
 use util::ResultExt;
 
@@ -47,11 +47,14 @@ impl Element for Svg {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, cx, |style, cx| cx.request_layout(style, None));
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, window, cx, |style, window, cx| {
+                    window.request_layout(style, None, cx)
+                });
         (layout_id, ())
     }
 
@@ -60,10 +63,17 @@ impl Element for Svg {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<Hitbox> {
-        self.interactivity
-            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, _| hitbox)
+        self.interactivity.prepaint(
+            global_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, _, _| hitbox,
+        )
     }
 
     fn paint(
@@ -72,25 +82,33 @@ impl Element for Svg {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) where
         Self: Sized,
     {
-        self.interactivity
-            .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
+        self.interactivity.paint(
+            global_id,
+            bounds,
+            hitbox.as_ref(),
+            window,
+            cx,
+            |style, window, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
                     let transformation = self
                         .transformation
                         .as_ref()
                         .map(|transformation| {
-                            transformation.into_matrix(bounds.center(), cx.scale_factor())
+                            transformation.into_matrix(bounds.center(), window.scale_factor())
                         })
                         .unwrap_or_default();
 
-                    cx.paint_svg(bounds, path.clone(), transformation, color)
+                    window
+                        .paint_svg(bounds, path.clone(), transformation, color, cx)
                         .log_err();
                 }
-            })
+            },
+        )
     }
 }
 

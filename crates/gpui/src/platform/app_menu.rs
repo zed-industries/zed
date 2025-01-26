@@ -1,4 +1,4 @@
-use crate::{Action, AppContext, Platform, SharedString};
+use crate::{Action, App, Platform, SharedString};
 use util::ResultExt;
 
 /// A menu of the application, either a main menu or a submenu
@@ -171,7 +171,7 @@ pub enum OsAction {
     Redo,
 }
 
-pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &AppContext) {
+pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
     platform.on_will_open_app_menu(Box::new({
         let cx = cx.to_async();
         move || {

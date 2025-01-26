@@ -1,18 +1,19 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, SharedString};
+use gpui::{App, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
 use util::ResultExt;
 
 use crate::{
-    read_user_theme, refine_theme_family, Appearance, IconTheme, Theme, ThemeFamily,
-    ThemeFamilyContent,
+    read_icon_theme, read_user_theme, refine_theme_family, Appearance, AppearanceContent,
+    ChevronIcons, DirectoryIcons, IconDefinition, IconTheme, Theme, ThemeFamily,
+    ThemeFamilyContent, DEFAULT_ICON_THEME_NAME,
 };
 
 /// The metadata for a theme.
@@ -48,19 +49,19 @@ pub struct ThemeRegistry {
 
 impl ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalThemeRegistry>().0.clone()
     }
 
     /// Returns the global [`ThemeRegistry`].
     ///
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+    pub fn default_global(cx: &mut App) -> Arc<Self> {
         cx.default_global::<GlobalThemeRegistry>().0.clone()
     }
 
     /// Sets the global [`ThemeRegistry`].
-    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
+    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut App) {
         cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 
@@ -80,7 +81,7 @@ impl ThemeRegistry {
 
         let default_icon_theme = crate::default_icon_theme();
         registry.state.write().icon_themes.insert(
-            default_icon_theme.id.clone().into(),
+            default_icon_theme.name.clone(),
             Arc::new(default_icon_theme),
         );
 
@@ -206,6 +207,11 @@ impl ThemeRegistry {
         Ok(())
     }
 
+    /// Returns the default icon theme.
+    pub fn default_icon_theme(&self) -> Result<Arc<IconTheme>> {
+        self.get_icon_theme(DEFAULT_ICON_THEME_NAME)
+    }
+
     /// Returns the icon theme with the specified name.
     pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>> {
         self.state
@@ -214,6 +220,67 @@ impl ThemeRegistry {
             .get(name)
             .ok_or_else(|| anyhow!("icon theme not found: {name}"))
             .cloned()
+    }
+
+    /// Removes the icon themes with the given names from the registry.
+    pub fn remove_icon_themes(&self, icon_themes_to_remove: &[SharedString]) {
+        self.state
+            .write()
+            .icon_themes
+            .retain(|name, _| !icon_themes_to_remove.contains(name))
+    }
+
+    /// Loads the icon theme from the specified path and adds it to the registry.
+    ///
+    /// The `icons_root_dir` parameter indicates the root directory from which
+    /// the relative paths to icons in the theme should be resolved against.
+    pub async fn load_icon_theme(
+        &self,
+        icon_theme_path: &Path,
+        icons_root_dir: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Result<()> {
+        let icon_theme_family = read_icon_theme(icon_theme_path, fs).await?;
+
+        let mut state = self.state.write();
+        for icon_theme in icon_theme_family.themes {
+            let icon_theme = IconTheme {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: icon_theme.name.into(),
+                appearance: match icon_theme.appearance {
+                    AppearanceContent::Light => Appearance::Light,
+                    AppearanceContent::Dark => Appearance::Dark,
+                },
+                directory_icons: DirectoryIcons {
+                    collapsed: icon_theme.directory_icons.collapsed,
+                    expanded: icon_theme.directory_icons.expanded,
+                },
+                chevron_icons: ChevronIcons {
+                    collapsed: icon_theme.chevron_icons.collapsed,
+                    expanded: icon_theme.chevron_icons.expanded,
+                },
+                file_icons: icon_theme
+                    .file_icons
+                    .into_iter()
+                    .map(|(key, icon)| {
+                        let path = icons_root_dir.join(icon.path.as_ref());
+
+                        (
+                            key,
+                            IconDefinition {
+                                path: path.to_string_lossy().to_string().into(),
+                            },
+                        )
+                    })
+                    .collect(),
+            };
+
+            state
+                .icon_themes
+                .insert(icon_theme.name.clone(), Arc::new(icon_theme));
+        }
+
+        Ok(())
     }
 }
 
