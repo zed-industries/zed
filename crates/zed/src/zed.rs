@@ -2370,16 +2370,11 @@ mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    
                     vec![path!("/dir1/a.txt").into()],
-                   
                     OpenVisible::All,
-                   
                     None,
                     window,
-                   
                     cx,
-                ,
                 )
             })
             .unwrap()
@@ -2410,16 +2405,11 @@ mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    
                     vec![path!("/dir2/b.txt").into()],
-                   
                     OpenVisible::All,
-                   
                     None,
                     window,
-                   
                     cx,
-                ,
                 )
             })
             .unwrap()
@@ -2506,7 +2496,13 @@ mod tests {
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
             .update(cx, |workspace, window, cx| {
-                workspace.open_paths(vec![path!("/d.txt").into()], OpenVisible::None, None, window, cx)
+                workspace.open_paths(
+                    vec![path!("/d.txt").into()],
+                    OpenVisible::None,
+                    None,
+                    window,
+                    cx,
+                )
             })
             .unwrap()
             .await;

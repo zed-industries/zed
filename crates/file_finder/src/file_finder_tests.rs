@@ -110,7 +110,9 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
     let matching_abs_path = path!("/root/a/b/file2.txt").to_string();
     picker
         .update_in(cx, |picker, window, cx| {
-            picker.delegate.update_matches(matching_abs_path, window, cx)
+            picker
+                .delegate
+                .update_matches(matching_abs_path, window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
@@ -130,7 +132,9 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
     let mismatching_abs_path = path!("/root/a/b/file1.txt").to_string();
     picker
         .update_in(cx, |picker, window, cx| {
-            picker.delegate.update_matches(mismatching_abs_path, window, cx)
+            picker
+                .delegate
+                .update_matches(mismatching_abs_path, window, cx)
         })
         .await;
     picker.update(cx, |picker, _| {
@@ -788,14 +792,10 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
     workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.open_abs_path(
-                
                 PathBuf::from(path!("/external-src/test/third.rs")),
-               
                 false,
                 window,
-               
                 cx,
-            ,
             )
         })
         .detach();

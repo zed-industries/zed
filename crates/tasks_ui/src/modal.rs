@@ -820,14 +820,10 @@ mod tests {
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
-                    
                     PathBuf::from(path!("/dir/file_with.odd_extension")),
-                   
                     true,
                     window,
-                   
                     cx,
-                ,
                 )
             })
             .await
@@ -851,14 +847,10 @@ mod tests {
         let second_item = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
-                    
                     PathBuf::from(path!("/dir/file_without_extension")),
-                   
                     true,
                     window,
-                   
                     cx,
-                ,
                 )
             })
             .await

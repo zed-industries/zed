@@ -5768,13 +5768,13 @@ mod tests {
 
         // Test filename with whitespace
         select_path(&panel, "root1", cx);
-        panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-        let confirm = panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+        let confirm = panel.update_in(cx, |panel, window, cx| {
             // If we want to create a subdirectory, there should be no prefix slash.
             panel
                 .filename_editor
-                .update(cx, |editor, cx| editor.set_text("new dir 2/", cx));
-            panel.confirm_edit(cx).unwrap()
+                .update(cx, |editor, cx| editor.set_text("new dir 2/", window, cx));
+            panel.confirm_edit(window, cx).unwrap()
         });
         confirm.await.unwrap();
         assert_eq!(
@@ -5792,13 +5792,13 @@ mod tests {
         #[cfg(target_os = "windows")]
         {
             select_path(&panel, "root1", cx);
-            panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
-            let confirm = panel.update(cx, |panel, cx| {
+            panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+            let confirm = panel.update_in(cx, |panel, window, cx| {
                 // If we want to create a subdirectory, there should be no prefix slash.
                 panel
                     .filename_editor
-                    .update(cx, |editor, cx| editor.set_text("new_dir_3\\", cx));
-                panel.confirm_edit(cx).unwrap()
+                    .update(cx, |editor, cx| editor.set_text("new_dir_3\\", window, cx));
+                panel.confirm_edit(window, cx).unwrap()
             });
             confirm.await.unwrap();
             assert_eq!(
