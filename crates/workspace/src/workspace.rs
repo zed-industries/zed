@@ -1305,6 +1305,10 @@ impl Workspace {
         &self.right_dock
     }
 
+    pub fn all_docks(&self) -> [&Entity<Dock>; 3] {
+        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+    }
+
     pub fn is_edited(&self) -> bool {
         self.window_edited
     }
@@ -1797,7 +1801,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
             .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
@@ -2457,7 +2461,7 @@ impl Workspace {
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let docks = self.all_docks();
 
         for dock in docks {
             dock.update(cx, |dock, cx| {
@@ -2495,7 +2499,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut panel = None;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_proto_id(panel_id) {
                 panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, window, cx);
@@ -2523,7 +2527,7 @@ impl Workspace {
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
                 let panel = dock.update(cx, |dock, cx| {
@@ -2562,7 +2566,7 @@ impl Workspace {
 
     /// Open the panel of the given type
     pub fn open_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, window, cx);
@@ -2573,7 +2577,7 @@ impl Workspace {
     }
 
     pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
-        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+        self.all_docks()
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())
     }
@@ -2593,7 +2597,7 @@ impl Workspace {
 
         // If another dock is zoomed, hide it.
         let mut focus_center = false;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
@@ -3546,7 +3550,7 @@ impl Workspace {
     }
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(pane) = dock
                     .read(cx)
@@ -4139,7 +4143,7 @@ impl Workspace {
     ) -> (Option<Box<dyn ItemHandle>>, Option<proto::PanelId>) {
         let mut active_item = None;
         let mut panel_id = None;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
                     if let Some(pane) = panel.pane(cx) {
