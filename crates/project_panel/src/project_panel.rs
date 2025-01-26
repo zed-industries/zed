@@ -3715,9 +3715,7 @@ impl ProjectPanel {
                     } else if kind.is_dir() {
                         this.marked_entries.clear();
                         if event.down.modifiers.alt {
-                            this.expand_all_for_entry(worktree_id, entry_id, cx);
-                            this.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                            cx.notify();
+                            this.toggle_expand_all(entry_id, window, cx);
                         } else {
                             this.toggle_expanded(entry_id, window, cx);
                         }
