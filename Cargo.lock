@@ -5464,6 +5464,7 @@ dependencies = [
 name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
