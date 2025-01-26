@@ -1309,16 +1309,16 @@ impl Workspace {
         [&self.left_dock, &self.bottom_dock, &self.right_dock]
     }
 
-    pub fn is_edited(&self) -> bool {
-        self.window_edited
-    }
-
     pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
         match position {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
             DockPosition::Right => &self.right_dock,
         }
+    }
+
+    pub fn is_edited(&self) -> bool {
+        self.window_edited
     }
 
     pub fn add_panel<T: Panel>(
