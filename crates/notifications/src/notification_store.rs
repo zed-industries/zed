@@ -3,7 +3,7 @@ use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{ChannelId, Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Global, Task};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task};
 use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
@@ -199,7 +199,7 @@ impl NotificationStore {
     async fn handle_new_notification(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::AddNotification>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<()> {
         Self::add_notifications(
             this,
@@ -217,7 +217,7 @@ impl NotificationStore {
     async fn handle_delete_notification(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::DeleteNotification>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.splice_notifications([(envelope.payload.notification_id, None)], false, cx);
@@ -228,7 +228,7 @@ impl NotificationStore {
     async fn handle_update_notification(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateNotification>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             if let Some(notification) = envelope.payload.notification {
@@ -259,7 +259,7 @@ impl NotificationStore {
         this: Entity<Self>,
         notifications: Vec<proto::Notification>,
         options: AddNotificationsOptions,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut user_ids = Vec::new();
         let mut message_ids = Vec::new();

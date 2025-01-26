@@ -4,7 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncAppContext};
+use gpui::{App, AsyncApp};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
@@ -221,7 +221,7 @@ impl LspAdapter for JsonLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = cx.update(|cx| {
             self.workspace_config

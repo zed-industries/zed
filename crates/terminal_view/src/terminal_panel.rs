@@ -12,7 +12,7 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnyView, App, AsyncAppContext, AsyncWindowContext, Context, Corner, Entity,
+    actions, Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity,
     EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
     Render, Styled, Task, WeakEntity, Window,
 };
@@ -1066,7 +1066,7 @@ pub fn new_terminal_pane(
 
 async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, Entity<Pane>, Entity<TerminalView>)>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) {
     let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
         terminal

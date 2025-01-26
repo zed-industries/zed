@@ -5,7 +5,7 @@ use collections::{hash_map::Entry, HashMap, HashSet};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, Future, StreamExt};
 use gpui::{
-    App, AsyncAppContext, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
+    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
@@ -275,7 +275,7 @@ impl UserStore {
     async fn handle_update_invite_info(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateInviteInfo>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.invite_info = Some(InviteInfo {
@@ -290,7 +290,7 @@ impl UserStore {
     async fn handle_show_contacts(
         this: Entity<Self>,
         _: TypedEnvelope<proto::ShowContacts>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| cx.emit(Event::ShowContacts))?;
         Ok(())
@@ -303,7 +303,7 @@ impl UserStore {
     async fn handle_update_contacts(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateContacts>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
             this.update_contacts_tx
@@ -316,7 +316,7 @@ impl UserStore {
     async fn handle_update_plan(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateUserPlan>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.current_plan = Some(message.payload.plan());
@@ -819,7 +819,7 @@ impl Contact {
     async fn from_proto(
         contact: proto::Contact,
         user_store: &Entity<UserStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let user = user_store
             .update(cx, |user_store, cx| {

@@ -180,7 +180,7 @@ impl ChannelView {
                 })
             })?;
 
-            cx.new_window_model(|window, cx| {
+            cx.new_window_entity(|window, cx| {
                 let mut this = Self::new(
                     project,
                     weak_workspace,

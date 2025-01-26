@@ -1318,7 +1318,7 @@ impl Room {
     }
 
     #[cfg(all(target_os = "windows", target_env = "gnu"))]
-    pub fn share_microphone(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    pub fn share_microphone(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("MinGW is not supported yet")))
     }
 
@@ -1626,7 +1626,7 @@ impl Room {
 #[cfg(all(target_os = "windows", target_env = "gnu"))]
 fn spawn_room_connection(
     livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
-    cx: &mut ModelContext<'_, Room>,
+    cx: &mut Context<'_, Room>,
 ) {
 }
 

@@ -7331,7 +7331,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         );
         multi_buffer
     });
-    let multi_buffer_editor = cx.new_window_model(|window, cx| {
+    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -12595,7 +12595,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-    let multi_buffer_editor = cx.new_window_model(|window, cx| {
+    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -14800,7 +14800,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-    let editor = cx.new_window_model(|window, cx| {
+    let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -14954,7 +14954,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         );
         multi_buffer
     });
-    let multi_buffer_editor = cx.new_window_model(|window, cx| {
+    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -15109,7 +15109,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         multi_buffer
     });
 
-    let multi_buffer_editor = cx.new_window_model(|window, cx| {
+    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -15229,7 +15229,7 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
         );
         multi_buffer
     });
-    let multi_buffer_editor = cx.new_window_model(|window, cx| {
+    let multi_buffer_editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,

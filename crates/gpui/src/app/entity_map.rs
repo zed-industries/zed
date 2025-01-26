@@ -422,7 +422,7 @@ impl<T: 'static> Entity<T> {
         cx: &C,
         f: impl FnOnce(&T, &App) -> R,
     ) -> C::Result<R> {
-        cx.read_model(self, f)
+        cx.read_entity(self, f)
     }
 
     /// Updates the entity referenced by this model with the given function.
@@ -438,7 +438,7 @@ impl<T: 'static> Entity<T> {
     where
         C: AppContext,
     {
-        cx.update_model(self, update)
+        cx.update_entity(self, update)
     }
 
     /// Updates the entity referenced by this model with the given function if
@@ -452,7 +452,7 @@ impl<T: 'static> Entity<T> {
     where
         C: VisualContext,
     {
-        cx.update_window_model(self, update)
+        cx.update_window_entity(self, update)
     }
 }
 
@@ -650,7 +650,7 @@ impl<T: 'static> WeakEntity<T> {
         crate::Flatten::flatten(
             self.upgrade()
                 .ok_or_else(|| anyhow!("entity released"))
-                .map(|this| cx.update_model(&this, update)),
+                .map(|this| cx.update_entity(&this, update)),
         )
     }
 
@@ -685,7 +685,7 @@ impl<T: 'static> WeakEntity<T> {
         crate::Flatten::flatten(
             self.upgrade()
                 .ok_or_else(|| anyhow!("entity release"))
-                .map(|this| cx.read_model(&this, read)),
+                .map(|this| cx.read_entity(&this, read)),
         )
     }
 }

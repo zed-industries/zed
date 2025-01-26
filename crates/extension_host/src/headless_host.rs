@@ -8,7 +8,7 @@ use extension::{
     ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
@@ -113,7 +113,7 @@ impl HeadlessExtensionStore {
     pub async fn load_extension(
         this: WeakEntity<Self>,
         extension: ExtensionVersion,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let (fs, wasm_host, extension_dir) = this.update(cx, |this, _cx| {
             this.loaded_extensions.insert(
@@ -258,7 +258,7 @@ impl HeadlessExtensionStore {
     pub async fn handle_sync_extensions(
         extension_store: Entity<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::SyncExtensions>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::SyncExtensionsResponse> {
         let requested_extensions =
             envelope
@@ -294,7 +294,7 @@ impl HeadlessExtensionStore {
     pub async fn handle_install_extension(
         extensions: Entity<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::InstallExtension>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let extension = envelope
             .payload

@@ -350,7 +350,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Create the project symbols view.
-        let symbols = cx.new_window_model(|window, cx| {
+        let symbols = cx.new_window_entity(|window, cx| {
             Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 window,

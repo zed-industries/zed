@@ -24,7 +24,7 @@ Provides access to the global application state. All other kinds of contexts ult
 
 Provides access to the state of an application window, and also derefs to an `AppContext`, so you can pass a window context reference to any method taking an app context. Obtain this context by calling `WindowHandle::update`.
 
-## `ModelContext<T>`
+## `Context<T>`
 
 Available when you create or update a `Model<T>`. It derefs to an `AppContext`, but also contains methods specific to the particular model, such as the ability to notify change observers or emit events.
 

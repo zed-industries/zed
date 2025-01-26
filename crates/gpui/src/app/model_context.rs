@@ -1,5 +1,5 @@
 use crate::{
-    AnyView, AnyWindowHandle, App, AppContext, AsyncAppContext, DispatchPhase, Effect, EntityId,
+    AnyView, AnyWindowHandle, App, AppContext, AsyncApp, DispatchPhase, Effect, EntityId,
     EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation,
     SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
@@ -183,7 +183,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Spawn the future returned by the given function.
     /// The function is provided a weak handle to the model owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncAppContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> Task<R>
     where
         T: 'static,
         Fut: Future<Output = R> + 'static,
@@ -683,27 +683,27 @@ impl<'a, T> AppContext for Context<'a, T> {
         self.app.new(build_model)
     }
 
-    fn reserve_model<U: 'static>(&mut self) -> Reservation<U> {
-        self.app.reserve_model()
+    fn reserve_entity<U: 'static>(&mut self) -> Reservation<U> {
+        self.app.reserve_entity()
     }
 
-    fn insert_model<U: 'static>(
+    fn insert_entity<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
         build_model: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Self::Result<Entity<U>> {
-        self.app.insert_model(reservation, build_model)
+        self.app.insert_entity(reservation, build_model)
     }
 
-    fn update_model<U: 'static, R>(
+    fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Entity<U>,
         update: impl FnOnce(&mut U, &mut Context<'_, U>) -> R,
     ) -> R {
-        self.app.update_model(handle, update)
+        self.app.update_entity(handle, update)
     }
 
-    fn read_model<U, R>(
+    fn read_entity<U, R>(
         &self,
         handle: &Entity<U>,
         read: impl FnOnce(&U, &App) -> R,
@@ -711,7 +711,7 @@ impl<'a, T> AppContext for Context<'a, T> {
     where
         U: 'static,
     {
-        self.app.read_model(handle, read)
+        self.app.read_entity(handle, read)
     }
 
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>

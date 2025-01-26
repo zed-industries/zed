@@ -12,7 +12,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt,
 };
-use gpui::{AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     language_settings::{Formatter, LanguageSettings, SelectedFormatter},
     Buffer, LanguageRegistry, LocalFile,
@@ -387,7 +387,7 @@ impl PrettierStore {
         prettier: &Prettier,
         worktree_id: Option<WorktreeId>,
         new_server_id: LanguageServerId,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) {
         let prettier_dir = prettier.prettier_dir();
         let is_default = prettier.is_default();
@@ -707,7 +707,7 @@ pub fn prettier_plugins_for_language(
 pub(super) async fn format_with_prettier(
     prettier_store: &WeakEntity<PrettierStore>,
     buffer: &Entity<Buffer>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Option<Result<crate::lsp_store::FormatOperation>> {
     let prettier_instance = prettier_store
         .update(cx, |prettier_store, cx| {

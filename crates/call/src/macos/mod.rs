@@ -8,8 +8,8 @@ use client::{proto, ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAY
 use collections::HashSet;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt};
 use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Global, Subscription,
-    Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Subscription, Task,
+    WeakEntity,
 };
 use postage::watch;
 use project::Project;
@@ -41,7 +41,7 @@ impl OneAtATime {
     /// otherwise you'll see the result of the task.
     fn spawn<F, Fut, R>(&mut self, cx: &mut App, f: F) -> Task<Result<Option<R>>>
     where
-        F: 'static + FnOnce(AsyncAppContext) -> Fut,
+        F: 'static + FnOnce(AsyncApp) -> Fut,
         Fut: Future<Output = Result<R>>,
         R: 'static,
     {
@@ -113,7 +113,7 @@ impl ActiveCall {
     async fn handle_incoming_call(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::IncomingCall>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
         let call = IncomingCall {
@@ -140,7 +140,7 @@ impl ActiveCall {
     async fn handle_call_canceled(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CallCanceled>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
             let mut incoming_call = this.incoming_call.0.borrow_mut();

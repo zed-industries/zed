@@ -394,7 +394,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 reload_task: None,
             })?;
 
-            let image_id = cx.read_model(&model, |model, _| model.id)?;
+            let image_id = cx.read_entity(&model, |model, _| model.id)?;
 
             this.update(&mut cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {

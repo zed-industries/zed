@@ -12,7 +12,7 @@ use client::proto::{self, PeerId};
 use clock::Global;
 use collections::HashSet;
 use futures::future;
-use gpui::{App, AsyncAppContext, Entity};
+use gpui::{App, AsyncApp, Entity};
 use language::{
     language_settings::{language_settings, InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
@@ -122,7 +122,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Self::Response>;
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest;
@@ -131,7 +131,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         message: Self::ProtoRequest,
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Self>;
 
     fn response_to_proto(
@@ -147,7 +147,7 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Self::Response>;
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
@@ -297,7 +297,7 @@ impl LspCommand for PrepareRename {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
         buffer.update(&mut cx, |buffer, _| {
             match message {
@@ -339,7 +339,7 @@ impl LspCommand for PrepareRename {
         message: proto::PrepareRename,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -393,7 +393,7 @@ impl LspCommand for PrepareRename {
         message: proto::PrepareRenameResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
         if message.can_rename {
             buffer
@@ -453,7 +453,7 @@ impl LspCommand for PerformRename {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         if let Some(edit) = message {
             let (lsp_adapter, lsp_server) =
@@ -488,7 +488,7 @@ impl LspCommand for PerformRename {
         message: proto::PerformRename,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -526,7 +526,7 @@ impl LspCommand for PerformRename {
         message: proto::PerformRenameResponse,
         lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
         let message = message
             .transaction
@@ -582,7 +582,7 @@ impl LspCommand for GetDefinition {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
     }
@@ -602,7 +602,7 @@ impl LspCommand for GetDefinition {
         message: proto::GetDefinition,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -634,7 +634,7 @@ impl LspCommand for GetDefinition {
         message: proto::GetDefinitionResponse,
         lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_proto(message.links, lsp_store, cx).await
     }
@@ -681,7 +681,7 @@ impl LspCommand for GetDeclaration {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
     }
@@ -701,7 +701,7 @@ impl LspCommand for GetDeclaration {
         message: proto::GetDeclaration,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -733,7 +733,7 @@ impl LspCommand for GetDeclaration {
         message: proto::GetDeclarationResponse,
         lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_proto(message.links, lsp_store, cx).await
     }
@@ -773,7 +773,7 @@ impl LspCommand for GetImplementation {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
     }
@@ -793,7 +793,7 @@ impl LspCommand for GetImplementation {
         message: proto::GetImplementation,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -825,7 +825,7 @@ impl LspCommand for GetImplementation {
         message: proto::GetImplementationResponse,
         project: Entity<LspStore>,
         _: Entity<Buffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_proto(message.links, project, cx).await
     }
@@ -872,7 +872,7 @@ impl LspCommand for GetTypeDefinition {
         project: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_lsp(message, project, buffer, server_id, cx).await
     }
@@ -892,7 +892,7 @@ impl LspCommand for GetTypeDefinition {
         message: proto::GetTypeDefinition,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -924,7 +924,7 @@ impl LspCommand for GetTypeDefinition {
         message: proto::GetTypeDefinitionResponse,
         project: Entity<LspStore>,
         _: Entity<Buffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
         location_links_from_proto(message.links, project, cx).await
     }
@@ -938,7 +938,7 @@ fn language_server_for_buffer(
     lsp_store: &Entity<LspStore>,
     buffer: &Entity<Buffer>,
     server_id: LanguageServerId,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     lsp_store
         .update(cx, |lsp_store, cx| {
@@ -952,7 +952,7 @@ fn language_server_for_buffer(
 async fn location_links_from_proto(
     proto_links: Vec<proto::LocationLink>,
     lsp_store: Entity<LspStore>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> Result<Vec<LocationLink>> {
     let mut links = Vec::new();
 
@@ -1018,7 +1018,7 @@ async fn location_links_from_lsp(
     lsp_store: Entity<LspStore>,
     buffer: Entity<Buffer>,
     server_id: LanguageServerId,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> Result<Vec<LocationLink>> {
     let message = match message {
         Some(message) => message,
@@ -1187,7 +1187,7 @@ impl LspCommand for GetReferences {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Vec<Location>> {
         let mut references = Vec::new();
         let (lsp_adapter, language_server) =
@@ -1240,7 +1240,7 @@ impl LspCommand for GetReferences {
         message: proto::GetReferences,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -1288,7 +1288,7 @@ impl LspCommand for GetReferences {
         message: proto::GetReferencesResponse,
         project: Entity<LspStore>,
         _: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Vec<Location>> {
         let mut locations = Vec::new();
         for location in message.locations {
@@ -1359,7 +1359,7 @@ impl LspCommand for GetDocumentHighlights {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Vec<DocumentHighlight>> {
         buffer.update(&mut cx, |buffer, _| {
             let mut lsp_highlights = lsp_highlights.unwrap_or_default();
@@ -1397,7 +1397,7 @@ impl LspCommand for GetDocumentHighlights {
         message: proto::GetDocumentHighlights,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -1441,7 +1441,7 @@ impl LspCommand for GetDocumentHighlights {
         message: proto::GetDocumentHighlightsResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Vec<DocumentHighlight>> {
         let mut highlights = Vec::new();
         for highlight in message.highlights {
@@ -1512,7 +1512,7 @@ impl LspCommand for GetSignatureHelp {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(message.and_then(|message| SignatureHelp::new(message, language)))
@@ -1532,7 +1532,7 @@ impl LspCommand for GetSignatureHelp {
         payload: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         buffer
             .update(&mut cx, |buffer, _| {
@@ -1568,7 +1568,7 @@ impl LspCommand for GetSignatureHelp {
         response: proto::GetSignatureHelpResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
         Ok(response
@@ -1619,7 +1619,7 @@ impl LspCommand for GetHover {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let Some(hover) = message else {
             return Ok(None);
@@ -1699,7 +1699,7 @@ impl LspCommand for GetHover {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -1765,7 +1765,7 @@ impl LspCommand for GetHover {
         message: proto::GetHoverResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let contents: Vec<_> = message
             .contents
@@ -1843,7 +1843,7 @@ impl LspCommand for GetCompletions {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let mut response_list = None;
         let mut completions = if let Some(completions) = completions {
@@ -2035,7 +2035,7 @@ impl LspCommand for GetCompletions {
         message: proto::GetCompletions,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let version = deserialize_version(&message.version);
         buffer
@@ -2080,7 +2080,7 @@ impl LspCommand for GetCompletions {
         message: proto::GetCompletionsResponse,
         _project: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         buffer
             .update(&mut cx, |buffer, _| {
@@ -2224,7 +2224,7 @@ impl LspCommand for GetCodeActions {
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         server_id: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
         let requested_kinds_set = if let Some(kinds) = self.kinds {
             Some(kinds.into_iter().collect::<HashSet<_>>())
@@ -2271,7 +2271,7 @@ impl LspCommand for GetCodeActions {
         message: proto::GetCodeActions,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let start = message
             .start
@@ -2314,7 +2314,7 @@ impl LspCommand for GetCodeActions {
         message: proto::GetCodeActionsResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Vec<CodeAction>> {
         buffer
             .update(&mut cx, |buffer, _| {
@@ -2405,7 +2405,7 @@ impl LspCommand for OnTypeFormatting {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Option<Transaction>> {
         if let Some(edits) = message {
             let (lsp_adapter, lsp_server) =
@@ -2441,7 +2441,7 @@ impl LspCommand for OnTypeFormatting {
         message: proto::OnTypeFormatting,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -2485,7 +2485,7 @@ impl LspCommand for OnTypeFormatting {
         message: proto::OnTypeFormattingResponse,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> Result<Option<Transaction>> {
         let Some(transaction) = message.transaction else {
             return Ok(None);
@@ -2505,7 +2505,7 @@ impl InlayHints {
         server_id: LanguageServerId,
         resolve_state: ResolveState,
         force_no_type_left_padding: bool,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> anyhow::Result<InlayHint> {
         let kind = lsp_hint.kind.and_then(|kind| match kind {
             lsp::InlayHintKind::TYPE => Some(InlayHintKind::Type),
@@ -2914,7 +2914,7 @@ impl LspCommand for InlayHints {
         lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let (lsp_adapter, lsp_server) =
             language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
@@ -2969,7 +2969,7 @@ impl LspCommand for InlayHints {
         message: proto::InlayHints,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let start = message
             .start
@@ -3009,7 +3009,7 @@ impl LspCommand for InlayHints {
         message: proto::InlayHintsResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Vec<InlayHint>> {
         buffer
             .update(&mut cx, |buffer, _| {
@@ -3073,7 +3073,7 @@ impl LspCommand for LinkedEditingRange {
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
         _server_id: LanguageServerId,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Vec<Range<Anchor>>> {
         if let Some(lsp::LinkedEditingRanges { mut ranges, .. }) = message {
             ranges.sort_by_key(|range| range.start);
@@ -3107,7 +3107,7 @@ impl LspCommand for LinkedEditingRange {
         message: proto::LinkedEditingRange,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
         let position = message
             .position
@@ -3148,7 +3148,7 @@ impl LspCommand for LinkedEditingRange {
         message: proto::LinkedEditingRangeResponse,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Vec<Range<Anchor>>> {
         buffer
             .update(&mut cx, |buffer, _| {

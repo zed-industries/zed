@@ -1431,9 +1431,9 @@ mod tests {
         });
         let cx = cx.add_empty_window();
         let editor =
-            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_window_model(|window, cx| {
+        let search_bar = cx.new_window_entity(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2008,9 +2008,9 @@ mod tests {
         let cx = cx.add_empty_window();
 
         let editor =
-            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_window_model(|window, cx| {
+        let search_bar = cx.new_window_entity(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2082,9 +2082,9 @@ mod tests {
         let cx = cx.add_empty_window();
 
         let editor =
-            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_window_model(|window, cx| {
+        let search_bar = cx.new_window_entity(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2462,9 +2462,9 @@ mod tests {
         });
         let cx = cx.add_empty_window();
         let editor =
-            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_window_model(|window, cx| {
+        let search_bar = cx.new_window_entity(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2530,7 +2530,7 @@ mod tests {
         .unindent();
 
         let cx = cx.add_empty_window();
-        let editor = cx.new_window_model(|window, cx| {
+        let editor = cx.new_window_entity(|window, cx| {
             let multibuffer = MultiBuffer::build_multi(
                 [
                     (
@@ -2547,7 +2547,7 @@ mod tests {
             Editor::for_multibuffer(multibuffer, None, false, window, cx)
         });
 
-        let search_bar = cx.new_window_model(|window, cx| {
+        let search_bar = cx.new_window_entity(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);

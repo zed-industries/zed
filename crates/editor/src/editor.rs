@@ -79,11 +79,11 @@ use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, Action, AnyElement, App,
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, ElementId, Entity, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
-    FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, MouseButton, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task,
-    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    ViewInputHandler, WeakEntity, WeakFocusHandle, Window,
+    DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
+    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -15355,7 +15355,7 @@ impl Render for Editor {
     }
 }
 
-impl ViewInputHandler for Editor {
+impl EntityInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{AsyncAppContext, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
+use gpui::{AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity};
 use log;
 use parking_lot::RwLock;
 use project::Project;
@@ -61,7 +61,7 @@ impl ContextServer {
         self.client.read().clone()
     }
 
-    pub async fn start(self: Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
+    pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
         log::info!("starting context server {}", self.id);
         let Some(command) = &self.config.command else {
             bail!("no command specified for server {}", self.id);
@@ -214,7 +214,7 @@ impl ContextServerManager {
             .collect()
     }
 
-    async fn maintain_servers(this: WeakEntity<Self>, mut cx: AsyncAppContext) -> Result<()> {
+    async fn maintain_servers(this: WeakEntity<Self>, mut cx: AsyncApp) -> Result<()> {
         let mut desired_servers = HashMap::default();
 
         let (registry, project) = this.update(&mut cx, |this, cx| {

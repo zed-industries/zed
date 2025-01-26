@@ -27,7 +27,7 @@ use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::Future;
-use gpui::{App, AsyncAppContext, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
@@ -211,7 +211,7 @@ impl CachedLspAdapter {
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
@@ -293,7 +293,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         toolchains: Arc<dyn LanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        cx: &'a mut AsyncAppContext,
+        cx: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
             // First we check whether the adapter can give us a user-installed binary.
@@ -368,7 +368,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         _: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -381,7 +381,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn will_fetch_server(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
+        _: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
         None
     }
@@ -476,7 +476,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut AsyncAppContext,
+        _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
     }
@@ -514,7 +514,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     adapter: &L,
     delegate: &Arc<dyn LspAdapterDelegate>,
     container_dir: PathBuf,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<LanguageServerBinary> {
     if let Some(task) = adapter.will_fetch_server(delegate, cx) {
         task.await?;
@@ -1805,7 +1805,7 @@ impl LspAdapter for FakeLspAdapter {
         &self,
         _: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.language_server_binary.clone())
     }
@@ -1816,7 +1816,7 @@ impl LspAdapter for FakeLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncAppContext,
+        _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move { Ok(self.language_server_binary.clone()) }.boxed_local()
     }

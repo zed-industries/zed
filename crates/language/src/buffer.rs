@@ -928,7 +928,7 @@ impl Buffer {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> {
-        let entity_id = cx.reserve_model::<Self>().entity_id();
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =

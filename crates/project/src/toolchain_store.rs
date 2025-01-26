@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use collections::BTreeMap;
 use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Subscription, Task,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task,
     WeakEntity,
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
@@ -112,7 +112,7 @@ impl ToolchainStore {
     async fn handle_activate_toolchain(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ActivateToolchain>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
             let language_name = LanguageName::from_proto(envelope.payload.language_name);
@@ -134,7 +134,7 @@ impl ToolchainStore {
     async fn handle_active_toolchain(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ActiveToolchain>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ActiveToolchainResponse> {
         let toolchain = this
             .update(&mut cx, |this, cx| {
@@ -156,7 +156,7 @@ impl ToolchainStore {
     async fn handle_list_toolchains(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ListToolchains>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ListToolchainsResponse> {
         let toolchains = this
             .update(&mut cx, |this, cx| {
@@ -221,7 +221,7 @@ impl language::LanguageToolchainStore for LocalStore {
         self: Arc<Self>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
         self.0
             .update(cx, |this, cx| {
@@ -238,7 +238,7 @@ impl language::LanguageToolchainStore for RemoteStore {
         self: Arc<Self>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
         self.0
             .update(cx, |this, cx| {
@@ -256,7 +256,7 @@ impl language::LanguageToolchainStore for EmptyToolchainStore {
         self: Arc<Self>,
         _: WorktreeId,
         _: LanguageName,
-        _: &mut AsyncAppContext,
+        _: &mut AsyncApp,
     ) -> Option<Toolchain> {
         None
     }

@@ -171,19 +171,19 @@ pub trait AppContext {
 
     /// Reserve a slot for a model to be inserted later.
     /// The returned [Reservation] allows you to obtain the [EntityId] for the future model.
-    fn reserve_model<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
+    fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
 
-    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_model`].
+    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
     ///
-    /// [`reserve_model`]: Self::reserve_model
-    fn insert_model<T: 'static>(
+    /// [`reserve_entity`]: Self::reserve_entity
+    fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
         build_model: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
     /// Update a model in the app context.
-    fn update_model<T, R>(
+    fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
@@ -192,7 +192,7 @@ pub trait AppContext {
         T: 'static;
 
     /// Read a model from the app context.
-    fn read_model<T, R>(
+    fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
         read: impl FnOnce(&T, &App) -> R,
@@ -215,7 +215,7 @@ pub trait AppContext {
         T: 'static;
 }
 
-/// Returned by [Context::reserve_model] to later be passed to [Context::insert_model].
+/// Returned by [Context::reserve_entity] to later be passed to [Context::insert_model].
 /// Allows you to obtain the [EntityId] for a model before it is created.
 pub struct Reservation<T>(pub(crate) Slot<T>);
 
@@ -233,14 +233,14 @@ pub trait VisualContext: AppContext {
     fn window_handle(&self) -> AnyWindowHandle;
 
     /// Update a view with the given callback
-    fn update_window_model<T: 'static, R>(
+    fn update_window_entity<T: 'static, R>(
         &mut self,
         model: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Self::Result<R>;
 
     /// Update a view with the given callback
-    fn new_window_model<T: 'static>(
+    fn new_window_entity<T: 'static>(
         &mut self,
         build_model: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;

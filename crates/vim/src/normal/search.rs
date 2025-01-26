@@ -669,7 +669,7 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        cx.update_model(search_bar, |bar, _window, cx| {
+        cx.update_entity(search_bar, |bar, _window, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 

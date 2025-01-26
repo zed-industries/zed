@@ -904,7 +904,7 @@ impl LanguageRegistry {
         server_id: LanguageServerId,
         name: &LanguageServerName,
         binary: lsp::LanguageServerBinary,
-        cx: gpui::AsyncAppContext,
+        cx: gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
         let mut state = self.state.write();
         let fake_entry = state.fake_server_entries.get_mut(&name)?;

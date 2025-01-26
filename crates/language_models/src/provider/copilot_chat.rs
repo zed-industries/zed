@@ -11,7 +11,7 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    percentage, svg, Animation, AnimationExt, AnyView, App, AsyncAppContext, Entity, Render,
+    percentage, svg, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render,
     Subscription, Task, Transformation,
 };
 use language_model::{
@@ -190,7 +190,7 @@ impl LanguageModel for CopilotChatLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         if let Some(message) = request.messages.last() {
             if message.contents_empty() {
@@ -266,7 +266,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         _name: String,
         _description: String,
         _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
     }

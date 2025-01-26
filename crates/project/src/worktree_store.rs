@@ -12,7 +12,7 @@ use futures::{
     future::{BoxFuture, Shared},
     FutureExt, SinkExt,
 };
-use gpui::{App, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
+use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
 use postage::oneshot;
 use rpc::{
     proto::{self, SSH_PROJECT_ID},
@@ -1041,7 +1041,7 @@ impl WorktreeStore {
     pub async fn handle_create_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CreateProjectEntry>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let worktree = this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -1054,7 +1054,7 @@ impl WorktreeStore {
     pub async fn handle_copy_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CopyProjectEntry>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
@@ -1067,7 +1067,7 @@ impl WorktreeStore {
     pub async fn handle_delete_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::DeleteProjectEntry>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
@@ -1080,7 +1080,7 @@ impl WorktreeStore {
     pub async fn handle_expand_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ExpandProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
@@ -1092,7 +1092,7 @@ impl WorktreeStore {
     pub async fn handle_git_branches(
         this: Entity<Self>,
         branches: TypedEnvelope<proto::GitBranches>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::GitBranchesResponse> {
         let project_path = branches
             .payload
@@ -1123,7 +1123,7 @@ impl WorktreeStore {
     pub async fn handle_update_branch(
         this: Entity<Self>,
         update_branch: TypedEnvelope<proto::UpdateGitBranch>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let project_path = update_branch
             .payload
