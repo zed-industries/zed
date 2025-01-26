@@ -93,7 +93,7 @@ macro_rules! path {
         $path
     };
     ($path:literal, $index:expr) => {
-        separator!($path, $index)
+        util::separator!($path, $index)
     };
 }
 
