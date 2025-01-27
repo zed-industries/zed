@@ -2,15 +2,18 @@ use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context as _;
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    System::SystemServices::*,
-    UI::{
-        Controls::*,
-        HiDpi::*,
-        Input::{Ime::*, KeyboardAndMouse::*},
-        WindowsAndMessaging::*,
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::SystemServices::*,
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            WindowsAndMessaging::*,
+        },
     },
 };
 
@@ -88,7 +91,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(handle, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
@@ -1187,6 +1190,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
 
 fn handle_system_settings_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
@@ -1198,6 +1202,13 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.update(handle).log_err();
     drop(lock);
+
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    println!("System settings changed: ->{}<-", unsafe {
+        parameter.display()
+    });
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
