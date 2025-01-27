@@ -72,7 +72,7 @@ impl std::fmt::Display for ListOrDirect {
 
 #[derive(Deserialize, JsonSchema)]
 pub(crate) struct VSCodeSnippet {
-    /// The snippet prefix used for intellisense.
+    /// The snippet prefix used to decide whether a completion menu should be shown.
     pub(crate) prefix: Option<ListOrDirect>,
 
     /// The snippet content. Use `$1` and `${1:defaultText}` to define cursor positions and `$0` for final cursor position.
