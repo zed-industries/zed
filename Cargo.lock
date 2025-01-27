@@ -14417,6 +14417,7 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "futures 0.3.31",
+ "git_ui",
  "gpui",
  "indoc",
  "itertools 0.14.0",
