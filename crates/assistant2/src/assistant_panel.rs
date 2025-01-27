@@ -119,12 +119,10 @@ impl AssistantPanel {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
             log::info!("[assistant2-debug] initializing ThreadStore");
-            let thread_store = workspace
-                .update(&mut cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    ThreadStore::new(project, tools.clone(), cx)
-                })?
-                .await?;
+            let thread_store = workspace.update(&mut cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                ThreadStore::new(project, tools.clone(), cx)
+            })??;
             log::info!("[assistant2-debug] finished initializing ThreadStore");
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
