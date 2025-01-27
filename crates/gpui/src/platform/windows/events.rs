@@ -1206,9 +1206,18 @@ fn handle_system_settings_changed(
     // lParam is a pointer to a string that indicates the area containing the system parameter
     // that was changed.
     let parameter = PCWSTR::from_raw(lparam.0 as _);
-    println!("System settings changed: ->{}<-", unsafe {
-        parameter.display()
-    });
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    handle_system_theme_changed(handle, state_ptr);
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
