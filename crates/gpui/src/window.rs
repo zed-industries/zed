@@ -3775,6 +3775,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Get the root view out of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn root<C>(&self, cx: &mut C) -> Result<Entity<V>>
     where
         C: AppContext,
