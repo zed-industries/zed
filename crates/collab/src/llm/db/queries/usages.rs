@@ -303,7 +303,7 @@ impl LlmDatabase {
         now: DateTimeUtc,
     ) -> Result<Usage> {
         self.transaction(|tx| async move {
-            let model = self.entity(provider, model_name)?;
+            let model = self.model(provider, model_name)?;
 
             let usages = usage::Entity::find()
                 .filter(

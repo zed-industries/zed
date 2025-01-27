@@ -604,7 +604,7 @@ async fn check_usage_limit(
         return Ok(());
     }
 
-    let model = state.db.entity(provider, model_name)?;
+    let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
         .get_usage(
