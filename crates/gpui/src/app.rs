@@ -1236,15 +1236,9 @@ impl App {
         T: 'static,
     {
         let window_handle = window.handle;
-        let (subscription, activate) = self.release_listeners.insert(
-            handle.entity_id(),
-            Box::new(move |entity, cx| {
-                let entity = entity.downcast_mut().expect("invalid entity type");
-                let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
-            }),
-        );
-        activate();
-        subscription
+        self.observe_release(&handle, move |entity, cx| {
+            let _ = window_handle.update(cx, |_, window, cx| on_release(entity, window, cx));
+        })
     }
 
     /// Register a callback to be invoked when a keystroke is received by the application

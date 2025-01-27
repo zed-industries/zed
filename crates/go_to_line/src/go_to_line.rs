@@ -133,19 +133,15 @@ impl GoToLine {
         }
     }
 
-    fn release(&mut self, window: AnyWindowHandle, cx: &mut App) {
-        window
-            .update(cx, |_, window, cx| {
-                let scroll_position = self.prev_scroll_position.take();
-                self.active_editor.update(cx, |editor, cx| {
-                    editor.clear_row_highlights::<GoToLineRowHighlights>();
-                    if let Some(scroll_position) = scroll_position {
-                        editor.set_scroll_position(scroll_position, window, cx);
-                    }
-                    cx.notify();
-                })
-            })
-            .ok();
+    fn release(&mut self, window: &mut Window, cx: &mut App) {
+        let scroll_position = self.prev_scroll_position.take();
+        self.active_editor.update(cx, |editor, cx| {
+            editor.clear_row_highlights::<GoToLineRowHighlights>();
+            if let Some(scroll_position) = scroll_position {
+                editor.set_scroll_position(scroll_position, window, cx);
+            }
+            cx.notify();
+        })
     }
 
     fn on_line_editor_event(
