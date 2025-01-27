@@ -88,11 +88,11 @@ fn cell_content(row: &Value, field: &str) -> String {
 const TABLE_Y_PADDING_MULTIPLE: f32 = 0.5;
 
 impl TableView {
-    pub fn new(table: &TabularDataResource, cx: &mut WindowContext) -> Self {
+    pub fn new(table: &TabularDataResource, window: &mut Window, cx: &mut App) -> Self {
         let mut widths = Vec::with_capacity(table.schema.fields.len());
 
-        let text_system = cx.text_system();
-        let text_style = cx.text_style();
+        let text_system = window.text_system();
+        let text_style = window.text_style();
         let text_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let mut runs = [TextRun {
@@ -119,7 +119,7 @@ impl TableView {
             for row in data {
                 let content = cell_content(row, &field.name);
                 runs[0].len = content.len();
-                let cell_width = cx
+                let cell_width = window
                     .text_system()
                     .layout_line(&content, font_size, &runs)
                     .map(|layout| layout.width)
@@ -189,11 +189,12 @@ impl TableView {
         schema: &TableSchema,
         is_header: bool,
         row: &Value,
-        cx: &WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> AnyElement {
         let theme = cx.theme();
 
-        let line_height = cx.line_height();
+        let line_height = window.line_height();
 
         let row_cells = schema
             .fields
@@ -248,7 +249,7 @@ impl TableView {
 }
 
 impl Render for TableView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let data = match &self.table.data {
             Some(data) => data,
             None => return div().into_any_element(),
@@ -258,11 +259,17 @@ impl Render for TableView {
         for field in &self.table.schema.fields {
             headings.insert(field.name.clone(), Value::String(field.name.clone()));
         }
-        let header = self.render_row(&self.table.schema, true, &Value::Object(headings), cx);
+        let header = self.render_row(
+            &self.table.schema,
+            true,
+            &Value::Object(headings),
+            window,
+            cx,
+        );
 
         let body = data
             .iter()
-            .map(|row| self.render_row(&self.table.schema, false, row, cx));
+            .map(|row| self.render_row(&self.table.schema, false, row, window, cx));
 
         v_flex()
             .id("table")
@@ -275,11 +282,11 @@ impl Render for TableView {
 }
 
 impl OutputContent for TableView {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
         Some(self.cached_clipboard_content.clone())
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
         true
     }
 }

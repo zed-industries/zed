@@ -43,7 +43,7 @@ impl Facepile {
 }
 
 impl RenderOnce for Facepile {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         // Lay the faces out in reverse so they overlap in the desired order (left to right, front to back)
         self.base
             .flex()
@@ -67,7 +67,7 @@ impl ComponentPreview for Facepile {
         \n\nFacepiles are used to display a group of people or things,\
         such as a list of participants in a collaboration session."
     }
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         let few_faces: [&'static str; 3] = [
             "https://avatars.githubusercontent.com/u/1714999?s=60&v=4",
             "https://avatars.githubusercontent.com/u/67129314?s=60&v=4",

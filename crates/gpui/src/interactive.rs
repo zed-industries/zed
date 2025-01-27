@@ -1,6 +1,6 @@
 use crate::{
-    point, seal::Sealed, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
-    ViewContext,
+    point, seal::Sealed, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
+    Window,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -372,7 +372,7 @@ impl ExternalPaths {
 }
 
 impl Render for ExternalPaths {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // the platform will render icons for the dragged files
         Empty
     }
@@ -467,8 +467,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, Keystroke,
-        ParentElement, Render, TestAppContext, ViewContext, VisualContext,
+        self as gpui, div, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
+        KeyBinding, Keystroke, ParentElement, Render, TestAppContext, Window,
     };
 
     struct TestView {
@@ -480,19 +480,17 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(cx.listener(|this, _, cx| {
+                    .on_key_down(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
                         this.saw_key_down = true
                     }))
-                    .on_action(
-                        cx.listener(|this: &mut TestView, _: &TestAction, _| {
-                            this.saw_action = true
-                        }),
-                    )
+                    .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
+                        this.saw_action = true
+                    }))
                     .child(
                         div()
                             .key_context("nested")
@@ -506,8 +504,8 @@ mod test {
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |cx| {
-                cx.new_view(|cx| TestView {
+            cx.open_window(Default::default(), |_, cx| {
+                cx.new(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,
                     focus_handle: cx.focus_handle(),
@@ -521,14 +519,16 @@ mod test {
         });
 
         window
-            .update(cx, |test_view, cx| cx.focus(&test_view.focus_handle))
+            .update(cx, |test_view, window, _cx| {
+                window.focus(&test_view.focus_handle)
+            })
             .unwrap();
 
         cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
         cx.dispatch_keystroke(*window, Keystroke::parse("ctrl-g").unwrap());
 
         window
-            .update(cx, |test_view, _| {
+            .update(cx, |test_view, _, _| {
                 assert!(test_view.saw_key_down || test_view.saw_action);
                 assert!(test_view.saw_key_down);
                 assert!(test_view.saw_action);

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::AppContext;
+use gpui::App;
 use language_model::LanguageModelCacheConfiguration;
 use project::Fs;
 use schemars::JsonSchema;
@@ -20,7 +20,7 @@ use crate::provider::{
 };
 
 /// Initializes the language model settings.
-pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 
     if AllLanguageModelSettings::get_global(cx)
@@ -246,7 +246,7 @@ impl settings::Settings for AllLanguageModelSettings {
 
     type FileContent = AllLanguageModelSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         fn merge<T>(target: &mut T, value: Option<T>) {
             if let Some(value) = value {
                 *target = value;

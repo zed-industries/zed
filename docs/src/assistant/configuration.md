@@ -175,8 +175,8 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
     "openai": {
       "available_models": [
         {
-          "provider": "openai",
           "name": "gpt-4o-2024-08-06",
+          "display_name": "GPT 4o Summer 2024",
           "max_tokens": 128000
         },
         {
@@ -186,7 +186,8 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
           "max_completion_tokens": 20000
         }
       ]
-    }
+    },
+    "version": "1"
   }
 }
 ```

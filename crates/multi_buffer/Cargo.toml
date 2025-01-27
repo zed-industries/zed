@@ -27,12 +27,16 @@ collections.workspace = true
 ctor.workspace = true
 env_logger.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+project.workspace = true
 rand.workspace = true
+rope.workspace = true
+smol.workspace = true
 settings.workspace = true
 serde.workspace = true
 smallvec.workspace = true
@@ -45,7 +49,10 @@ util.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+indoc.workspace = true

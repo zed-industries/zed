@@ -10,15 +10,16 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
+use gpui::{Context, Window};
 use language::Selection;
-use ui::ViewContext;
 
 impl Vim {
     pub fn change_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         // Some motions ignore failure when switching to normal mode
         let mut motion_succeeded = matches!(
@@ -29,12 +30,12 @@ impl Vim {
                 | Motion::Backspace
                 | Motion::StartOfLine { .. }
         );
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.transact(window, cx, |editor, window, cx| {
                 // We are swapping to insert mode anyway. Just set the line end clipping behavior now
                 editor.set_clip_at_line_ends(false, cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         motion_succeeded |= match motion {
                             Motion::NextWordStart { ignore_punctuation }
@@ -76,41 +77,47 @@ impl Vim {
                     });
                 });
                 vim.copy_selections_content(editor, motion.linewise(), cx);
-                editor.insert("", cx);
-                editor.refresh_inline_completion(true, false, cx);
+                editor.insert("", window, cx);
+                editor.refresh_inline_completion(true, false, window, cx);
             });
         });
 
         if motion_succeeded {
-            self.switch_mode(Mode::Insert, false, cx)
+            self.switch_mode(Mode::Insert, false, window, cx)
         } else {
-            self.switch_mode(Mode::Normal, false, cx)
+            self.switch_mode(Mode::Normal, false, window, cx)
         }
     }
 
-    pub fn change_object(&mut self, object: Object, around: bool, cx: &mut ViewContext<Self>) {
+    pub fn change_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut objects_found = false;
-        self.update_editor(cx, |vim, editor, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
-            editor.transact(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         objects_found |= object.expand_selection(map, selection, around);
                     });
                 });
                 if objects_found {
                     vim.copy_selections_content(editor, false, cx);
-                    editor.insert("", cx);
-                    editor.refresh_inline_completion(true, false, cx);
+                    editor.insert("", window, cx);
+                    editor.refresh_inline_completion(true, false, window, cx);
                 }
             });
         });
 
         if objects_found {
-            self.switch_mode(Mode::Insert, false, cx);
+            self.switch_mode(Mode::Insert, false, window, cx);
         } else {
-            self.switch_mode(Mode::Normal, false, cx);
+            self.switch_mode(Mode::Normal, false, window, cx);
         }
     }
 }

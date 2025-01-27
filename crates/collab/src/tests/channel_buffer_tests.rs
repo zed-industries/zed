@@ -9,7 +9,7 @@ use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
-use gpui::{BackgroundExecutor, Model, TestAppContext, ViewContext};
+use gpui::{BackgroundExecutor, Context, Entity, TestAppContext, Window};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;
@@ -161,43 +161,43 @@ async fn test_channel_notes_participant_indices(
 
     // Clients A, B, and C open the channel notes
     let channel_view_a = cx_a
-        .update(|cx| ChannelView::open(channel_id, None, workspace_a.clone(), cx))
+        .update(|window, cx| ChannelView::open(channel_id, None, workspace_a.clone(), window, cx))
         .await
         .unwrap();
     let channel_view_b = cx_b
-        .update(|cx| ChannelView::open(channel_id, None, workspace_b.clone(), cx))
+        .update(|window, cx| ChannelView::open(channel_id, None, workspace_b.clone(), window, cx))
         .await
         .unwrap();
     let channel_view_c = cx_c
-        .update(|cx| ChannelView::open(channel_id, None, workspace_c.clone(), cx))
+        .update(|window, cx| ChannelView::open(channel_id, None, workspace_c.clone(), window, cx))
         .await
         .unwrap();
 
     // Clients A, B, and C all insert and select some text
-    channel_view_a.update(cx_a, |notes, cx| {
+    channel_view_a.update_in(cx_a, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
-            editor.insert("a", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.insert("a", window, cx);
+            editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges(vec![0..1]);
             });
         });
     });
     executor.run_until_parked();
-    channel_view_b.update(cx_b, |notes, cx| {
+    channel_view_b.update_in(cx_b, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
-            editor.move_down(&Default::default(), cx);
-            editor.insert("b", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.move_down(&Default::default(), window, cx);
+            editor.insert("b", window, cx);
+            editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges(vec![1..2]);
             });
         });
     });
     executor.run_until_parked();
-    channel_view_c.update(cx_c, |notes, cx| {
+    channel_view_c.update_in(cx_c, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
-            editor.move_down(&Default::default(), cx);
-            editor.insert("c", cx);
-            editor.change_selections(None, cx, |selections| {
+            editor.move_down(&Default::default(), window, cx);
+            editor.insert("c", window, cx);
+            editor.change_selections(None, window, cx, |selections| {
                 selections.select_ranges(vec![2..3]);
             });
         });
@@ -206,9 +206,9 @@ async fn test_channel_notes_participant_indices(
     // Client A sees clients B and C without assigned colors, because they aren't
     // in a call together.
     executor.run_until_parked();
-    channel_view_a.update(cx_a, |notes, cx| {
+    channel_view_a.update_in(cx_a, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
-            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], cx);
+            assert_remote_selections(editor, &[(None, 1..2), (None, 2..3)], window, cx);
         });
     });
 
@@ -222,20 +222,22 @@ async fn test_channel_notes_participant_indices(
     // Clients A and B see each other with two different assigned colors. Client C
     // still doesn't have a color.
     executor.run_until_parked();
-    channel_view_a.update(cx_a, |notes, cx| {
+    channel_view_a.update_in(cx_a, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(1)), 1..2), (None, 2..3)],
+                window,
                 cx,
             );
         });
     });
-    channel_view_b.update(cx_b, |notes, cx| {
+    channel_view_b.update_in(cx_b, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
             assert_remote_selections(
                 editor,
                 &[(Some(ParticipantIndex(0)), 0..1), (None, 2..3)],
+                window,
                 cx,
             );
         });
@@ -252,8 +254,8 @@ async fn test_channel_notes_participant_indices(
     // Clients A and B open the same file.
     executor.start_waiting();
     let editor_a = workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path((worktree_id_a, "file.txt"), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -261,32 +263,32 @@ async fn test_channel_notes_participant_indices(
         .unwrap();
     executor.start_waiting();
     let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id_a, "file.txt"), None, true, window, cx)
         })
         .await
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
 
-    editor_a.update(cx_a, |editor, cx| {
-        editor.change_selections(None, cx, |selections| {
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |selections| {
             selections.select_ranges(vec![0..1]);
         });
     });
-    editor_b.update(cx_b, |editor, cx| {
-        editor.change_selections(None, cx, |selections| {
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(None, window, cx, |selections| {
             selections.select_ranges(vec![2..3]);
         });
     });
     executor.run_until_parked();
 
     // Clients A and B see each other with the same colors as in the channel notes.
-    editor_a.update(cx_a, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], cx);
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(1)), 2..3)], window, cx);
     });
-    editor_b.update(cx_b, |editor, cx| {
-        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], cx);
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        assert_remote_selections(editor, &[(Some(ParticipantIndex(0)), 0..1)], window, cx);
     });
 }
 
@@ -294,9 +296,10 @@ async fn test_channel_notes_participant_indices(
 fn assert_remote_selections(
     editor: &mut Editor,
     expected_selections: &[(Option<ParticipantIndex>, Range<usize>)],
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
 ) {
-    let snapshot = editor.snapshot(cx);
+    let snapshot = editor.snapshot(window, cx);
     let range = Anchor::min()..Anchor::max();
     let remote_selections = snapshot
         .remote_selections_in_range(&range, editor.collaboration_hub().unwrap(), cx)
@@ -641,9 +644,9 @@ async fn test_channel_buffer_changes(
     });
 
     // Closing the buffer should re-enable change tracking
-    cx_b.update(|cx| {
+    cx_b.update(|window, cx| {
         workspace_b.update(cx, |workspace, cx| {
-            workspace.close_all_items_and_panes(&Default::default(), cx)
+            workspace.close_all_items_and_panes(&Default::default(), window, cx)
         });
     });
     deterministic.run_until_parked();
@@ -691,6 +694,6 @@ fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Op
     );
 }
 
-fn buffer_text(channel_buffer: &Model<language::Buffer>, cx: &mut TestAppContext) -> String {
+fn buffer_text(channel_buffer: &Entity<language::Buffer>, cx: &mut TestAppContext) -> String {
     channel_buffer.read_with(cx, |buffer, _| buffer.text())
 }
