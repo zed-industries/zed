@@ -871,8 +871,9 @@ impl CompletionsMenu {
         };
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
         self.selected_item = new_selection;
-        self.scroll_handle
-            .scroll_to_item(new_selection, ScrollStrategy::Top);
+        // Scroll to 0 even if the LSP completion is the only one selected. This keeps the display
+        // consistent when y_flipped.
+        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
     }
 }
 
