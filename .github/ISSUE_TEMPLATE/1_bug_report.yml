@@ -17,10 +17,8 @@ body:
         3.
 
         Actual Behavior:
-          *
 
         Expected Behavior:
-          *
 
     validations:
       required: true
