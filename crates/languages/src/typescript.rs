@@ -3,7 +3,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
@@ -270,7 +270,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
@@ -367,7 +367,7 @@ impl LspAdapter for EsLintLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
 
@@ -593,7 +593,7 @@ async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
     use unindent::Unindent;
 
     #[gpui::test]
@@ -618,8 +618,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer =
-            cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline

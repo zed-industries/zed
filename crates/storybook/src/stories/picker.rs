@@ -1,12 +1,12 @@
 use fuzzy::StringMatchCandidate;
-use gpui::{div, prelude::*, KeyBinding, Render, SharedString, Styled, Task, View, WindowContext};
+use gpui::{div, prelude::*, App, Entity, KeyBinding, Render, SharedString, Styled, Task, Window};
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{prelude::*, ListItemSpacing};
 use ui::{Label, ListItem};
 
 pub struct PickerStory {
-    picker: View<Picker<Delegate>>,
+    picker: Entity<Picker<Delegate>>,
 }
 
 struct Delegate {
@@ -37,7 +37,7 @@ impl PickerDelegate for Delegate {
         self.candidates.len()
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Test".into()
     }
 
@@ -45,7 +45,8 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidate_ix = self.matches.get(ix)?;
         // TASK: Make StringMatchCandidate::string a SharedString
@@ -64,12 +65,12 @@ impl PickerDelegate for Delegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_ix = ix;
         cx.notify();
     }
 
-    fn confirm(&mut self, secondary: bool, _cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
         let candidate_ix = self.matches[self.selected_ix];
         let candidate = self.candidates[candidate_ix].string.clone();
 
@@ -80,11 +81,16 @@ impl PickerDelegate for Delegate {
         }
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         cx.quit();
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
         let candidates = self.candidates.clone();
         self.matches = cx
             .background_executor()
@@ -105,8 +111,8 @@ impl PickerDelegate for Delegate {
 }
 
 impl PickerStory {
-    pub fn new(cx: &mut WindowContext) -> View<Self> {
-        cx.new_view(|cx| {
+    pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
             cx.bind_keys([
                 KeyBinding::new("up", menu::SelectPrev, Some("picker")),
                 KeyBinding::new("pageup", menu::SelectFirst, Some("picker")),
@@ -126,7 +132,7 @@ impl PickerStory {
             ]);
 
             PickerStory {
-                picker: cx.new_view(|cx| {
+                picker: cx.new(|cx| {
                     let mut delegate = Delegate::new(&[
                         "Baguette (France)",
                         "Baklava (Turkey)",
@@ -178,10 +184,10 @@ impl PickerStory {
                         "Tzatziki (Greece)",
                         "Wiener Schnitzel (Austria)",
                     ]);
-                    delegate.update_matches("".into(), cx).detach();
+                    delegate.update_matches("".into(), window, cx).detach();
 
-                    let picker = Picker::uniform_list(delegate, cx);
-                    picker.focus(cx);
+                    let picker = Picker::uniform_list(delegate, window, cx);
+                    picker.focus(window, cx);
                     picker
                 }),
             }
@@ -190,7 +196,7 @@ impl PickerStory {
 }
 
 impl Render for PickerStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().styles.colors.background)
             .size_full()

@@ -20,7 +20,7 @@ pub struct ListHeader {
     /// It will obscure the `end_slot` when visible.
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     inset: bool,
     selected: bool,
 }
@@ -46,7 +46,7 @@ impl ListHeader {
 
     pub fn on_toggle(
         mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle = Some(Arc::new(on_toggle));
         self
@@ -81,7 +81,7 @@ impl Toggleable for ListHeader {
 }
 
 impl RenderOnce for ListHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let ui_density = ThemeSettings::get_global(cx).ui_density;
 
         h_flex()
@@ -120,7 +120,9 @@ impl RenderOnce for ListHeader {
                                     .children(self.start_slot)
                                     .child(Label::new(self.label.clone()).color(Color::Muted))
                                     .when_some(self.on_toggle, |this, on_toggle| {
-                                        this.on_click(move |event, cx| on_toggle(event, cx))
+                                        this.on_click(move |event, window, cx| {
+                                            on_toggle(event, window, cx)
+                                        })
                                     }),
                             ),
                     )

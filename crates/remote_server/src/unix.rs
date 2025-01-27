@@ -1,6 +1,6 @@
 use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use chrono::Utc;
 use client::{telemetry, ProxySettings};
 use extension::ExtensionHostProxy;
@@ -8,7 +8,7 @@ use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use git::GitHostingProviderRegistry;
-use gpui::{AppContext, Context as _, Model, ModelContext, SemanticVersion, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -189,7 +189,7 @@ fn init_panic_hook() {
     }));
 }
 
-fn handle_panic_requests(project: &Model<HeadlessProject>, client: &Arc<ChannelClient>) {
+fn handle_panic_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
     let client: AnyProtoClient = client.clone().into();
     client.add_request_handler(
         project.downgrade(),
@@ -250,7 +250,7 @@ impl ServerListeners {
 fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Arc<ChannelClient> {
     // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
@@ -421,7 +421,7 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    gpui::App::headless().run(move |cx| {
+    gpui::Application::headless().run(move |cx| {
         settings::init(cx);
         let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
@@ -439,7 +439,7 @@ pub fn execute_run(
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
-        let project = cx.new_model(|cx| {
+        let project = cx.new(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
@@ -740,7 +740,7 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
 fn initialize_settings(
     session: Arc<ChannelClient>,
     fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> async_watch::Receiver<Option<NodeBinaryOptions>> {
     let user_settings_file_rx = watch_config_file(
         &cx.background_executor(),
@@ -808,8 +808,8 @@ fn initialize_settings(
 
 pub fn handle_settings_file_changes(
     mut server_settings_file: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
+    cx: &mut App,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
     let server_settings_content = cx
         .background_executor()
@@ -828,7 +828,7 @@ pub fn handle_settings_file_changes(
                     log::error!("Failed to load server settings: {err}");
                 }
                 settings_changed(result.err(), cx);
-                cx.refresh();
+                cx.refresh_windows();
             });
             if result.is_err() {
                 break; // App dropped
@@ -838,7 +838,7 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut Context<'_, HeadlessProject>) -> Option<Uri> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()

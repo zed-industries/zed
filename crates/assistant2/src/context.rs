@@ -2,7 +2,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use file_icons::FileIcons;
-use gpui::{AppContext, Model, SharedString};
+use gpui::{App, Entity, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
@@ -63,14 +63,14 @@ impl ContextKind {
 }
 
 #[derive(Debug)]
-pub enum Context {
+pub enum AssistantContext {
     File(FileContext),
     Directory(DirectoryContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
 }
 
-impl Context {
+impl AssistantContext {
     pub fn id(&self) -> ContextId {
         match self {
             Self::File(file) => file.id,
@@ -107,7 +107,7 @@ pub struct FetchedUrlContext {
 #[derive(Debug)]
 pub struct ThreadContext {
     pub id: ContextId,
-    pub thread: Model<Thread>,
+    pub thread: Entity<Thread>,
     pub text: SharedString,
 }
 
@@ -117,13 +117,13 @@ pub struct ThreadContext {
 #[derive(Debug, Clone)]
 pub struct ContextBuffer {
     pub id: BufferId,
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub version: clock::Global,
     pub text: SharedString,
 }
 
-impl Context {
-    pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
+impl AssistantContext {
+    pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
         match &self {
             Self::File(file_context) => file_context.snapshot(cx),
             Self::Directory(directory_context) => Some(directory_context.snapshot()),
@@ -134,7 +134,7 @@ impl Context {
 }
 
 impl FileContext {
-    pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
+    pub fn snapshot(&self, cx: &App) -> Option<ContextSnapshot> {
         let buffer = self.context_buffer.buffer.read(cx);
         let path = buffer_path_log_err(buffer)?;
         let full_path: SharedString = path.to_string_lossy().into_owned().into();
@@ -221,7 +221,7 @@ impl FetchedUrlContext {
 }
 
 impl ThreadContext {
-    pub fn snapshot(&self, cx: &AppContext) -> ContextSnapshot {
+    pub fn snapshot(&self, cx: &App) -> ContextSnapshot {
         let thread = self.thread.read(cx);
         ContextSnapshot {
             id: self.id,

@@ -1,6 +1,6 @@
 use gpui::{
-    div, green, red, HighlightStyle, InteractiveText, IntoElement, ParentElement, Render, Styled,
-    StyledText, View, ViewContext, VisualContext, WindowContext,
+    div, green, red, App, AppContext as _, Context, Entity, HighlightStyle, InteractiveText,
+    IntoElement, ParentElement, Render, Styled, StyledText, Window,
 };
 use indoc::indoc;
 use story::*;
@@ -8,13 +8,13 @@ use story::*;
 pub struct TextStory;
 
 impl TextStory {
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
-        cx.new_view(|_cx| Self)
+    pub fn model(cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self)
     }
 }
 
 impl Render for TextStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title("Text"))
             .children(vec![
@@ -82,7 +82,7 @@ impl Render for TextStory {
                             InteractiveText::new(
                                 "interactive",
                                 StyledText::new("Hello world, how is it going?").with_highlights(
-                                    &cx.text_style(),
+                                    &window.text_style(),
                                     [
                                         (
                                             6..11,
@@ -94,14 +94,14 @@ impl Render for TextStory {
                                     ],
                                 ),
                             )
-                            .on_click(vec![2..4, 1..3, 7..9], |range_ix, _cx| {
+                            .on_click(vec![2..4, 1..3, 7..9], |range_ix, _, _cx| {
                                 println!("Clicked range {range_ix}");
                             }),
                         )
                         .usage(indoc! {r##"
                             InteractiveText::new(
                                 "interactive",
-                                StyledText::new("Hello world, how is it going?").with_highlights(&cx.text_style(), [
+                                StyledText::new("Hello world, how is it going?").with_highlights(&window.text_style(), [
                                     (6..11, HighlightStyle {
                                         background_color: Some(green()),
                                         ..Default::default()

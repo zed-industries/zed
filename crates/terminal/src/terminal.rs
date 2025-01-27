@@ -28,7 +28,7 @@ use anyhow::{bail, Result};
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
-    FutureExt, SinkExt,
+    FutureExt,
 };
 
 use mappings::mouse::{
@@ -53,14 +53,14 @@ use std::{
     ops::{Deref, Index, RangeInclusive},
     path::PathBuf,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use thiserror::Error;
 
 use gpui::{
-    actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
-    Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
+    actions, black, px, AnyWindowHandle, App, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
+    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -156,7 +156,7 @@ impl EventListener for ZedListener {
     }
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     TerminalSettings::register(cx);
 }
 
@@ -334,7 +334,7 @@ impl TerminalBuilder {
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
         // (As is the case when launched from a .app on MacOS),
@@ -401,7 +401,7 @@ impl TerminalBuilder {
             ..Config::default()
         };
 
-        //Spawn a task so the Alacritty EventLoop can communicate with us in a view context
+        //Spawn a task so the Alacritty EventLoop can communicate with us
         //TODO: Remove with a bounded sender which can be dispatched on &self
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
@@ -482,141 +482,66 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(self, cx: &ModelContext<Terminal>) -> Terminal {
-        // Accumulate the effects of events on a background thread in order to keep up with the
-        // events from alacritty even when it is emitting events rapidly.
-        let (mut accumulated_events_tx, mut accumulated_events_rx) = unbounded();
-        let mut events_rx = self.events_rx;
-        let background_executor = cx.background_executor().clone();
-        cx.background_executor()
-            .spawn(async move {
-                while let Some(event) = events_rx.next().await {
-                    // Process the first event immediately to reduce latency
-                    accumulated_events_tx
-                        .feed(EventOrAccumulator::Event(event))
-                        .await?;
-                    'outer: loop {
-                        let start_time = Instant::now();
-                        let mut timer = background_executor.timer(Duration::from_millis(4)).fuse();
-                        let mut event_accumulator = EventAccumulator::new();
-                        loop {
-                            futures::select_biased! {
-                                // Events are no longer coming in at a high rate, so go back to just
-                                // awaiting the next event.
-                                _ = timer => break 'outer,
-                                event = events_rx.next() => {
-                                    let Some(event) = event else {
-                                        break;
-                                    };
-                                    event_accumulator.add(event);
-                                    if event_accumulator.events.len() > 100 {
-                                        break;
-                                    }
-                                    let elapsed = Instant::now().duration_since(start_time);
-                                    if elapsed > Duration::from_millis(20) {
-                                        break;
-                                    }
-                                },
-                            }
-                        }
-                        accumulated_events_tx
-                            .feed(EventOrAccumulator::Accumulator(event_accumulator))
-                            .await?;
-                    }
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
-        // On the foreground thread, process the accumulated effects of events.
+    pub fn subscribe(mut self, cx: &Context<Terminal>) -> Terminal {
+        //Event loop
         cx.spawn(|terminal, mut cx| async move {
-            while let Some(event_or_accumulator) = accumulated_events_rx.next().await {
+            while let Some(event) = self.events_rx.next().await {
                 terminal.update(&mut cx, |terminal, cx| {
-                    event_or_accumulator.process_events(terminal, cx)
+                    //Process the first event immediately for lowered latency
+                    terminal.process_event(&event, cx);
                 })?;
+
+                'outer: loop {
+                    let mut events = Vec::new();
+                    let mut timer = cx
+                        .background_executor()
+                        .timer(Duration::from_millis(4))
+                        .fuse();
+                    let mut wakeup = false;
+                    loop {
+                        futures::select_biased! {
+                            _ = timer => break,
+                            event = self.events_rx.next() => {
+                                if let Some(event) = event {
+                                    if matches!(event, AlacTermEvent::Wakeup) {
+                                        wakeup = true;
+                                    } else {
+                                        events.push(event);
+                                    }
+
+                                    if events.len() > 100 {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            },
+                        }
+                    }
+
+                    if events.is_empty() && !wakeup {
+                        smol::future::yield_now().await;
+                        break 'outer;
+                    }
+
+                    terminal.update(&mut cx, |this, cx| {
+                        if wakeup {
+                            this.process_event(&AlacTermEvent::Wakeup, cx);
+                        }
+
+                        for event in events {
+                            this.process_event(&event, cx);
+                        }
+                    })?;
+                    smol::future::yield_now().await;
+                }
             }
+
             anyhow::Ok(())
         })
         .detach();
 
         self.terminal
-    }
-}
-
-enum EventOrAccumulator {
-    Event(AlacTermEvent),
-    Accumulator(EventAccumulator),
-}
-
-impl EventOrAccumulator {
-    fn process_events(self, terminal: &mut Terminal, cx: &mut ModelContext<Terminal>) {
-        match self {
-            EventOrAccumulator::Event(event) => terminal.process_event(event, cx),
-            EventOrAccumulator::Accumulator(accumulator) => {
-                accumulator.process_events(terminal, cx)
-            }
-        }
-    }
-}
-
-struct EventAccumulator {
-    wakeup: bool,
-    cursor_blinking_changed: bool,
-    bell: bool,
-    title: Option<String>,
-    /// Events that can't be deduplicated.
-    events: Vec<AlacTermEvent>,
-}
-
-impl EventAccumulator {
-    fn new() -> Self {
-        EventAccumulator {
-            wakeup: false,
-            cursor_blinking_changed: false,
-            bell: false,
-            title: None,
-            events: Vec::new(),
-        }
-    }
-
-    fn add(&mut self, event: AlacTermEvent) {
-        match event {
-            // Events that can have their effects deduplicated.
-            AlacTermEvent::Title(title) => self.title = Some(title),
-            AlacTermEvent::ResetTitle => self.title = Some(String::new()),
-            AlacTermEvent::CursorBlinkingChange => self.cursor_blinking_changed = true,
-            AlacTermEvent::Wakeup => self.wakeup = true,
-            AlacTermEvent::Bell => self.bell = true,
-            // Events that have handlers involving writing text to the terminal or interacting with
-            // clipboard, and so must be kept in order.
-            AlacTermEvent::ClipboardStore(_, _) => self.events.push(event),
-            AlacTermEvent::ClipboardLoad(_, _) => self.events.push(event),
-            AlacTermEvent::PtyWrite(_) => self.events.push(event),
-            AlacTermEvent::TextAreaSizeRequest(_) => self.events.push(event),
-            AlacTermEvent::ColorRequest(_, _) => self.events.push(event),
-            AlacTermEvent::Exit => self.events.push(event),
-            AlacTermEvent::ChildExit(_) => self.events.push(event),
-            // Handled in render so no need to handle here.
-            AlacTermEvent::MouseCursorDirty => {}
-        }
-    }
-
-    fn process_events(self, terminal: &mut Terminal, cx: &mut ModelContext<Terminal>) {
-        if self.wakeup {
-            terminal.process_event(AlacTermEvent::Wakeup, cx);
-        }
-        if self.cursor_blinking_changed {
-            terminal.process_event(AlacTermEvent::CursorBlinkingChange, cx);
-        }
-        if self.bell {
-            terminal.process_event(AlacTermEvent::Bell, cx);
-        }
-        if let Some(title) = self.title {
-            terminal.process_event(AlacTermEvent::Title(title), cx);
-        }
-        for event in self.events {
-            terminal.process_event(event, cx);
-        }
     }
 }
 
@@ -749,7 +674,7 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: AlacTermEvent, cx: &mut ModelContext<Self>) {
+    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
                 self.breadcrumb_text = title.to_string();
@@ -803,12 +728,13 @@ impl Terminal {
                 // Instead of locking, we could store the colors in `self.last_content`. But then
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
-                let color = self.term.lock().colors()[index]
-                    .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
+                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
+                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
+                });
                 self.write_to_pty(format(color));
             }
             AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(error_code), cx);
+                self.register_task_finished(Some(*error_code), cx);
             }
         }
     }
@@ -817,12 +743,11 @@ impl Terminal {
         self.selection_phase == SelectionPhase::Selecting
     }
 
-    ///Takes events from Alacritty and translates them to behavior on this view
     fn process_terminal_event(
         &mut self,
         event: &InternalEvent,
         term: &mut Term<ZedListener>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             InternalEvent::Resize(mut new_size) => {
@@ -1076,7 +1001,7 @@ impl Terminal {
         word_match: RangeInclusive<AlacPoint>,
         word: String,
         navigation_target: MaybeNavigationTarget,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(prev_word) = prev_word {
             if prev_word.word == word && prev_word.word_match == word_match {
@@ -1377,7 +1302,7 @@ impl Terminal {
         self.input(paste_text);
     }
 
-    pub fn sync(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn sync(&mut self, cx: &mut Context<Self>) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
@@ -1553,7 +1478,7 @@ impl Terminal {
         &mut self,
         e: &MouseDownEvent,
         origin: Point<Pixels>,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let position = e.position - origin;
         let point = grid_point(
@@ -1606,7 +1531,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &ModelContext<Self>) {
+    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &Context<Self>) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - origin;
@@ -1710,7 +1635,7 @@ impl Terminal {
     pub fn find_matches(
         &self,
         mut searcher: RegexSearch,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
         cx.background_executor().spawn(async move {
@@ -1802,7 +1727,7 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
+    pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
@@ -1814,11 +1739,7 @@ impl Terminal {
         Task::ready(())
     }
 
-    fn register_task_finished(
-        &mut self,
-        error_code: Option<i32>,
-        cx: &mut ModelContext<'_, Terminal>,
-    ) {
+    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
         self.completion_tx.try_send(()).ok();
         let task = match &mut self.task {
             Some(task) => task,

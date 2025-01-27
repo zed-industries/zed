@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
@@ -76,7 +76,7 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         Some(LanguageServerBinary {
@@ -89,7 +89,7 @@ impl super::LspAdapter for GoLspAdapter {
     fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
         static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
 
@@ -443,7 +443,7 @@ impl ContextProvider for GoContextProvider {
         location: &Location,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
@@ -506,7 +506,7 @@ impl ContextProvider for GoContextProvider {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn language::File>>,
-        _: &AppContext,
+        _: &App,
     ) -> Option<TaskTemplates> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None

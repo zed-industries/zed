@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use anyhow::Context;
-use gpui::AppContext;
+use anyhow::Context as _;
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -69,10 +69,7 @@ impl Settings for WorktreeSettings {
 
     type FileContent = WorktreeSettingsContent;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let result: WorktreeSettingsContent = sources.json_merge()?;
         let mut file_scan_exclusions = result.file_scan_exclusions.unwrap_or_default();
         let mut private_files = result.private_files.unwrap_or_default();

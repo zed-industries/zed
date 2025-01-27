@@ -3,7 +3,7 @@ use std::{path::Path, str};
 
 use collections::HashMap;
 
-use gpui::{AppContext, AssetSource, Global, SharedString};
+use gpui::{App, AssetSource, Global, SharedString};
 use serde_derive::Deserialize;
 use settings::Settings;
 use theme::{IconTheme, ThemeRegistry, ThemeSettings};
@@ -19,12 +19,12 @@ impl Global for FileIcons {}
 
 pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
 
-pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
+pub fn init(assets: impl AssetSource, cx: &mut App) {
     cx.set_global(FileIcons::new(assets))
 }
 
 impl FileIcons {
-    pub fn get(cx: &AppContext) -> &Self {
+    pub fn get(cx: &App) -> &Self {
         cx.global::<FileIcons>()
     }
 
@@ -40,7 +40,7 @@ impl FileIcons {
             })
     }
 
-    pub fn get_icon(path: &Path, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_icon(path: &Path, cx: &App) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
         // TODO: Associate a type with the languages and have the file's language
@@ -59,12 +59,12 @@ impl FileIcons {
         .or_else(|| this.get_icon_for_type("default", cx))
     }
 
-    fn default_icon_theme(cx: &AppContext) -> Option<Arc<IconTheme>> {
+    fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {
         let theme_registry = ThemeRegistry::global(cx);
         theme_registry.default_icon_theme().ok()
     }
 
-    pub fn get_icon_for_type(&self, typ: &str, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_icon_for_type(&self, typ: &str, cx: &App) -> Option<SharedString> {
         fn get_icon_for_type(icon_theme: &Arc<IconTheme>, typ: &str) -> Option<SharedString> {
             icon_theme
                 .file_icons
@@ -77,7 +77,7 @@ impl FileIcons {
         })
     }
 
-    pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
         fn get_folder_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
             if expanded {
                 icon_theme.directory_icons.expanded.clone()
@@ -92,7 +92,7 @@ impl FileIcons {
         })
     }
 
-    pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
+    pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {
         fn get_chevron_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
             if expanded {
                 icon_theme.chevron_icons.expanded.clone()

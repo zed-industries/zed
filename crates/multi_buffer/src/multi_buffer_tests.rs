@@ -1,6 +1,6 @@
 use super::*;
 use git::diff::DiffHunkStatus;
-use gpui::{AppContext, Context, TestAppContext};
+use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
@@ -17,9 +17,9 @@ fn init_logger() {
 }
 
 #[gpui::test]
-fn test_empty_singleton(cx: &mut AppContext) {
-    let buffer = cx.new_model(|cx| Buffer::local("", cx));
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+fn test_empty_singleton(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "");
     assert_eq!(
@@ -33,9 +33,9 @@ fn test_empty_singleton(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_singleton(cx: &mut AppContext) {
-    let buffer = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+fn test_singleton(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), buffer.read(cx).text());
@@ -68,9 +68,9 @@ fn test_singleton(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_remote(cx: &mut AppContext) {
-    let host_buffer = cx.new_model(|cx| Buffer::local("a", cx));
-    let guest_buffer = cx.new_model(|cx| {
+fn test_remote(cx: &mut App) {
+    let host_buffer = cx.new(|cx| Buffer::local("a", cx));
+    let guest_buffer = cx.new(|cx| {
         let state = host_buffer.read(cx).to_proto(cx);
         let ops = cx
             .background_executor()
@@ -83,7 +83,7 @@ fn test_remote(cx: &mut AppContext) {
         );
         buffer
     });
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "a");
 
@@ -97,10 +97,10 @@ fn test_remote(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
+    let buffer_2 = cx.new(|cx| Buffer::local(sample_text(6, 6, 'g'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
     let events = Arc::new(RwLock::new(Vec::<Event>::new()));
     multibuffer.update(cx, |_, cx| {
@@ -354,17 +354,17 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_diff_boundary_anchors(cx: &mut AppContext) {
+fn test_diff_boundary_anchors(cx: &mut App) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
     let snapshot = buffer.read(cx).snapshot();
-    let change_set = cx.new_model(|cx| {
+    let change_set = cx.new(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
         change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
         change_set
     });
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_change_set(change_set, cx)
     });
@@ -406,14 +406,14 @@ fn test_diff_boundary_anchors(cx: &mut AppContext) {
 fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-    let change_set = cx.new_model(|cx| {
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let change_set = cx.new(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
         let snapshot = buffer.read(cx).snapshot();
         change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
         change_set
     });
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
@@ -504,14 +504,14 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-    let change_set = cx.new_model(|cx| {
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let change_set = cx.new(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
         let snapshot = buffer.read(cx).snapshot();
         change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
         change_set
     });
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_change_set(change_set.clone(), cx);
@@ -660,12 +660,12 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_excerpt_events(cx: &mut AppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'm'), cx));
+fn test_excerpt_events(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
+    let buffer_2 = cx.new(|cx| Buffer::local(sample_text(10, 3, 'm'), cx));
 
-    let leader_multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-    let follower_multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+    let leader_multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let follower_multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let follower_edit_event_count = Arc::new(RwLock::new(0));
 
     follower_multibuffer.update(cx, |_, cx| {
@@ -766,9 +766,9 @@ fn test_excerpt_events(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_expand_excerpts(cx: &mut AppContext) {
-    let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+fn test_expand_excerpts(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts_with_context_lines(
@@ -842,9 +842,9 @@ fn test_expand_excerpts(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
-    let buffer = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+fn test_push_excerpts_with_context_lines(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.push_excerpts_with_context_lines(
             buffer.clone(),
@@ -896,8 +896,8 @@ fn test_push_excerpts_with_context_lines(cx: &mut AppContext) {
 
 #[gpui::test(iterations = 100)]
 async fn test_push_multiple_excerpts_with_context_lines(cx: &mut TestAppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(15, 4, 'a'), cx));
+    let buffer_1 = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
+    let buffer_2 = cx.new(|cx| Buffer::local(sample_text(15, 4, 'a'), cx));
     let snapshot_1 = buffer_1.update(cx, |buffer, _| buffer.snapshot());
     let snapshot_2 = buffer_2.update(cx, |buffer, _| buffer.snapshot());
     let ranges_1 = vec![
@@ -910,7 +910,7 @@ async fn test_push_multiple_excerpts_with_context_lines(cx: &mut TestAppContext)
         snapshot_2.anchor_before(Point::new(10, 0))..snapshot_2.anchor_before(Point::new(10, 2)),
     ];
 
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let anchor_ranges = multibuffer
         .update(cx, |multibuffer, cx| {
             multibuffer.push_multiple_excerpts_with_context_lines(
@@ -972,8 +972,8 @@ async fn test_push_multiple_excerpts_with_context_lines(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-fn test_empty_multibuffer(cx: &mut AppContext) {
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+fn test_empty_multibuffer(cx: &mut App) {
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "");
@@ -994,9 +994,9 @@ fn test_empty_multibuffer(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
-    let buffer = cx.new_model(|cx| Buffer::local("abcd", cx));
-    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+fn test_singleton_multibuffer_anchors(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("abcd", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
     let old_snapshot = multibuffer.read(cx).snapshot(cx);
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "X")], None, cx);
@@ -1014,10 +1014,10 @@ fn test_singleton_multibuffer_anchors(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_multibuffer_anchors(cx: &mut AppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local("abcd", cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local("efghi", cx));
-    let multibuffer = cx.new_model(|cx| {
+fn test_multibuffer_anchors(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local("abcd", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("efghi", cx));
+    let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
@@ -1072,10 +1072,10 @@ fn test_multibuffer_anchors(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut AppContext) {
-    let buffer_1 = cx.new_model(|cx| Buffer::local("abcd", cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local("ABCDEFGHIJKLMNOP", cx));
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
+    let buffer_1 = cx.new(|cx| Buffer::local("abcd", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("ABCDEFGHIJKLMNOP", cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
 
     // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
     // Add an excerpt from buffer 1 that spans this new insertion.
@@ -1224,12 +1224,12 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
         "
     );
 
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
     let change_set =
-        cx.new_model(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
     cx.run_until_parked();
 
-    let multibuffer = cx.new_model(|cx| {
+    let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
         multibuffer.add_change_set(change_set.clone(), cx);
         multibuffer
@@ -1468,12 +1468,12 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
         "
     );
 
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
     let change_set =
-        cx.new_model(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
     cx.run_until_parked();
 
-    let multibuffer = cx.new_model(|cx| {
+    let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
         multibuffer.add_change_set(change_set.clone(), cx);
         multibuffer
@@ -1573,17 +1573,15 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         "
     );
 
-    let buffer_1 = cx.new_model(|cx| Buffer::local(text_1, cx));
-    let buffer_2 = cx.new_model(|cx| Buffer::local(text_2, cx));
-    let change_set_1 = cx.new_model(|cx| {
-        BufferChangeSet::new_with_base_text(base_text_1.to_string(), &buffer_1, cx)
-    });
-    let change_set_2 = cx.new_model(|cx| {
-        BufferChangeSet::new_with_base_text(base_text_2.to_string(), &buffer_2, cx)
-    });
+    let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
+    let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
+    let change_set_1 =
+        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_1.to_string(), &buffer_1, cx));
+    let change_set_2 =
+        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_2.to_string(), &buffer_2, cx));
     cx.run_until_parked();
 
-    let multibuffer = cx.new_model(|cx| {
+    let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
         multibuffer.push_excerpts(
             buffer_1.clone(),
@@ -1762,12 +1760,12 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 #[derive(Default)]
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
-    change_sets: HashMap<BufferId, Model<BufferChangeSet>>,
+    change_sets: HashMap<BufferId, Entity<BufferChangeSet>>,
 }
 
 struct ReferenceExcerpt {
     id: ExcerptId,
-    buffer: Model<Buffer>,
+    buffer: Entity<Buffer>,
     range: Range<text::Anchor>,
     expanded_diff_hunks: Vec<text::Anchor>,
 }
@@ -1780,7 +1778,7 @@ struct ReferenceRegion {
 }
 
 impl ReferenceMultibuffer {
-    fn expand_excerpts(&mut self, excerpts: &HashSet<ExcerptId>, line_count: u32, cx: &AppContext) {
+    fn expand_excerpts(&mut self, excerpts: &HashSet<ExcerptId>, line_count: u32, cx: &App) {
         if line_count == 0 {
             return;
         }
@@ -1798,7 +1796,7 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn remove_excerpt(&mut self, id: ExcerptId, cx: &AppContext) {
+    fn remove_excerpt(&mut self, id: ExcerptId, cx: &App) {
         let ix = self
             .excerpts
             .iter()
@@ -1819,7 +1817,7 @@ impl ReferenceMultibuffer {
         &mut self,
         prev_id: ExcerptId,
         new_excerpt_id: ExcerptId,
-        (buffer_handle, anchor_range): (Model<Buffer>, Range<text::Anchor>),
+        (buffer_handle, anchor_range): (Entity<Buffer>, Range<text::Anchor>),
     ) {
         let excerpt_ix = if prev_id == ExcerptId::max() {
             self.excerpts.len()
@@ -1841,12 +1839,7 @@ impl ReferenceMultibuffer {
         );
     }
 
-    fn expand_diff_hunks(
-        &mut self,
-        excerpt_id: ExcerptId,
-        range: Range<text::Anchor>,
-        cx: &AppContext,
-    ) {
+    fn expand_diff_hunks(&mut self, excerpt_id: ExcerptId, range: Range<text::Anchor>, cx: &App) {
         let excerpt = self
             .excerpts
             .iter_mut()
@@ -1894,7 +1887,7 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn expected_content(&self, cx: &AppContext) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
+    fn expected_content(&self, cx: &App) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
         let mut text = String::new();
         let mut regions = Vec::<ReferenceRegion>::new();
         let mut excerpt_boundary_rows = HashSet::default();
@@ -2030,7 +2023,7 @@ impl ReferenceMultibuffer {
         (text, row_infos, excerpt_boundary_rows)
     }
 
-    fn diffs_updated(&mut self, cx: &AppContext) {
+    fn diffs_updated(&mut self, cx: &App) {
         for excerpt in &mut self.excerpts {
             let buffer = excerpt.buffer.read(cx).snapshot();
             let excerpt_range = excerpt.range.to_offset(&buffer);
@@ -2064,20 +2057,20 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn add_change_set(&mut self, change_set: Model<BufferChangeSet>, cx: &mut AppContext) {
+    fn add_change_set(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut App) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.change_sets.insert(buffer_id, change_set);
     }
 }
 
 #[gpui::test(iterations = 100)]
-fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
+fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let mut buffers: Vec<Model<Buffer>> = Vec::new();
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+    let mut buffers: Vec<Entity<Buffer>> = Vec::new();
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     let mut reference = ReferenceMultibuffer::default();
     let mut anchors = Vec::new();
     let mut old_versions = Vec::new();
@@ -2214,9 +2207,9 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                         .take(256)
                         .collect::<String>();
 
-                    let buffer = cx.new_model(|cx| Buffer::local(base_text.clone(), cx));
+                    let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                     let snapshot = buffer.read(cx).snapshot();
-                    let change_set = cx.new_model(|cx| {
+                    let change_set = cx.new(|cx| {
                         let mut change_set = BufferChangeSet::new(&buffer, cx);
                         change_set.recalculate_diff_sync(base_text, snapshot.text, true, cx);
                         change_set
@@ -2431,21 +2424,21 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
 }
 
 #[gpui::test]
-fn test_history(cx: &mut AppContext) {
+fn test_history(cx: &mut App) {
     let test_settings = SettingsStore::test(cx);
     cx.set_global(test_settings);
     let group_interval: Duration = Duration::from_millis(1);
-    let buffer_1 = cx.new_model(|cx| {
+    let buffer_1 = cx.new(|cx| {
         let mut buf = Buffer::local("1234", cx);
         buf.set_group_interval(group_interval);
         buf
     });
-    let buffer_2 = cx.new_model(|cx| {
+    let buffer_2 = cx.new(|cx| {
         let mut buf = Buffer::local("5678", cx);
         buf.set_group_interval(group_interval);
         buf
     });
-    let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |this, _| {
         this.history.group_interval = group_interval;
     });
@@ -2710,7 +2703,7 @@ fn format_diff(
 
 #[track_caller]
 fn assert_new_snapshot(
-    multibuffer: &Model<MultiBuffer>,
+    multibuffer: &Entity<MultiBuffer>,
     snapshot: &mut MultiBufferSnapshot,
     subscription: &mut Subscription,
     cx: &mut TestAppContext,

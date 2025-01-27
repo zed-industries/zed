@@ -3,7 +3,7 @@ use super::{
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     Highlights,
 };
-use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
+use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{Chunk, Point};
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
@@ -90,9 +90,9 @@ impl WrapMap {
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
-        cx: &mut AppContext,
-    ) -> (Model<Self>, WrapSnapshot) {
-        let handle = cx.new_model(|cx| {
+        cx: &mut App,
+    ) -> (Entity<Self>, WrapSnapshot) {
+        let handle = cx.new(|cx| {
             let mut this = Self {
                 font_with_size: (font, font_size),
                 wrap_width: None,
@@ -119,7 +119,7 @@ impl WrapMap {
         &mut self,
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> (WrapSnapshot, Patch<u32>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
@@ -138,7 +138,7 @@ impl WrapMap {
         &mut self,
         font: Font,
         font_size: Pixels,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let font_with_size = (font, font_size);
 
@@ -151,11 +151,7 @@ impl WrapMap {
         }
     }
 
-    pub fn set_wrap_width(
-        &mut self,
-        wrap_width: Option<Pixels>,
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
+    pub fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
         if wrap_width == self.wrap_width {
             return false;
         }
@@ -165,7 +161,7 @@ impl WrapMap {
         true
     }
 
-    fn rewrap(&mut self, cx: &mut ModelContext<Self>) {
+    fn rewrap(&mut self, cx: &mut Context<Self>) {
         self.background_task.take();
         self.interpolated_edits.clear();
         self.pending_edits.clear();
@@ -236,7 +232,7 @@ impl WrapMap {
         }
     }
 
-    fn flush_edits(&mut self, cx: &mut ModelContext<Self>) {
+    fn flush_edits(&mut self, cx: &mut Context<Self>) {
         if !self.snapshot.interpolated {
             let mut to_remove_len = 0;
             for (tab_snapshot, _) in &self.pending_edits {

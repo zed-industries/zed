@@ -1,14 +1,14 @@
 use gpui::{
-    actions, Action, AppContext, EventEmitter, FocusHandle, FocusableView,
+    actions, Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
     KeyBindingContextPredicate, KeyContext, Keystroke, MouseButton, Render, Subscription,
 };
 use itertools::Itertools;
 use serde_json::json;
 use settings::get_key_equivalents;
 use ui::{
-    div, h_flex, px, v_flex, ButtonCommon, Clickable, FluentBuilder, InteractiveElement, Label,
-    LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    ViewContext, VisualContext, WindowContext,
+    div, h_flex, px, v_flex, ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement,
+    Label, LabelCommon, LabelSize, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    Window,
 };
 use ui::{Button, ButtonStyle};
 use workspace::Item;
@@ -16,11 +16,11 @@ use workspace::Workspace;
 
 actions!(debug, [OpenKeyContextView]);
 
-pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, _: &OpenKeyContextView, cx| {
-            let key_context_view = cx.new_view(KeyContextView::new);
-            workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, cx)
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
+        workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
+            let key_context_view = cx.new(|cx| KeyContextView::new(window, cx));
+            workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, window, cx)
         });
     })
     .detach();
@@ -36,13 +36,13 @@ struct KeyContextView {
 }
 
 impl KeyContextView {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let sub1 = cx.observe_keystrokes(|this, e, cx| {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let sub1 = cx.observe_keystrokes(|this, e, window, cx| {
             let mut pending = this.pending_keystrokes.take().unwrap_or_default();
             pending.push(e.keystroke.clone());
             let mut possibilities = cx.all_bindings_for_input(&pending);
             possibilities.reverse();
-            this.context_stack = cx.context_stack();
+            this.context_stack = window.context_stack();
             this.last_keystrokes = Some(
                 json!(pending.iter().map(|p| p.unparse()).join(" "))
                     .to_string()
@@ -86,8 +86,8 @@ impl KeyContextView {
                 })
                 .collect();
         });
-        let sub2 = cx.observe_pending_input(|this, cx| {
-            this.pending_keystrokes = cx
+        let sub2 = cx.observe_pending_input(window, |this, window, cx| {
+            this.pending_keystrokes = window
                 .pending_input_keystrokes()
                 .map(|k| k.iter().cloned().collect());
             if this.pending_keystrokes.is_some() {
@@ -109,13 +109,13 @@ impl KeyContextView {
 
 impl EventEmitter<()> for KeyContextView {}
 
-impl FocusableView for KeyContextView {
-    fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
+impl Focusable for KeyContextView {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 impl KeyContextView {
-    fn set_context_stack(&mut self, stack: Vec<KeyContext>, cx: &mut ViewContext<Self>) {
+    fn set_context_stack(&mut self, stack: Vec<KeyContext>, cx: &mut Context<Self>) {
         self.context_stack = stack;
         cx.notify()
     }
@@ -145,7 +145,7 @@ impl Item for KeyContextView {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
         Some("Keyboard Context".into())
     }
 
@@ -156,17 +156,18 @@ impl Item for KeyContextView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<workspace::WorkspaceId>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<gpui::View<Self>>
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<Self>>
     where
         Self: Sized,
     {
-        Some(cx.new_view(Self::new))
+        Some(cx.new(|cx| KeyContextView::new(window, cx)))
     }
 }
 
 impl Render for KeyContextView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
         let key_equivalents = get_key_equivalents(cx.keyboard_layout());
         v_flex()
@@ -180,17 +181,17 @@ impl Render for KeyContextView {
             .key_context("KeyContextView")
             .on_mouse_up_out(
                 MouseButton::Left,
-                cx.listener(|this, _, cx| {
+                cx.listener(|this, _, window, cx| {
                     this.last_keystrokes.take();
-                    this.set_context_stack(cx.context_stack(), cx);
+                    this.set_context_stack(window.context_stack(), cx);
                 }),
             )
             .on_mouse_up_out(
                 MouseButton::Right,
-                cx.listener(|_, _, cx| {
-                    cx.defer(|this, cx| {
+                cx.listener(|_, _, window, cx| {
+                    cx.defer_in(window, |this, window, cx| {
                         this.last_keystrokes.take();
-                        this.set_context_stack(cx.context_stack(), cx);
+                        this.set_context_stack(window.context_stack(), cx);
                     });
                 }),
             )
@@ -203,27 +204,27 @@ impl Render for KeyContextView {
                     .child(
                         Button::new("default", "Open Documentation")
                             .style(ButtonStyle::Filled)
-                            .on_click(|_, cx| cx.open_url("https://zed.dev/docs/key-bindings")),
+                            .on_click(|_, _, cx| cx.open_url("https://zed.dev/docs/key-bindings")),
                     )
                     .child(
                         Button::new("default", "View default keymap")
                             .style(ButtonStyle::Filled)
                             .key_binding(ui::KeyBinding::for_action(
                                 &zed_actions::OpenDefaultKeymap,
-                                cx,
+                                window,
                             ))
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(workspace::SplitRight.boxed_clone());
-                                cx.dispatch_action(zed_actions::OpenDefaultKeymap.boxed_clone());
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(workspace::SplitRight.boxed_clone(), cx);
+                                window.dispatch_action(zed_actions::OpenDefaultKeymap.boxed_clone(), cx);
                             }),
                     )
                     .child(
                         Button::new("default", "Edit your keymap")
                             .style(ButtonStyle::Filled)
-                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymap, cx))
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(workspace::SplitRight.boxed_clone());
-                                cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                            .key_binding(ui::KeyBinding::for_action(&zed_actions::OpenKeymap, window))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(workspace::SplitRight.boxed_clone(), cx);
+                                window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                             }),
                     ),
             )
@@ -233,7 +234,7 @@ impl Render for KeyContextView {
                     .mt_8(),
             )
             .children({
-                cx.context_stack().iter().enumerate().map(|(i, context)| {
+                window.context_stack().iter().enumerate().map(|(i, context)| {
                     let primary = context.primary().map(|e| e.key.clone()).unwrap_or_default();
                     let secondary = context
                         .secondary()
