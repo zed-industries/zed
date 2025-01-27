@@ -46,9 +46,8 @@ pub(crate) fn handle_msg(
         WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
-        WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
+        WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
-        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -295,18 +294,6 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
-}
-
-fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.hovered = false;
-    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-        drop(lock);
-        callback(false);
-        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-    }
-
-    Some(0)
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
