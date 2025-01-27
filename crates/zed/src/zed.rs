@@ -212,7 +212,7 @@ pub fn initialize_workspace(
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
             status_bar.add_right_item(cursor_position, window, cx);
-            status_bar.add_right_item(image_metadata, cx);
+            status_bar.add_right_item(image_metadata, window, cx);
         });
 
         auto_update_ui::notify_of_any_new_update(window, cx);

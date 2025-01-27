@@ -1,10 +1,10 @@
 use crate::ImageView;
 use anyhow;
-use gpui::{div, AppContext, IntoElement, ParentElement, Render, Subscription, View, ViewContext};
+use gpui::{div, Context, Entity, IntoElement, ParentElement, Render, Subscription};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use ui::{prelude::*, Button, LabelSize};
+use ui::{prelude::*, Button, LabelSize, Window};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
@@ -22,7 +22,7 @@ impl Settings for ImageFileSizeUnitType {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
+        _: &mut App,
     ) -> Result<Self, anyhow::Error> {
         sources.json_merge().or_else(|_| Ok(Self::Binary))
     }
@@ -38,7 +38,7 @@ pub struct ImageInfo {
 }
 
 impl ImageInfo {
-    pub fn new(_workspace: &Workspace, cx: &mut AppContext) -> Self {
+    pub fn new(_workspace: &Workspace, cx: &mut App) -> Self {
         static INIT: std::sync::Once = std::sync::Once::new();
         INIT.call_once(|| {
             ImageFileSizeUnitType::register(cx);
@@ -54,7 +54,7 @@ impl ImageInfo {
         }
     }
 
-    fn update_metadata(&mut self, image_view: &View<ImageView>, cx: &mut ViewContext<Self>) {
+    fn update_metadata(&mut self, image_view: &Entity<ImageView>, cx: &mut Context<Self>) {
         let image_item = image_view.read(cx).image_item.read(cx);
 
         if let Some(meta) = &image_item.image_meta {
@@ -98,7 +98,7 @@ impl ImageInfo {
 }
 
 impl Render for ImageInfo {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let unit_type = ImageFileSizeUnitType::get_global(cx);
 
         let components = [
@@ -125,7 +125,8 @@ impl StatusItemView for ImageInfo {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self._observe_active_image = None;
 

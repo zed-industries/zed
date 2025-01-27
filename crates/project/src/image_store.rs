@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, App, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity,
+    hash, prelude::*, App, AsyncAppContext, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity
 };
 use image::{ExtendedColorType, GenericImageView, ImageFormat, ImageReader};
 use language::{DiskState, File};
@@ -93,8 +93,8 @@ fn image_color_type_description(color_type: ExtendedColorType) -> String {
 
 impl ImageItem {
     pub async fn image_info(
-        image: Model<ImageItem>,
-        project: Model<Project>,
+        image: Entity<ImageItem>,
+        project: Entity<Project>,
         cx: &mut AsyncAppContext,
     ) -> Result<ImageItemMeta> {
         let project_path = cx
