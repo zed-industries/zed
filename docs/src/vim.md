@@ -291,6 +291,8 @@ Zed's key bindings are evaluated only when the `"context"` property matches your
 }
 ```
 
+asdf //
+
 Contexts are nested, so when you're editing a file, the context is the `"Editor"` context, which is inside the `"Pane"` context, which is inside the `"Workspace"` context. That's why any key bindings you add to the `"Workspace"` context will work when you're editing a file. Here's an example:
 
 ```json

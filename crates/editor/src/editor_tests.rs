@@ -14397,12 +14397,8 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
             let buffer = multibuffer.as_singleton().unwrap();
             let change_set = cx.new(|cx| {
                 let mut change_set = BufferChangeSet::new(&buffer, cx);
-                change_set.recalculate_diff_sync(
-                    base_text.into(),
-                    buffer.read(cx).text_snapshot(),
-                    true,
-                    cx,
-                );
+                let _ =
+                    change_set.set_base_text(base_text.into(), buffer.read(cx).text_snapshot(), cx);
                 change_set
             });
 
@@ -14412,6 +14408,7 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
             buffer.read(cx).remote_id()
         })
     });
+    cx.run_until_parked();
 
     cx.assert_state_with_diff(
         indoc! { "

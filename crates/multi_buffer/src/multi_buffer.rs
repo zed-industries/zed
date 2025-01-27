@@ -21,7 +21,7 @@ use language::{
     TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
     Unclipped,
 };
-use project::buffer_store::BufferChangeSet;
+use project::buffer_store::{BufferChangeSet, BufferChangeSetEvent};
 use rope::DimensionPair;
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -546,8 +546,14 @@ impl MultiBuffer {
             diff_bases.insert(
                 *buffer_id,
                 ChangeSetState {
-                    _subscription: new_cx
-                        .observe(&change_set_state.change_set, Self::buffer_diff_changed),
+                    _subscription: new_cx.subscribe(
+                        &change_set_state.change_set,
+                        |this, change_set, event, cx| match event {
+                            BufferChangeSetEvent::DiffChanged { changed_range } => {
+                                this.buffer_diff_changed(change_set, changed_range.clone(), cx)
+                            }
+                        },
+                    ),
                     change_set: change_set_state.change_set.clone(),
                 },
             );
@@ -1998,22 +2004,26 @@ impl MultiBuffer {
         });
     }
 
-    fn buffer_diff_changed(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut Context<Self>) {
+    fn buffer_diff_changed(
+        &mut self,
+        change_set: Entity<BufferChangeSet>,
+        range: Range<text::Anchor>,
+        cx: &mut Context<Self>,
+    ) {
         let change_set = change_set.read(cx);
         let buffer_id = change_set.buffer_id;
         let diff = change_set.diff_to_buffer.clone();
         let base_text = change_set.base_text.clone();
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
-        let base_text_version_changed =
-            snapshot
-                .diffs
-                .get(&buffer_id)
-                .map_or(true, |diff_snapshot| {
-                    change_set.base_text.as_ref().map_or(true, |base_text| {
-                        base_text.remote_id() != diff_snapshot.base_text.remote_id()
-                    })
-                });
+        let base_text_changed = snapshot
+            .diffs
+            .get(&buffer_id)
+            .map_or(true, |diff_snapshot| {
+                change_set.base_text.as_ref().map_or(true, |base_text| {
+                    base_text.remote_id() != diff_snapshot.base_text.remote_id()
+                })
+            });
 
         if let Some(base_text) = base_text {
             snapshot.diffs.insert(
@@ -2026,26 +2036,44 @@ impl MultiBuffer {
         } else {
             snapshot.diffs.remove(&buffer_id);
         }
+        let buffers = self.buffers.borrow();
+        let Some(buffer_state) = buffers.get(&buffer_id) else {
+            return;
+        };
+
+        let diff_change_range = range.to_offset(buffer_state.buffer.read(cx));
 
         let mut excerpt_edits = Vec::new();
-        for locator in self
-            .buffers
-            .borrow()
-            .get(&buffer_id)
-            .map(|state| &state.excerpts)
-            .into_iter()
-            .flatten()
-        {
+        for locator in &buffer_state.excerpts {
             let mut cursor = snapshot
                 .excerpts
                 .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
             cursor.seek_forward(&Some(locator), Bias::Left, &());
             if let Some(excerpt) = cursor.item() {
                 if excerpt.locator == *locator {
-                    let excerpt_range = cursor.start().1..cursor.end(&()).1;
+                    let excerpt_buffer_range = excerpt.range.context.to_offset(&excerpt.buffer);
+                    if diff_change_range.end < excerpt_buffer_range.start
+                        || diff_change_range.start > excerpt_buffer_range.end
+                    {
+                        continue;
+                    }
+                    let excerpt_start = cursor.start().1;
+                    let excerpt_len = ExcerptOffset::new(excerpt.text_summary.len);
+                    let diff_change_start_in_excerpt = ExcerptOffset::new(
+                        diff_change_range
+                            .start
+                            .saturating_sub(excerpt_buffer_range.start),
+                    );
+                    let diff_change_end_in_excerpt = ExcerptOffset::new(
+                        diff_change_range
+                            .end
+                            .saturating_sub(excerpt_buffer_range.start),
+                    );
+                    let edit_start = excerpt_start + diff_change_start_in_excerpt.min(excerpt_len);
+                    let edit_end = excerpt_start + diff_change_end_in_excerpt.min(excerpt_len);
                     excerpt_edits.push(Edit {
-                        old: excerpt_range.clone(),
-                        new: excerpt_range.clone(),
+                        old: edit_start..edit_end,
+                        new: edit_start..edit_end,
                     });
                 }
             }
@@ -2055,7 +2083,7 @@ impl MultiBuffer {
             snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
-                base_changed: base_text_version_changed,
+                base_changed: base_text_changed,
             },
         );
         cx.emit(Event::Edited {
@@ -2145,11 +2173,18 @@ impl MultiBuffer {
 
     pub fn add_change_set(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut Context<Self>) {
         let buffer_id = change_set.read(cx).buffer_id;
-        self.buffer_diff_changed(change_set.clone(), cx);
+        self.buffer_diff_changed(change_set.clone(), text::Anchor::MIN..text::Anchor::MAX, cx);
         self.diff_bases.insert(
             buffer_id,
             ChangeSetState {
-                _subscription: cx.observe(&change_set, Self::buffer_diff_changed),
+                _subscription: cx.subscribe(
+                    &change_set,
+                    |this, change_set, event, cx| match event {
+                        BufferChangeSetEvent::DiffChanged { changed_range } => {
+                            this.buffer_diff_changed(change_set, changed_range.clone(), cx);
+                        }
+                    },
+                ),
                 change_set,
             },
         );
@@ -2162,6 +2197,7 @@ impl MultiBuffer {
     }
 
     pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
+        // something some
         self.expand_or_collapse_diff_hunks(ranges, true, cx);
     }
 
