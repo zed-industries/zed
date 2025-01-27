@@ -21,3 +21,4 @@ serde.workspace = true
 serde_json.workspace = true
 snippet.workspace = true
 util.workspace = true
+schemars.workspace = true
