@@ -196,6 +196,8 @@ pub struct ContextEditor {
     // the file is opened. In order to keep the worktree alive for the duration of the
     // context editor, we keep a reference here.
     dragged_file_worktrees: Vec<Entity<Worktree>>,
+    model_selector: Entity<LanguageModelSelector>,
+    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 pub const DEFAULT_TAB_TITLE: &str = "New Chat";
@@ -234,6 +236,22 @@ impl ContextEditor {
             editor
         });
 
+        let model_selector_menu_handle = PopoverMenuHandle::default();
+        let fs_clone = fs.clone();
+        let model_selector = cx.new(|cx| {
+            LanguageModelSelector::new(
+                move |model, cx| {
+                    update_settings_file::<AssistantSettings>(
+                        fs_clone.clone(),
+                        cx,
+                        move |settings, _cx| settings.set_model(model.clone()),
+                    )
+                },
+                window,
+                cx,
+            )
+        });
+
         let _subscriptions = vec![
             cx.observe(&context, |_, _, cx| cx.notify()),
             cx.subscribe_in(&context, window, Self::handle_context_event),
@@ -268,6 +286,8 @@ impl ContextEditor {
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
+            model_selector,
+            model_selector_menu_handle,
         };
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
@@ -2506,16 +2526,26 @@ impl ContextEditor {
             })
     }
 
-    fn render_inject_context_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_inject_context_menu(
+        &self,
+        cx: &mut Context<Self>,
+        _: &mut Window,
+    ) -> impl IntoElement {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
             cx.entity().downgrade(),
-            Button::new("trigger", "Add Context")
-                .icon(IconName::Plus)
+            IconButton::new("trigger", IconName::Plus)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
-                .tooltip(Tooltip::text("Type / to insert via keyboard")),
+                .tooltip(move |window, cx| {
+                    Tooltip::with_meta(
+                        "Add Context",
+                        None,
+                        "Type / to insert via keyboard",
+                        window,
+                        cx,
+                    )
+                }),
         )
     }
 
@@ -3007,7 +3037,52 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(self.render_inject_context_menu(cx, window))
+                                .child(ui::Divider::vertical())
+                                .child(
+                                LanguageModelSelectorPopoverMenu::new(
+                                    self.model_selector.clone(),
+                                    ButtonLike::new("active-model")
+                                        .style(ButtonStyle::Subtle)
+                                        .child(
+                                        h_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                div()
+                                                    .overflow_x_hidden()
+                                                    .flex_grow()
+                                                    .whitespace_nowrap()
+                                                    .child(
+                                                        match LanguageModelRegistry::read_global(cx)
+                                                            .active_model()
+                                                        {
+                                                            Some(model) => h_flex()
+                                                                .child(
+                                                                    Label::new(model.name().0)
+                                                                        .size(LabelSize::Small)
+                                                                        .color(Color::Muted),
+                                                                )
+                                                                .into_any_element(),
+                                                            _ => Label::new("No model selected")
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted)
+                                                                .into_any_element(),
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::ChevronDown)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
+                                            ),
+                                    ),
+                                )
+                                .with_handle(self.model_selector_menu_handle.clone()),
+                            ),
+                        )
                         .child(
                             h_flex()
                                 .w_full()
