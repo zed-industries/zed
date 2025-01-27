@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{anyhow, Context as _, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{App, AsyncApp, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
@@ -22,7 +22,6 @@ use smol::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Child,
 };
-use text::BufferId;
 
 use std::{
     collections::BTreeSet,
@@ -101,7 +100,7 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
-    registered_buffers: Arc<Mutex<HashMap<BufferId, Url>>>,
+    registered_buffers: Arc<Mutex<HashSet<Url>>>,
 }
 
 /// Identifies a running language server.
@@ -1285,32 +1284,32 @@ impl LanguageServer {
 
     pub fn register_buffer(
         &self,
-        buffer_id: BufferId,
         uri: Url,
         language_id: String,
         version: i32,
         initial_text: String,
     ) {
-        let previous_value = self
-            .registered_buffers
-            .lock()
-            .insert(buffer_id, uri.clone());
-        if previous_value.is_none() {
+        let was_already_registered = self.registered_buffers.lock().insert(uri.clone());
+
+        if was_already_registered {
             self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
             })
             .log_err();
         } else {
-            debug_assert_eq!(previous_value, Some(uri));
+            debug_assert!(false);
         }
     }
 
-    pub fn unregister_buffer(&self, buffer_id: BufferId) {
-        if let Some(path) = self.registered_buffers.lock().remove(&buffer_id) {
+    pub fn unregister_buffer(&self, uri: &Url) {
+        let was_removed = self.registered_buffers.lock().remove(uri);
+        if was_removed {
             self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
-                text_document: TextDocumentIdentifier::new(path),
+                text_document: TextDocumentIdentifier::new(uri.clone()),
             })
             .log_err();
+        } else {
+            debug_assert!(false);
         }
     }
 }

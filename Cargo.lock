@@ -7397,7 +7397,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "text",
  "util",
 ]
 
