@@ -225,16 +225,16 @@ impl RenderOnce for PastThread {
             .child(Label::new(summary).size(LabelSize::Small).text_ellipsis())
             .end_slot(
                 h_flex()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
                         Label::new(thread_timestamp)
-                            .color(Color::Disabled)
-                            .size(LabelSize::Small),
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
                     )
                     .child(
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
+                            .icon_size(IconSize::XSmall)
                             .tooltip(Tooltip::text("Delete Thread"))
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
