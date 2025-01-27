@@ -7,7 +7,7 @@ pub mod structure;
 
 use std::io::Read;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use html5ever::driver::ParseOpts;
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;

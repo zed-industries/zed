@@ -7,3 +7,5 @@
   (#set! injection.language "phpdoc"))
 
 ((heredoc_body) (heredoc_end) @injection.language) @injection.content
+
+((nowdoc_body) (heredoc_end) @injection.language) @injection.content

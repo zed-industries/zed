@@ -8,19 +8,19 @@ use crate::{prelude::*, IconButtonShape};
 pub struct NumericStepper {
     id: ElementId,
     value: SharedString,
-    on_decrement: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
-    on_increment: Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>,
+    on_decrement: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    on_increment: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     /// Whether to reserve space for the reset button.
     reserve_space_for_reset: bool,
-    on_reset: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl NumericStepper {
     pub fn new(
         id: impl Into<ElementId>,
         value: impl Into<SharedString>,
-        on_decrement: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
-        on_increment: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_decrement: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        on_increment: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -39,7 +39,7 @@ impl NumericStepper {
 
     pub fn on_reset(
         mut self,
-        on_reset: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_reset = Some(Box::new(on_reset));
         self
@@ -47,7 +47,7 @@ impl NumericStepper {
 }
 
 impl RenderOnce for NumericStepper {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let shape = IconButtonShape::Square;
         let icon_size = IconSize::Small;
 
@@ -65,7 +65,7 @@ impl RenderOnce for NumericStepper {
                 } else if self.reserve_space_for_reset {
                     element.child(
                         h_flex()
-                            .size(icon_size.square(cx))
+                            .size(icon_size.square(window, cx))
                             .flex_none()
                             .into_any_element(),
                     )

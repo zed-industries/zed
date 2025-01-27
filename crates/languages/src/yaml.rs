@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use language::{
     language_settings::AllLanguageSettings, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use smol::fs;
@@ -58,7 +58,7 @@ impl LspAdapter for YamlLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         let env = delegate.shell_env().await;
@@ -128,9 +128,10 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let location = SettingsLocation {
             worktree_id: delegate.worktree_id(),
@@ -142,7 +143,11 @@ impl LspAdapter for YamlLspAdapter {
                 .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
         })?;
-        let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});
+
+        let mut options = serde_json::json!({
+            "[yaml]": {"editor.tabSize": tab_size},
+            "yaml": {"format": {"enable": true}}
+        });
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)

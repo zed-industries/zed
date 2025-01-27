@@ -168,9 +168,7 @@ impl ParentElement for LabelLike {
 }
 
 impl RenderOnce for LabelLike {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut color = self.color.color(cx);
         if let Some(alpha) = self.alpha {
             color.fade_out(1.0 - alpha);
@@ -203,7 +201,10 @@ impl RenderOnce for LabelLike {
                 this.overflow_x_hidden().text_ellipsis()
             })
             .text_color(color)
-            .font_weight(self.weight.unwrap_or(settings.ui_font.weight))
+            .font_weight(
+                self.weight
+                    .unwrap_or(ThemeSettings::get_global(cx).ui_font.weight),
+            )
             .children(self.children)
     }
 }

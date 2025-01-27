@@ -4,7 +4,7 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
-use gpui::{AppContext, Pixels};
+use gpui::{App, Pixels};
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
@@ -68,7 +68,7 @@ pub struct AssistantSettings {
 }
 
 impl AssistantSettings {
-    pub fn are_live_diffs_enabled(&self, cx: &AppContext) -> bool {
+    pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
         cx.is_staff() || self.enable_experimental_live_diffs
     }
 }
@@ -447,7 +447,7 @@ impl Settings for AssistantSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         let mut settings = AssistantSettings::default();
 

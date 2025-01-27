@@ -1,4 +1,4 @@
-use gpui::AppContext;
+use gpui::App;
 use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -463,7 +463,7 @@ pub struct GutterContent {
 }
 
 impl EditorSettings {
-    pub fn jupyter_enabled(cx: &AppContext) -> bool {
+    pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
     }
 }
@@ -473,10 +473,7 @@ impl Settings for EditorSettings {
 
     type FileContent = EditorSettingsContent;
 
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut AppContext,
-    ) -> anyhow::Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         sources.json_merge()
     }
 }

@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::Value;
 use std::{
     any::Any,
@@ -34,16 +34,25 @@ impl VtslsLspAdapter {
         VtslsLspAdapter { node }
     }
 
-    async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
+    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
             .is_ok();
 
-        if is_yarn {
+        let tsdk_path = if is_yarn {
             ".yarn/sdks/typescript/lib"
         } else {
             Self::TYPESCRIPT_TSDK_PATH
+        };
+
+        if fs
+            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .await
+        {
+            Some(tsdk_path)
+        } else {
+            None
         }
     }
 }
@@ -78,7 +87,7 @@ impl LspAdapter for VtslsLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let env = delegate.shell_env().await;
         let path = delegate.which(SERVER_NAME.as_ref()).await?;
@@ -196,11 +205,12 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let tsdk_path = Self::tsdk_path(delegate).await;
+        let tsdk_path = Self::tsdk_path(fs, delegate).await;
         let config = serde_json::json!({
             "tsdk": tsdk_path,
             "suggest": {

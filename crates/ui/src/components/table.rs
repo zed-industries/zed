@@ -49,7 +49,7 @@ impl Table {
         self
     }
 
-    fn base_cell_style(cx: &WindowContext) -> Div {
+    fn base_cell_style(cx: &mut App) -> Div {
         div()
             .px_1p5()
             .flex_1()
@@ -74,7 +74,7 @@ impl Table {
 }
 
 impl RenderOnce for Table {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let header = div()
             .flex()
             .flex_row()
@@ -160,7 +160,7 @@ impl ComponentPreview for Table {
         ExampleLabelSide::Top
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group(vec![
                 single_example(

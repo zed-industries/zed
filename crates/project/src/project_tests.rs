@@ -2,7 +2,7 @@ use crate::{Event, *};
 use ::git::diff::assert_hunks;
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use gpui::{AppContext, SemanticVersion, UpdateGlobal};
+use gpui::{App, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
@@ -27,7 +27,7 @@ use unindent::Unindent as _;
 use util::{
     assert_set_eq,
     paths::{replace_path_separator, PathMatcher},
-    test::temp_tree,
+    test::TempTree,
     TryFutureExt as _,
 };
 
@@ -67,7 +67,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         "root": {
             "apple": "",
             "banana": {
@@ -106,7 +106,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".editorconfig": r#"
         root = true
         [*.rs]
@@ -1749,12 +1749,6 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             });
         })
     });
-    let _rs_buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
-        })
-        .await
-        .unwrap();
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
     assert_eq!(
         fake_rust_server_2
@@ -2579,28 +2573,25 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(
         "/dir",
         json!({
+            "a.rs": "const fn a() { A }",
             "b.rs": "const y: i32 = crate::a()",
         }),
     )
     .await;
-    fs.insert_tree(
-        "/another_dir",
-        json!({
-        "a.rs": "const fn a() { A }"}),
-    )
-    .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, ["/dir/b.rs".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp("/dir/b.rs", cx)
         })
         .await
         .unwrap();
+
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
@@ -2612,11 +2603,12 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
         Ok(Some(lsp::GotoDefinitionResponse::Scalar(
             lsp::Location::new(
-                lsp::Url::from_file_path("/another_dir/a.rs").unwrap(),
+                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             ),
         )))
     });
+
     let mut definitions = project
         .update(cx, |project, cx| project.definition(&buffer, 22, cx))
         .await
@@ -2637,27 +2629,21 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
                 .as_local()
                 .unwrap()
                 .abs_path(cx),
-            Path::new("/another_dir/a.rs"),
+            Path::new("/dir/a.rs"),
         );
         assert_eq!(definition.target.range.to_offset(target_buffer), 9..10);
         assert_eq!(
             list_worktrees(&project, cx),
-            [
-                ("/another_dir/a.rs".as_ref(), false),
-                ("/dir".as_ref(), true)
-            ],
+            [("/dir/a.rs".as_ref(), false), ("/dir/b.rs".as_ref(), true)],
         );
 
         drop(definition);
     });
     cx.update(|cx| {
-        assert_eq!(list_worktrees(&project, cx), [("/dir".as_ref(), true)]);
+        assert_eq!(list_worktrees(&project, cx), [("/dir/b.rs".as_ref(), true)]);
     });
 
-    fn list_worktrees<'a>(
-        project: &'a Model<Project>,
-        cx: &'a AppContext,
-    ) -> Vec<(&'a Path, bool)> {
+    fn list_worktrees<'a>(project: &'a Entity<Project>, cx: &'a App) -> Vec<(&'a Path, bool)> {
         project
             .read(cx)
             .worktrees(cx)
@@ -3201,7 +3187,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         "a": {
             "file1": "",
             "file2": "",
@@ -5662,7 +5648,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &unstaged_changes.base_text.as_ref().unwrap().text(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5692,14 +5678,14 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &unstaged_changes.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });
 }
 
 async fn search(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
@@ -5818,10 +5804,10 @@ fn tsx_lang() -> Arc<Language> {
 }
 
 fn get_all_tasks(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     worktree_id: Option<WorktreeId>,
     task_context: &TaskContext,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> Vec<(TaskSourceKind, ResolvedTask)> {
     let (mut old, new) = project.update(cx, |project, cx| {
         project

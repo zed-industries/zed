@@ -1,6 +1,6 @@
 use gpui::{
-    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, AppContext,
-    Bounds, ColorSpace, Half, Render, ViewContext, WindowOptions,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, size, App, Application,
+    Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions,
 };
 
 struct GradientViewer {
@@ -16,7 +16,7 @@ impl GradientViewer {
 }
 
 impl Render for GradientViewer {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let color_space = self.color_space;
 
         div()
@@ -46,7 +46,7 @@ impl Render for GradientViewer {
                                 .text_color(gpui::white())
                                 .child(format!("{}", color_space))
                                 .active(|this| this.opacity(0.8))
-                                .on_click(cx.listener(move |this, _, cx| {
+                                .on_click(cx.listener(move |this, _, _, cx| {
                                     this.color_space = match this.color_space {
                                         ColorSpace::Oklab => ColorSpace::Srgb,
                                         ColorSpace::Srgb => ColorSpace::Oklab,
@@ -205,8 +205,8 @@ impl Render for GradientViewer {
                     ),
             )
             .child(div().h_24().child(canvas(
-                move |_, _| {},
-                move |bounds, _, cx| {
+                move |_, _, _| {},
+                move |bounds, _, window, _| {
                     let size = size(bounds.size.width * 0.8, px(80.));
                     let square_bounds = Bounds {
                         origin: point(
@@ -225,7 +225,7 @@ impl Render for GradientViewer {
                     );
                     path.line_to(square_bounds.bottom_right());
                     path.line_to(square_bounds.bottom_left());
-                    cx.paint_path(
+                    window.paint_path(
                         path,
                         linear_gradient(
                             180.,
@@ -240,13 +240,13 @@ impl Render for GradientViewer {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         cx.open_window(
             WindowOptions {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_| GradientViewer::new()),
+            |_, cx| cx.new(|_| GradientViewer::new()),
         )
         .unwrap();
         cx.activate(true);

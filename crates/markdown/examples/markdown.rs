@@ -1,5 +1,5 @@
 use assets::Assets;
-use gpui::{prelude::*, rgb, App, KeyBinding, StyleRefinement, View, WindowOptions};
+use gpui::{prelude::*, rgb, Application, Entity, KeyBinding, StyleRefinement, WindowOptions};
 use language::{language_settings::AllLanguageSettings, LanguageRegistry};
 use markdown::{Markdown, MarkdownStyle};
 use node_runtime::NodeRuntime;
@@ -7,7 +7,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 use theme::LoadThemes;
 use ui::prelude::*;
-use ui::{div, WindowContext};
+use ui::{div, App, Window};
 
 const MARKDOWN_EXAMPLE: &str = r#"
 # Markdown Example Document
@@ -99,7 +99,7 @@ Remember, markdown processors may have slight differences and extensions, so alw
 
 pub fn main() {
     env_logger::init();
-    App::new().with_assets(Assets).run(|cx| {
+    Application::new().with_assets(Assets).run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
@@ -118,8 +118,8 @@ pub fn main() {
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);
-        cx.open_window(WindowOptions::default(), |cx| {
-            cx.new_view(|cx| {
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            cx.new(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Plex Sans".into(),
@@ -164,6 +164,7 @@ pub fn main() {
                     MARKDOWN_EXAMPLE.to_string(),
                     markdown_style,
                     language_registry,
+                    window,
                     cx,
                 )
             })
@@ -173,7 +174,7 @@ pub fn main() {
 }
 
 struct MarkdownExample {
-    markdown: View<Markdown>,
+    markdown: Entity<Markdown>,
 }
 
 impl MarkdownExample {
@@ -181,16 +182,17 @@ impl MarkdownExample {
         text: String,
         style: MarkdownStyle,
         language_registry: Arc<LanguageRegistry>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self {
         let markdown =
-            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), None, cx));
+            cx.new(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
         Self { markdown }
     }
 }
 
 impl Render for MarkdownExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("markdown-example")
             .debug_selector(|| "foo".into())

@@ -2,13 +2,13 @@ use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, View, WeakView};
+use gpui::{AsyncWindowContext, Entity, WeakEntity};
 use itertools::Itertools as _;
 use project::Project;
 use remote::ssh_session::SshProjectId;
@@ -353,11 +353,15 @@ impl SerializedPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         workspace_id: WorkspaceId,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
-    ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+    ) -> Option<(
+        Member,
+        Option<Entity<Pane>>,
+        Vec<Option<Box<dyn ItemHandle>>>,
+    )> {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -394,7 +398,9 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.add_pane(window, cx).downgrade()
+                    })
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
@@ -412,8 +418,8 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.force_remove_pane(&pane, &None, cx)
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.force_remove_pane(&pane, &None, window, cx)
                         })
                         .log_err()?;
                     None
@@ -441,10 +447,10 @@ impl SerializedPane {
 
     pub async fn deserialize_to(
         &self,
-        project: &Model<Project>,
-        pane: &WeakView<Pane>,
+        project: &Entity<Project>,
+        pane: &WeakEntity<Pane>,
         workspace_id: WorkspaceId,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
@@ -452,13 +458,14 @@ impl SerializedPane {
         let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            item_tasks.push(pane.update(cx, |_, cx| {
+            item_tasks.push(pane.update_in(cx, |_, window, cx| {
                 SerializableItemRegistry::deserialize(
                     &item.kind,
                     project,
                     workspace.clone(),
                     workspace_id,
                     item.item_id,
+                    window,
                     cx,
                 )
             })?);
@@ -476,15 +483,15 @@ impl SerializedPane {
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, cx);
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(active_item_index, false, false, cx);
+            pane.update_in(cx, |pane, window, cx| {
+                pane.activate_item(active_item_index, false, false, window, cx);
             })?;
         }
 
