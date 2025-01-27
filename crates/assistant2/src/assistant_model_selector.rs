@@ -49,7 +49,7 @@ impl Render for AssistantModelSelector {
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
         let focus_handle = self.focus_handle.clone();
         let model_name = match active_model {
-            Some(model) => SharedString::from(model.name().0),
+            Some(model) => model.name().0,
             _ => SharedString::from("No model selected"),
         };
 
