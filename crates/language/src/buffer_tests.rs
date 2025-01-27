@@ -2687,7 +2687,15 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 buffer.preview_edits(edits.clone().into(), cx)
             })
             .await;
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, true, cx))
+        cx.read(|cx| {
+            edit_preview.highlight_edits(
+                &buffer.read(cx).snapshot(),
+                &edits,
+                HighlightEditsRange::AllEdits,
+                true,
+                cx,
+            )
+        })
     }
 }
 
@@ -2716,8 +2724,15 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
         .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
         .await;
 
-    let highlighted_edits =
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+    let highlighted_edits = cx.read(|cx| {
+        edit_preview.highlight_edits(
+            &buffer.read(cx).snapshot(),
+            &edits,
+            HighlightEditsRange::AllEdits,
+            false,
+            cx,
+        )
+    });
 
     let created_background = cx.read(|cx| cx.theme().status().created_background);
 
@@ -2740,8 +2755,15 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
     let edit_preview = buffer
         .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
         .await;
-    let highlighted_edits =
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+    let highlighted_edits = cx.read(|cx| {
+        edit_preview.highlight_edits(
+            &buffer.read(cx).snapshot(),
+            &edits,
+            HighlightEditsRange::AllEdits,
+            false,
+            cx,
+        )
+    });
 
     assert_eq!(highlighted_edits.text, "    first_name: String");
     assert_eq!(highlighted_edits.highlights.len(), 1);

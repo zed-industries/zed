@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
-    SharedString, Task, TaskLabel, Window,
+    SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -600,20 +600,42 @@ pub struct HighlightedEdits {
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
 
+impl HighlightedEdits {
+    pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
+        StyledText::new(self.text.clone()).with_highlights(&default_style, self.highlights.clone())
+    }
+}
+
+pub enum HighlightEditsRange {
+    AllEdits,
+    SingleLineAfter(Anchor),
+}
+
 impl EditPreview {
     pub fn highlight_edits(
         &self,
         current_snapshot: &BufferSnapshot,
         edits: &[(Range<Anchor>, String)],
+        highlight_edits_range: HighlightEditsRange,
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedEdits {
         let mut text = String::new();
         let mut highlights = Vec::new();
 
-        let Some(visible_range) = Self::compute_visible_range(edits, current_snapshot) else {
-            return HighlightedEdits::default();
+        let visible_range = match highlight_edits_range {
+            HighlightEditsRange::AllEdits => {
+                let Some(visible_range) = Self::compute_all_edits_range(current_snapshot, edits)
+                else {
+                    return HighlightedEdits::default();
+                };
+                visible_range
+            }
+            HighlightEditsRange::SingleLineAfter(start) => {
+                Self::compute_single_line_range(current_snapshot, start)
+            }
         };
+        dbg!(&visible_range);
 
         let mut offset = visible_range.start;
 
@@ -629,9 +651,20 @@ impl EditPreview {
 
         for (edit_anchor_range, edit_text) in edits {
             let edit_range = edit_anchor_range.to_offset(current_snapshot);
-            let unchanged_range = offset..edit_range.start;
+            if visible_range.end < edit_range.start {
+                dbg!(&edit_range, "after", &visible_range);
+                break;
+            }
+            if edit_range.end < visible_range.start {
+                dbg!(&edit_range, "before", &visible_range);
+                continue;
+            }
+
+            let prev_offset = offset;
             offset = edit_range.end;
 
+            let unchanged_range = prev_offset.max(visible_range.start)..edit_range.start;
+            dbg!(&unchanged_range);
             if !unchanged_range.is_empty() {
                 Self::add_highlighted_text_from(
                     unchanged_range,
@@ -644,6 +677,9 @@ impl EditPreview {
                 );
             }
 
+            let edit_range =
+                edit_range.start.max(visible_range.start)..edit_range.end.min(visible_range.end);
+            dbg!(&edit_range);
             if include_deletions && !edit_range.is_empty() {
                 Self::add_highlighted_text_from(
                     edit_range,
@@ -657,25 +693,65 @@ impl EditPreview {
             }
 
             if !edit_text.is_empty() {
-                let mut edited_snapshot_insertion_range =
-                    edit_anchor_range.to_offset(&self.applied_edits_snapshot);
-                // Because the edit ranges are built from `anchor_after..anchor_before`, for an
-                // empty range with an insertion, their positions get swapped in the edited
-                // snapshot, so unswap them.
-                if edited_snapshot_insertion_range.start > edited_snapshot_insertion_range.end {
-                    edited_snapshot_insertion_range =
-                        edited_snapshot_insertion_range.end..edited_snapshot_insertion_range.start;
-                }
-                if !edited_snapshot_insertion_range.is_empty() {
-                    Self::add_highlighted_text_from(
-                        edited_snapshot_insertion_range,
-                        &self.applied_edits_snapshot,
-                        &self.syntax_snapshot,
-                        created_highlight,
-                        &mut text,
-                        &mut highlights,
-                        cx,
-                    );
+                // todo! clearly something is messed up
+                if !edit_anchor_range
+                    .start
+                    .is_valid(&self.applied_edits_snapshot)
+                    || !edit_anchor_range.end.is_valid(&self.applied_edits_snapshot)
+                {
+                    log::error!("Invalid edit anchor range?!: {:?}", edit_anchor_range);
+                } else {
+                    let mut edited_snapshot_insertion_range =
+                        edit_anchor_range.to_offset(&self.applied_edits_snapshot);
+                    // Because the edit ranges are built from `anchor_after..anchor_before`, for an
+                    // empty range with an insertion, their positions get swapped in the edited
+                    // snapshot, so unswap them.
+                    if edited_snapshot_insertion_range.start > edited_snapshot_insertion_range.end {
+                        edited_snapshot_insertion_range = edited_snapshot_insertion_range.end
+                            ..edited_snapshot_insertion_range.start;
+                    }
+                    if edited_snapshot_insertion_range.is_empty() {
+                        // todo! remove
+                        log::error!(
+                            "Insertion range is empty despite insertion text being present"
+                        );
+                    } else {
+                        let start = edited_snapshot_insertion_range.start;
+                        let (found_newline_and_is_single_line, end) = match highlight_edits_range {
+                            HighlightEditsRange::AllEdits => (false, start + edit_text.len()),
+                            HighlightEditsRange::SingleLineAfter(_) => {
+                                if let Some(newline_index) = edit_text.find('\n') {
+                                    (true, start + newline_index)
+                                } else {
+                                    (false, start + edit_text.len())
+                                }
+                            }
+                        };
+                        let edited_snapshot_insertion_range = start..end;
+                        dbg!(&edited_snapshot_insertion_range);
+                        dbg!(self
+                            .applied_edits_snapshot
+                            .text_for_range(
+                                edited_snapshot_insertion_range.start - 10
+                                    ..edited_snapshot_insertion_range.end + 10
+                            )
+                            .collect::<String>());
+                        Self::add_highlighted_text_from(
+                            edited_snapshot_insertion_range,
+                            &self.applied_edits_snapshot,
+                            &self.syntax_snapshot,
+                            created_highlight,
+                            &mut text,
+                            &mut highlights,
+                            cx,
+                        );
+                        if found_newline_and_is_single_line {
+                            return HighlightedEdits {
+                                text: text.into(),
+                                highlights,
+                            };
+                        }
+                    }
                 }
             }
         }
@@ -693,10 +769,10 @@ impl EditPreview {
             );
         }
 
-        HighlightedEdits {
+        dbg!(HighlightedEdits {
             text: text.into(),
             highlights,
-        }
+        })
     }
 
     fn add_highlighted_text_from<'a>(
@@ -753,9 +829,9 @@ impl EditPreview {
 
     /// Offset range in `current_snapshot` that contains all edits, expanded to start at the
     /// beginning of the first line and end at the end of the last line.
-    fn compute_visible_range(
-        edits: &[(Range<Anchor>, String)],
+    fn compute_all_edits_range(
         snapshot: &BufferSnapshot,
+        edits: &[(Range<Anchor>, String)],
     ) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
@@ -767,6 +843,11 @@ impl EditPreview {
         let range = Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row));
 
         Some(range.to_offset(&snapshot))
+    }
+
+    fn compute_single_line_range(snapshot: &BufferSnapshot, start: Anchor) -> Range<usize> {
+        let start = start.to_point(snapshot);
+        dbg!(start..Point::new(start.row, snapshot.line_len(start.row))).to_offset(&snapshot)
     }
 }
 

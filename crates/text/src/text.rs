@@ -2226,10 +2226,21 @@ impl BufferSnapshot {
     }
 
     fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
+        self.fragment_id_for_anchor_if_valid(anchor)
+            .with_context(|| {
+                format!(
+                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
+                    anchor, self.remote_id, self.version
+                )
+            })
+            .unwrap()
+    }
+
+    fn fragment_id_for_anchor_if_valid(&self, anchor: &Anchor) -> Option<&Locator> {
         if *anchor == Anchor::MIN {
-            Locator::min_ref()
+            Some(Locator::min_ref())
         } else if *anchor == Anchor::MAX {
-            Locator::max_ref()
+            Some(Locator::max_ref())
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -2250,20 +2261,17 @@ impl BufferSnapshot {
                 insertion_cursor.prev(&());
             }
 
-            let Some(insertion) = insertion_cursor.item().filter(|insertion| {
+            if let Some(insertion) = insertion_cursor.item().filter(|insertion| {
                 if cfg!(debug_assertions) {
                     insertion.timestamp == anchor.timestamp
                 } else {
                     true
                 }
-            }) else {
-                panic!(
-                    "invalid anchor {:?}. buffer id: {}, version: {:?}",
-                    anchor, self.remote_id, self.version
-                );
-            };
-
-            &insertion.fragment_id
+            }) {
+                Some(&insertion.fragment_id)
+            } else {
+                None
+            }
         }
     }
 

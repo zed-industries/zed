@@ -29,7 +29,8 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     display_map::DisplayPoint,
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
-    CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
+    CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, InlineCompletionText,
+    ResolvedTasks,
 };
 use crate::{AcceptInlineCompletion, InlineCompletionMenuHint};
 
@@ -783,7 +784,7 @@ impl CompletionsMenu {
                                     })),
                             ),
                             CompletionEntry::InlineCompletionHint(
-                                hint @ InlineCompletionMenuHint::Loaded { .. },
+                                hint @ InlineCompletionMenuHint::Loaded { text, .. },
                             ) => div().min_w(px(250.)).max_w(px(500.)).child(
                                 ListItem::new("inline-completion")
                                     .inset(true)
@@ -796,10 +797,25 @@ impl CompletionsMenu {
                                             .when(translucent, |this| this.opacity(0.)),
                                     )
                                     .child(
-                                        base_label.child(
-                                            StyledText::new(hint.label())
-                                                .with_highlights(&editor_text_style, None),
-                                        ),
+                                        div()
+                                            .child(match text {
+                                                InlineCompletionText::EditPreview(edit) => edit
+                                                    .to_styled_text(&editor_text_style)
+                                                    .into_any(),
+                                                InlineCompletionText::Move(text) => {
+                                                    text.clone().into_any()
+                                                }
+                                                InlineCompletionText::NoPreview => base_label
+                                                    .child(
+                                                        StyledText::new(hint.label())
+                                                            .with_highlights(
+                                                                &editor_text_style,
+                                                                None,
+                                                            ),
+                                                    )
+                                                    .into_any(),
+                                            })
+                                            .when(translucent, |this| this.opacity(0.)),
                                     )
                                     .on_click(cx.listener(move |editor, _event, window, cx| {
                                         cx.stop_propagation();
@@ -999,6 +1015,10 @@ impl CompletionsMenu {
             Some(SelectionType::InlineCompletionSelected) => true,
             Some(SelectionType::LspCompletionSelected) => false,
         };
+
+        dbg!(prior_selection_type);
+        dbg!(should_select_inline_completion);
+        dbg!(matches.is_empty());
 
         let mut entries = self.entries.borrow_mut();
         let new_selection = if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first()

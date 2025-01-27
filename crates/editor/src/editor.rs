@@ -96,9 +96,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedEdits, IndentKind, IndentSize,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
-    TreeSitterOptions,
+    CursorShape, Diagnostic, Documentation, EditPreview, HighlightEditsRange, HighlightedEdits,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -488,7 +488,9 @@ impl InlineCompletionMenuHint {
 #[derive(Clone, Debug)]
 enum InlineCompletionText {
     Move(SharedString),
-    Edit(HighlightedEdits),
+    EditPreview(HighlightedEdits),
+    // todo! summarize edits in this case?
+    NoPreview,
 }
 
 pub(crate) enum EditDisplayMode {
@@ -3881,8 +3883,16 @@ impl Editor {
                 let menu = if let Some(completions) = completions {
                     let inline_completion_menu_hint = editor
                         .update_in(&mut cx, |editor, window, cx| {
-                            if editor.show_inline_completions_in_menu(cx) {
-                                editor.inline_completion_menu_hint(window, cx)
+                            if let Some(provider) = editor.inline_completion_provider() {
+                                if editor
+                                    .show_inline_completions_in_menu_for_provider(&provider, cx)
+                                {
+                                    Some(editor.inline_completion_menu_hint(
+                                        position, &provider, window, cx,
+                                    ))
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -5196,18 +5206,22 @@ impl Editor {
             invalidation_range,
         });
 
-        if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
-            if let Some(hint) = self.inline_completion_menu_hint(window, cx) {
-                let should_be_visible = match self.context_menu.borrow_mut().as_mut() {
-                    Some(CodeContextMenu::Completions(menu)) => {
-                        menu.show_inline_completion_hint(hint)
+        if let Some(provider) = self.inline_completion_provider() {
+            if self.show_inline_completions_in_menu_for_provider(&provider, cx) {
+                let mut context_menu = self.context_menu.borrow_mut();
+                if let Some(CodeContextMenu::Completions(menu)) = context_menu.as_mut() {
+                    if menu.visible() {
+                        let position = menu.initial_position;
+                        let hint =
+                            self.inline_completion_menu_hint(position, &provider, window, cx);
+                        let should_be_visible = menu.show_inline_completion_hint(hint);
+                        drop(context_menu);
+                        if !should_be_visible {
+                            // TODO: Inefficient to hide the splices / highlights that were just inserted
+                            // above.
+                            self.hide_active_inline_completion(cx);
+                        }
                     }
-                    _ => true,
-                };
-                if !should_be_visible {
-                    // TODO: Inefficient to hide the splices / highlights that were just inserted
-                    // above.
-                    self.hide_active_inline_completion(cx);
                 }
             }
         }
@@ -5217,44 +5231,62 @@ impl Editor {
         Some(())
     }
 
+    // todo! this should take the "completion target start" position not cursor position
     fn inline_completion_menu_hint(
         &self,
+        position: Anchor,
+        provider: &Arc<dyn InlineCompletionProviderHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<InlineCompletionMenuHint> {
-        let provider = self.inline_completion_provider()?;
+    ) -> InlineCompletionMenuHint {
         if self.has_active_inline_completion() {
             let editor_snapshot = self.snapshot(window, cx);
 
-            let text = match &self.active_inline_completion.as_ref()?.completion {
+            let text = match &self.active_inline_completion.as_ref().unwrap().completion {
                 InlineCompletion::Edit {
                     edits,
                     edit_preview,
                     display_mode: _,
                     snapshot,
-                } => edit_preview
-                    .as_ref()
-                    .and_then(|edit_preview| {
-                        inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
-                    })
-                    .map(InlineCompletionText::Edit),
+                } => {
+                    if position.buffer_id != Some(snapshot.remote_id()) {
+                        InlineCompletionText::NoPreview
+                    } else {
+                        edit_preview
+                            .as_ref()
+                            .and_then(|edit_preview| {
+                                inline_completion_edit_text(
+                                    &snapshot,
+                                    &edits,
+                                    edit_preview,
+                                    HighlightEditsRange::SingleLineAfter(position.text_anchor),
+                                    true,
+                                    cx,
+                                )
+                            })
+                            .map_or_else(
+                                || InlineCompletionText::NoPreview,
+                                InlineCompletionText::EditPreview,
+                            )
+                    }
+                }
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
                     let target_line = target_point.row + 1;
-                    Some(InlineCompletionText::Move(
+                    InlineCompletionText::Move(
                         format!("Jump to edit in line {}", target_line).into(),
-                    ))
+                    )
                 }
             };
 
-            Some(InlineCompletionMenuHint::Loaded { text: text? })
+            InlineCompletionMenuHint::Loaded { text }
         } else if provider.is_refreshing(cx) {
-            Some(InlineCompletionMenuHint::Loading)
+            InlineCompletionMenuHint::Loading
         } else if provider.needs_terms_acceptance(cx) {
-            Some(InlineCompletionMenuHint::PendingTermsAcceptance)
+            InlineCompletionMenuHint::PendingTermsAcceptance
         } else {
-            Some(InlineCompletionMenuHint::None)
+            InlineCompletionMenuHint::None
         }
     }
 
@@ -5263,6 +5295,18 @@ impl Editor {
     }
 
     fn show_inline_completions_in_menu(&self, cx: &App) -> bool {
+        if let Some(provider) = self.inline_completion_provider() {
+            self.show_inline_completions_in_menu_for_provider(&provider, cx)
+        } else {
+            false
+        }
+    }
+
+    fn show_inline_completions_in_menu_for_provider(
+        &self,
+        provider: &Arc<dyn InlineCompletionProviderHandle>,
+        cx: &App,
+    ) -> bool {
         let by_provider = matches!(
             self.menu_inline_completions_policy,
             MenuInlineCompletionsPolicy::ByProvider
@@ -5270,9 +5314,7 @@ impl Editor {
 
         by_provider
             && EditorSettings::get_global(cx).show_inline_completions_in_menu
-            && self
-                .inline_completion_provider()
-                .map_or(false, |provider| provider.show_completions_in_menu())
+            && provider.show_completions_in_menu()
     }
 
     fn render_code_actions_indicator(
@@ -15933,6 +15975,7 @@ fn inline_completion_edit_text(
     current_snapshot: &BufferSnapshot,
     edits: &[(Range<Anchor>, String)],
     edit_preview: &EditPreview,
+    mode: HighlightEditsRange,
     include_deletions: bool,
     cx: &App,
 ) -> Option<HighlightedEdits> {
@@ -15946,7 +15989,8 @@ fn inline_completion_edit_text(
         })
         .collect::<Vec<_>>();
 
-    Some(edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx))
+    // todo! char limit to match available space in completions menu?
+    Some(edit_preview.highlight_edits(current_snapshot, &edits, mode, include_deletions, cx))
 }
 
 pub fn highlight_diagnostic_message(

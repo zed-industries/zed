@@ -15454,6 +15454,7 @@ async fn assert_highlighted_edits(
             &snapshot.as_singleton().unwrap().2,
             &edits,
             &edit_preview,
+            HighlightEditsRange::AllEdits,
             include_deletions,
             cx,
         )
