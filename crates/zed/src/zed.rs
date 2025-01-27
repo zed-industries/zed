@@ -1197,8 +1197,7 @@ fn show_keymap_file_json_error(
                     cx.emit(DismissEvent);
                 })
         })
-    })
-    .log_err();
+    });
 }
 
 fn show_keymap_file_load_error(
@@ -1242,7 +1241,6 @@ fn show_keymap_file_load_error(
                     })
                 })
             })
-            .log_err();
         })
         .ok();
     })

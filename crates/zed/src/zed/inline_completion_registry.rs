@@ -9,7 +9,6 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity, W
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
-use workspace::Workspace;
 use zed_predict_tos::ZedPredictTos;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -115,8 +114,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                                 return;
                             };
 
-                            let Some(workspace) =
-                                window.downcast::<Workspace>().and_then(|w| w.root(cx).ok())
+                            let Some(Some(workspace)) = window
+                                .update(cx, |_, window, _| window.root().flatten())
+                                .ok()
                             else {
                                 return;
                             };

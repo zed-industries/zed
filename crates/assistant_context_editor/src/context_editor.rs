@@ -23,11 +23,11 @@ use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
-    size, Animation, AnimationExt, AnyElement, AnyView, AnyWindowHandle, App, AsyncWindowContext,
-    ClipboardEntry, ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, WeakEntity,
+    size, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
+    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    WeakEntity,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
