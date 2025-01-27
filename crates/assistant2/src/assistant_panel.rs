@@ -612,9 +612,16 @@ impl AssistantPanel {
                     SharedString::from(context_editor.read(cx).title(cx).to_string())
                 })
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
-            ActiveView::History => "History / Thread".into(),
-            ActiveView::PromptEditorHistory => "History / Prompt Editor".into(),
+            ActiveView::History | ActiveView::PromptEditorHistory => "History".into(),
             ActiveView::Configuration => "Configuration".into(),
+        };
+
+        let sub_title = match self.active_view {
+            ActiveView::Thread => None,
+            ActiveView::PromptEditor => None,
+            ActiveView::History => Some("Thread"),
+            ActiveView::PromptEditorHistory => Some("Prompt Editor"),
+            ActiveView::Configuration => None,
         };
 
         h_flex()
@@ -627,7 +634,24 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(h_flex().child(Label::new(title)))
+            .child(
+                h_flex()
+                    .child(Label::new(title))
+                    .when(sub_title.is_some(), |this| {
+                        this.child(
+                            h_flex()
+                                .pl_1p5()
+                                .gap_1p5()
+                                .child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Disabled)
+                                        .alpha(0.5),
+                                )
+                                .child(Label::new(sub_title.unwrap())),
+                        )
+                    }),
+            )
             .child(
                 h_flex()
                     .h_full()
