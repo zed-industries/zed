@@ -8801,16 +8801,59 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
         return;
     }
 
-    for (range, _) in &mut label.runs {
-        range.start = offset_map[range.start];
-        range.end = offset_map[range.end];
+    let last_index = new_idx;
+    let mut run_ranges_errors = Vec::new();
+    label.runs.retain_mut(|(range, _)| {
+        match offset_map.get(range.start) {
+            Some(&start) => range.start = start,
+            None => {
+                run_ranges_errors.push(range.clone());
+                return false;
+            }
+        }
+
+        match offset_map.get(range.end) {
+            Some(&end) => range.end = end,
+            None => {
+                run_ranges_errors.push(range.clone());
+                range.end = last_index;
+            }
+        }
+        true
+    });
+    if !run_ranges_errors.is_empty() {
+        log::error!(
+            "Completion label has errors in its run ranges: {run_ranges_errors:?}, label text: {}",
+            label.text
+        );
     }
 
+    let mut wrong_filter_range = None;
     if label.filter_range == (0..label.text.len()) {
         label.filter_range = 0..new_text.len();
     } else {
-        label.filter_range.start = offset_map[label.filter_range.start];
-        label.filter_range.end = offset_map[label.filter_range.end];
+        let mut original_filter_range = Some(label.filter_range.clone());
+        match offset_map.get(label.filter_range.start) {
+            Some(&start) => label.filter_range.start = start,
+            None => {
+                wrong_filter_range = original_filter_range.take();
+                label.filter_range.start = last_index;
+            }
+        }
+
+        match offset_map.get(label.filter_range.end) {
+            Some(&end) => label.filter_range.end = end,
+            None => {
+                wrong_filter_range = original_filter_range.take();
+                label.filter_range.end = last_index;
+            }
+        }
+    }
+    if let Some(wrong_filter_range) = wrong_filter_range {
+        log::error!(
+            "Completion label has an invalid filter range: {wrong_filter_range:?}, label text: {}",
+            label.text
+        );
     }
 
     label.text = new_text;
