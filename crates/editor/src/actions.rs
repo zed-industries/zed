@@ -287,6 +287,7 @@ gpui::actions!(
         Indent,
         InsertUuidV4,
         InsertUuidV7,
+        InsertNumberSequence,
         JoinLines,
         KillRingCut,
         KillRingYank,

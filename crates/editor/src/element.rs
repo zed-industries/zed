@@ -463,6 +463,7 @@ impl EditorElement {
         register_action(editor, window, Editor::spawn_nearest_task);
         register_action(editor, window, Editor::insert_uuid_v4);
         register_action(editor, window, Editor::insert_uuid_v7);
+        register_action(editor, window, Editor::insert_number_sequence);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
     }
 

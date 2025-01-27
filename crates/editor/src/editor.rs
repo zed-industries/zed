@@ -12660,6 +12660,24 @@ impl Editor {
         });
     }
 
+    fn insert_number_sequence(
+        &mut self,
+        _: &InsertNumberSequence,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.transact(window, cx, |this, window, cx| {
+            let edits = this
+                .selections
+                .all::<Point>(cx)
+                .into_iter()
+                .enumerate()
+                .map(|(idx, selection)| (selection.range(), (idx + 1).to_string()));
+            this.edit(edits, cx);
+            this.refresh_inline_completion(true, false, window, cx);
+        });
+    }
+
     pub fn open_selections_in_multibuffer(
         &mut self,
         _: &OpenSelectionsInMultibuffer,
