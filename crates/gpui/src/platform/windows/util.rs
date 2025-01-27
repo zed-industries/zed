@@ -140,16 +140,16 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
 }
 
 pub(crate) fn set_dwm_window_appearance(hwnd: HWND) {
-    let dark_mode_enabled = match system_appearance().log_err().unwrap_or_default() {
-        WindowAppearance::Dark => 1,
-        _ => 0,
+    let dark_mode_enabled: BOOL = match system_appearance().log_err().unwrap_or_default() {
+        WindowAppearance::Dark | WindowAppearance::VibrantDark => true.into(),
+        WindowAppearance::Light | WindowAppearance::VibrantLight => false.into(),
     };
     unsafe {
         DwmSetWindowAttribute(
             hwnd,
             DWMWA_USE_IMMERSIVE_DARK_MODE,
             &dark_mode_enabled as *const _ as _,
-            4,
+            std::mem::size_of::<BOOL>() as u32,
         )
         .log_err();
     }
