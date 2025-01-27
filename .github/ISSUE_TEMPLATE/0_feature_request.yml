@@ -5,10 +5,11 @@ body:
   - type: textarea
     attributes:
       label: Describe the feature
-      description: A clear and concise description of what you want to happen.
+      description: A one line summary, and description of what you want to happen.
       value: |
         Summary:
-          *
+
+        Description:
 
         Screenshots:
           <!-- drag files here -->
