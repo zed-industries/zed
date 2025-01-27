@@ -609,7 +609,7 @@ pub struct Window {
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
-    pub(crate) root_model: Option<AnyView>,
+    pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -887,7 +887,7 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
-            root_model: None,
+            root: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -1019,27 +1019,27 @@ impl Window {
         subscription
     }
 
-    pub fn replace_root_model<V>(
+    pub fn replace_root<E>(
         &mut self,
         cx: &mut App,
-        build_view: impl FnOnce(&mut Window, &mut Context<'_, V>) -> V,
-    ) -> Entity<V>
+        build_view: impl FnOnce(&mut Window, &mut Context<'_, E>) -> E,
+    ) -> Entity<E>
     where
-        V: 'static + Render,
+        E: 'static + Render,
     {
         let view = cx.new(|cx| build_view(self, cx));
-        self.root_model = Some(view.clone().into());
+        self.root = Some(view.clone().into());
         self.refresh();
         view
     }
 
-    pub fn root_model<V>(&mut self) -> Option<Option<Entity<V>>>
+    pub fn root<E>(&self) -> Option<Option<Entity<E>>>
     where
-        V: 'static + Render,
+        E: 'static + Render,
     {
-        self.root_model
+        self.root
             .as_ref()
-            .map(|view| view.clone().downcast::<V>().ok())
+            .map(|view| view.clone().downcast::<E>().ok())
     }
 
     /// Obtain a handle to the window that belongs to this context.
@@ -1632,7 +1632,7 @@ impl Window {
         self.tooltip_bounds.take();
 
         // Layout all root elements.
-        let mut root_element = self.root_model.as_ref().unwrap().clone().into_any();
+        let mut root_element = self.root.as_ref().unwrap().clone().into_any();
         root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
 
         let mut sorted_deferred_draws =
@@ -3816,7 +3816,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .and_then(|window| {
                 window
                     .as_ref()
-                    .and_then(|window| window.root_model.clone())
+                    .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
             .ok_or_else(|| anyhow!("window not found"))?
@@ -3838,7 +3838,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Read the root view pointer off of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
-    pub fn root_model<C>(&self, cx: &C) -> Result<Entity<V>>
+    pub fn entity<C>(&self, cx: &C) -> Result<Entity<V>>
     where
         C: AppContext,
     {

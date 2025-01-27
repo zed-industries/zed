@@ -56,7 +56,7 @@ impl ActiveThread {
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
-                let this = cx.model().downgrade();
+                let this = cx.entity().downgrade();
                 move |ix, _: &mut Window, cx: &mut App| {
                     this.update(cx, |this, cx| this.render_message(ix, cx))
                         .unwrap()

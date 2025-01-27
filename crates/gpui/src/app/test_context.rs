@@ -238,7 +238,7 @@ impl TestAppContext {
             )
             .unwrap();
         drop(cx);
-        let view = window.root_model(self).unwrap();
+        let view = window.root(self).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
 
@@ -946,7 +946,7 @@ impl VisualContext for VisualTestContext {
     {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                window.replace_root_model(cx, build_view)
+                window.replace_root(cx, build_view)
             })
             .unwrap()
     }

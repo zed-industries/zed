@@ -596,7 +596,7 @@ impl Editor {
             style: BlockStyle::Sticky,
             priority: 0,
             render: Arc::new({
-                let editor = cx.model().clone();
+                let editor = cx.entity().clone();
                 let hunk = hunk.clone();
                 let has_multiple_hunks = self.has_multiple_hunks(cx);
 
@@ -870,7 +870,7 @@ impl Editor {
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, window, cx);
-        let editor = cx.model().clone();
+        let editor = cx.entity().clone();
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
         BlockProperties {
@@ -1214,7 +1214,7 @@ fn editor_with_deleted_text(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> (u32, Model<Editor>) {
-    let parent_editor = cx.model().downgrade();
+    let parent_editor = cx.entity().downgrade();
     let editor = cx.new(|cx| {
         let multi_buffer = cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {

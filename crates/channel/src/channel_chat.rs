@@ -132,7 +132,7 @@ impl ChannelChat {
                 last_acknowledged_id: None,
                 rng: StdRng::from_entropy(),
                 first_loaded_message_id: None,
-                _subscription: subscription.set_model(&cx.model(), &mut cx.to_async()),
+                _subscription: subscription.set_model(&cx.entity(), &mut cx.to_async()),
             }
         })?;
         Self::handle_loaded_messages(

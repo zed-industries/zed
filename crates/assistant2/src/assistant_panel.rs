@@ -158,7 +158,7 @@ impl AssistantPanel {
         let project = workspace.project().clone();
         let language_registry = project.read(cx).languages().clone();
         let workspace = workspace.weak_handle();
-        let weak_self = cx.model().downgrade();
+        let weak_self = cx.entity().downgrade();
 
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
@@ -811,7 +811,7 @@ impl AssistantPanel {
                     .child(v_flex().mx_auto().w_4_5().gap_2().children(
                         recent_threads.into_iter().map(|thread| {
                             // TODO: keyboard navigation
-                            PastThread::new(thread, cx.model().downgrade(), false)
+                            PastThread::new(thread, cx.entity().downgrade(), false)
                         }),
                     ))
                     .child(

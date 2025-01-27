@@ -124,7 +124,7 @@ impl RefreshLlmTokenListener {
     fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
             _llm_token_subscription: client
-                .add_message_handler(cx.weak_model(), Self::handle_refresh_llm_token),
+                .add_message_handler(cx.weak_entity(), Self::handle_refresh_llm_token),
         }
     }
 

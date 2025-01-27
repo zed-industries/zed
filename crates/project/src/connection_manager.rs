@@ -39,7 +39,7 @@ impl Manager {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
-        let manager = cx.weak_model();
+        let manager = cx.weak_entity();
         project.update(cx, |_, cx| {
             let manager = manager.clone();
             cx.on_release(move |project, cx| {

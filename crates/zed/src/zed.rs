@@ -143,7 +143,7 @@ pub fn initialize_workspace(
             return;
         };
 
-        let workspace_handle = cx.model().clone();
+        let workspace_handle = cx.entity().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
         cx.subscribe_in(&workspace_handle, window, {
@@ -214,7 +214,7 @@ pub fn initialize_workspace(
 
         auto_update_ui::notify_of_any_new_update(window, cx);
 
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             handle
                 .update(cx, |workspace, cx| {
@@ -1221,7 +1221,7 @@ fn show_keymap_file_load_error(
         let parsed_markdown = Rc::new(parsed_markdown.await);
         cx.update(|cx| {
             show_app_notification(notification_id, cx, move |cx| {
-                let workspace_handle = cx.model().downgrade();
+                let workspace_handle = cx.entity().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
                 cx.new(move |_cx| {
                     MessageNotification::new_from_builder(move |window, cx| {
@@ -2574,7 +2574,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            opened_workspace.root_model(cx).unwrap().entity_id(),
+            opened_workspace.root(cx).unwrap().entity_id(),
             workspace.entity_id(),
             "Excluded files in subfolders of a workspace root should be opened in the workspace"
         );

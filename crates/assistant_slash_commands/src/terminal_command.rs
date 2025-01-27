@@ -85,7 +85,7 @@ impl SlashCommand for TerminalSlashCommand {
 
         let lines = active_terminal
             .read(cx)
-            .model()
+            .entity()
             .read(cx)
             .last_n_non_empty_lines(line_count);
 

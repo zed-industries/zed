@@ -849,7 +849,7 @@ impl TestClient {
     ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
-        let model = window.root_model(cx).unwrap();
+        let model = window.root(cx).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (model, cx)
@@ -861,7 +861,7 @@ pub fn open_channel_notes(
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<Entity<ChannelView>>> {
     let window = cx.update(|_, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
-    let model = window.root_model(cx).unwrap();
+    let model = window.root(cx).unwrap();
 
     cx.update(|window, cx| ChannelView::open(channel_id, None, model.clone(), window, cx))
 }

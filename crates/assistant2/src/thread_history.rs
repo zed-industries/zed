@@ -154,7 +154,7 @@ impl Render for ThreadHistory {
                 } else {
                     history.child(
                         uniform_list(
-                            cx.model().clone(),
+                            cx.entity().clone(),
                             "thread-history",
                             threads.len(),
                             move |history, range, _window, _cx| {

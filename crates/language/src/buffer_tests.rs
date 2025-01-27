@@ -2805,7 +2805,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             );
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
-            cx.subscribe(&cx.model(), move |buffer, _, event, _| {
+            cx.subscribe(&cx.entity(), move |buffer, _, event, _| {
                 if let BufferEvent::Operation {
                     operation,
                     is_local: true,
@@ -2936,7 +2936,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                     );
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
-                    cx.subscribe(&cx.model(), move |buffer, _, event, _| {
+                    cx.subscribe(&cx.entity(), move |buffer, _, event, _| {
                         if let BufferEvent::Operation {
                             operation,
                             is_local: true,

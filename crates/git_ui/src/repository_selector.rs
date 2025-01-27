@@ -27,7 +27,7 @@ impl RepositorySelector {
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
-            repository_selector: cx.model().downgrade(),
+            repository_selector: cx.entity().downgrade(),
             repository_entries: all_repositories,
             filtered_repositories,
             selected_index: 0,

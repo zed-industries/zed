@@ -265,7 +265,7 @@ impl Render for LanguageServerPrompt {
                     )
                     .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
-                        let this_handle = cx.model().clone();
+                        let this_handle = cx.entity().clone();
                         Button::new(ix, action.title.clone())
                             .size(ButtonSize::Large)
                             .on_click(move |_, window, cx| {

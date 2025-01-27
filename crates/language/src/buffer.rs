@@ -972,7 +972,7 @@ impl Buffer {
     }
 
     pub fn branch(&mut self, cx: &mut Context<Self>) -> Entity<Self> {
-        let this = cx.model();
+        let this = cx.entity();
         cx.new(|cx| {
             let mut branch = Self {
                 branch_state: Some(BufferBranchState {

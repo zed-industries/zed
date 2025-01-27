@@ -393,7 +393,7 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::remove_focused_context))
             .on_action(cx.listener(Self::accept_suggested_context))
             .on_children_prepainted({
-                let model = cx.model().downgrade();
+                let model = cx.entity().downgrade();
                 move |children_bounds, _window, cx| {
                     model
                         .update(cx, |this, _| {

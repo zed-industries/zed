@@ -572,7 +572,7 @@ impl Render for TextInput {
                     .p(px(4.))
                     .bg(white())
                     .child(TextElement {
-                        input: cx.model().clone(),
+                        input: cx.entity().clone(),
                     }),
             )
     }
@@ -697,7 +697,7 @@ fn main() {
                 },
             )
             .unwrap();
-        let view = window.root_model(cx).unwrap();
+        let view = window.root(cx).unwrap();
         cx.observe_keystrokes(move |ev, _, cx| {
             view.update(cx, |view, cx| {
                 view.recent_keystrokes.push(ev.keystroke.clone());

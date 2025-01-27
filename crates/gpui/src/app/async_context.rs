@@ -399,9 +399,8 @@ impl VisualContext for AsyncWindowContext {
     where
         V: 'static + Render,
     {
-        self.window.update(self, |_, window, cx| {
-            window.replace_root_model(cx, build_view)
-        })
+        self.window
+            .update(self, |_, window, cx| window.replace_root(cx, build_view))
     }
 
     fn focus<V>(&mut self, view: &Entity<V>) -> Self::Result<()>

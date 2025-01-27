@@ -130,7 +130,7 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
-                let Some(Some(workspace)) = window.root_model::<Workspace>() else {
+                let Some(Some(workspace)) = window.root::<Workspace>() else {
                     return;
                 };
                 let Some(editor) = workspace

@@ -107,7 +107,7 @@ impl CommandPalette {
             .collect();
 
         let delegate =
-            CommandPaletteDelegate::new(cx.model().downgrade(), commands, previous_focus_handle);
+            CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);

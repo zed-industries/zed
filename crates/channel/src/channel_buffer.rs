@@ -81,7 +81,7 @@ impl ChannelBuffer {
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
-                subscription: Some(subscription.set_model(&cx.model(), &mut cx.to_async())),
+                subscription: Some(subscription.set_model(&cx.entity(), &mut cx.to_async())),
                 user_store,
                 channel_store,
             };

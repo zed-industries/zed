@@ -158,8 +158,8 @@ impl ChannelStore {
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let rpc_subscriptions = [
-            client.add_message_handler(cx.weak_model(), Self::handle_update_channels),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_user_channels),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_channels),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_user_channels),
         ];
 
         let mut connection_status = client.status();
@@ -306,7 +306,7 @@ impl ChannelStore {
     ) -> Task<Result<Entity<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let channel_store = cx.model();
+        let channel_store = cx.entity();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
@@ -436,7 +436,7 @@ impl ChannelStore {
     ) -> Task<Result<Entity<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let this = cx.model();
+        let this = cx.entity();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_chats,

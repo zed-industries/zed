@@ -318,7 +318,7 @@ impl ContextStore {
                 .client
                 .subscribe_to_entity(remote_id)
                 .log_err()
-                .map(|subscription| subscription.set_model(&cx.model(), &mut cx.to_async()));
+                .map(|subscription| subscription.set_model(&cx.entity(), &mut cx.to_async()));
             self.advertise_contexts(cx);
         } else {
             self.client_subscription = None;

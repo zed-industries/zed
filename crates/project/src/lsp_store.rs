@@ -417,7 +417,7 @@ impl LocalLspStore {
             let delegate = LocalLspAdapterDelegate::new(
                 self.languages.clone(),
                 &self.environment,
-                cx.weak_model(),
+                cx.weak_entity(),
                 &worktree,
                 self.http_client.clone(),
                 self.fs.clone(),
@@ -5153,7 +5153,7 @@ impl LspStore {
                             let delegate = LocalLspAdapterDelegate::new(
                                 local.languages.clone(),
                                 &local.environment,
-                                cx.weak_model(),
+                                cx.weak_entity(),
                                 &worktree,
                                 local.http_client.clone(),
                                 local.fs.clone(),
@@ -8159,7 +8159,7 @@ impl LanguageServerWatchedPathsBuilder {
         language_server_id: LanguageServerId,
         cx: &mut Context<LspStore>,
     ) -> LanguageServerWatchedPaths {
-        let project = cx.weak_model();
+        let project = cx.weak_entity();
 
         const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
         let abs_paths = self
