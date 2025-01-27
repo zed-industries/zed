@@ -6738,6 +6738,7 @@ dependencies = [
  "client",
  "collections",
  "copilot",
+ "deepseek",
  "editor",
  "feature_flags",
  "fs",
