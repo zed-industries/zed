@@ -1,54 +1,36 @@
 name: Bug Report
 description: |
-  Use this template for **non-crash-related** bug reports.
-  Tip: open this issue template from within Zed with the `file bug report` command palette action.
-labels: ["admin read", "triage", "bug"]
+  Something is broken in Zed (exclude crashing).
+type: "Bug"
 body:
-  - type: checkboxes
-    attributes:
-      label: Check for existing issues
-      description: Check the backlog of issues to reduce the chances of creating duplicates; if an issue already exists, place a `+1` (👍) on it.
-      options:
-        - label: Completed
-          required: true
   - type: textarea
     attributes:
       label: Describe the bug / provide steps to reproduce it
-      description: A clear and concise description of what the bug is.
+      description: A one line summary, and detailed reproduction steps
+      value: |
+        Summary:
+
+        <!-- Include all steps necessary to reproduce from a clean Zed installation. Be verbose -->
+        Steps to trigger the problem:
+        1.
+        2.
+        3.
+
+        Actual Behavior:
+          *
+
+        Expected Behavior:
+          *
+
     validations:
       required: true
+
   - type: textarea
     id: environment
     attributes:
       label: Zed Version and System Specs
-      description: Zed version, release channel, architecture (x86_64 or aarch64), OS (macOS version / Linux distro and version) and RAM amount.
+      description: 'Open Zed, and in the command palette select "zed: Copy System Specs Into Clipboard"'
       placeholder: |
-        <!-- In Zed run `copy system specs into clipboard` from the Zed command palette and paste here. -->
-        <!-- Alternatively spawn `file bug report` and this field will be autopopulated -->
-        <!-- If Zed won't launch, include the equivalent with other relevant details (e.g. video card driver version for display bugs, etc) -->
-        <!-- Zed Version: 0.xxx.x; Channel: Stable, OS: macOS xx.xx, RAM: XXGB, Architecture: x86_64"
+        Output of "zed: Copy System Specs Into Clipboard"
     validations:
       required: true
-  - type: textarea
-    attributes:
-      label: If applicable, add screenshots or screencasts of the incorrect state / behavior
-      description: Drag images / videos into the text input below
-    validations:
-      required: false
-  - type: textarea
-    attributes:
-      label: If applicable, attach your Zed.log file to this issue.
-      description: |
-        macOS: `~/Library/Logs/Zed/Zed.log`
-        Linux: `~/.local/share/zed/logs/Zed.log` or $XDG_DATA_HOME
-        If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
-      value: |
-        <details><summary>Zed.log</summary>
-
-        <!-- Click below this line and paste or drag-and-drop your log-->
-        ```
-
-        ```
-        <!-- Click above this line and paste or drag-and-drop your log--></details>
-    validations:
-      required: false
