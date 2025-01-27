@@ -146,8 +146,13 @@ impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(language_model_selector.clone()))
             .trigger(self.trigger)
-            .attach(gpui::Corner::BottomLeft)
+            .anchor(gpui::Corner::BottomLeft)
+            .attach(gpui::Corner::TopLeft)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-4.0),
+            })
     }
 }
 
