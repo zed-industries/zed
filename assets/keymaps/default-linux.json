@@ -709,8 +709,7 @@
       "enter": "menu::Confirm",
       "space": "git::ToggleStaged",
       "ctrl-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll",
-      "right": "git_panel::FocusEditor"
+      "ctrl-shift-space": "git::UnstageAll"
     }
   },
   {
