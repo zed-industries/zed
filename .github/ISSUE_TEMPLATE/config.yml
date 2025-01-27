@@ -7,9 +7,6 @@ contact_links:
   - name: Theme Request
     url: https://github.com/zed-industries/extensions/issues/new?assignees=&labels=theme&projects=&template=0_theme_request.yml&title=%3Cname_of_theme%3E+theme
     about: Request a theme in the extensions repository
-  - name: Top-Ranking Issues
-    url: https://github.com/zed-industries/zed/issues/5393
-    about: See an overview of the most popular Zed issues
   - name: Platform Support
     url: https://github.com/zed-industries/zed/issues/5391
     about: A quick note on platform support
