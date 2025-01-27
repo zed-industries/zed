@@ -34,45 +34,39 @@ impl ThreadStore {
         project: Entity<Project>,
         tools: Arc<ToolWorkingSet>,
         cx: &mut App,
-    ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let this = cx.new(|cx: &mut Context<Self>| {
-                let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
-                let context_server_manager = cx.new(|cx| {
-                    ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
-                });
+    ) -> Result<Entity<Self>> {
+        let this = cx.new(|cx| {
+            let context_server_factory_registry = ContextServerFactoryRegistry::default_global(cx);
+            let context_server_manager = cx.new(|cx| {
+                ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
+            });
 
-                let executor = cx.background_executor().clone();
-                let database_future = executor
-                    .spawn({
-                        let executor = executor.clone();
-                        let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
-                        async move { ThreadsDatabase::new(database_path, executor) }
-                    })
-                    .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
-                    .boxed()
-                    .shared();
+            let executor = cx.background_executor().clone();
+            let database_future = executor
+                .spawn({
+                    let executor = executor.clone();
+                    let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                    async move { ThreadsDatabase::new(database_path, executor) }
+                })
+                .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
+                .boxed()
+                .shared();
 
-                let this = Self {
-                    project,
-                    tools,
-                    context_server_manager,
-                    context_server_tool_ids: HashMap::default(),
-                    threads: Vec::new(),
-                    database_future,
-                };
-                this.register_context_server_handlers(cx);
+            let this = Self {
+                project,
+                tools,
+                context_server_manager,
+                context_server_tool_ids: HashMap::default(),
+                threads: Vec::new(),
+                database_future,
+            };
+            this.register_context_server_handlers(cx);
+            this.reload(cx).detach_and_log_err(cx);
 
-                this
-            })?;
+            this
+        });
 
-            log::info!("[assistant2-debug] reloading threads");
-            this.update(&mut cx, |this, cx| this.reload(cx))?.await?;
-            log::info!("[assistant2-debug] finished reloading threads");
-
-            Ok(this)
-        })
+        Ok(this)
     }
 
     /// Returns the number of threads.
