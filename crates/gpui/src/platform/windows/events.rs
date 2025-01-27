@@ -966,26 +966,7 @@ fn handle_nc_mouse_move_msg(
         return None;
     }
 
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE | TME_NONCLIENT,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
