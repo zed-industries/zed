@@ -16,6 +16,7 @@ use std::{
 
 use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext, Entity, Subscription};
+use itertools::Itertools;
 use language::{
     language_settings::AllLanguageSettings, Attach, LanguageName, LanguageRegistry,
     LspAdapterDelegate,
@@ -220,31 +221,35 @@ impl LanguageServerTree {
             });
         }
 
-        roots.into_iter().filter_map(move |(adapter, root_path)| {
-            let attach = self.attach_kind(&adapter);
-            let (settings, new_languages) = adapters.get(&adapter).cloned()?;
-            let inner_node = self
-                .instances
-                .entry(root_path.worktree_id)
-                .or_default()
-                .roots
-                .entry(root_path.path.clone())
-                .or_default()
-                .entry(adapter.0.name.clone());
-            let (node, languages) = inner_node.or_insert_with(move || {
-                (
-                    Arc::new(InnerTreeNode::new(
-                        adapter.0.name(),
-                        attach,
-                        root_path,
-                        settings,
-                    )),
-                    Default::default(),
-                )
-            });
-            languages.extend(new_languages);
-            Some(Arc::downgrade(&node).into())
-        })
+        roots
+            .into_iter()
+            .filter_map(move |(adapter, root_path)| {
+                let attach = self.attach_kind(&adapter);
+                let (index, _, (settings, new_languages)) = adapters.get_full(&adapter)?;
+                let inner_node = self
+                    .instances
+                    .entry(root_path.worktree_id)
+                    .or_default()
+                    .roots
+                    .entry(root_path.path.clone())
+                    .or_default()
+                    .entry(adapter.0.name.clone());
+                let (node, languages) = inner_node.or_insert_with(move || {
+                    (
+                        Arc::new(InnerTreeNode::new(
+                            adapter.0.name(),
+                            attach,
+                            root_path,
+                            settings.clone(),
+                        )),
+                        Default::default(),
+                    )
+                });
+                languages.extend(new_languages.iter().cloned());
+                Some((index, Arc::downgrade(&node).into()))
+            })
+            .sorted_by_key(|(index, _)| *index)
+            .map(|(_, node)| node)
     }
 
     fn adapter_for_name(&self, name: &LanguageServerName) -> Option<AdapterWrapper> {
