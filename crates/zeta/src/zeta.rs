@@ -1031,6 +1031,28 @@ impl CurrentInlineCompletion {
             true
         }
     }
+
+    fn refresh(mut self, buffer: Entity<Buffer>, cx: &App) -> Task<Option<Self>> {
+        cx.spawn(|cx| async move {
+            let (edits, snapshot, edit_preview) = buffer
+                .read_with(&cx, {
+                    let edits = self.completion.edits.clone();
+                    |buffer, cx| {
+                        let new_snapshot = buffer.snapshot();
+                        let edits: Arc<[(Range<Anchor>, String)]> =
+                            interpolate(&self.completion.snapshot, &new_snapshot, edits)?.into();
+
+                        Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                    }
+                })
+                .log_err()??;
+
+            self.completion.edit_preview = edit_preview.await;
+            self.completion.snapshot = snapshot;
+            self.completion.edits = edits;
+            Some(self)
+        })
+    }
 }
 
 struct PendingCompletion {
@@ -1136,31 +1158,53 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 Err(error) => Err(error),
             };
 
-            this.update(&mut cx, |this, cx| {
-                if this.pending_completions[0].id == pending_completion_id {
-                    this.pending_completions.remove(0);
-                } else {
-                    this.pending_completions.clear();
-                }
+            let Some(new_current_completion) = this
+                .update(&mut cx, |this, cx| {
+                    if this.pending_completions[0].id == pending_completion_id {
+                        this.pending_completions.remove(0);
+                    } else {
+                        this.pending_completions.clear();
+                    }
 
-                if let Some(new_completion) = completion.context("zeta prediction failed").log_err()
-                {
-                    if let Some(old_completion) = this.current_completion.as_ref() {
-                        let snapshot = buffer.read(cx).snapshot();
-                        if new_completion.should_replace_completion(&old_completion, &snapshot) {
+                    let mut new_current_completion = None;
+
+                    if let Some(new_completion) =
+                        completion.context("zeta prediction failed").log_err()
+                    {
+                        if let Some(old_completion) = this.current_completion.as_ref() {
+                            let snapshot = buffer.read(cx).snapshot();
+                            if new_completion.should_replace_completion(&old_completion, &snapshot)
+                            {
+                                this.zeta.update(cx, |zeta, cx| {
+                                    zeta.completion_shown(&new_completion.completion, cx);
+                                });
+                                new_current_completion = Some(new_completion);
+                            }
+                        } else {
                             this.zeta.update(cx, |zeta, cx| {
                                 zeta.completion_shown(&new_completion.completion, cx);
                             });
-                            this.current_completion = Some(new_completion);
+                            new_current_completion = Some(new_completion);
                         }
-                    } else {
-                        this.zeta.update(cx, |zeta, cx| {
-                            zeta.completion_shown(&new_completion.completion, cx);
-                        });
-                        this.current_completion = Some(new_completion);
                     }
-                }
 
+                    match new_current_completion {
+                        Some(new_current_completion) => Task::ready(Some(new_current_completion)),
+                        None => match this.current_completion.take() {
+                            Some(old_completion) => old_completion.refresh(buffer, cx),
+                            None => Task::ready(None),
+                        },
+                    }
+                })
+                .log_err()
+            else {
+                return ();
+            };
+
+            let new_current_completion = new_current_completion.await;
+
+            this.update(&mut cx, |this, cx| {
+                this.current_completion = new_current_completion;
                 cx.notify();
             })
             .ok();
