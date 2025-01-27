@@ -1296,8 +1296,6 @@ impl LanguageServer {
                 text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
             })
             .log_err();
-        } else {
-            debug_assert!(false);
         }
     }
 
@@ -1308,8 +1306,6 @@ impl LanguageServer {
                 text_document: TextDocumentIdentifier::new(uri.clone()),
             })
             .log_err();
-        } else {
-            debug_assert!(false);
         }
     }
 }
