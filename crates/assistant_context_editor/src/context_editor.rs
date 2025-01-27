@@ -3043,45 +3043,45 @@ impl Render for ContextEditor {
                                 .child(self.render_inject_context_menu(cx, window))
                                 .child(ui::Divider::vertical())
                                 .child(
-                                LanguageModelSelectorPopoverMenu::new(
-                                    self.model_selector.clone(),
-                                    ButtonLike::new("active-model")
-                                        .style(ButtonStyle::Subtle)
-                                        .child(
-                                        h_flex()
-                                            .gap_0p5()
+                                    LanguageModelSelectorPopoverMenu::new(
+                                        self.model_selector.clone(),
+                                        ButtonLike::new("active-model")
+                                            .style(ButtonStyle::Subtle)
                                             .child(
-                                                div()
-                                                    .overflow_x_hidden()
-                                                    .flex_grow()
-                                                    .whitespace_nowrap()
+                                                h_flex()
+                                                    .gap_0p5()
                                                     .child(
-                                                        match LanguageModelRegistry::read_global(cx)
-                                                            .active_model()
-                                                        {
-                                                            Some(model) => h_flex()
-                                                                .child(
-                                                                    Label::new(model.name().0)
+                                                        div()
+                                                            .overflow_x_hidden()
+                                                            .flex_grow()
+                                                            .whitespace_nowrap()
+                                                            .child(
+                                                                match LanguageModelRegistry::read_global(cx)
+                                                                    .active_model()
+                                                                {
+                                                                    Some(model) => h_flex()
+                                                                        .child(
+                                                                            Label::new(model.name().0)
+                                                                                .size(LabelSize::Small)
+                                                                                .color(Color::Muted),
+                                                                        )
+                                                                        .into_any_element(),
+                                                                    _ => Label::new("No model selected")
                                                                         .size(LabelSize::Small)
-                                                                        .color(Color::Muted),
-                                                                )
-                                                                .into_any_element(),
-                                                            _ => Label::new("No model selected")
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted)
-                                                                .into_any_element(),
-                                                        },
+                                                                        .color(Color::Muted)
+                                                                        .into_any_element(),
+                                                                },
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        Icon::new(IconName::ChevronDown)
+                                                            .color(Color::Muted)
+                                                            .size(IconSize::XSmall),
                                                     ),
-                                            )
-                                            .child(
-                                                Icon::new(IconName::ChevronDown)
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::XSmall),
                                             ),
-                                    ),
-                                )
-                                .with_handle(self.model_selector_menu_handle.clone()),
-                            ),
+                                    )
+                                    .with_handle(self.model_selector_menu_handle.clone()),
+                                ),
                         )
                         .child(
                             h_flex()
