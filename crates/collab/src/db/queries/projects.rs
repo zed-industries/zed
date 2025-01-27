@@ -269,7 +269,7 @@ impl Database {
                         worktree_id: ActiveValue::set(worktree_id),
                         id: ActiveValue::set(entry.id as i64),
                         is_dir: ActiveValue::set(entry.is_dir),
-                        path: ActiveValue::set(entry.path.join("/")),
+                        path: ActiveValue::set(entry.path.clone()),
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
@@ -717,7 +717,7 @@ impl Database {
                     worktree.entries.push(proto::Entry {
                         id: db_entry.id as u64,
                         is_dir: db_entry.is_dir,
-                        path: db_entry.path.split('/').map(Into::into).collect(),
+                        path: db_entry.path.clone(),
                         inode: db_entry.inode as u64,
                         mtime: Some(proto::Timestamp {
                             seconds: db_entry.mtime_seconds as u64,

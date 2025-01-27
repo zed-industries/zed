@@ -653,7 +653,7 @@ impl Database {
                         worktree.updated_entries.push(proto::Entry {
                             id: db_entry.id as u64,
                             is_dir: db_entry.is_dir,
-                            path: db_entry.path.split('/').map(Into::into).collect(),
+                            path: db_entry.path.clone(),
                             inode: db_entry.inode as u64,
                             mtime: Some(proto::Timestamp {
                                 seconds: db_entry.mtime_seconds as u64,

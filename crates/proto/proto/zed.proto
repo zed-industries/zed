@@ -1783,7 +1783,7 @@ message File {
 message Entry {
     uint64 id = 1;
     bool is_dir = 2;
-    repeated string path = 3;
+    string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
     bool is_ignored = 7;

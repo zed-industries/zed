@@ -6153,7 +6153,8 @@ impl<'a> From<&'a Entry> for proto::Entry {
             .path
             .components()
             .map(|comp| comp.as_os_str().to_string_lossy().to_string())
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .join("/");
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
@@ -6183,7 +6184,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
         } else {
             EntryKind::File
         };
-        let path: Arc<Path> = entry.path.iter().collect::<PathBuf>().into();
+        let path: Arc<Path> = entry.path.split('/').collect::<PathBuf>().into();
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         Ok(Entry {
             id: ProjectEntryId::from_proto(entry.id),
