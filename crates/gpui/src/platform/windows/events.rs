@@ -89,7 +89,7 @@ pub(crate) fn handle_msg(
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
-        WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(state_ptr),
+        WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(handle, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -1215,7 +1215,10 @@ fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     None
 }
 
-fn handle_system_theme_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_system_theme_changed(
+    handle: HWND,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
     let mut callback = state_ptr
         .state
         .borrow_mut()
@@ -1224,6 +1227,7 @@ fn handle_system_theme_changed(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<i
         .take()?;
     callback();
     state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+    set_dwm_window_appearance(handle);
     Some(0)
 }
 

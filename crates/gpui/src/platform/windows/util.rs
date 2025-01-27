@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use ::util::ResultExt;
 use windows::{
     Wdk::System::SystemServices::RtlGetVersion,
-    Win32::{Foundation::*, UI::WindowsAndMessaging::*},
+    Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
     UI::{
         Color,
         ViewManagement::{UIColorType, UISettings},
@@ -137,6 +137,22 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
         )
         .into()
     }))
+}
+
+pub(crate) fn set_dwm_window_appearance(hwnd: HWND) {
+    let dark_mode_enabled = match system_appearance().log_err().unwrap_or_default() {
+        WindowAppearance::Dark => 1,
+        _ => 0,
+    };
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &dark_mode_enabled as *const _ as _,
+            4,
+        )
+        .log_err();
+    }
 }
 
 #[inline]
