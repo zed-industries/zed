@@ -387,6 +387,7 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
+ "deepseek",
  "editor",
  "env_logger 0.11.6",
  "feature_flags",
@@ -3560,6 +3561,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepseek"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "deflate64"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6681,6 +6694,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "collections",
+ "deepseek",
  "futures 0.3.31",
  "google_ai",
  "gpui",
@@ -6724,6 +6738,7 @@ dependencies = [
  "client",
  "collections",
  "copilot",
+ "deepseek",
  "editor",
  "feature_flags",
  "fs",

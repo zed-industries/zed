@@ -121,6 +121,7 @@ pub enum IconName {
     Ai,
     AiAnthropic,
     AiAnthropicHosted,
+    AiDeepSeek,
     AiGoogle,
     AiLmStudio,
     AiOllama,
