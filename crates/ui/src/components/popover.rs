@@ -64,13 +64,13 @@ impl RenderOnce for Popover {
                 .border_color(cx.theme().colors().border_variant)
                 .shadow(ElevationIndex::ElevatedSurface.shadow()),
             PopoverElision::TranslucentWithCroppedBottom => inner
-                .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
+                // .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
                 .border_color(cx.theme().colors().border_variant.opacity(0.5))
                 .rounded_bl_none()
                 .rounded_br_none()
                 .border_b(px(0.)),
             PopoverElision::TranslucentWithCroppedTop => inner
-                .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
+                // .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
                 .border_color(cx.theme().colors().border_variant.opacity(0.5))
                 .rounded_tl_none()
                 .rounded_tr_none()
