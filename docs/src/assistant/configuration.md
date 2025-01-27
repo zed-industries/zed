@@ -186,7 +186,8 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
           "max_completion_tokens": 20000
         }
       ]
-    }
+    },
+    "version": "1"
   }
 }
 ```
