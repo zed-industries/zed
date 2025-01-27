@@ -7397,9 +7397,6 @@ impl LspStore {
             for server_id in servers_to_stop {
                 self.stop_local_language_server(server_id, cx).detach();
             }
-            // for (worktree, language) in language_server_lookup_info {
-            //     self.restart_local_language_servers(worktree, language, cx);
-            // }
         }
     }
 
