@@ -610,66 +610,88 @@ impl EditPreview {
     ) -> HighlightedEdits {
         let mut text = String::new();
         let mut highlights = Vec::new();
-        let Some(range) = self.compute_visible_range(edits, current_snapshot) else {
+
+        let Some(visible_range) = Self::compute_visible_range(edits, current_snapshot) else {
             return HighlightedEdits::default();
         };
-        let mut offset = range.start;
-        let mut delta = 0isize;
+
+        let mut offset = visible_range.start;
 
         let status_colors = cx.theme().status();
+        let deleted_highlight = Some(HighlightStyle {
+            background_color: Some(status_colors.deleted_background),
+            ..Default::default()
+        });
+        let created_highlight = Some(HighlightStyle {
+            background_color: Some(status_colors.created_background),
+            ..Default::default()
+        });
 
-        for (range, edit_text) in edits {
-            let edit_range = range.to_offset(current_snapshot);
-            let new_edit_start = (edit_range.start as isize + delta) as usize;
-            let new_edit_range = new_edit_start..new_edit_start + edit_text.len();
+        for (edit_anchor_range, edit_text) in edits {
+            let edit_range = edit_anchor_range.to_offset(current_snapshot);
+            let unchanged_range = offset..edit_range.start;
+            offset = edit_range.end;
 
-            let prev_range = offset..new_edit_start;
-
-            if !prev_range.is_empty() {
-                let start = text.len();
-                self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
-                offset += text.len() - start;
+            if !unchanged_range.is_empty() {
+                Self::add_highlighted_text_from(
+                    unchanged_range,
+                    &current_snapshot.text,
+                    &current_snapshot.syntax,
+                    None,
+                    &mut text,
+                    &mut highlights,
+                    cx,
+                );
             }
 
             if include_deletions && !edit_range.is_empty() {
-                let start = text.len();
-                text.extend(current_snapshot.text_for_range(edit_range.clone()));
-                let end = text.len();
-
-                highlights.push((
-                    start..end,
-                    HighlightStyle {
-                        background_color: Some(status_colors.deleted_background),
-                        ..Default::default()
-                    },
-                ));
+                Self::add_highlighted_text_from(
+                    edit_range,
+                    &current_snapshot.text,
+                    &current_snapshot.syntax,
+                    deleted_highlight,
+                    &mut text,
+                    &mut highlights,
+                    cx,
+                );
             }
 
             if !edit_text.is_empty() {
-                self.highlight_text(
-                    new_edit_range,
-                    &mut text,
-                    &mut highlights,
-                    Some(HighlightStyle {
-                        background_color: Some(status_colors.created_background),
-                        ..Default::default()
-                    }),
-                    cx,
-                );
-
-                offset += edit_text.len();
+                let mut edited_snapshot_insertion_range =
+                    edit_anchor_range.to_offset(&self.applied_edits_snapshot);
+                // Because the edit ranges are built from `anchor_after..anchor_before`, for an
+                // empty range with an insertion, their positions get swapped in the edited
+                // snapshot, so unswap them.
+                if edited_snapshot_insertion_range.start > edited_snapshot_insertion_range.end {
+                    edited_snapshot_insertion_range =
+                        edited_snapshot_insertion_range.end..edited_snapshot_insertion_range.start;
+                }
+                if !edited_snapshot_insertion_range.is_empty() {
+                    Self::add_highlighted_text_from(
+                        edited_snapshot_insertion_range,
+                        &self.applied_edits_snapshot,
+                        &self.syntax_snapshot,
+                        created_highlight,
+                        &mut text,
+                        &mut highlights,
+                        cx,
+                    );
+                }
             }
-
-            delta += edit_text.len() as isize - edit_range.len() as isize;
         }
 
-        self.highlight_text(
-            offset..(range.end as isize + delta) as usize,
-            &mut text,
-            &mut highlights,
-            None,
-            cx,
-        );
+        let unchanged_range = offset..visible_range.end;
+        if !unchanged_range.is_empty() {
+            Self::add_highlighted_text_from(
+                unchanged_range,
+                &current_snapshot.text,
+                &current_snapshot.syntax,
+                None,
+                &mut text,
+                &mut highlights,
+                cx,
+            );
+        }
 
         HighlightedEdits {
             text: text.into(),
@@ -677,15 +699,16 @@ impl EditPreview {
         }
     }
 
-    fn highlight_text(
-        &self,
+    fn add_highlighted_text_from<'a>(
         range: Range<usize>,
+        buffer_snapshot: &'a text::BufferSnapshot,
+        syntax_snapshot: &'a SyntaxSnapshot,
+        override_style: Option<HighlightStyle>,
         text: &mut String,
         highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
-        override_style: Option<HighlightStyle>,
         cx: &App,
     ) {
-        for chunk in self.highlighted_chunks(range) {
+        for chunk in Self::highlighted_chunks(range, syntax_snapshot, buffer_snapshot) {
             let start = text.len();
             text.push_str(chunk.text);
             let end = text.len();
@@ -704,12 +727,14 @@ impl EditPreview {
         }
     }
 
-    fn highlighted_chunks(&self, range: Range<usize>) -> BufferChunks {
-        let captures =
-            self.syntax_snapshot
-                .captures(range.clone(), &self.applied_edits_snapshot, |grammar| {
-                    grammar.highlights_query.as_ref()
-                });
+    fn highlighted_chunks<'a>(
+        range: Range<usize>,
+        syntax_snapshot: &'a SyntaxSnapshot,
+        buffer_snapshot: &'a text::BufferSnapshot,
+    ) -> BufferChunks<'a> {
+        let captures = syntax_snapshot.captures(range.clone(), &buffer_snapshot, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
 
         let highlight_maps = captures
             .grammars()
@@ -718,7 +743,7 @@ impl EditPreview {
             .collect();
 
         BufferChunks::new(
-            self.applied_edits_snapshot.as_rope(),
+            buffer_snapshot.as_rope(),
             range,
             Some((captures, highlight_maps)),
             false,
@@ -726,8 +751,9 @@ impl EditPreview {
         )
     }
 
+    /// Offset range in `current_snapshot` that contains all edits, expanded to start at the
+    /// beginning of the first line and end at the end of the last line.
     fn compute_visible_range(
-        &self,
         edits: &[(Range<Anchor>, String)],
         snapshot: &BufferSnapshot,
     ) -> Option<Range<usize>> {
