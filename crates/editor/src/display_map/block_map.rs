@@ -225,8 +225,11 @@ pub enum BlockStyle {
     Sticky,
 }
 
+#[derive(gpui::AppContext, gpui::VisualContext)]
 pub struct BlockContext<'a, 'b> {
+    #[window]
     pub window: &'a mut Window,
+    #[app]
     pub app: &'b mut App,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
