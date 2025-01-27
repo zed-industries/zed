@@ -1,26 +1,35 @@
 name: Crash Report
-description: |
-  Use this template for crash reports.
-labels: ["admin read", "triage", "bug", "panic / crash"]
+description: Zed is Crashing or Hanging
+type: "Crash"
 body:
-  - type: checkboxes
-    attributes:
-      label: Check for existing issues
-      description: Check the backlog of issues to reduce the chances of creating duplicates; if an issue already exists, place a `+1` (👍) on it.
-      options:
-        - label: Completed
-          required: true
   - type: textarea
     attributes:
       label: Describe the bug / provide steps to reproduce it
-      description: A clear and concise description of what the bug is.
+      description: A one line summary, and detailed reproduction steps
+      value: |
+        Summary:
+
+        <!-- Include all steps necessary to reproduce from a clean Zed installation. Be verbose -->
+        Steps to trigger the problem:
+        1.
+        2.
+        3.
+
+        Actual Behavior:
+          *
+
+        Expected Behavior:
+          *
+
     validations:
       required: true
   - type: textarea
     id: environment
     attributes:
-      label: Environment
-      description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below. If you are unable to run the command, please include your Zed version and release channel, operating system and version, RAM amount, and architecture.
+      label: Zed Version and System Specs
+      description: 'Open Zed, and in the command palette select "zed: Copy System Specs Into Clipboard"'
+      placeholder: |
+        Output of "zed: Copy System Specs Into Clipboard"
     validations:
       required: true
   - type: textarea
