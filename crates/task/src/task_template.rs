@@ -64,7 +64,7 @@ pub struct TaskTemplate {
     pub tags: Vec<String>,
     /// A list of other tasks to be run before executing this task, referenced by label
     #[serde(default)]
-    pub pre: Vec<String>,
+    pub prerequisite: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
     pub shell: Shell,
@@ -191,7 +191,7 @@ impl TaskTemplate {
         });
 
         let pre_labels = self
-            .pre
+            .prerequisite
             .iter()
             .filter_map(|pre_label| {
                 substitute_all_template_variables_in_str(
