@@ -91,7 +91,7 @@ async fn test_host_disconnect(
         )
     });
     let cx_b = &mut VisualTestContext::from_window(*workspace_b, cx_b);
-    let workspace_b_view = workspace_b.root_model(cx_b).unwrap();
+    let workspace_b_view = workspace_b.root(cx_b).unwrap();
 
     let editor_b = workspace_b
         .update(cx_b, |workspace, window, cx| {

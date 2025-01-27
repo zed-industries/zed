@@ -39,7 +39,7 @@ impl Render for IndentGuidesStory {
             .child(
                 v_flex().size_full().child(
                     uniform_list(
-                        cx.model().clone(),
+                        cx.entity().clone(),
                         "some-list",
                         self.depths.len(),
                         |this, range, cx| {
@@ -60,7 +60,7 @@ impl Render for IndentGuidesStory {
                     )
                     .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
                     .with_decoration(ui::indent_guides(
-                        cx.model().clone(),
+                        cx.entity().clone(),
                         px(16.),
                         ui::IndentGuideColors {
                             default: Color::Info.color(cx),

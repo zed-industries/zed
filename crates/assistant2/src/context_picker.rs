@@ -78,7 +78,7 @@ impl ContextPicker {
     }
 
     fn build_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
-        let context_picker = cx.model().clone();
+        let context_picker = cx.entity().clone();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let recent = self.recent_entries(cx);
@@ -144,7 +144,7 @@ impl ContextPicker {
     }
 
     fn select_kind(&mut self, kind: ContextKind, window: &mut Window, cx: &mut Context<Self>) {
-        let context_picker = cx.model().downgrade();
+        let context_picker = cx.entity().downgrade();
 
         match kind {
             ContextKind::File => {

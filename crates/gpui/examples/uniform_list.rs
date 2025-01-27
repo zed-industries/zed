@@ -9,7 +9,7 @@ impl Render for UniformListExample {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().size_full().bg(rgb(0xffffff)).child(
             uniform_list(
-                cx.model().clone(),
+                cx.entity().clone(),
                 "entries",
                 50,
                 |_this, range, _window, _cx| {

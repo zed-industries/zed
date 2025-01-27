@@ -35,7 +35,7 @@ impl BranchList {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let this = cx.model().clone();
+        let this = cx.entity().clone();
         cx.spawn_in(window, |_, mut cx| async move {
             // Modal branch picker has a longer trailoff than a popover one.
             let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;

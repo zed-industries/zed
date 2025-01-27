@@ -21,7 +21,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
                     let project = workspace.project().clone();
-                    let handle = cx.model().downgrade();
+                    let handle = cx.entity().downgrade();
                     workspace.toggle_modal(window, cx, move |window, cx| {
                         let delegate = ProjectSymbolsDelegate::new(handle, project);
                         Picker::uniform_list(delegate, window, cx).width(rems(34.))

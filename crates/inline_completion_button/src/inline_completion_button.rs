@@ -121,7 +121,7 @@ impl Render for InlineCompletionButton {
                             }),
                     );
                 }
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
 
                 div().child(
                     PopoverMenu::new("copilot")
@@ -173,7 +173,7 @@ impl Render for InlineCompletionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
                 let fs = self.fs.clone();
 
                 return div().child(
@@ -268,7 +268,7 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict).when(
                     !self.popover_menu_handle.is_deployed(),
                     |button| {
@@ -399,7 +399,7 @@ impl InlineCompletionButton {
                 None,
                 move |window, cx| {
                     if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
-                        if let Ok(workspace) = workspace.root_model(cx) {
+                        if let Ok(workspace) = workspace.root(cx) {
                             let workspace = workspace.downgrade();
                             window
                                 .spawn(cx, |cx| {

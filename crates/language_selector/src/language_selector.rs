@@ -67,7 +67,7 @@ impl LanguageSelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let delegate = LanguageSelectorDelegate::new(
-            cx.model().downgrade(),
+            cx.entity().downgrade(),
             buffer,
             project,
             language_registry,

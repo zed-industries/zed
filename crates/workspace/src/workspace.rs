@@ -941,7 +941,7 @@ impl Workspace {
         })
         .detach();
 
-        let weak_handle = cx.model().downgrade();
+        let weak_handle = cx.entity().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = cx.new(|cx| {
@@ -1216,7 +1216,7 @@ impl Workspace {
             }
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |_, window, cx| {
-                    window.replace_root_model(cx, |window, cx| {
+                    window.replace_root(cx, |window, cx| {
                         Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
@@ -4962,7 +4962,7 @@ impl Workspace {
     }
 
     pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<Workspace>> {
-        window.root_model().flatten()
+        window.root().flatten()
     }
 
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
@@ -5265,7 +5265,7 @@ impl Render for Workspace {
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .child({
-                                    let this = cx.model().clone();
+                                    let this = cx.entity().clone();
                                     canvas(
                                         move |bounds, window, cx| {
                                             this.update(cx, |this, cx| {
@@ -5477,8 +5477,8 @@ impl WorkspaceStore {
         Self {
             workspaces: Default::default(),
             _subscriptions: vec![
-                client.add_request_handler(cx.weak_model(), Self::handle_follow),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_followers),
+                client.add_request_handler(cx.weak_entity(), Self::handle_follow),
+                client.add_message_handler(cx.weak_entity(), Self::handle_update_followers),
             ],
             client,
         }
@@ -6146,7 +6146,7 @@ pub fn open_ssh_project(
         }
 
         cx.update_window(window.into(), |_, window, cx| {
-            window.replace_root_model(cx, |window, cx| {
+            window.replace_root(cx, |window, cx| {
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
 

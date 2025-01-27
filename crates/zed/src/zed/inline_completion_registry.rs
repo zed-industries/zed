@@ -29,7 +29,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 return;
             };
 
-            let editor_handle = cx.model().downgrade();
+            let editor_handle = cx.entity().downgrade();
             cx.on_release({
                 let editor_handle = editor_handle.clone();
                 let editors = editors.clone();
@@ -115,9 +115,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                                 return;
                             };
 
-                            let Some(workspace) = window
-                                .downcast::<Workspace>()
-                                .and_then(|w| w.root_model(cx).ok())
+                            let Some(workspace) =
+                                window.downcast::<Workspace>().and_then(|w| w.root(cx).ok())
                             else {
                                 return;
                             };

@@ -58,7 +58,7 @@ impl ScopeSelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let delegate =
-            ScopeSelectorDelegate::new(workspace, cx.model().downgrade(), language_registry);
+            ScopeSelectorDelegate::new(workspace, cx.entity().downgrade(), language_registry);
 
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 

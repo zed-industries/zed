@@ -204,7 +204,7 @@ impl ChannelView {
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
-        let this = cx.model().downgrade();
+        let this = cx.entity().downgrade();
         let editor = cx.new(|cx| {
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(

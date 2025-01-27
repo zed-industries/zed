@@ -603,7 +603,7 @@ impl App {
                     cx.window_update_stack.push(id);
                     let root_view = build_root_view(&mut window, cx);
                     cx.window_update_stack.pop();
-                    window.root_model.replace(root_view.into());
+                    window.root.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
@@ -999,7 +999,7 @@ impl App {
                 .take()
                 .ok_or_else(|| anyhow!("window not found"))?;
 
-            let root_view = window.root_model.clone().unwrap();
+            let root_view = window.root.clone().unwrap();
 
             cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
@@ -1666,7 +1666,7 @@ impl AppContext for App {
             .as_ref()
             .expect("attempted to read a window that is already on the stack");
 
-        let root_view = window.root_model.clone().unwrap();
+        let root_view = window.root.clone().unwrap();
         let view = root_view
             .downcast::<T>()
             .map_err(|_| anyhow!("root view's type has changed"))?;

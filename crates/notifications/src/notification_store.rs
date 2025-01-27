@@ -103,9 +103,9 @@ impl NotificationStore {
             channel_messages: Default::default(),
             _watch_connection_status: watch_connection_status,
             _subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_new_notification),
-                client.add_message_handler(cx.weak_model(), Self::handle_delete_notification),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_notification),
+                client.add_message_handler(cx.weak_entity(), Self::handle_new_notification),
+                client.add_message_handler(cx.weak_entity(), Self::handle_delete_notification),
+                client.add_message_handler(cx.weak_entity(), Self::handle_update_notification),
             ],
             user_store,
             client,

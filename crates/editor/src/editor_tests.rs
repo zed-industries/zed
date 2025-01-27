@@ -62,7 +62,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor1 = cx.add_window({
         let events = events.clone();
         |window, cx| {
-            let model = cx.model().clone();
+            let model = cx.entity().clone();
             cx.subscribe_in(
                 &model,
                 window,
@@ -83,7 +83,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |window, cx| {
             cx.subscribe_in(
-                &cx.model().clone(),
+                &cx.entity().clone(),
                 window,
                 move |_, _, event: &EditorEvent, _, _| match event {
                     EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
@@ -689,7 +689,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
         cx.new(|cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), window, cx);
-            let handle = cx.model();
+            let handle = cx.entity();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
             fn pop_history(editor: &mut Editor, cx: &mut App) -> Option<NavigationEntry> {
@@ -10180,8 +10180,8 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let is_still_following = Rc::new(RefCell::new(true));
     let follower_edit_event_count = Rc::new(RefCell::new(0));
     let pending_update = Rc::new(RefCell::new(None));
-    let leader_model = leader.root_model(cx).unwrap();
-    let follower_model = follower.root_model(cx).unwrap();
+    let leader_model = leader.root(cx).unwrap();
+    let follower_model = follower.root(cx).unwrap();
     _ = follower.update(cx, {
         let update = pending_update.clone();
         let is_still_following = is_still_following.clone();
@@ -10368,7 +10368,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following the editor when it has no excerpts.
     let mut state_message =
         leader.update_in(cx, |leader, window, cx| leader.to_state_proto(window, cx));
-    let workspace_model = workspace.root_model(cx).unwrap();
+    let workspace_model = workspace.root(cx).unwrap();
     let follower_1 = cx
         .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
@@ -10470,7 +10470,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following separately after it already has excerpts.
     let mut state_message =
         leader.update_in(cx, |leader, window, cx| leader.to_state_proto(window, cx));
-    let workspace_model = workspace.root_model(cx).unwrap();
+    let workspace_model = workspace.root(cx).unwrap();
     let follower_2 = cx
         .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
@@ -14497,7 +14497,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
             let _div = snapshot.render_crease_toggle(
                 MultiBufferRow(1),
                 false,
-                cx.model().clone(),
+                cx.entity().clone(),
                 window,
                 cx,
             );
@@ -14718,7 +14718,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
             "Initially, only one, test, editor should be open in the workspace"
         );
         assert_eq!(
-            test_editor_cx.model(),
+            test_editor_cx.entity(),
             editors.last().expect("Asserted len is 1").clone()
         );
     });
@@ -14754,7 +14754,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
         );
         let references_fallback_text = editors
             .into_iter()
-            .find(|new_editor| *new_editor != test_editor_cx.model())
+            .find(|new_editor| *new_editor != test_editor_cx.entity())
             .expect("Should have one non-test editor now")
             .read(test_editor_cx)
             .text(test_editor_cx);

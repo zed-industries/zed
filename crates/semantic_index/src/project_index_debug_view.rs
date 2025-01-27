@@ -115,7 +115,7 @@ impl ProjectIndexDebugView {
                 .collect::<Vec<_>>();
 
             this.update(&mut cx, |this, cx| {
-                let view = cx.model().downgrade();
+                let view = cx.entity().downgrade();
                 this.selected_path = Some(PathState {
                     path: file_path,
                     list_state: ListState::new(
@@ -224,7 +224,7 @@ impl Render for ProjectIndexDebugView {
                 .into_any_element()
         } else {
             let mut list = uniform_list(
-                cx.model().clone(),
+                cx.entity().clone(),
                 "ProjectIndexDebugView",
                 self.rows.len(),
                 move |this, range, _, cx| {

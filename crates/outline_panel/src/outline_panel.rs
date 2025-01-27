@@ -709,7 +709,7 @@ impl OutlinePanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
-        let workspace_handle = cx.model().downgrade();
+        let workspace_handle = cx.entity().downgrade();
         let outline_panel = cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
@@ -796,9 +796,9 @@ impl OutlinePanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_model(&cx.model()),
+                    .parent_model(&cx.entity()),
                 horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_model(&cx.model()),
+                    .parent_model(&cx.entity()),
                 max_width_item_index: None,
                 scroll_handle,
                 focus_handle,
@@ -4467,7 +4467,7 @@ impl OutlinePanel {
                 let multi_buffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
-                uniform_list(cx.model().clone(), "entries", items_len, {
+                uniform_list(cx.entity().clone(), "entries", items_len, {
                     move |outline_panel, range, window, cx| {
                         let entries = outline_panel.cached_entries.get(range);
                         entries
@@ -4534,7 +4534,7 @@ impl OutlinePanel {
                 .when(show_indent_guides, |list| {
                     list.with_decoration(
                         ui::indent_guides(
-                            cx.model().clone(),
+                            cx.entity().clone(),
                             px(indent_size),
                             IndentGuideColors::panel(cx),
                             |outline_panel, range, _, _| {
@@ -4547,7 +4547,7 @@ impl OutlinePanel {
                             },
                         )
                         .with_render_fn(
-                            cx.model().clone(),
+                            cx.entity().clone(),
                             move |outline_panel, params, _, _| {
                                 const LEFT_OFFSET: f32 = 14.;
 

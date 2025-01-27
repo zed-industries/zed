@@ -42,7 +42,7 @@ enum GoToLineRowHighlights {}
 
 impl GoToLine {
     fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
                 let Some(editor_handle) = handle.upgrade() else {
@@ -94,7 +94,7 @@ impl GoToLine {
 
         let line_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            let editor_handle = cx.model().downgrade();
+            let editor_handle = cx.entity().downgrade();
             editor
                 .register_action::<Tab>({
                     move |_, window, cx| {

@@ -242,7 +242,7 @@ impl TerminalInlineAssistant {
         let (latest_output, working_directory) = assist
             .terminal
             .update(cx, |terminal, cx| {
-                let terminal = terminal.model().read(cx);
+                let terminal = terminal.entity().read(cx);
                 let latest_output = terminal.last_n_non_empty_lines(DEFAULT_CONTEXT_LINES);
                 let working_directory = terminal
                     .working_directory()

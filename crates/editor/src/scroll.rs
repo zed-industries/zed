@@ -317,7 +317,7 @@ impl ScrollManager {
         self.show_scrollbar(window, cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {
-            let item_id = cx.model().entity_id().as_u64() as ItemId;
+            let item_id = cx.entity().entity_id().as_u64() as ItemId;
 
             cx.foreground_executor()
                 .spawn(async move {

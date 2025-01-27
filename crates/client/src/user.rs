@@ -146,10 +146,10 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
-            client.add_message_handler(cx.weak_model(), Self::handle_update_plan),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_contacts),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_invite_info),
-            client.add_message_handler(cx.weak_model(), Self::handle_show_contacts),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_plan),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
+            client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
         Self {
             users: Default::default(),
@@ -262,7 +262,7 @@ impl UserStore {
                 Ok(())
             }),
             pending_contact_requests: Default::default(),
-            weak_self: cx.weak_model(),
+            weak_self: cx.weak_entity(),
         }
     }
 

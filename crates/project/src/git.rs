@@ -122,7 +122,7 @@ impl GitState {
 
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
-        let this = cx.weak_model();
+        let this = cx.weak_entity();
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {

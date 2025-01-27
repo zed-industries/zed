@@ -1159,7 +1159,7 @@ impl Editor {
     ) -> Self {
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let editor = cx.model().downgrade();
+        let editor = cx.entity().downgrade();
         let fold_placeholder = FoldPlaceholder {
             constrain_width: true,
             render: Arc::new(move |fold_id, fold_range, _, cx| {
@@ -15339,7 +15339,7 @@ impl Render for Editor {
         };
 
         EditorElement::new(
-            &cx.model(),
+            &cx.entity(),
             EditorStyle {
                 background,
                 local_player: cx.theme().players().local(),
