@@ -8656,6 +8656,14 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.worktree.id()
     }
 
+    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool {
+        self.worktree.entry_for_path(path).map_or(false, |entry| {
+            is_dir.map_or(true, |is_required_to_be_dir| {
+                is_required_to_be_dir == entry.is_dir()
+            })
+        })
+    }
+
     fn worktree_root_path(&self) -> &Path {
         self.worktree.abs_path().as_ref()
     }
