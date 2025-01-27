@@ -126,16 +126,15 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut App) {
     window.defer(cx, |window, cx| {
         struct NotifType();
         let notification_id = NotificationId::unique::<NotifType>();
-        let Some(workspace) = window.window_handle().downcast::<Workspace>() else {
+
+        let Some(workspace) = window.root::<Workspace>().flatten() else {
             return;
         };
-        workspace
-            .update(cx, |workspace, _, cx| {
-                workspace.show_toast(
-                    Toast::new(notification_id.clone(), "No more matches").autohide(),
-                    cx,
-                );
-            })
-            .ok();
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                Toast::new(notification_id.clone(), "No more matches").autohide(),
+                cx,
+            );
+        })
     });
 }

@@ -91,17 +91,16 @@ impl Render for InlineCompletionButton {
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                if let Some(workspace) =
-                                    window.window_handle().downcast::<Workspace>()
-                                {
-                                    workspace
-                                        .update(cx, |workspace, _, cx| {
-                                            workspace.show_toast(
-                                                Toast::new(
-                                                    NotificationId::unique::<CopilotErrorToast>(),
-                                                    format!("Copilot can't be started: {}", e),
-                                                )
-                                                .on_click("Reinstall Copilot", |_, cx| {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_toast(
+                                            Toast::new(
+                                                NotificationId::unique::<CopilotErrorToast>(),
+                                                format!("Copilot can't be started: {}", e),
+                                            )
+                                            .on_click(
+                                                "Reinstall Copilot",
+                                                |_, cx| {
                                                     if let Some(copilot) = Copilot::global(cx) {
                                                         copilot
                                                             .update(cx, |copilot, cx| {
@@ -109,11 +108,11 @@ impl Render for InlineCompletionButton {
                                                             })
                                                             .detach();
                                                     }
-                                                }),
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
+                                                },
+                                            ),
+                                            cx,
+                                        );
+                                    });
                                 }
                             }))
                             .tooltip(|window, cx| {
@@ -398,19 +397,17 @@ impl InlineCompletionButton {
                 ),
                 None,
                 move |window, cx| {
-                    if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
-                        if let Ok(workspace) = workspace.root(cx) {
-                            let workspace = workspace.downgrade();
-                            window
-                                .spawn(cx, |cx| {
-                                    configure_disabled_globs(
-                                        workspace,
-                                        path_enabled.then_some(path.clone()),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(workspace) = window.root().flatten() {
+                        let workspace = workspace.downgrade();
+                        window
+                            .spawn(cx, |cx| {
+                                configure_disabled_globs(
+                                    workspace,
+                                    path_enabled.then_some(path.clone()),
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
                     }
                 },
             );

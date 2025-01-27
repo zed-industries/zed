@@ -323,46 +323,32 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn on_release_in(
         &mut self,
         window: &Window,
-        on_release: impl FnOnce(&mut T, AnyWindowHandle, &mut App) + 'static,
+        on_release: impl FnOnce(&mut T, &mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let window_handle = window.handle;
-        let (subscription, activate) = self.release_listeners.insert(
-            self.entity_id(),
-            Box::new(move |this, cx| {
-                let this = this.downcast_mut().expect("invalid entity type");
-                on_release(this, window_handle, cx)
-            }),
-        );
-        activate();
-        subscription
+        let entity = self.entity();
+        self.app.observe_release_in(&entity, window, on_release)
     }
 
     /// Register a callback to be invoked when the given Model or View is released.
-    pub fn observe_release_in<V2>(
+    pub fn observe_release_in<T2>(
         &self,
-        observed: &Entity<V2>,
+        observed: &Entity<T2>,
         window: &Window,
-        mut on_release: impl FnMut(&mut T, &mut V2, &mut Window, &mut Context<'_, T>) + 'static,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut Window, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
-        V2: 'static,
+        T2: 'static,
     {
         let observer = self.weak_entity();
-        let window_handle = window.handle;
-        let (subscription, activate) = self.release_listeners.insert(
-            observed.entity_id(),
-            Box::new(move |observed, cx| {
-                let observed = observed
-                    .downcast_mut()
-                    .expect("invalid observed entity type");
-                let _ = window_handle.update(cx, |_, window, cx| {
-                    observer.update(cx, |this, cx| on_release(this, observed, window, cx))
-                });
-            }),
-        );
-        activate();
-        subscription
+        self.app
+            .observe_release_in(observed, window, move |observed, window, cx| {
+                observer
+                    .update(cx, |observer, cx| {
+                        on_release(observer, observed, window, cx)
+                    })
+                    .ok();
+            })
     }
 
     /// Register a callback to be invoked when the window is resized.
