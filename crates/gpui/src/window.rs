@@ -677,6 +677,9 @@ pub(crate) struct ElementStateBox {
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels> {
     const DEFAULT_WINDOW_OFFSET: Point<Pixels> = point(px(0.), px(35.));
 
+    // TODO, BUG: if you open a window with the currently active window
+    // on the stack, this will erroneously select the 'unwrap_or_else'
+    // code path
     cx.active_window()
         .and_then(|w| w.update(cx, |_, window, _| window.bounds()).ok())
         .map(|mut bounds| {
