@@ -35,6 +35,7 @@ collections.workspace = true
 command_palette_hooks.workspace = true
 context_server.workspace = true
 db.workspace = true
+deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
