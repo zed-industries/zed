@@ -5607,36 +5607,6 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub fn activate_workspace_for_project(
-    cx: &mut App,
-    predicate: impl Fn(&Project, &App) -> bool + Send + 'static,
-) -> Option<WindowHandle<Workspace>> {
-    for window in cx.windows() {
-        let Some(workspace) = window.downcast::<Workspace>() else {
-            continue;
-        };
-
-        let predicate = workspace
-            .update(cx, |workspace, window, cx| {
-                let project = workspace.project.read(cx);
-                if predicate(project, cx) {
-                    window.activate_window();
-                    true
-                } else {
-                    false
-                }
-            })
-            .log_err()
-            .unwrap_or(false);
-
-        if predicate {
-            return Some(workspace);
-        }
-    }
-
-    None
-}
-
 pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
