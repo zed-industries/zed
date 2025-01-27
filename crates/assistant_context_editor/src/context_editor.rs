@@ -198,7 +198,7 @@ pub struct ContextEditor {
     dragged_file_worktrees: Vec<Entity<Worktree>>,
 }
 
-pub const DEFAULT_TAB_TITLE: &str = "New Chat";
+pub const DEFAULT_TAB_TITLE: &str = "New Prompt Editor";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
@@ -2437,13 +2437,7 @@ impl ContextEditor {
                 button.tooltip(move |_, _| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new(
-                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
-                    "Chat"
-                } else {
-                    "Send"
-                },
-            ))
+            .child(Label::new("Send"))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, window)
                     .map(|binding| binding.into_any_element()),
