@@ -679,8 +679,8 @@ impl AssistantPanel {
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip(Tooltip::text("Configure Assistant"))
-                            .on_click(move |_event, _window, cx| {
-                                cx.dispatch_action(&OpenConfiguration);
+                            .on_click(move |_event, window, cx| {
+                                window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
                             }),
                     ),
             )
