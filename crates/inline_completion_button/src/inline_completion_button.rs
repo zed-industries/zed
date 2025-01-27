@@ -398,19 +398,17 @@ impl InlineCompletionButton {
                 ),
                 None,
                 move |window, cx| {
-                    if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
-                        if let Ok(workspace) = workspace.root(cx) {
-                            let workspace = workspace.downgrade();
-                            window
-                                .spawn(cx, |cx| {
-                                    configure_disabled_globs(
-                                        workspace,
-                                        path_enabled.then_some(path.clone()),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(workspace) = window.root().flatten() {
+                        let workspace = workspace.downgrade();
+                        window
+                            .spawn(cx, |cx| {
+                                configure_disabled_globs(
+                                    workspace,
+                                    path_enabled.then_some(path.clone()),
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
                     }
                 },
             );
