@@ -1563,7 +1563,7 @@ impl LanguageScope {
             self.config_override().map(|o| &o.line_comments),
             Some(&self.language.config.line_comments),
         )
-        .map_or(&[] as &[_], |e| e.as_slice())
+        .map_or([].as_slice(), |e| e.as_slice())
     }
 
     pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
