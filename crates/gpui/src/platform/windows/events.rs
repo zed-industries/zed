@@ -1246,7 +1246,7 @@ fn handle_system_theme_changed(
         .take()?;
     callback();
     state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-    set_dwm_window_appearance(handle);
+    configure_dwm_dark_mode(handle);
     Some(0)
 }
 

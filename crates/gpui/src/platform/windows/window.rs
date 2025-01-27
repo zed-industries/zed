@@ -443,7 +443,7 @@ impl WindowsWindow {
         let state_ptr = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
-        set_dwm_window_appearance(hwnd);
+        configure_dwm_dark_mode(hwnd);
         state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
