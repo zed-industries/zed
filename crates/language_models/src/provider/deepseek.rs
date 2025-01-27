@@ -3,8 +3,7 @@ use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
-    AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
-    View, WhiteSpace,
+    AnyView, AppContext, AsyncApp, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -42,7 +41,7 @@ pub struct AvailableModel {
 
 pub struct DeepSeekLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
-    state: gpui::Model<State>,
+    state: Entity<State>,
 }
 
 pub struct State {
@@ -56,7 +55,7 @@ impl State {
         self.api_key.is_some()
     }
 
-    fn reset_api_key(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).deepseek;
         let delete_credentials = cx.delete_credentials(&settings.api_url);
         cx.spawn(|this, mut cx| async move {
@@ -69,7 +68,7 @@ impl State {
         })
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
         let settings = &AllLanguageModelSettings::get_global(cx).deepseek;
         let write_credentials =
             cx.write_credentials(&settings.api_url, "Bearer", api_key.as_bytes());
@@ -83,7 +82,7 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
@@ -114,8 +113,8 @@ impl State {
 }
 
 impl DeepSeekLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| State {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
             _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
@@ -130,7 +129,7 @@ impl DeepSeekLanguageModelProvider {
 impl LanguageModelProviderState for DeepSeekLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -148,7 +147,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         IconName::AiDeepSeek
     }
 
-    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
         models.insert("deepseek-chat", deepseek::Model::Chat);
@@ -184,20 +183,20 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
+    fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
-    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state.update(cx, |state, cx| state.reset_api_key(cx))
     }
 }
@@ -205,7 +204,7 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
 pub struct DeepSeekLanguageModel {
     id: LanguageModelId,
     model: deepseek::Model,
-    state: gpui::Model<State>,
+    state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -214,10 +213,10 @@ impl DeepSeekLanguageModel {
     fn stream_completion(
         &self,
         request: deepseek::Request,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<deepseek::StreamResponse>>>> {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).deepseek;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
@@ -268,7 +267,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         cx.background_executor()
             .spawn(async move {
@@ -295,7 +294,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = request.into_deepseek(self.model.id().to_string(), self.max_output_tokens());
         let stream = self.stream_completion(request, cx);
@@ -329,7 +328,7 @@ impl LanguageModel for DeepSeekLanguageModel {
         name: String,
         description: String,
         schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<String>>>> {
         let mut deepseek_request =
             request.into_deepseek(self.model.id().to_string(), self.max_output_tokens());
@@ -377,15 +376,15 @@ impl LanguageModel for DeepSeekLanguageModel {
 }
 
 struct ConfigurationView {
-    api_key_editor: View<Editor>,
-    state: gpui::Model<State>,
+    api_key_editor: Entity<Editor>,
+    state: Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let api_key_editor = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let api_key_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("sk-00000000000000000000000000000000", cx);
             editor
         });
@@ -420,7 +419,7 @@ impl ConfigurationView {
         }
     }
 
-    fn save_api_key(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn save_api_key(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
@@ -437,9 +436,9 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn reset_api_key(&mut self, cx: &mut ViewContext<Self>) {
+    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
@@ -452,7 +451,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,
@@ -480,13 +479,13 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const DEEPSEEK_CONSOLE_URL: &str = "https://platform.deepseek.com/api_keys";
         const INSTRUCTIONS: [&str; 3] = [
             "To use DeepSeek in Zed, you need an API key:",
@@ -510,7 +509,7 @@ impl Render for ConfigurationView {
                             .icon(IconName::ExternalLink)
                             .icon_size(IconSize::XSmall)
                             .icon_color(Color::Muted)
-                            .on_click(move |_, cx| cx.open_url(DEEPSEEK_CONSOLE_URL)),
+                            .on_click(move |_, _window, cx| cx.open_url(DEEPSEEK_CONSOLE_URL)),
                     ),
                 )
                 .child(Label::new(INSTRUCTIONS[2]))
@@ -550,7 +549,9 @@ impl Render for ConfigurationView {
                     Button::new("reset-key", "Reset")
                         .icon(IconName::Trash)
                         .disabled(env_var_set)
-                        .on_click(cx.listener(|this, _, cx| this.reset_api_key(cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)),
+                        ),
                 )
                 .into_any()
         }
