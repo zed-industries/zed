@@ -67,7 +67,9 @@ impl ThreadStore {
                 this
             })?;
 
+            log::info!("[assistant2-debug] reloading threads");
             this.update(&mut cx, |this, cx| this.reload(cx))?.await?;
+            log::info!("[assistant2-debug] finished reloading threads");
 
             Ok(this)
         })

@@ -440,12 +440,14 @@ fn initialize_panels(
         };
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+            log::info!("[assistant2-debug] initializing Assistant2");
             let assistant2_panel = assistant2::AssistantPanel::load(
                 workspace_handle.clone(),
                 prompt_builder,
                 cx.clone(),
             )
             .await?;
+            log::info!("[assistant2-debug] finished initializing Assistant2");
 
             (None, Some(assistant2_panel))
         } else {
@@ -461,6 +463,7 @@ fn initialize_panels(
 
         workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
+                log::info!("[assistant2-debug] adding Assistant2 panel");
                 workspace.add_panel(assistant2_panel, window, cx);
             }
 
