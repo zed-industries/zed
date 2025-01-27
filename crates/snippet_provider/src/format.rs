@@ -1,13 +1,47 @@
 use collections::HashMap;
+use schemars::{
+    gen::SchemaSettings,
+    schema::{ObjectValidation, Schema, SchemaObject},
+    JsonSchema,
+};
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Deserialize)]
-pub(crate) struct VSSnippetsFile {
+pub struct VSSnippetsFile {
     #[serde(flatten)]
     pub(crate) snippets: HashMap<String, VSCodeSnippet>,
 }
 
-#[derive(Deserialize)]
+impl VSSnippetsFile {
+    pub fn generate_json_schema() -> Value {
+        let schema = SchemaSettings::draft07()
+            .with(|settings| settings.option_add_null_type = false)
+            .into_generator()
+            .into_root_schema_for::<Self>();
+
+        serde_json::to_value(schema).unwrap()
+    }
+}
+
+impl JsonSchema for VSSnippetsFile {
+    fn schema_name() -> String {
+        "VSSnippetsFile".into()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+        SchemaObject {
+            object: Some(Box::new(ObjectValidation {
+                additional_properties: Some(Box::new(gen.subschema_for::<VSCodeSnippet>())),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum ListOrDirect {
     Single(String),
@@ -36,9 +70,14 @@ impl std::fmt::Display for ListOrDirect {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct VSCodeSnippet {
+    /// The snippet prefix used to decide whether a completion menu should be shown.
     pub(crate) prefix: Option<ListOrDirect>,
+
+    /// The snippet content. Use `$1` and `${1:defaultText}` to define cursor positions and `$0` for final cursor position.
     pub(crate) body: ListOrDirect,
+
+    /// The snippet description displayed inside the completion menu.
     pub(crate) description: Option<ListOrDirect>,
 }

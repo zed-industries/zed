@@ -1,5 +1,5 @@
 mod extension_snippet;
-mod format;
+pub mod format;
 mod registry;
 
 use std::{
