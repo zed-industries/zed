@@ -191,8 +191,8 @@ pub fn themes_dir() -> &'static PathBuf {
 
 /// Returns the path to the snippets directory.
 pub fn snippets_dir() -> &'static PathBuf {
-    static THEMES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    THEMES_DIR.get_or_init(|| config_dir().join("snippets"))
+    static SNIPPETS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
 }
 
 /// Returns the path to the contexts directory.
