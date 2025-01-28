@@ -156,7 +156,7 @@ impl Render for BufferSearchBar {
         let hide_inline_icons = self.editor_needed_width
             > self.editor_scroll_handle.bounds().size.width - window.rem_size() * 6.;
 
-        let supported_options = self.supported_options();
+        let supported_options = self.supported_options(cx);
 
         if self.query_editor.update(cx, |query_editor, _cx| {
             query_editor.placeholder_text().is_none()
@@ -328,56 +328,58 @@ impl Render for BufferSearchBar {
                             }),
                         )
                     })
-                    .child(
-                        IconButton::new("select-all", ui::IconName::SelectAll)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(SelectAllMatches.boxed_clone(), cx)
-                            })
-                            .shape(IconButtonShape::Square)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Select All Matches",
-                                        &SelectAllMatches,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            }),
-                    )
-                    .child(
-                        h_flex()
-                            .pl_2()
-                            .ml_1()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .child(render_nav_button(
-                                ui::IconName::ChevronLeft,
-                                self.active_match_index.is_some(),
-                                "Select Previous Match",
-                                &SelectPrevMatch,
-                                focus_handle.clone(),
+                    .when(supported_options.next_prev, |el| {
+                        el.child(
+                            IconButton::new("select-all", ui::IconName::SelectAll)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(SelectAllMatches.boxed_clone(), cx)
+                                })
+                                .shape(IconButtonShape::Square)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Select All Matches",
+                                            &SelectAllMatches,
+                                            &focus_handle,
+                                            window,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .pl_2()
+                                .ml_1()
+                                .border_l_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(render_nav_button(
+                                    ui::IconName::ChevronLeft,
+                                    self.active_match_index.is_some(),
+                                    "Select Previous Match",
+                                    &SelectPrevMatch,
+                                    focus_handle.clone(),
+                                ))
+                                .child(render_nav_button(
+                                    ui::IconName::ChevronRight,
+                                    self.active_match_index.is_some(),
+                                    "Select Next Match",
+                                    &SelectNextMatch,
+                                    focus_handle.clone(),
+                                )),
+                        )
+                        .when(!narrow_mode, |this| {
+                            this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
+                                Label::new(match_text).size(LabelSize::Small).color(
+                                    if self.active_match_index.is_some() {
+                                        Color::Default
+                                    } else {
+                                        Color::Disabled
+                                    },
+                                ),
                             ))
-                            .child(render_nav_button(
-                                ui::IconName::ChevronRight,
-                                self.active_match_index.is_some(),
-                                "Select Next Match",
-                                &SelectNextMatch,
-                                focus_handle.clone(),
-                            )),
-                    )
-                    .when(!narrow_mode, |this| {
-                        this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
-                            Label::new(match_text).size(LabelSize::Small).color(
-                                if self.active_match_index.is_some() {
-                                    Color::Default
-                                } else {
-                                    Color::Disabled
-                                },
-                            ),
-                        ))
+                        })
                     }),
             );
 
@@ -447,23 +449,23 @@ impl Render for BufferSearchBar {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::select_next_match))
             .on_action(cx.listener(Self::select_prev_match))
-            .when(self.supported_options().replacement, |this| {
+            .when(self.supported_options(cx).replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
                     .when(in_replace, |this| {
                         this.on_action(cx.listener(Self::replace_next))
                             .on_action(cx.listener(Self::replace_all))
                     })
             })
-            .when(self.supported_options().case, |this| {
+            .when(self.supported_options(cx).case, |this| {
                 this.on_action(cx.listener(Self::toggle_case_sensitive))
             })
-            .when(self.supported_options().word, |this| {
+            .when(self.supported_options(cx).word, |this| {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
-            .when(self.supported_options().regex, |this| {
+            .when(self.supported_options(cx).regex, |this| {
                 this.on_action(cx.listener(Self::toggle_regex))
             })
-            .when(self.supported_options().selection, |this| {
+            .when(self.supported_options(cx).selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
             .child(
@@ -549,40 +551,56 @@ impl BufferSearchBar {
         }));
         registrar.register_handler(ForDeployed(
             |this, action: &ToggleCaseSensitive, window, cx| {
-                if this.supported_options().case {
+                if this.supported_options(cx).case {
                     this.toggle_case_sensitive(action, window, cx);
                 }
             },
         ));
         registrar.register_handler(ForDeployed(|this, action: &ToggleWholeWord, window, cx| {
-            if this.supported_options().word {
+            if this.supported_options(cx).word {
                 this.toggle_whole_word(action, window, cx);
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleRegex, window, cx| {
-            if this.supported_options().regex {
+            if this.supported_options(cx).regex {
                 this.toggle_regex(action, window, cx);
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, window, cx| {
-            if this.supported_options().selection {
+            if this.supported_options(cx).selection {
                 this.toggle_selection(action, window, cx);
+            } else {
+                cx.propagate();
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleReplace, window, cx| {
-            if this.supported_options().replacement {
+            if this.supported_options(cx).replacement {
                 this.toggle_replace(action, window, cx);
+            } else {
+                cx.propagate();
             }
         }));
         registrar.register_handler(WithResults(|this, action: &SelectNextMatch, window, cx| {
-            this.select_next_match(action, window, cx);
+            if this.supported_options(cx).next_prev {
+                this.select_next_match(action, window, cx);
+            } else {
+                cx.propagate();
+            }
         }));
         registrar.register_handler(WithResults(|this, action: &SelectPrevMatch, window, cx| {
-            this.select_prev_match(action, window, cx);
+            if this.supported_options(cx).next_prev {
+                this.select_prev_match(action, window, cx);
+            } else {
+                cx.propagate();
+            }
         }));
         registrar.register_handler(WithResults(
             |this, action: &SelectAllMatches, window, cx| {
-                this.select_all_matches(action, window, cx);
+                if this.supported_options(cx).next_prev {
+                    this.select_all_matches(action, window, cx);
+                } else {
+                    cx.propagate();
+                }
             },
         ));
         registrar.register_handler(ForDeployed(
@@ -735,10 +753,10 @@ impl BufferSearchBar {
         true
     }
 
-    fn supported_options(&self) -> workspace::searchable::SearchOptions {
+    fn supported_options(&self, cx: &mut Context<Self>) -> workspace::searchable::SearchOptions {
         self.active_searchable_item
-            .as_deref()
-            .map(SearchableItemHandle::supported_options)
+            .as_ref()
+            .map(|item| item.supported_options(cx))
             .unwrap_or_default()
     }
 
