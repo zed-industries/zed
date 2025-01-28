@@ -354,16 +354,17 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_diff_boundary_anchors(cx: &mut App) {
+fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let snapshot = buffer.read(cx).snapshot();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let change_set = cx.new(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
-        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
+        let _ = change_set.set_base_text(base_text.into(), snapshot.text, cx);
         change_set
     });
+    cx.run_until_parked();
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_change_set(change_set, cx)
@@ -375,9 +376,9 @@ fn test_diff_boundary_anchors(cx: &mut App) {
         multibuffer.set_all_diff_hunks_expanded(cx);
         (before, after)
     });
-    cx.background_executor().run_until_parked();
+    cx.run_until_parked();
 
-    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     let actual_text = snapshot.text();
     let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
     let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
@@ -410,9 +411,10 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let change_set = cx.new(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
         let snapshot = buffer.read(cx).snapshot();
-        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
+        let _ = change_set.set_base_text(base_text.into(), snapshot.text, cx);
         change_set
     });
+    cx.run_until_parked();
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
@@ -507,10 +509,11 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text, cx));
     let change_set = cx.new(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
-        let snapshot = buffer.read(cx).snapshot();
-        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
+        let snapshot = buffer.read(cx).text_snapshot();
+        let _ = change_set.set_base_text(base_text.into(), snapshot, cx);
         change_set
     });
+    cx.run_until_parked();
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
@@ -586,14 +589,6 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| multibuffer.undo(cx));
-    change_set.update(cx, |change_set, cx| {
-        change_set.recalculate_diff_sync(
-            base_text.into(),
-            buffer.read(cx).text_snapshot(),
-            true,
-            cx,
-        );
-    });
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
@@ -1861,7 +1856,7 @@ impl ReferenceMultibuffer {
                 .buffer_range
                 .end
                 .cmp(&excerpt.range.start, &buffer)
-                .is_le();
+                .is_lt();
             let hunk_follows_excerpt = hunk
                 .buffer_range
                 .start
@@ -2064,7 +2059,7 @@ impl ReferenceMultibuffer {
 }
 
 #[gpui::test(iterations = 100)]
-fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
+async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
     let operations = env::var("OPERATIONS")
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
@@ -2085,7 +2080,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                     buf.randomly_edit(&mut rng, edit_count, cx);
                     needs_diff_calculation = true;
                 });
-                reference.diffs_updated(cx);
+                cx.update(|cx| reference.diffs_updated(cx));
             }
             15..=19 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
@@ -2119,10 +2114,11 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                         break;
                     };
                     let id = excerpt.id;
-                    reference.remove_excerpt(id, cx);
+                    cx.update(|cx| reference.remove_excerpt(id, cx));
                     ids_to_remove.push(id);
                 }
-                let snapshot = multibuffer.read(cx).read(cx);
+                let snapshot =
+                    multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
                 ids_to_remove.sort_unstable_by(|a, b| a.cmp(b, &snapshot));
                 drop(snapshot);
                 multibuffer.update(cx, |multibuffer, cx| {
@@ -2130,7 +2126,8 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                 });
             }
             30..=39 if !reference.excerpts.is_empty() => {
-                let multibuffer = multibuffer.read(cx).read(cx);
+                let multibuffer =
+                    multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
                 let offset =
                     multibuffer.clip_offset(rng.gen_range(0..=multibuffer.len()), Bias::Left);
                 let bias = if rng.gen() { Bias::Left } else { Bias::Right };
@@ -2139,7 +2136,8 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                 anchors.sort_by(|a, b| a.cmp(b, &multibuffer));
             }
             40..=44 if !anchors.is_empty() => {
-                let multibuffer = multibuffer.read(cx).read(cx);
+                let multibuffer =
+                    multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
                 let prev_len = anchors.len();
                 anchors = multibuffer
                     .refresh_anchors(&anchors)
@@ -2189,12 +2187,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
-                                change_set.recalculate_diff_sync(
-                                    change_set.base_text.clone().unwrap().text(),
-                                    snapshot.text,
-                                    false,
-                                    cx,
-                                )
+                                change_set.recalculate_diff(snapshot.text, cx)
                             });
                     }
                     reference.diffs_updated(cx);
@@ -2208,15 +2201,17 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                         .collect::<String>();
 
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                    let snapshot = buffer.read(cx).snapshot();
-                    let change_set = cx.new(|cx| {
-                        let mut change_set = BufferChangeSet::new(&buffer, cx);
-                        change_set.recalculate_diff_sync(base_text, snapshot.text, true, cx);
-                        change_set
-                    });
+                    let change_set = cx.new(|cx| BufferChangeSet::new(&buffer, cx));
+                    change_set
+                        .update(cx, |change_set, cx| {
+                            let snapshot = buffer.read(cx).snapshot();
+                            change_set.set_base_text(base_text, snapshot.text, cx)
+                        })
+                        .await
+                        .unwrap();
 
-                    reference.add_change_set(change_set.clone(), cx);
                     multibuffer.update(cx, |multibuffer, cx| {
+                        reference.add_change_set(change_set.clone(), cx);
                         multibuffer.add_change_set(change_set, cx)
                     });
                     buffers.push(buffer);
@@ -2225,12 +2220,6 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                     buffers.choose(&mut rng).unwrap()
                 };
 
-                let buffer = buffer_handle.read(cx);
-                let end_row = rng.gen_range(0..=buffer.max_point().row);
-                let start_row = rng.gen_range(0..=end_row);
-                let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
-                let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
-                let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
                 let prev_excerpt_ix = rng.gen_range(0..=reference.excerpts.len());
                 let prev_excerpt_id = reference
                     .excerpts
@@ -2238,15 +2227,25 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                     .map_or(ExcerptId::max(), |e| e.id);
                 let excerpt_ix = (prev_excerpt_ix + 1).min(reference.excerpts.len());
 
-                log::info!(
-                    "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
-                    excerpt_ix,
-                    reference.excerpts.len(),
-                    buffer_handle.read(cx).remote_id(),
-                    buffer.text(),
-                    start_ix..end_ix,
-                    &buffer.text()[start_ix..end_ix]
-                );
+                let (range, anchor_range) = buffer_handle.read_with(cx, |buffer, _| {
+                    let end_row = rng.gen_range(0..=buffer.max_point().row);
+                    let start_row = rng.gen_range(0..=end_row);
+                    let end_ix = buffer.point_to_offset(Point::new(end_row, 0));
+                    let start_ix = buffer.point_to_offset(Point::new(start_row, 0));
+                    let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
+
+                    log::info!(
+                        "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
+                        excerpt_ix,
+                        reference.excerpts.len(),
+                        buffer.remote_id(),
+                        buffer.text(),
+                        start_ix..end_ix,
+                        &buffer.text()[start_ix..end_ix]
+                    );
+
+                    (start_ix..end_ix, anchor_range)
+                });
 
                 let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer
@@ -2254,7 +2253,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                             prev_excerpt_id,
                             buffer_handle.clone(),
                             [ExcerptRange {
-                                context: start_ix..end_ix,
+                                context: range,
                                 primary: None,
                             }],
                             cx,
@@ -2277,7 +2276,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
             })
         }
 
-        let snapshot = multibuffer.read(cx).snapshot(cx);
+        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
         let actual_text = snapshot.text();
         let actual_boundary_rows = snapshot
             .excerpt_boundaries_in_range(0..)
@@ -2287,7 +2286,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
         let actual_diff = format_diff(&actual_text, &actual_row_infos, &actual_boundary_rows);
 
         let (expected_text, expected_row_infos, expected_boundary_rows) =
-            reference.expected_content(cx);
+            cx.update(|cx| reference.expected_content(cx));
         let expected_diff =
             format_diff(&expected_text, &expected_row_infos, &expected_boundary_rows);
 
@@ -2404,7 +2403,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
         }
     }
 
-    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     for (old_snapshot, subscription) in old_versions {
         let edits = subscription.consume().into_inner();
 

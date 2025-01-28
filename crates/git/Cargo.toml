@@ -35,6 +35,7 @@ util.workspace = true
 unindent.workspace = true
 serde_json.workspace = true
 pretty_assertions.workspace = true
+text = {workspace = true, features = ["test-support"]}
 
 [features]
 test-support = []
