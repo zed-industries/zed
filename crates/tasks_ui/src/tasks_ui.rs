@@ -84,7 +84,7 @@ pub fn init(cx: &mut App) {
                                     return;
                                 };
 
-                                cx.update_model(&workspace, |workspace, cx| {
+                                cx.update_entity(&workspace, |workspace, cx| {
                                     let inventory = workspace
                                         .project()
                                         .read(cx)

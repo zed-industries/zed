@@ -556,7 +556,7 @@ impl TerminalPanel {
                     };
 
                     let task_result = cx
-                        .read_model(&terminal, |terminal, cx| {
+                        .read_entity(&terminal, |terminal, cx| {
                             terminal.wait_for_completed_task(cx)
                         })
                         .log_err();
