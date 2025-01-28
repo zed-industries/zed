@@ -1524,7 +1524,7 @@ impl SearchableItem for Editor {
                                         .anchor_before(search_range.start + match_range.end);
                                     Anchor {
                                         diff_base_anchor: Some(start),
-                                        ..deleted_hunk_anchor.clone()
+                                        ..deleted_hunk_anchor
                                     }..Anchor {
                                         diff_base_anchor: Some(end),
                                         ..deleted_hunk_anchor

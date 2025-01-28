@@ -1,3 +1,4 @@
+t st
 #![allow(rustdoc::private_intra_doc_links)]
 //! This is the place where everything editor-related is stored (data-wise) and displayed (ui-wise).
 //! The main point of interest in this crate is [`Editor`] type, which is used in every other Zed part as a user input element.
