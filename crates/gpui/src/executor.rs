@@ -1,4 +1,4 @@
-use crate::{AppContext, PlatformDispatcher};
+use crate::{App, PlatformDispatcher};
 use async_task::Runnable;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -84,7 +84,7 @@ where
     /// Run the task to completion in the background and log any
     /// errors that occur.
     #[track_caller]
-    pub fn detach_and_log_err(self, cx: &AppContext) {
+    pub fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))

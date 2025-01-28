@@ -4,35 +4,40 @@ use crate::{
     Vim,
 };
 use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
-use gpui::{actions, ViewContext};
+use gpui::{actions, Context, Window};
 use language::Point;
 use std::ops::Range;
 use std::sync::Arc;
 
 actions!(vim, [ToggleReplace, UndoReplace]);
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    Vim::action(editor, cx, |vim, _: &ToggleReplace, cx| {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    Vim::action(editor, cx, |vim, _: &ToggleReplace, window, cx| {
         vim.replacements = vec![];
         vim.start_recording(cx);
-        vim.switch_mode(Mode::Replace, false, cx);
+        vim.switch_mode(Mode::Replace, false, window, cx);
     });
 
-    Vim::action(editor, cx, |vim, _: &UndoReplace, cx| {
+    Vim::action(editor, cx, |vim, _: &UndoReplace, window, cx| {
         if vim.mode != Mode::Replace {
             return;
         }
         let count = Vim::take_count(cx);
-        vim.undo_replace(count, cx)
+        vim.undo_replace(count, window, cx)
     });
 }
 
 impl Vim {
-    pub(crate) fn multi_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.transact(cx, |editor, cx| {
+    pub(crate) fn multi_replace(
+        &mut self,
+        text: Arc<str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let map = editor.snapshot(cx);
+                let map = editor.snapshot(window, cx);
                 let display_selections = editor.selections.all::<Point>(cx);
 
                 // Handles all string that require manipulation, including inserts and replaces
@@ -60,7 +65,7 @@ impl Vim {
 
                 editor.edit_with_block_indent(edits.clone(), Vec::new(), cx);
 
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_anchor_ranges(edits.iter().map(|(range, _)| range.end..range.end));
                 });
                 editor.set_clip_at_line_ends(true, cx);
@@ -68,11 +73,16 @@ impl Vim {
         });
     }
 
-    fn undo_replace(&mut self, maybe_times: Option<usize>, cx: &mut ViewContext<Self>) {
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.transact(cx, |editor, cx| {
+    fn undo_replace(
+        &mut self,
+        maybe_times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let map = editor.snapshot(cx);
+                let map = editor.snapshot(window, cx);
                 let selections = editor.selections.all::<Point>(cx);
                 let mut new_selections = vec![];
                 let edits: Vec<(Range<Point>, String)> = selections
@@ -107,7 +117,7 @@ impl Vim {
 
                 editor.edit(edits, cx);
 
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges(new_selections);
                 });
                 editor.set_clip_at_line_ends(true, cx);

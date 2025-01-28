@@ -1,5 +1,5 @@
-use anyhow::Context;
-use gpui::{AppContext, UpdateGlobal};
+use anyhow::Context as _;
+use gpui::{App, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
 use lsp::LanguageServerName;
@@ -31,7 +31,7 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
-pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
+pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),

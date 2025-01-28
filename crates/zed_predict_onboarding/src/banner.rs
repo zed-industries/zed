@@ -5,7 +5,7 @@ use chrono::Utc;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsFeatureFlag};
 use fs::Fs;
-use gpui::{AppContext, Model, Subscription, WeakView};
+use gpui::{Entity, Subscription, WeakEntity};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use ui::{prelude::*, ButtonLike};
@@ -14,8 +14,8 @@ use workspace::Workspace;
 
 /// Prompts user to try AI inline prediction feature
 pub struct ZedPredictBanner {
-    workspace: WeakView<Workspace>,
-    user_store: Model<UserStore>,
+    workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
     dismissed: bool,
@@ -24,11 +24,11 @@ pub struct ZedPredictBanner {
 
 impl ZedPredictBanner {
     pub fn new(
-        workspace: WeakView<Workspace>,
-        user_store: Model<UserStore>,
+        workspace: WeakEntity<Workspace>,
+        user_store: Entity<UserStore>,
         client: Arc<Client>,
         fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self {
             workspace,
@@ -40,7 +40,7 @@ impl ZedPredictBanner {
         }
     }
 
-    fn should_show(&self, cx: &mut WindowContext) -> bool {
+    fn should_show(&self, cx: &mut App) -> bool {
         if !cx.has_flag::<PredictEditsFeatureFlag>() || self.dismissed {
             return false;
         }
@@ -55,7 +55,7 @@ impl ZedPredictBanner {
         }
     }
 
-    fn handle_settings_changed(&mut self, cx: &mut ViewContext<Self>) {
+    fn handle_settings_changed(&mut self, cx: &mut Context<Self>) {
         if self.dismissed {
             return;
         }
@@ -72,7 +72,7 @@ impl ZedPredictBanner {
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
         persist_dismissed(cx);
         self.dismissed = true;
         cx.notify();
@@ -88,7 +88,7 @@ pub(crate) fn get_dismissed() -> bool {
         .map_or(false, |dismissed| dismissed.is_some())
 }
 
-pub(crate) fn persist_dismissed(cx: &mut AppContext) {
+pub(crate) fn persist_dismissed(cx: &mut App) {
     cx.spawn(|_| {
         let time = Utc::now().to_rfc3339();
         db::kvp::KEY_VALUE_STORE.write_kvp(DISMISSED_AT_KEY.into(), time)
@@ -97,7 +97,7 @@ pub(crate) fn persist_dismissed(cx: &mut AppContext) {
 }
 
 impl Render for ZedPredictBanner {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.should_show(cx) {
             return div();
         }
@@ -131,7 +131,7 @@ impl Render for ZedPredictBanner {
                         let user_store = self.user_store.clone();
                         let client = self.client.clone();
                         let fs = self.fs.clone();
-                        move |_, cx| {
+                        move |_, window, cx| {
                             let Some(workspace) = workspace.upgrade() else {
                                 return;
                             };
@@ -140,6 +140,7 @@ impl Render for ZedPredictBanner {
                                 user_store.clone(),
                                 client.clone(),
                                 fs.clone(),
+                                window,
                                 cx,
                             );
                         }
@@ -152,7 +153,7 @@ impl Render for ZedPredictBanner {
                     .child(
                         IconButton::new("close", IconName::Close)
                             .icon_size(IconSize::Indicator)
-                            .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
+                            .on_click(cx.listener(|this, _, _window, cx| this.dismiss(cx))),
                     ),
             );
 

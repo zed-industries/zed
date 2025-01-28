@@ -1,5 +1,5 @@
 use crate::EditorSettings;
-use gpui::ModelContext;
+use gpui::Context;
 use settings::Settings;
 use settings::SettingsStore;
 use smol::Timer;
@@ -15,7 +15,7 @@ pub struct BlinkManager {
 }
 
 impl BlinkManager {
-    pub fn new(blink_interval: Duration, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(blink_interval: Duration, cx: &mut Context<Self>) -> Self {
         // Make sure we blink the cursors if the setting is re-enabled
         cx.observe_global::<SettingsStore>(move |this, cx| {
             this.blink_cursors(this.blink_epoch, cx)
@@ -37,7 +37,7 @@ impl BlinkManager {
         self.blink_epoch
     }
 
-    pub fn pause_blinking(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn pause_blinking(&mut self, cx: &mut Context<Self>) {
         self.show_cursor(cx);
 
         let epoch = self.next_blink_epoch();
@@ -49,14 +49,14 @@ impl BlinkManager {
         .detach();
     }
 
-    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut ModelContext<Self>) {
+    fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
         if epoch == self.blink_epoch {
             self.blinking_paused = false;
             self.blink_cursors(epoch, cx);
         }
     }
 
-    fn blink_cursors(&mut self, epoch: usize, cx: &mut ModelContext<Self>) {
+    fn blink_cursors(&mut self, epoch: usize, cx: &mut Context<Self>) {
         if EditorSettings::get_global(cx).cursor_blink {
             if epoch == self.blink_epoch && self.enabled && !self.blinking_paused {
                 self.visible = !self.visible;
@@ -78,14 +78,14 @@ impl BlinkManager {
         }
     }
 
-    pub fn show_cursor(&mut self, cx: &mut ModelContext<'_, BlinkManager>) {
+    pub fn show_cursor(&mut self, cx: &mut Context<'_, BlinkManager>) {
         if !self.visible {
             self.visible = true;
             cx.notify();
         }
     }
 
-    pub fn enable(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn enable(&mut self, cx: &mut Context<Self>) {
         if self.enabled {
             return;
         }
@@ -97,7 +97,7 @@ impl BlinkManager {
         self.blink_cursors(self.blink_epoch, cx);
     }
 
-    pub fn disable(&mut self, _cx: &mut ModelContext<Self>) {
+    pub fn disable(&mut self, _cx: &mut Context<Self>) {
         self.visible = false;
         self.enabled = false;
     }

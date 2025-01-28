@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use client::{Client, UserStore};
 use fs::Fs;
 use gpui::{
-    ease_in_out, svg, Animation, AnimationExt as _, AppContext, ClickEvent, DismissEvent,
-    EventEmitter, FocusHandle, FocusableView, Model, MouseDownEvent, Render, View,
+    ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, MouseDownEvent, Render,
 };
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
@@ -13,7 +13,7 @@ use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
 
 /// Introduces user to AI inline prediction feature and terms of service
 pub struct ZedPredictModal {
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
@@ -34,10 +34,10 @@ enum SignInStatus {
 
 impl ZedPredictModal {
     fn new(
-        user_store: Model<UserStore>,
+        user_store: Entity<UserStore>,
         client: Arc<Client>,
         fs: Arc<dyn Fs>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         ZedPredictModal {
             user_store,
@@ -51,28 +51,31 @@ impl ZedPredictModal {
     }
 
     pub fn toggle(
-        workspace: View<Workspace>,
-        user_store: Model<UserStore>,
+        workspace: Entity<Workspace>,
+        user_store: Entity<UserStore>,
         client: Arc<Client>,
         fs: Arc<dyn Fs>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         workspace.update(cx, |this, cx| {
-            this.toggle_modal(cx, |cx| ZedPredictModal::new(user_store, client, fs, cx));
+            this.toggle_modal(window, cx, |_window, cx| {
+                ZedPredictModal::new(user_store, client, fs, cx)
+            });
         });
     }
 
-    fn view_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn view_terms(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/terms-of-service");
         cx.notify();
     }
 
-    fn view_blog(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
         cx.notify();
     }
 
-    fn accept_and_enable(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
@@ -90,10 +93,10 @@ impl ZedPredictModal {
                 cx.emit(DismissEvent);
             })
         })
-        .detach_and_notify_err(cx);
+        .detach_and_notify_err(window, cx);
     }
 
-    fn sign_in(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn sign_in(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let client = self.client.clone();
         self.sign_in_status = SignInStatus::Waiting;
 
@@ -112,18 +115,18 @@ impl ZedPredictModal {
 
             result
         })
-        .detach_and_notify_err(cx);
+        .detach_and_notify_err(window, cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
     }
 }
 
 impl EventEmitter<DismissEvent> for ZedPredictModal {}
 
-impl FocusableView for ZedPredictModal {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+impl Focusable for ZedPredictModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
@@ -131,7 +134,7 @@ impl FocusableView for ZedPredictModal {
 impl ModalView for ZedPredictModal {}
 
 impl Render for ZedPredictModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let base = v_flex()
             .w(px(420.))
             .p_4()
@@ -143,11 +146,11 @@ impl Render for ZedPredictModal {
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
             .key_context("ZedPredictModal")
-            .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
+            .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 cx.emit(DismissEvent);
             }))
-            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
-                cx.focus(&this.focus_handle);
+            .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
+                this.focus_handle.focus(window);
             }))
             .child(
                 div()
@@ -224,7 +227,7 @@ impl Render for ZedPredictModal {
             )
             .child(h_flex().absolute().top_2().right_2().child(
                 IconButton::new("cancel", IconName::X).on_click(cx.listener(
-                    |_, _: &ClickEvent, cx| {
+                    |_, _: &ClickEvent, _window, cx| {
                         cx.emit(DismissEvent);
                     },
                 )),
@@ -252,7 +255,7 @@ impl Render for ZedPredictModal {
                             "tos-checkbox",
                             Label::new("Have read and accepted the").color(Color::Muted),
                             self.terms_of_service.into(),
-                            cx.listener(move |this, state, cx| {
+                            cx.listener(move |this, state, _window, cx| {
                                 this.terms_of_service = *state == ToggleState::Selected;
                                 cx.notify()
                             }),
@@ -270,7 +273,7 @@ impl Render for ZedPredictModal {
                     Label::new("Understood that Zed AI collects completion data")
                         .color(Color::Muted),
                     self.data_collection.into(),
-                    cx.listener(move |this, state, cx| {
+                    cx.listener(move |this, state, _window, cx| {
                         this.data_collection = *state == ToggleState::Selected;
                         cx.notify()
                     }),

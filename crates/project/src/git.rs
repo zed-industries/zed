@@ -8,8 +8,7 @@ use git::{
     status::{GitSummary, TrackedSummary},
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, Model, ModelContext, SharedString, Subscription,
-    WeakModel,
+    App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
 use settings::WorktreeId;
@@ -28,11 +27,11 @@ pub struct GitState {
 
 #[derive(Clone)]
 pub struct RepositoryHandle {
-    git_state: WeakModel<GitState>,
+    git_state: WeakEntity<GitState>,
     worktree_id: WorktreeId,
     repository_entry: RepositoryEntry,
-    git_repo: Arc<dyn GitRepository>,
-    commit_message: Model<Buffer>,
+    git_repo: Option<Arc<dyn GitRepository>>,
+    commit_message: Entity<Buffer>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
 
@@ -67,9 +66,9 @@ impl EventEmitter<Event> for GitState {}
 
 impl GitState {
     pub fn new(
-        worktree_store: &Model<WorktreeStore>,
+        worktree_store: &Entity<WorktreeStore>,
         languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) -> Self {
         let (update_sender, mut update_receiver) =
             mpsc::unbounded::<(Message, mpsc::Sender<anyhow::Error>)>();
@@ -101,7 +100,7 @@ impl GitState {
 
         GitState {
             languages,
-            repositories: vec![],
+            repositories: Vec::new(),
             active_index: None,
             update_sender,
             _subscription,
@@ -115,27 +114,25 @@ impl GitState {
 
     fn on_worktree_store_event(
         &mut self,
-        worktree_store: Model<WorktreeStore>,
+        worktree_store: Entity<WorktreeStore>,
         _event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         // TODO inspect the event
 
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
-        let this = cx.weak_model();
+        let this = cx.weak_entity();
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
-                    let Some(local) = worktree.as_local() else {
-                        return;
-                    };
                     for repo in snapshot.repositories().iter() {
-                        let Some(local_repo) = local.get_local_repo(repo) else {
-                            continue;
-                        };
+                        let git_repo = worktree
+                            .as_local()
+                            .and_then(|local_worktree| local_worktree.get_local_repo(repo))
+                            .map(|local_repo| local_repo.repo().clone());
                         let existing = self
                             .repositories
                             .iter()
@@ -150,7 +147,7 @@ impl GitState {
                             existing_handle.repository_entry = repo.clone();
                             existing_handle
                         } else {
-                            let commit_message = cx.new_model(|cx| Buffer::local("", cx));
+                            let commit_message = cx.new(|cx| Buffer::local("", cx));
                             cx.spawn({
                                 let commit_message = commit_message.downgrade();
                                 let languages = self.languages.clone();
@@ -167,7 +164,7 @@ impl GitState {
                                 git_state: this.clone(),
                                 worktree_id: worktree.id(),
                                 repository_entry: repo.clone(),
-                                git_repo: local_repo.repo().clone(),
+                                git_repo,
                                 commit_message,
                                 update_sender: self.update_sender.clone(),
                             }
@@ -194,7 +191,7 @@ impl GitState {
 }
 
 impl RepositoryHandle {
-    pub fn display_name(&self, project: &Project, cx: &AppContext) -> SharedString {
+    pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
             let path = self.unrelativize(&"".into())?;
             Some(
@@ -209,7 +206,7 @@ impl RepositoryHandle {
         .unwrap_or("".into())
     }
 
-    pub fn activate(&self, cx: &mut AppContext) {
+    pub fn activate(&self, cx: &mut App) {
         let Some(git_state) = self.git_state.upgrade() else {
             return;
         };
@@ -236,7 +233,7 @@ impl RepositoryHandle {
         Some((self.worktree_id, path).into())
     }
 
-    pub fn commit_message(&self) -> Model<Buffer> {
+    pub fn commit_message(&self) -> Entity<Buffer> {
         self.commit_message.clone()
     }
 
@@ -248,8 +245,11 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
         self.update_sender
-            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Stage(git_repo, entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
         Ok(())
     }
@@ -262,8 +262,11 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
         self.update_sender
-            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Unstage(git_repo, entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
         Ok(())
     }
@@ -304,7 +307,7 @@ impl RepositoryHandle {
         self.repository_entry.status_summary().index != TrackedSummary::UNCHANGED
     }
 
-    pub fn can_commit(&self, commit_all: bool, cx: &AppContext) -> bool {
+    pub fn can_commit(&self, commit_all: bool, cx: &App) -> bool {
         return self
             .commit_message
             .read(cx)
@@ -314,12 +317,14 @@ impl RepositoryHandle {
             && (commit_all || self.have_staged_changes());
     }
 
-    pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut AppContext) {
+    pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return;
+        };
         let message = self.commit_message.read(cx).as_rope().clone();
-        let result = self.update_sender.unbounded_send((
-            Message::Commit(self.git_repo.clone(), message),
-            err_sender.clone(),
-        ));
+        let result = self
+            .update_sender
+            .unbounded_send((Message::Commit(git_repo, message), err_sender.clone()));
         if result.is_err() {
             cx.spawn(|_| async move {
                 err_sender
@@ -335,7 +340,10 @@ impl RepositoryHandle {
         });
     }
 
-    pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut AppContext) {
+    pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return;
+        };
         let to_stage = self
             .repository_entry
             .status()
@@ -344,7 +352,7 @@ impl RepositoryHandle {
             .collect::<Vec<_>>();
         let message = self.commit_message.read(cx).as_rope().clone();
         let result = self.update_sender.unbounded_send((
-            Message::StageAndCommit(self.git_repo.clone(), message, to_stage),
+            Message::StageAndCommit(git_repo, message, to_stage),
             err_sender.clone(),
         ));
         if result.is_err() {

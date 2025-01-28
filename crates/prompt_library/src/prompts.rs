@@ -2,7 +2,7 @@ use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource};
+use gpui::{App, AssetSource};
 use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
@@ -48,7 +48,7 @@ pub struct ProjectSlashCommandPromptContext {
 pub struct PromptLoadingParams<'a> {
     pub fs: Arc<dyn Fs>,
     pub repo_path: Option<PathBuf>,
-    pub cx: &'a gpui::AppContext,
+    pub cx: &'a gpui::App,
 }
 
 pub struct PromptBuilder {
@@ -56,7 +56,7 @@ pub struct PromptBuilder {
 }
 
 impl PromptBuilder {
-    pub fn load(fs: Arc<dyn Fs>, stdout_is_a_pty: bool, cx: &mut AppContext) -> Arc<Self> {
+    pub fn load(fs: Arc<dyn Fs>, stdout_is_a_pty: bool, cx: &mut App) -> Arc<Self> {
         Self::new(Some(PromptLoadingParams {
             fs: fs.clone(),
             repo_path: stdout_is_a_pty

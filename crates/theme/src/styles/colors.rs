@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{Hsla, SharedString, WindowBackgroundAppearance, WindowContext};
+use gpui::{App, Hsla, SharedString, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;
 use strum::{AsRefStr, EnumIter, IntoEnumIterator};
@@ -512,7 +512,7 @@ impl ThemeColors {
     }
 }
 
-pub fn all_theme_colors(cx: &WindowContext) -> Vec<(Hsla, SharedString)> {
+pub fn all_theme_colors(cx: &mut App) -> Vec<(Hsla, SharedString)> {
     let theme = cx.theme();
     ThemeColorField::iter()
         .map(|field| {

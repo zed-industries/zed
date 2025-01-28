@@ -117,12 +117,13 @@
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
       "ctrl-k ctrl-r": "editor::RevertSelectedHunks",
-      "ctrl-'": "editor::ToggleHunkDiff",
+      "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllHunkDiffs",
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
-      "shift-f10": "editor::OpenContextMenu"
+      "shift-f10": "editor::OpenContextMenu",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
@@ -425,6 +426,7 @@
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
+      "ctrl-shift-g": "git_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
@@ -543,7 +545,7 @@
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
-      "ctrl-k enter": "editor::OpenExcerptsSplit",
+      "ctrl-alt-enter": "editor::OpenExcerptsSplit",
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
@@ -645,7 +647,7 @@
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "alt-enter": "editor::OpenExcerpts",
-      "ctrl-k enter": "editor::OpenExcerptsSplit"
+      "ctrl-alt-enter": "editor::OpenExcerptsSplit"
     }
   },
   {
@@ -689,6 +691,34 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::FocusChanges",
+      "ctrl-enter": "git::CommitChanges",
+      "ctrl-shift-enter": "git::CommitAllChanges"
     }
   },
   {

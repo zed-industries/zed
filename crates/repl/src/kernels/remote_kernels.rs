@@ -1,5 +1,5 @@
 use futures::{channel::mpsc, SinkExt as _};
-use gpui::{Task, View, WindowContext};
+use gpui::{App, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
@@ -137,8 +137,9 @@ impl RemoteRunningKernel {
     pub fn new(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        session: View<Session>,
-        cx: &mut WindowContext,
+        session: Entity<Session>,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
         let remote_server = RemoteServer {
             base_url: kernelspec.url,
@@ -147,7 +148,7 @@ impl RemoteRunningKernel {
 
         let http_client = cx.http_client();
 
-        cx.spawn(|cx| async move {
+        window.spawn(cx, |cx| async move {
             let kernel_id = launch_remote_kernel(
                 &remote_server,
                 http_client.clone(),
@@ -205,8 +206,8 @@ impl RemoteRunningKernel {
                         match message {
                             Ok(message) => {
                                 session
-                                    .update(&mut cx, |session, cx| {
-                                        session.route(&message, cx);
+                                    .update_in(&mut cx, |session, window, cx| {
+                                        session.route(&message, window, cx);
                                     })
                                     .ok();
                             }
@@ -273,14 +274,14 @@ impl RunningKernel for RemoteRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, cx: &mut WindowContext) -> Task<anyhow::Result<()>> {
+    fn force_shutdown(&mut self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>> {
         let url = self
             .remote_server
             .api_url(&format!("/kernels/{}", self.kernel_id));
         let token = self.remote_server.token.clone();
         let http_client = self.http_client.clone();
 
-        cx.spawn(|_| async move {
+        window.spawn(cx, |_| async move {
             let request = Request::builder()
                 .method("DELETE")
                 .uri(&url)

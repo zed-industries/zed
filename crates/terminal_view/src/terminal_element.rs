@@ -1,11 +1,11 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
-    div, fill, point, px, relative, size, AnyElement, AvailableSpace, Bounds, ContentMask,
-    DispatchPhase, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId,
-    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Model, ModelContext, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, View, WeakView, WhiteSpace, WindowContext, WindowTextSystem,
+    div, fill, point, px, relative, size, AnyElement, App, AvailableSpace, Bounds, ContentMask,
+    Context, DispatchPhase, Element, ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight,
+    GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point,
+    ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -88,7 +88,8 @@ impl LayoutCell {
         origin: Point<Pixels>,
         dimensions: &TerminalSize,
         _visible_bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         let pos = {
             let point = self.point;
@@ -99,7 +100,9 @@ impl LayoutCell {
             )
         };
 
-        self.text.paint(pos, dimensions.line_height, cx).ok();
+        self.text
+            .paint(pos, dimensions.line_height, window, cx)
+            .ok();
     }
 }
 
@@ -127,7 +130,7 @@ impl LayoutRect {
         }
     }
 
-    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, cx: &mut WindowContext) {
+    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, window: &mut Window) {
         let position = {
             let alac_point = self.point;
             point(
@@ -141,16 +144,16 @@ impl LayoutRect {
         )
         .into();
 
-        cx.paint_quad(fill(Bounds::new(position, size), self.color));
+        window.paint_quad(fill(Bounds::new(position, size), self.color));
     }
 }
 
 /// The GPUI element that paints the terminal.
-/// We need to keep a reference to the view for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
+/// We need to keep a reference to the model for mouse events, do we need it for any other terminal stuff, or can we move that to connection?
 pub struct TerminalElement {
-    terminal: Model<Terminal>,
-    terminal_view: View<TerminalView>,
-    workspace: WeakView<Workspace>,
+    terminal: Entity<Terminal>,
+    terminal_view: Entity<TerminalView>,
+    workspace: WeakEntity<Workspace>,
     focus: FocusHandle,
     focused: bool,
     cursor_visible: bool,
@@ -170,9 +173,9 @@ impl StatefulInteractiveElement for TerminalElement {}
 impl TerminalElement {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        terminal: Model<Terminal>,
-        terminal_view: View<TerminalView>,
-        workspace: WeakView<Workspace>,
+        terminal: Entity<Terminal>,
+        terminal_view: Entity<TerminalView>,
+        workspace: WeakEntity<Workspace>,
         focus: FocusHandle,
         focused: bool,
         cursor_visible: bool,
@@ -202,7 +205,8 @@ impl TerminalElement {
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
         hyperlink: Option<(HighlightStyle, &RangeInclusive<AlacPoint>)>,
-        cx: &WindowContext,
+        window: &Window,
+        cx: &App,
     ) -> (Vec<LayoutCell>, Vec<LayoutRect>) {
         let theme = cx.theme();
         let mut cells = vec![];
@@ -286,7 +290,7 @@ impl TerminalElement {
                         let layout_cell = text_system
                             .shape_line(
                                 cell_text.into(),
-                                text_style.font_size.to_pixels(cx.rem_size()),
+                                text_style.font_size.to_pixels(window.rem_size()),
                                 &[cell_style],
                             )
                             .unwrap();
@@ -408,13 +412,13 @@ impl TerminalElement {
     }
 
     fn generic_button_handler<E>(
-        connection: Model<Terminal>,
+        connection: Entity<Terminal>,
         origin: Point<Pixels>,
         focus_handle: FocusHandle,
-        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut ModelContext<Terminal>),
-    ) -> impl Fn(&E, &mut WindowContext) {
-        move |event, cx| {
-            cx.focus(&focus_handle);
+        f: impl Fn(&mut Terminal, Point<Pixels>, &E, &mut Context<Terminal>),
+    ) -> impl Fn(&E, &mut Window, &mut App) {
+        move |event, window, cx| {
+            window.focus(&focus_handle);
             connection.update(cx, |terminal, cx| {
                 f(terminal, origin, event, cx);
 
@@ -428,7 +432,7 @@ impl TerminalElement {
         origin: Point<Pixels>,
         mode: TermMode,
         hitbox: &Hitbox,
-        cx: &mut WindowContext,
+        window: &mut Window,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -436,8 +440,8 @@ impl TerminalElement {
         self.interactivity.on_mouse_down(MouseButton::Left, {
             let terminal = terminal.clone();
             let focus = focus.clone();
-            move |e, cx| {
-                cx.focus(&focus);
+            move |e, window, cx| {
+                window.focus(&focus);
                 terminal.update(cx, |terminal, cx| {
                     terminal.mouse_down(e, origin, cx);
                     cx.notify();
@@ -445,17 +449,17 @@ impl TerminalElement {
             }
         });
 
-        cx.on_mouse_event({
+        window.on_mouse_event({
             let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
-            move |e: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+            move |e: &MouseMoveEvent, phase, window, cx| {
+                if phase != DispatchPhase::Bubble || !focus.is_focused(window) {
                     return;
                 }
 
                 if e.pressed_button.is_some() && !cx.has_active_drag() {
-                    let hovered = hitbox.is_hovered(cx);
+                    let hovered = hitbox.is_hovered(window);
                     terminal.update(cx, |terminal, cx| {
                         if terminal.selection_started() {
                             terminal.mouse_drag(e, origin, hitbox.bounds);
@@ -467,7 +471,7 @@ impl TerminalElement {
                     })
                 }
 
-                if hitbox.is_hovered(cx) {
+                if hitbox.is_hovered(window) {
                     terminal.update(cx, |terminal, cx| {
                         terminal.mouse_move(e, origin);
                         cx.notify();
@@ -500,7 +504,7 @@ impl TerminalElement {
         );
         self.interactivity.on_scroll_wheel({
             let terminal_view = self.terminal_view.downgrade();
-            move |e, cx| {
+            move |e, _, cx| {
                 terminal_view
                     .update(cx, |terminal_view, cx| {
                         terminal_view.scroll_wheel(e, origin, cx);
@@ -549,7 +553,7 @@ impl TerminalElement {
         }
     }
 
-    fn rem_size(&self, cx: &WindowContext) -> Option<Pixels> {
+    fn rem_size(&self, cx: &mut App) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
         let buffer_font_size = settings.buffer_font_size();
         let rem_size_scale = {
@@ -581,17 +585,18 @@ impl Element for TerminalElement {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id = self
-            .interactivity
-            .request_layout(global_id, cx, |mut style, cx| {
-                style.size.width = relative(1.).into();
-                style.size.height = relative(1.).into();
-                // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
+        let layout_id =
+            self.interactivity
+                .request_layout(global_id, window, cx, |mut style, window, cx| {
+                    style.size.width = relative(1.).into();
+                    style.size.height = relative(1.).into();
+                    // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
 
-                cx.request_layout(style, None)
-            });
+                    window.request_layout(style, None, cx)
+                });
         (layout_id, ())
     }
 
@@ -600,11 +605,17 @@ impl Element for TerminalElement {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self::PrepaintState {
         let rem_size = self.rem_size(cx);
-        self.interactivity
-            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
+        self.interactivity.prepaint(
+            global_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, window, cx| {
                 let hitbox = hitbox.unwrap();
                 let settings = ThemeSettings::get_global(cx).clone();
 
@@ -675,7 +686,7 @@ impl Element for TerminalElement {
                 let match_color = theme.colors().search_match_background;
                 let gutter;
                 let dimensions = {
-                    let rem_size = cx.rem_size();
+                    let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
                     let line_height = font_pixels * line_height.to_pixels(rem_size);
                     let font_id = cx.text_system().resolve_font(&text_style.font());
@@ -721,9 +732,9 @@ impl Element for TerminalElement {
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
-                        .tooltip(move |cx| Tooltip::text(hovered_word.word.clone(), cx))
+                        .tooltip(Tooltip::text(hovered_word.word.clone()))
                         .into_any_element();
-                    element.prepaint_as_root(offset, bounds.size.into(), cx);
+                    element.prepaint_as_root(offset, bounds.size.into(), window, cx);
                     element
                 });
 
@@ -754,10 +765,11 @@ impl Element for TerminalElement {
                 let (cells, rects) = TerminalElement::layout_grid(
                     cells.iter().cloned(),
                     &text_style,
-                    cx.text_system(),
+                    window.text_system(),
                     last_hovered_word
                         .as_ref()
                         .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                    window,
                     cx,
                 );
 
@@ -770,10 +782,11 @@ impl Element for TerminalElement {
                     let cursor_text = {
                         let str_trxt = cursor_char.to_string();
                         let len = str_trxt.len();
-                        cx.text_system()
+                        window
+                            .text_system()
                             .shape_line(
                                 str_trxt.into(),
-                                text_style.font_size.to_pixels(cx.rem_size()),
+                                text_style.font_size.to_pixels(window.rem_size()),
                                 &[TextRun {
                                     len,
                                     font: text_style.font(),
@@ -817,6 +830,7 @@ impl Element for TerminalElement {
                         let target_line = terminal.last_content.cursor.point.line.0 + 1;
                         let render = &block.render;
                         let mut block_cx = BlockContext {
+                            window,
                             context: cx,
                             dimensions,
                         };
@@ -831,8 +845,8 @@ impl Element for TerminalElement {
                         let origin = bounds.origin
                             + point(px(0.), target_line as f32 * dimensions.line_height())
                             - point(px(0.), scroll_top);
-                        cx.with_rem_size(rem_size, |cx| {
-                            element.prepaint_as_root(origin, available_space, cx);
+                        window.with_rem_size(rem_size, |window| {
+                            element.prepaint_as_root(origin, available_space, window, cx);
                         });
                         Some(element)
                     } else {
@@ -857,7 +871,8 @@ impl Element for TerminalElement {
                     last_hovered_word,
                     block_below_cursor_element,
                 }
-            })
+            },
+        )
     }
 
     fn paint(
@@ -866,12 +881,13 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
-        cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
 
-            cx.paint_quad(fill(bounds, layout.background_color));
+            window.paint_quad(fill(bounds, layout.background_color));
             let origin =
                 bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
 
@@ -884,23 +900,28 @@ impl Element for TerminalElement {
                 workspace: self.workspace.clone(),
             };
 
-            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, cx);
+            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, window);
             if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
-                cx.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
-                cx.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
+                window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
             }
 
             let cursor = layout.cursor.take();
             let hyperlink_tooltip = layout.hyperlink_tooltip.take();
             let block_below_cursor_element = layout.block_below_cursor_element.take();
-            self.interactivity
-                .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
-                    cx.handle_input(&self.focus, terminal_input_handler);
+            self.interactivity.paint(
+                global_id,
+                bounds,
+                Some(&layout.hitbox),
+                window,
+                cx,
+                |_, window, cx| {
+                    window.handle_input(&self.focus, terminal_input_handler, cx);
 
-                    cx.on_key_event({
+                    window.on_key_event({
                         let this = self.terminal.clone();
-                        move |event: &ModifiersChangedEvent, phase, cx| {
+                        move |event: &ModifiersChangedEvent, phase, window, cx| {
                             if phase != DispatchPhase::Bubble {
                                 return;
                             }
@@ -909,13 +930,13 @@ impl Element for TerminalElement {
                                 .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
                             if handled {
-                                cx.refresh();
+                                window.refresh();
                             }
                         }
                     });
 
                     for rect in &layout.rects {
-                        rect.paint(origin, &layout.dimensions, cx);
+                        rect.paint(origin, &layout.dimensions, window);
                     }
 
                     for (relative_highlighted_range, color) in
@@ -931,28 +952,29 @@ impl Element for TerminalElement {
                                 color: *color,
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };
-                            hr.paint(bounds, cx);
+                            hr.paint(bounds, window);
                         }
                     }
 
                     for cell in &layout.cells {
-                        cell.paint(origin, &layout.dimensions, bounds, cx);
+                        cell.paint(origin, &layout.dimensions, bounds, window, cx);
                     }
 
                     if self.cursor_visible {
                         if let Some(mut cursor) = cursor {
-                            cursor.paint(origin, cx);
+                            cursor.paint(origin, window, cx);
                         }
                     }
 
                     if let Some(mut element) = block_below_cursor_element {
-                        element.paint(cx);
+                        element.paint(window, cx);
                     }
 
                     if let Some(mut element) = hyperlink_tooltip {
-                        element.paint(cx);
+                        element.paint(window, cx);
                     }
-                });
+                },
+            );
         });
     }
 }
@@ -966,8 +988,8 @@ impl IntoElement for TerminalElement {
 }
 
 struct TerminalInputHandler {
-    terminal: Model<Terminal>,
-    workspace: WeakView<Workspace>,
+    terminal: Entity<Terminal>,
+    workspace: WeakEntity<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -975,7 +997,8 @@ impl InputHandler for TerminalInputHandler {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Option<UTF16Selection> {
         if self
             .terminal
@@ -993,7 +1016,7 @@ impl InputHandler for TerminalInputHandler {
         }
     }
 
-    fn marked_text_range(&mut self, _: &mut WindowContext) -> Option<std::ops::Range<usize>> {
+    fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<std::ops::Range<usize>> {
         None
     }
 
@@ -1001,7 +1024,8 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _: std::ops::Range<usize>,
         _: &mut Option<std::ops::Range<usize>>,
-        _: &mut WindowContext,
+        _: &mut Window,
+        _: &mut App,
     ) -> Option<String> {
         None
     }
@@ -1010,7 +1034,8 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _replacement_range: Option<std::ops::Range<usize>>,
         text: &str,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         self.terminal.update(cx, |terminal, _| {
             terminal.input(text.into());
@@ -1018,7 +1043,7 @@ impl InputHandler for TerminalInputHandler {
 
         self.workspace
             .update(cx, |this, cx| {
-                cx.invalidate_character_coordinates();
+                window.invalidate_character_coordinates();
                 let project = this.project().read(cx);
                 let telemetry = project.client().telemetry().clone();
                 telemetry.log_edit_event("terminal", project.is_via_ssh());
@@ -1031,16 +1056,18 @@ impl InputHandler for TerminalInputHandler {
         _range_utf16: Option<std::ops::Range<usize>>,
         _new_text: &str,
         _new_selected_range: Option<std::ops::Range<usize>>,
-        _: &mut WindowContext,
+        _window: &mut Window,
+        _cx: &mut App,
     ) {
     }
 
-    fn unmark_text(&mut self, _: &mut WindowContext) {}
+    fn unmark_text(&mut self, _window: &mut Window, _cx: &mut App) {}
 
     fn bounds_for_range(
         &mut self,
         _range_utf16: std::ops::Range<usize>,
-        _: &mut WindowContext,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
     }
