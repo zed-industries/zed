@@ -7,7 +7,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use chrono::Local;
-use gpui::{Task, WeakView};
+use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
@@ -35,8 +35,9 @@ impl SlashCommand for NowSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -46,9 +47,10 @@ impl SlashCommand for NowSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let now = Local::now();
         let text = format!("Today is {now}.", now = now.to_rfc2822());

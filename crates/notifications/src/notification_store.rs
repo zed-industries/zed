@@ -1,31 +1,29 @@
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use channel::{ChannelMessage, ChannelMessageId, ChannelStore};
 use client::{ChannelId, Client, UserStore};
 use collections::HashMap;
 use db::smol::stream::StreamExt;
-use gpui::{
-    AppContext, AsyncAppContext, Context as _, EventEmitter, Global, Model, ModelContext, Task,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task};
 use rpc::{proto, Notification, TypedEnvelope};
 use std::{ops::Range, sync::Arc};
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
 use util::ResultExt;
 
-pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
-    let notification_store = cx.new_model(|cx| NotificationStore::new(client, user_store, cx));
+pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+    let notification_store = cx.new(|cx| NotificationStore::new(client, user_store, cx));
     cx.set_global(GlobalNotificationStore(notification_store));
 }
 
-struct GlobalNotificationStore(Model<NotificationStore>);
+struct GlobalNotificationStore(Entity<NotificationStore>);
 
 impl Global for GlobalNotificationStore {}
 
 pub struct NotificationStore {
     client: Arc<Client>,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     channel_messages: HashMap<u64, ChannelMessage>,
-    channel_store: Model<ChannelStore>,
+    channel_store: Entity<ChannelStore>,
     notifications: SumTree<NotificationEntry>,
     loaded_all_notifications: bool,
     _watch_connection_status: Task<Option<()>>,
@@ -72,15 +70,11 @@ struct Count(usize);
 struct NotificationId(u64);
 
 impl NotificationStore {
-    pub fn global(cx: &AppContext) -> Model<Self> {
+    pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalNotificationStore>().0.clone()
     }
 
-    pub fn new(
-        client: Arc<Client>,
-        user_store: Model<UserStore>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
+    pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let mut connection_status = client.status();
         let watch_connection_status = cx.spawn(|this, mut cx| async move {
             while let Some(status) = connection_status.next().await {
@@ -109,9 +103,9 @@ impl NotificationStore {
             channel_messages: Default::default(),
             _watch_connection_status: watch_connection_status,
             _subscriptions: vec![
-                client.add_message_handler(cx.weak_model(), Self::handle_new_notification),
-                client.add_message_handler(cx.weak_model(), Self::handle_delete_notification),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_notification),
+                client.add_message_handler(cx.weak_entity(), Self::handle_new_notification),
+                client.add_message_handler(cx.weak_entity(), Self::handle_delete_notification),
+                client.add_message_handler(cx.weak_entity(), Self::handle_update_notification),
             ],
             user_store,
             client,
@@ -155,7 +149,7 @@ impl NotificationStore {
     pub fn load_more_notifications(
         &self,
         clear_old: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         if self.loaded_all_notifications && !clear_old {
             return None;
@@ -191,21 +185,21 @@ impl NotificationStore {
         }))
     }
 
-    fn handle_connect(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
+    fn handle_connect(&mut self, cx: &mut Context<Self>) -> Option<Task<Result<()>>> {
         self.notifications = Default::default();
         self.channel_messages = Default::default();
         cx.notify();
         self.load_more_notifications(true, cx)
     }
 
-    fn handle_disconnect(&mut self, cx: &mut ModelContext<Self>) {
+    fn handle_disconnect(&mut self, cx: &mut Context<Self>) {
         cx.notify()
     }
 
     async fn handle_new_notification(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::AddNotification>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<()> {
         Self::add_notifications(
             this,
@@ -221,9 +215,9 @@ impl NotificationStore {
     }
 
     async fn handle_delete_notification(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::DeleteNotification>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.splice_notifications([(envelope.payload.notification_id, None)], false, cx);
@@ -232,9 +226,9 @@ impl NotificationStore {
     }
 
     async fn handle_update_notification(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateNotification>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             if let Some(notification) = envelope.payload.notification {
@@ -262,10 +256,10 @@ impl NotificationStore {
     }
 
     async fn add_notifications(
-        this: Model<Self>,
+        this: Entity<Self>,
         notifications: Vec<proto::Notification>,
         options: AddNotificationsOptions,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut user_ids = Vec::new();
         let mut message_ids = Vec::new();
@@ -366,7 +360,7 @@ impl NotificationStore {
         &mut self,
         notifications: impl IntoIterator<Item = (u64, Option<NotificationEntry>)>,
         is_new: bool,
-        cx: &mut ModelContext<'_, NotificationStore>,
+        cx: &mut Context<'_, NotificationStore>,
     ) {
         let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());
         let mut new_notifications = SumTree::default();
@@ -425,7 +419,7 @@ impl NotificationStore {
         &mut self,
         notification: Notification,
         response: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match notification {
             Notification::ContactRequest { sender_id } => {

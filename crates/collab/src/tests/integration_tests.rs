@@ -18,7 +18,7 @@ use prompt_library::PromptBuilder;
 
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
-    px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
+    px, size, App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
     TestAppContext, UpdateGlobal,
 };
 use language::{
@@ -2073,7 +2073,7 @@ async fn test_mute_deafen(
     }
 
     fn participant_audio_state(
-        room: &Model<Room>,
+        room: &Entity<Room>,
         cx: &TestAppContext,
     ) -> Vec<ParticipantAudioState> {
         room.read_with(cx, |room, _| {
@@ -2252,7 +2252,7 @@ async fn test_room_location(
     );
 
     fn participant_locations(
-        room: &Model<Room>,
+        room: &Entity<Room>,
         cx: &TestAppContext,
     ) -> Vec<(String, ParticipantLocation)> {
         room.read_with(cx, |room, _| {
@@ -2821,7 +2821,7 @@ async fn test_git_branch_name(
     executor.run_until_parked();
 
     #[track_caller]
-    fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &AppContext) {
+    fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &App) {
         let branch_name = branch_name.map(Into::into);
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
         assert_eq!(worktrees.len(), 1);
@@ -2931,7 +2931,7 @@ async fn test_git_status_sync(
         file: &impl AsRef<Path>,
         status: Option<FileStatus>,
         project: &Project,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let file = file.as_ref();
         let worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
@@ -6167,7 +6167,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     cx.simulate_resize(size(px(300.), px(300.)));
 
     cx.simulate_keystrokes("cmd-n cmd-n cmd-n");
-    cx.update(|cx| cx.refresh());
+    cx.update(|window, _cx| window.refresh());
 
     let tab_bounds = cx.debug_bounds("TAB-2").unwrap();
     let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
@@ -6260,14 +6260,14 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-    let get_path = |pane: &Pane, idx: usize, cx: &AppContext| {
+    let get_path = |pane: &Pane, idx: usize, cx: &App| {
         pane.item_for_index(idx).unwrap().project_path(cx).unwrap()
     };
 
     // Opening item 3 as a "permanent" tab
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path(path_3.clone(), None, false, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(path_3.clone(), None, false, window, cx)
         })
         .await
         .unwrap();
@@ -6283,8 +6283,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 1 as preview
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_1.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_1.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6304,8 +6304,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 2 as preview
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6325,7 +6325,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .update_in(cx, |workspace, window, cx| {
+            workspace.go_back(pane.downgrade(), window, cx)
+        })
         .await
         .unwrap();
 
@@ -6343,10 +6345,11 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Closing item 1
-    pane.update(cx, |pane, cx| {
+    pane.update_in(cx, |pane, window, cx| {
         pane.close_item_by_id(
             pane.active_item().unwrap().item_id(),
             workspace::SaveIntent::Skip,
+            window,
             cx,
         )
     })
@@ -6364,7 +6367,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .update_in(cx, |workspace, window, cx| {
+            workspace.go_back(pane.downgrade(), window, cx)
+        })
         .await
         .unwrap();
 
@@ -6382,9 +6387,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Close permanent tab
-    pane.update(cx, |pane, cx| {
+    pane.update_in(cx, |pane, window, cx| {
         let id = pane.items().next().unwrap().item_id();
-        pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
+        pane.close_item_by_id(id, workspace::SaveIntent::Skip, window, cx)
     })
     .await
     .unwrap();
@@ -6431,8 +6436,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 2 as preview in right pane
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6463,14 +6468,14 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Focus left pane
-    workspace.update(cx, |workspace, cx| {
-        workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx)
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.activate_pane_in_direction(workspace::SplitDirection::Left, window, cx)
     });
 
     // Open item 2 as preview in left pane
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();

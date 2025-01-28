@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, AppContext, EntityId, Pixels, WindowContext};
+use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
@@ -225,8 +225,12 @@ pub enum BlockStyle {
     Sticky,
 }
 
+#[derive(gpui::AppContext, gpui::VisualContext)]
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    #[window]
+    pub window: &'a mut Window,
+    #[app]
+    pub app: &'b mut App,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -1232,22 +1236,12 @@ impl<'a> BlockMapWriter<'a> {
         self.remove(blocks_to_remove);
     }
 
-    pub fn fold_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        multi_buffer: &MultiBuffer,
-        cx: &AppContext,
-    ) {
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, multi_buffer: &MultiBuffer, cx: &App) {
         self.0.folded_buffers.insert(buffer_id);
         self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
     }
 
-    pub fn unfold_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        multi_buffer: &MultiBuffer,
-        cx: &AppContext,
-    ) {
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, multi_buffer: &MultiBuffer, cx: &App) {
         self.0.folded_buffers.remove(&buffer_id);
         self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
     }
@@ -1256,7 +1250,7 @@ impl<'a> BlockMapWriter<'a> {
         &mut self,
         buffer_id: BufferId,
         multi_buffer: &MultiBuffer,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow().clone();
 
@@ -1934,16 +1928,16 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
 }
 
 impl<'a> Deref for BlockContext<'a, '_> {
-    type Target = WindowContext<'a>;
+    type Target = App;
 
     fn deref(&self) -> &Self::Target {
-        self.context
+        self.app
     }
 }
 
 impl DerefMut for BlockContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
+        self.app
     }
 }
 
@@ -2001,7 +1995,7 @@ mod tests {
     use crate::display_map::{
         fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
     };
-    use gpui::{div, font, px, AppContext, Context as _, Element};
+    use gpui::{div, font, px, App, AppContext as _, Element};
     use itertools::Itertools;
     use language::{Buffer, Capability};
     use multi_buffer::{ExcerptRange, MultiBuffer};
@@ -2195,15 +2189,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_multibuffer_headers_and_footers(cx: &mut AppContext) {
+    fn test_multibuffer_headers_and_footers(cx: &mut App) {
         init_test(cx);
 
-        let buffer1 = cx.new_model(|cx| Buffer::local("Buffer 1", cx));
-        let buffer2 = cx.new_model(|cx| Buffer::local("Buffer 2", cx));
-        let buffer3 = cx.new_model(|cx| Buffer::local("Buffer 3", cx));
+        let buffer1 = cx.new(|cx| Buffer::local("Buffer 1", cx));
+        let buffer2 = cx.new(|cx| Buffer::local("Buffer 2", cx));
+        let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
         let mut excerpt_ids = Vec::new();
-        let multi_buffer = cx.new_model(|cx| {
+        let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
@@ -3652,7 +3646,7 @@ mod tests {
         }
     }
 
-    fn init_test(cx: &mut gpui::AppContext) {
+    fn init_test(cx: &mut gpui::App) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);

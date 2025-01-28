@@ -1,11 +1,10 @@
 use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
-use gpui::{AppContext, Task};
+use gpui::{App, Context, Task, Window};
 use language::language_settings::language_settings;
 use multi_buffer::{IndentGuide, MultiBufferRow};
 use text::{LineIndent, Point};
-use ui::ViewContext;
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
@@ -34,7 +33,7 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<Vec<IndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
@@ -67,7 +66,8 @@ impl Editor {
         &mut self,
         indent_guides: &[IndentGuide],
         snapshot: &DisplaySnapshot,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
         let cursor_row = MultiBufferRow(selection.head().row);
@@ -113,15 +113,16 @@ impl Editor {
             {
                 Ok(result) => state.active_indent_range = result,
                 Err(future) => {
-                    state.pending_refresh = Some(cx.spawn(|editor, mut cx| async move {
-                        let result = cx.background_executor().spawn(future).await;
-                        editor
-                            .update(&mut cx, |editor, _| {
-                                editor.active_indent_guides_state.active_indent_range = result;
-                                editor.active_indent_guides_state.pending_refresh = None;
-                            })
-                            .log_err();
-                    }));
+                    state.pending_refresh =
+                        Some(cx.spawn_in(window, |editor, mut cx| async move {
+                            let result = cx.background_executor().spawn(future).await;
+                            editor
+                                .update(&mut cx, |editor, _| {
+                                    editor.active_indent_guides_state.active_indent_range = result;
+                                    editor.active_indent_guides_state.pending_refresh = None;
+                                })
+                                .log_err();
+                        }));
                     return None;
                 }
             }
@@ -154,7 +155,7 @@ pub fn indent_guides_in_range(
     visible_buffer_range: Range<MultiBufferRow>,
     ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
-    cx: &AppContext,
+    cx: &App,
 ) -> Vec<IndentGuide> {
     let start_anchor = snapshot
         .buffer_snapshot

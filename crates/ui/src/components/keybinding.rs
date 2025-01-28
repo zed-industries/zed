@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke, WindowContext};
+use gpui::{relative, Action, App, FocusHandle, IntoElement, Keystroke, Window};
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -18,8 +18,12 @@ pub struct KeyBinding {
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        let key_binding = cx.bindings_for_action(action).into_iter().rev().next()?;
+    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
+        let key_binding = window
+            .bindings_for_action(action)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
     }
 
@@ -27,9 +31,9 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut Window,
     ) -> Option<Self> {
-        let key_binding = cx
+        let key_binding = window
             .bindings_for_action_in(action, focus)
             .into_iter()
             .rev()
@@ -76,7 +80,7 @@ impl KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -152,7 +156,7 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
 
         div()
@@ -187,7 +191,7 @@ pub struct KeyIcon {
 }
 
 impl RenderOnce for KeyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         Icon::new(self.icon)
             .size(IconSize::XSmall)
             .color(Color::Muted)
@@ -201,8 +205,8 @@ impl KeyIcon {
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String> {
-    let bindings = cx.bindings_for_action(action);
+pub fn text_for_action(action: &dyn Action, window: &Window) -> Option<String> {
+    let bindings = window.bindings_for_action(action);
     let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
@@ -212,9 +216,9 @@ pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String
 pub fn text_for_action_in(
     action: &dyn Action,
     focus: &FocusHandle,
-    cx: &mut WindowContext,
+    window: &mut Window,
 ) -> Option<String> {
-    let bindings = cx.bindings_for_action_in(action, focus);
+    let bindings = window.bindings_for_action_in(action, focus);
     let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }

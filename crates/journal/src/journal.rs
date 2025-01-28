@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::Editor;
-use gpui::{actions, AppContext, ViewContext, WindowContext};
+use gpui::{actions, App, Context, Window};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -50,25 +50,25 @@ impl settings::Settings for JournalSettings {
 
     type FileContent = Self;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }
 
-pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
+pub fn init(_: Arc<AppState>, cx: &mut App) {
     JournalSettings::register(cx);
 
-    cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(|workspace, _: &NewJournalEntry, cx| {
-                new_journal_entry(workspace, cx);
+    cx.observe_new(
+        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+            workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {
+                new_journal_entry(workspace, window, cx);
             });
         },
     )
     .detach();
 }
 
-pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
+pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut App) {
     let settings = JournalSettings::get_global(cx);
     let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
         Some(journal_dir) => journal_dir,
@@ -117,51 +117,52 @@ pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
     let app_state = workspace.app_state().clone();
     let view_snapshot = workspace.weak_handle().clone();
 
-    cx.spawn(|mut cx| async move {
-        let (journal_dir, entry_path) = create_entry.await?;
-        let opened = if open_new_workspace {
-            let (new_workspace, _) = cx
-                .update(|cx| {
-                    workspace::open_paths(
-                        &[journal_dir],
-                        app_state,
-                        workspace::OpenOptions::default(),
-                        cx,
-                    )
-                })?
-                .await?;
-            new_workspace
-                .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
-                })?
-                .await
-        } else {
-            view_snapshot
-                .update(&mut cx, |workspace, cx| {
-                    workspace.open_paths(vec![entry_path], OpenVisible::All, None, cx)
-                })?
-                .await
-        };
+    window
+        .spawn(cx, |mut cx| async move {
+            let (journal_dir, entry_path) = create_entry.await?;
+            let opened = if open_new_workspace {
+                let (new_workspace, _) = cx
+                    .update(|_window, cx| {
+                        workspace::open_paths(
+                            &[journal_dir],
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                    })?
+                    .await?;
+                new_workspace
+                    .update(&mut cx, |workspace, window, cx| {
+                        workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
+                    })?
+                    .await
+            } else {
+                view_snapshot
+                    .update_in(&mut cx, |workspace, window, cx| {
+                        workspace.open_paths(vec![entry_path], OpenVisible::All, None, window, cx)
+                    })?
+                    .await
+            };
 
-        if let Some(Some(Ok(item))) = opened.first() {
-            if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
-                editor.update(&mut cx, |editor, cx| {
-                    let len = editor.buffer().read(cx).len(cx);
-                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                        s.select_ranges([len..len])
-                    });
-                    if len > 0 {
-                        editor.insert("\n\n", cx);
-                    }
-                    editor.insert(&entry_heading, cx);
-                    editor.insert("\n\n", cx);
-                })?;
+            if let Some(Some(Ok(item))) = opened.first() {
+                if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
+                    editor.update_in(&mut cx, |editor, window, cx| {
+                        let len = editor.buffer().read(cx).len(cx);
+                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
+                            s.select_ranges([len..len])
+                        });
+                        if len > 0 {
+                            editor.insert("\n\n", window, cx);
+                        }
+                        editor.insert(&entry_heading, window, cx);
+                        editor.insert("\n\n", window, cx);
+                    })?;
+                }
             }
-        }
 
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 }
 
 fn journal_dir(path: &str) -> Option<PathBuf> {

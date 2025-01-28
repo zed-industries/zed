@@ -7,7 +7,7 @@ use crate::notifications::collab_notification::CollabNotification;
 pub struct CollabNotificationStory;
 
 impl Render for CollabNotificationStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let window_container = |width, height| div().w(px(width)).h(px(height));
 
         Story::container()

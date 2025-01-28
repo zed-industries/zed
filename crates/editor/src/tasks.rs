@@ -1,6 +1,6 @@
 use crate::Editor;
 
-use gpui::{Task as AsyncTask, WindowContext};
+use gpui::{App, Task as AsyncTask, Window};
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{ToOffset, ToPoint};
@@ -8,7 +8,8 @@ use workspace::Workspace;
 
 fn task_context_with_editor(
     editor: &mut Editor,
-    cx: &mut WindowContext,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AsyncTask<Option<TaskContext>> {
     let Some(project) = editor.project.clone() else {
         return AsyncTask::ready(None);
@@ -22,7 +23,7 @@ fn task_context_with_editor(
         else {
             return AsyncTask::ready(None);
         };
-        let snapshot = editor.snapshot(cx);
+        let snapshot = editor.snapshot(window, cx);
         (selection, buffer, snapshot)
     };
     let selection_range = selection.range();
@@ -74,7 +75,11 @@ fn task_context_with_editor(
     })
 }
 
-pub fn task_context(workspace: &Workspace, cx: &mut WindowContext) -> AsyncTask<TaskContext> {
+pub fn task_context(
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) -> AsyncTask<TaskContext> {
     let Some(editor) = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
@@ -82,7 +87,7 @@ pub fn task_context(workspace: &Workspace, cx: &mut WindowContext) -> AsyncTask<
         return AsyncTask::ready(TaskContext::default());
     };
     editor.update(cx, |editor, cx| {
-        let context_task = task_context_with_editor(editor, cx);
+        let context_task = task_context_with_editor(editor, window, cx);
         cx.background_executor()
             .spawn(async move { context_task.await.unwrap_or_default() })
     })

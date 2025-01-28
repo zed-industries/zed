@@ -10,7 +10,7 @@ use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
 
 use super::{wasm_engine, WasmState};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{

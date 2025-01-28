@@ -6,7 +6,7 @@ use assistant_slash_command::{
 use futures::channel::mpsc;
 use futures::Stream;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, Task, View, WeakView};
+use gpui::{App, Entity, Task, WeakEntity};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use std::{
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
+use worktree::ChildEntriesOptions;
 
 pub struct FileSlashCommand;
 
@@ -28,8 +29,8 @@ impl FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut AppContext,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -42,7 +43,13 @@ impl FileSlashCommand {
                 .chain(project.worktrees(cx).flat_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let id = worktree.id();
-                    worktree.child_entries(Path::new("")).map(move |entry| {
+                    let options = ChildEntriesOptions {
+                        include_files: true,
+                        include_dirs: true,
+                        include_ignored: false,
+                    };
+                    let entries = worktree.child_entries_with_options(Path::new(""), options);
+                    entries.map(move |entry| {
                         (
                             project::ProjectPath {
                                 worktree_id: id,
@@ -134,8 +141,9 @@ impl SlashCommand for FileSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakEntity<Workspace>>,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -187,9 +195,10 @@ impl SlashCommand for FileSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut App,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -209,9 +218,9 @@ impl SlashCommand for FileSlashCommand {
 }
 
 fn collect_files(
-    project: Model<Project>,
+    project: Entity<Project>,
     glob_inputs: &[String],
-    cx: &mut AppContext,
+    cx: &mut App,
 ) -> impl Stream<Item = Result<SlashCommandEvent>> {
     let Ok(matchers) = glob_inputs
         .into_iter()

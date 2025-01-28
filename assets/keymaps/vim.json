@@ -668,5 +668,20 @@
       "shift-g": "menu::SelectLast",
       "g g": "menu::SelectFirst"
     }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "k": "menu::SelectPrev",
+      "j": "menu::SelectNext",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "g f": "menu::Confirm",
+      "i": "git_panel::FocusEditor",
+      "x": "git::ToggleStaged",
+      "shift-x": "git::StageAll",
+      "shift-u": "git::UnstageAll"
+    }
   }
 ]

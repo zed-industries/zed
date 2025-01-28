@@ -3,7 +3,7 @@ mod state;
 
 use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
-use gpui::{AppContext, ViewContext};
+use gpui::{App, Context, Window};
 use language::markdown::parse_markdown;
 use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
@@ -27,7 +27,8 @@ impl Editor {
     pub fn toggle_auto_signature_help_menu(
         &mut self,
         _: &ToggleAutoSignatureHelp,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.auto_signature_help = self
             .auto_signature_help
@@ -35,7 +36,7 @@ impl Editor {
             .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
         match self.auto_signature_help {
             Some(auto_signature_help) if auto_signature_help => {
-                self.show_signature_help(&ShowSignatureHelp, cx);
+                self.show_signature_help(&ShowSignatureHelp, window, cx);
             }
             Some(_) => {
                 self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
@@ -47,7 +48,7 @@ impl Editor {
 
     pub(super) fn hide_signature_help(
         &mut self,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
         signature_help_hidden_by: SignatureHelpHiddenBy,
     ) -> bool {
         if self.signature_help_state.is_shown() {
@@ -60,7 +61,7 @@ impl Editor {
         }
     }
 
-    pub fn auto_signature_help_enabled(&self, cx: &AppContext) -> bool {
+    pub fn auto_signature_help_enabled(&self, cx: &App) -> bool {
         if let Some(auto_signature_help) = self.auto_signature_help {
             auto_signature_help
         } else {
@@ -72,7 +73,8 @@ impl Editor {
         &mut self,
         old_cursor_position: &Anchor,
         backspace_pressed: bool,
-        cx: &mut ViewContext<Self>,
+
+        cx: &mut Context<Self>,
     ) -> bool {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {
             return false;
@@ -150,7 +152,12 @@ impl Editor {
         }
     }
 
-    pub fn show_signature_help(&mut self, _: &ShowSignatureHelp, cx: &mut ViewContext<Self>) {
+    pub fn show_signature_help(
+        &mut self,
+        _: &ShowSignatureHelp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.pending_rename.is_some() || self.has_active_completions_menu() {
             return;
         }
@@ -163,7 +170,7 @@ impl Editor {
         };
 
         self.signature_help_state
-            .set_task(cx.spawn(move |editor, mut cx| async move {
+            .set_task(cx.spawn_in(window, move |editor, mut cx| async move {
                 let signature_help = editor
                     .update(&mut cx, |editor, cx| {
                         let language = editor.language_at(position, cx);

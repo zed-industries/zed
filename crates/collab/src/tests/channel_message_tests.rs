@@ -1,7 +1,7 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use channel::{ChannelChat, ChannelMessageId, MessageParams};
 use collab_ui::chat_panel::ChatPanel;
-use gpui::{BackgroundExecutor, Model, TestAppContext};
+use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use rpc::Notification;
 use workspace::dock::Panel;
 
@@ -295,7 +295,7 @@ async fn test_remove_channel_message(
 }
 
 #[track_caller]
-fn assert_messages(chat: &Model<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
+fn assert_messages(chat: &Entity<ChannelChat>, messages: &[&str], cx: &mut TestAppContext) {
     assert_eq!(
         chat.read_with(cx, |chat, _| {
             chat.messages()
@@ -356,10 +356,10 @@ async fn test_channel_message_changes(
     let project_b = client_b.build_empty_local_project(cx_b);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    let chat_panel_b = workspace_b.update(cx_b, ChatPanel::new);
+    let chat_panel_b = workspace_b.update_in(cx_b, ChatPanel::new);
     chat_panel_b
-        .update(cx_b, |chat_panel, cx| {
-            chat_panel.set_active(true, cx);
+        .update_in(cx_b, |chat_panel, window, cx| {
+            chat_panel.set_active(true, window, cx);
             chat_panel.select_channel(channel_id, None, cx)
         })
         .await
@@ -367,7 +367,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -384,7 +384,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -394,8 +394,8 @@ async fn test_channel_message_changes(
     assert!(!b_has_messages);
 
     // Sending a message while the chat is closed should change the flag.
-    chat_panel_b.update(cx_b, |chat_panel, cx| {
-        chat_panel.set_active(false, cx);
+    chat_panel_b.update_in(cx_b, |chat_panel, window, cx| {
+        chat_panel.set_active(false, window, cx);
     });
 
     // Sending a message while the chat is open should not change the flag.
@@ -406,7 +406,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -416,7 +416,7 @@ async fn test_channel_message_changes(
     assert!(b_has_messages);
 
     // Closing the chat should re-enable change tracking
-    cx_b.update(|_| drop(chat_panel_b));
+    cx_b.update(|_, _| drop(chat_panel_b));
 
     channel_chat_a
         .update(cx_a, |c, cx| c.send_message("four".into(), cx).unwrap())
@@ -425,7 +425,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)

@@ -1070,7 +1070,7 @@ mod tests {
         hover_links::InlayHighlight,
         InlayId, MultiBuffer,
     };
-    use gpui::{AppContext, HighlightStyle};
+    use gpui::{App, HighlightStyle};
     use project::{InlayHint, InlayHintLabel, ResolveState};
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1163,7 +1163,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_basic_inlays(cx: &mut AppContext) {
+    fn test_basic_inlays(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
@@ -1451,7 +1451,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_inlay_buffer_rows(cx: &mut AppContext) {
+    fn test_inlay_buffer_rows(cx: &mut App) {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
@@ -1488,7 +1488,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_inlays(cx: &mut AppContext, mut rng: StdRng) {
+    fn test_random_inlays(cx: &mut App, mut rng: StdRng) {
         init_test(cx);
 
         let operations = env::var("OPERATIONS")
@@ -1792,7 +1792,7 @@ mod tests {
         }
     }
 
-    fn init_test(cx: &mut AppContext) {
+    fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
