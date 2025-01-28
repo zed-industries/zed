@@ -20,6 +20,7 @@ use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
+use smol::channel::Sender;
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{
     terminal_settings::{TerminalDockPosition, TerminalSettings},
@@ -29,7 +30,7 @@ use ui::{
     prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable,
     Tooltip,
 };
-use util::{ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
@@ -253,13 +254,16 @@ impl TerminalPanel {
                 .update_in(&mut cx, |_, window, cx| {
                     cx.subscribe_in(&workspace, window, |terminal_panel, _, e, window, cx| {
                         if let workspace::Event::SpawnTask {
-                            pre_actions: pre_tasks,
                             action: spawn_in_terminal,
+                            completion_tx,
                         } = e
                         {
-                            let mut tasks = pre_tasks.clone();
-                            tasks.push(*spawn_in_terminal.clone());
-                            terminal_panel.spawn_task_queue(tasks, window, cx);
+                            terminal_panel.spawn_task(
+                                *spawn_in_terminal.clone(),
+                                *completion_tx.clone(),
+                                window,
+                                cx,
+                            );
                         };
                     })
                     .detach();
@@ -459,35 +463,29 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task_queue(
+    fn spawn_task(
         &mut self,
-        tasks: Vec<SpawnInTerminal>,
+        task: SpawnInTerminal,
+        completion_tx: Sender<Result<i32>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if tasks.is_empty() {
-            return;
-        }
-
-        let Some(is_local) = self
+        let is_local = match self
             .workspace
             .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
-            .log_err()
-        else {
-            return;
-        };
-
-        let Some(primary_task) = tasks.last() else {
-            return;
+        {
+            Ok(is_local) => is_local,
+            Err(e) => {
+                cx.spawn(|_, _| async move { completion_tx.send(Err(e)).await })
+                    .detach_and_log_err(cx);
+                return;
+            }
         };
 
         self.deferred_tasks.insert(
-            primary_task.id.clone(),
+            task.id.clone(),
             cx.spawn_in(window, |terminal_panel, mut cx| async move {
-                let mut task_iter = tasks.iter();
-                let mut failed_task_info: Option<(&str, i32)> = None;
-
-                for task in task_iter.by_ref() {
+                let spawn_result = maybe!(async move {
                     let builder = ShellBuilder::new(is_local, &task.shell);
                     let command_label = builder.command_label(&task.command_label);
                     let (command, args) = builder.build(task.command.clone(), &task.args);
@@ -499,16 +497,12 @@ impl TerminalPanel {
                         ..task.clone()
                     };
 
-                    let Some(mut terminals_for_task) = terminal_panel
-                        .update(&mut cx, |terminal_panel, cx| {
+                    let mut terminals_for_task =
+                        terminal_panel.update(&mut cx, |terminal_panel, cx| {
                             terminal_panel.terminals_for_task(&terminal_task.full_label, cx)
-                        })
-                        .log_err()
-                    else {
-                        break;
-                    };
+                        })?;
 
-                    let Some(spawn_terminal_task) = if terminal_task.allow_concurrent_runs
+                    let spawn_terminal_task = if terminal_task.allow_concurrent_runs
                         && terminal_task.use_new_terminal
                         || terminals_for_task.is_empty()
                     {
@@ -546,39 +540,19 @@ impl TerminalPanel {
                                 }
                             })
                         }
-                    }
-                    .log_err() else {
-                        break;
-                    };
+                    }?;
 
-                    let Some(terminal) = spawn_terminal_task.await.log_err() else {
-                        break;
-                    };
+                    let terminal = spawn_terminal_task.await?;
 
-                    let task_result = cx
-                        .read_entity(&terminal, |terminal, cx| {
-                            terminal.wait_for_completed_task(cx)
-                        })
-                        .log_err();
-                    let Some(task_result) = task_result else {
-                        break;
-                    };
+                    let task_result = cx.read_entity(&terminal, |terminal, cx| {
+                        terminal.wait_for_completed_task(cx)
+                    })??;
 
-                    let exit_code = task_result.await;
+                    Ok(task_result.await)
+                })
+                .await;
 
-                    if exit_code != 0 {
-                        failed_task_info = Some((task.label.as_str(), exit_code));
-                        break;
-                    }
-                }
-
-                if let Some((label, exit_code)) = failed_task_info {
-                    let n_remaining = task_iter.count();
-                    Result::<()>::Err(anyhow!(
-                        "Task '{label}' exited with non-zero exit code ({exit_code}), aborting {n_remaining} remaining tasks",
-                    ))
-                    .log_err();
-                };
+                completion_tx.send(spawn_result).await.log_err();
             }),
         );
     }
@@ -1102,15 +1076,21 @@ async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, Entity<Pane>, Entity<TerminalView>)>,
     cx: &mut AsyncApp,
 ) {
-    let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
-        terminal
-            .update(cx, |terminal_view, cx| {
-                terminal_view
-                    .terminal()
-                    .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
-            })
-            .ok()
-    });
+    let pending_tasks = terminals_for_task
+        .iter()
+        .filter_map(|(_, _, terminal)| {
+            terminal
+                .update(cx, |terminal_view, cx| {
+                    terminal_view
+                        .terminal()
+                        .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
+                        .log_err()
+                })
+                .log_err()
+                .flatten()
+        })
+        .collect_vec();
+
     let _: Vec<_> = join_all(pending_tasks).await;
 }
 

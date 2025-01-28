@@ -24,7 +24,7 @@ use alacritty_terminal::{
     },
     Term,
 };
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 
 use futures::{
     channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender},
@@ -1721,18 +1721,18 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn wait_for_completed_task(&self, cx: &App) -> Task<i32> {
+    pub fn wait_for_completed_task(&self, cx: &App) -> Result<Task<i32>> {
         let Some(task) = self.task() else {
-            return Task::ready(0);
+            return Err(anyhow!("Terminal task was dropped"));
         };
 
         match task.status {
-            TaskStatus::Completed { exit_code } => Task::ready(exit_code),
-            TaskStatus::Unknown => Task::ready(0),
+            TaskStatus::Completed { exit_code } => Ok(Task::ready(exit_code)),
             TaskStatus::Running => {
                 let rx = task.completion_rx.clone();
-                cx.spawn(|_| async move { rx.recv().await.unwrap_or(-1) })
+                Ok(cx.spawn(|_| async move { rx.recv().await.unwrap_or(-1) }))
             }
+            TaskStatus::Unknown => Err(anyhow!("Task '{}' had an unknown status", task.full_label)),
         }
     }
 

@@ -1,8 +1,11 @@
+use anyhow::anyhow;
 use gpui::Context;
 use itertools::Itertools as _;
 use project::TaskSourceKind;
 use remote::ConnectionState;
+use smol::channel::bounded;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
+use util::ResultExt as _;
 
 use crate::{notifications::NotifyResultExt as _, Workspace};
 
@@ -83,14 +86,47 @@ pub fn schedule_resolved_tasks(
             });
         }
 
-        let pre_tasks = pre_task_queue
+        let mut all_tasks = pre_task_queue
             .into_iter()
             .filter_map(|mut task| task.resolved.take())
             .collect_vec();
 
-        cx.emit(crate::Event::SpawnTask {
-            pre_actions: pre_tasks,
-            action: Box::new(spawn_in_terminal),
-        });
+        all_tasks.push(spawn_in_terminal);
+
+        cx.spawn(|workspace, mut cx| async move {
+            let mut task_iter = all_tasks.into_iter();
+            let mut failed_task_info: Option<(String, i32)> = None;
+
+            for task in task_iter.by_ref() {
+                let label = task.full_label.clone();
+                let (tx, rx) = bounded(1);
+
+                workspace.update(&mut cx, move |_, cx| {
+                    cx.emit(crate::Event::SpawnTask {
+                        action: Box::new(task),
+                        completion_tx: Box::new(tx)
+                    });
+                })?;
+
+                let exit_code = rx
+                    .recv()
+                    .await
+                    .anyhow()??;
+
+                if exit_code != 0 {
+                    failed_task_info = Some((label, exit_code));
+                    break;
+                }
+            };
+
+            if let Some((label, exit_code)) = failed_task_info {
+                let n_remaining = task_iter.count();
+                Err(anyhow!(
+                    "Task '{label}' exited with non-zero exit code ({exit_code}), aborting {n_remaining} remaining tasks",
+                ))
+            } else {
+                Ok(())
+            }
+        }).detach_and_log_err(cx);
     }
 }

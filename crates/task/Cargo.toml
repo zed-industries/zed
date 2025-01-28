@@ -14,6 +14,7 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 hex.workspace = true
+itertools.workspace = true
 parking_lot.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -22,7 +23,6 @@ sha2.workspace = true
 shellexpand.workspace = true
 util.workspace = true
 zed_actions.workspace = true
-itertools.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

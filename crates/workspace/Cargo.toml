@@ -55,6 +55,7 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
+smol.workspace = true
 sqlez.workspace = true
 theme.workspace = true
 ui.workspace = true

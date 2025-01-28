@@ -14,6 +14,7 @@ use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
+use smol::channel::bounded;
 use std::{
     io::Write,
     iter::Peekable,
@@ -1286,8 +1287,9 @@ impl ShellExec {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                let (tx, rx) = bounded(1);
                 cx.emit(workspace::Event::SpawnTask {
-                    pre_actions: vec![],
+                    completion_tx: Box::new(tx),
                     action: Box::new(SpawnInTerminal {
                         id: TaskId("vim".to_string()),
                         full_label: self.command.clone(),
@@ -1307,7 +1309,11 @@ impl ShellExec {
                         show_command: false,
                     }),
                 });
+
+                cx.spawn(|_, _| async move { rx.recv().await })
+                    .detach_and_log_err(cx);
             });
+
             return;
         };
 
