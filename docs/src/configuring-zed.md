@@ -714,7 +714,8 @@ List of `string` values
 ```json
 "tab_bar": {
   "show": true,
-  "show_nav_history_buttons": true
+  "show_nav_history_buttons": true,
+  "show_tab_bar_buttons": true
 }
 ```
 
@@ -732,6 +733,16 @@ List of `string` values
 
 - Description: Whether or not to show the navigation history buttons.
 - Setting: `show_nav_history_buttons`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Tab Bar Buttons
+
+- Description: Whether or not to show the pane-related buttons in the tab bar.
+- Setting: `show_tab_bar_buttons`
 - Default: `true`
 
 **Options**
