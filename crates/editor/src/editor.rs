@@ -7042,7 +7042,7 @@ impl Editor {
             let mut should_rewrap = is_vim_mode == IsVimMode::Yes;
 
             if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
-                match language_scope.language_name().0.as_ref() {
+                match language_scope.language_name().as_ref() {
                     "Markdown" | "Plain Text" => {
                         should_rewrap = true;
                     }
