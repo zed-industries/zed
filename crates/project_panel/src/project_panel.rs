@@ -5126,10 +5126,10 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                "v root1",
+                separator!("v root1"),
                 separator!("    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                "v root2",
-                "    > dir_2",
+                separator!("v root2"),
+                separator!("    > dir_2"),
             ]
         );
 
@@ -5141,14 +5141,14 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                "v root1",
+                separator!("v root1"),
                 separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
                 separator!("        > nested_dir_4/nested_dir_5"),
-                "          file_a.java",
-                "          file_b.java",
-                "          file_c.java",
-                "v root2",
-                "    > dir_2",
+                separator!("          file_a.java"),
+                separator!("          file_b.java"),
+                separator!("          file_c.java"),
+                separator!("v root2"),
+                separator!("    > dir_2"),
             ]
         );
 
@@ -5160,31 +5160,31 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                "v root1",
+                separator!("v root1"),
                 separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
                 separator!("        v nested_dir_4/nested_dir_5  <== selected"),
-                "              file_d.java",
-                "          file_a.java",
-                "          file_b.java",
-                "          file_c.java",
-                "v root2",
-                "    > dir_2",
+                separator!("              file_d.java"),
+                separator!("          file_a.java"),
+                separator!("          file_b.java"),
+                separator!("          file_c.java"),
+                separator!("v root2"),
+                separator!("    > dir_2"),
             ]
         );
         toggle_expand_dir(&panel, "root2/dir_2", cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
-                "v root1",
+                separator!("v root1"),
                 separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
                 separator!("        v nested_dir_4/nested_dir_5"),
-                "              file_d.java",
-                "          file_a.java",
-                "          file_b.java",
-                "          file_c.java",
-                "v root2",
-                "    v dir_2  <== selected",
-                "          file_1.java",
+                separator!("              file_d.java"),
+                separator!("          file_a.java"),
+                separator!("          file_b.java"),
+                separator!("          file_c.java"),
+                separator!("v root2"),
+                separator!("    v dir_2  <== selected"),
+                separator!("          file_1.java"),
             ]
         );
     }
