@@ -1813,7 +1813,8 @@ message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
     repeated StatusEntry updated_statuses = 3;
-    repeated string removed_statuses = 4;
+    reserved 4;
+    repeated CrossPlatformPath removed_statuses = 5;
     repeated string current_merge_conflicts = 5;
 }
 
