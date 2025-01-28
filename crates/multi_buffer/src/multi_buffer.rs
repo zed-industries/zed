@@ -2630,7 +2630,7 @@ impl MultiBuffer {
             let edit_old_start = old_diff_transforms.start().1 + edit_start_overshoot;
             let edit_new_start = (edit_old_start as isize + output_delta) as usize;
 
-            self.recompute_diff_transforms_for_edit(
+            let changed_diff_hunks = self.recompute_diff_transforms_for_edit(
                 &edit,
                 &mut excerpts,
                 &mut old_diff_transforms,
@@ -2654,7 +2654,9 @@ impl MultiBuffer {
 
             output_delta += (output_edit.new.end - output_edit.new.start) as isize;
             output_delta -= (output_edit.old.end - output_edit.old.start) as isize;
-            output_edits.push(output_edit);
+            if changed_diff_hunks || matches!(change_kind, DiffChangeKind::BufferEdited) {
+                output_edits.push(output_edit);
+            }
 
             // If this is the last edit that intersects the current diff transform,
             // then recreate the content up to the end of this transform, to prepare
@@ -2713,7 +2715,7 @@ impl MultiBuffer {
         old_expanded_hunks: &mut HashSet<(ExcerptId, text::Anchor)>,
         snapshot: &MultiBufferSnapshot,
         change_kind: DiffChangeKind,
-    ) {
+    ) -> bool {
         log::trace!(
             "recomputing diff transform for edit {:?} => {:?}",
             edit.old.start.value..edit.old.end.value,
@@ -2740,10 +2742,11 @@ impl MultiBuffer {
             && change_kind == DiffChangeKind::BufferEdited
             && !self.all_diff_hunks_expanded
         {
-            return;
+            return false;
         }
 
         // Visit each excerpt that intersects the edit.
+        let mut did_expand_hunks = false;
         while let Some(excerpt) = excerpts.item() {
             if excerpt.text_summary.len == 0 {
                 if excerpts.end(&()) <= edit.new.end {
@@ -2818,6 +2821,7 @@ impl MultiBuffer {
                     };
 
                     if should_expand_hunk {
+                        did_expand_hunks = true;
                         log::trace!(
                             "expanding hunk {:?}",
                             hunk_excerpt_start.value..hunk_excerpt_end.value,
@@ -2867,6 +2871,8 @@ impl MultiBuffer {
                 break;
             }
         }
+
+        did_expand_hunks || !old_expanded_hunks.is_empty()
     }
 
     fn append_diff_transforms(
