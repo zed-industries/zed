@@ -3441,10 +3441,8 @@ impl MultiBufferSnapshot {
         while let Some(region) = cursor.region() {
             if region.is_main_buffer {
                 let mut buffer_end = region.buffer_range.start.key;
-                if region.is_main_buffer {
-                    let overshoot = range.end.saturating_sub(region.range.start.key);
-                    buffer_end.add_assign(&overshoot);
-                }
+                let overshoot = range.end.saturating_sub(region.range.start.key);
+                buffer_end.add_assign(&overshoot);
                 range_end = Some((region.excerpt.id, buffer_end));
                 break;
             }
@@ -3455,6 +3453,10 @@ impl MultiBufferSnapshot {
             key: range.start,
             value: None,
         });
+
+        if cursor.region().is_some_and(|region| !region.is_main_buffer) {
+            cursor.prev();
+        }
 
         iter::from_fn(move || loop {
             let excerpt = cursor.excerpt()?;
@@ -3498,8 +3500,9 @@ impl MultiBufferSnapshot {
                 // the metadata item's range.
                 if range.start > D::default() {
                     while let Some(region) = cursor.region() {
-                        if region.buffer.remote_id() == excerpt.buffer_id
-                            && region.buffer_range.end.value.unwrap() < range.start
+                        if !region.is_main_buffer
+                            || region.buffer.remote_id() == excerpt.buffer_id
+                                && region.buffer_range.end.value.unwrap() < range.start
                         {
                             cursor.next();
                         } else {
