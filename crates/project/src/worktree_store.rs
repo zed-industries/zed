@@ -271,7 +271,7 @@ impl WorktreeStore {
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
-                    path: abs_path.clone(),
+                    path: Some(abs_path.clone().into()),
                     visible,
                 })
                 .await?;
@@ -282,10 +282,21 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_name = PathBuf::from(&response.canonicalized_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(response.canonicalized_path.to_string());
+            let root_name = PathBuf::from(
+                response
+                    .canonicalized_path
+                    .clone()
+                    .context("Missing path")?,
+            )
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or(
+                response
+                    .canonicalized_path
+                    .clone()
+                    .context("Missing path")?
+                    .to_native_string(),
+            );
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -596,7 +607,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name().into(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
+                    abs_path: Some(worktree.abs_path().into()),
                 }
             })
             .collect()
@@ -923,7 +934,7 @@ impl WorktreeStore {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: project_path.worktree_id.to_proto(),
-                        path: project_path.path.to_string_lossy().to_string(), // Root path
+                        path: Some(project_path.path.into()), // Root path
                     }),
                 });
 
@@ -994,7 +1005,7 @@ impl WorktreeStore {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: repository.worktree_id.to_proto(),
-                        path: repository.path.to_string_lossy().to_string(), // Root path
+                        path: Some(repository.path.into()), // Root path
                     }),
                     branch_name: new_branch,
                 });
@@ -1116,7 +1127,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Path::new(&project_path.path).into(),
+            path: project_path.path.context("Missing path")?.into(),
         };
 
         let branches = this
@@ -1147,7 +1158,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: Path::new(&project_path.path).into(),
+            path: project_path.path.context("Missing path")?.into(),
         };
         let new_branch = update_branch.payload.branch_name;
 

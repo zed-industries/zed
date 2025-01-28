@@ -1,6 +1,6 @@
 use std::{str::FromStr, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 
 use async_trait::async_trait;
 use collections::BTreeMap;
@@ -120,7 +120,11 @@ impl ToolchainStore {
             };
             let toolchain = Toolchain {
                 name: toolchain.name.into(),
-                path: toolchain.path.into(),
+                path: toolchain
+                    .path
+                    .context("Missing path")?
+                    .to_native_string()
+                    .into(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
@@ -146,7 +150,7 @@ impl ToolchainStore {
         Ok(proto::ActiveToolchainResponse {
             toolchain: toolchain.map(|toolchain| proto::Toolchain {
                 name: toolchain.name.into(),
-                path: toolchain.path.into(),
+                path: Some(toolchain.path.to_string().into()),
                 raw_json: toolchain.as_json.to_string(),
             }),
         })
@@ -185,7 +189,7 @@ impl ToolchainStore {
                 .into_iter()
                 .map(|toolchain| proto::Toolchain {
                     name: toolchain.name.to_string(),
-                    path: toolchain.path.to_string(),
+                    path: Some(toolchain.path.to_string().into()),
                     raw_json: toolchain.as_json.to_string(),
                 })
                 .collect::<Vec<_>>()
@@ -361,7 +365,7 @@ impl RemoteToolchainStore {
                     language_name: toolchain.language_name.into(),
                     toolchain: Some(proto::Toolchain {
                         name: toolchain.name.into(),
-                        path: toolchain.path.into(),
+                        path: Some(toolchain.path.to_string().into()),
                         raw_json: toolchain.as_json.to_string(),
                     }),
                 })
@@ -398,7 +402,7 @@ impl RemoteToolchainStore {
                     Some(Toolchain {
                         language_name: language_name.clone(),
                         name: toolchain.name.into(),
-                        path: toolchain.path.into(),
+                        path: toolchain.path?.to_native_string().into(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })
@@ -439,7 +443,7 @@ impl RemoteToolchainStore {
                 Some(Toolchain {
                     language_name: language_name.clone(),
                     name: toolchain.name.into(),
-                    path: toolchain.path.into(),
+                    path: toolchain.path?.to_native_string().into(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })

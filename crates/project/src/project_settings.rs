@@ -14,11 +14,7 @@ use settings::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
     SettingsSources, SettingsStore,
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
@@ -292,7 +288,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: path.to_string_lossy().into(),
+                        path: Some(path.into()),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
@@ -305,7 +301,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: path.to_string_lossy().into(),
+                        path: Some(path.into()),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
@@ -343,7 +339,7 @@ impl SettingsObserver {
             this.update_settings(
                 worktree,
                 [(
-                    PathBuf::from(&envelope.payload.path).into(),
+                    envelope.payload.path.clone().unwrap().into(),
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
@@ -551,7 +547,7 @@ impl SettingsObserver {
                     .send(proto::UpdateWorktreeSettings {
                         project_id: self.project_id,
                         worktree_id: remote_worktree_id.to_proto(),
-                        path: directory.to_string_lossy().into_owned(),
+                        path: Some(directory.into()),
                         content: file_content,
                         kind: Some(local_settings_kind_to_proto(kind).into()),
                     })

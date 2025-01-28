@@ -296,14 +296,14 @@ impl ProjectPath {
     pub fn from_proto(p: proto::ProjectPath) -> Self {
         Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: Arc::from(PathBuf::from(p.path)),
+            path: p.path.unwrap_or_default().into(),
         }
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
         proto::ProjectPath {
             worktree_id: self.worktree_id.to_proto(),
-            path: self.path.to_string_lossy().to_string(),
+            path: Some(self.path.clone().into()),
         }
     }
 
@@ -3337,13 +3337,13 @@ impl Project {
                 .proto_client()
                 .request(proto::GetPathMetadata {
                     project_id: SSH_PROJECT_ID,
-                    path: path.to_string(),
+                    path: Some(path.into()),
                 });
             cx.background_executor().spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from(response.path),
+                        path: PathBuf::from(response.path?),
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -3415,7 +3415,7 @@ impl Project {
         } else if let Some(session) = self.ssh_client.as_ref() {
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
-                path: query,
+                path: Some(query.into()),
             };
 
             let response = session.read(cx).proto_client().request(request);
@@ -3966,7 +3966,7 @@ impl Project {
             this.open_buffer(
                 ProjectPath {
                     worktree_id,
-                    path: PathBuf::from(envelope.payload.path).into(),
+                    path: envelope.payload.path.unwrap_or_default().into(),
                 },
                 cx,
             )

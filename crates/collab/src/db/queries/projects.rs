@@ -428,13 +428,14 @@ impl Database {
                                     worktree_repository_statuses::Column::WorktreeId
                                         .eq(worktree_id),
                                 )
-                                .and(
-                                    worktree_repository_statuses::Column::RepoPath.is_in(
-                                        update.updated_repositories.iter().flat_map(|repository| {
-                                            repository.removed_statuses.iter()
-                                        }),
-                                    ),
-                                ),
+                                .and(worktree_repository_statuses::Column::RepoPath.is_in(
+                                    update.updated_repositories.iter().flat_map(|repository| {
+                                        repository
+                                            .removed_statuses
+                                            .iter()
+                                            .map(|status_entry| status_entry.to_db_string())
+                                    }),
+                                )),
                         )
                         .set(worktree_repository_statuses::ActiveModel {
                             is_deleted: ActiveValue::Set(true),
@@ -710,7 +711,7 @@ impl Database {
                     db_worktree.id as u64,
                     Worktree {
                         id: db_worktree.id as u64,
-                        abs_path: proto::join_paths(db_worktree.abs_path),
+                        abs_path: db_worktree.abs_path,
                         root_name: db_worktree.root_name,
                         visible: db_worktree.visible,
                         entries: Default::default(),
@@ -853,7 +854,7 @@ impl Database {
                 let db_settings_file = db_settings_file?;
                 if let Some(worktree) = worktrees.get_mut(&(db_settings_file.worktree_id as u64)) {
                     worktree.settings_files.push(WorktreeSettingsFile {
-                        path: db_settings_file.path,
+                        path: proto::CrossPlatformPath::from_db_string(db_settings_file.path).path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
                     });

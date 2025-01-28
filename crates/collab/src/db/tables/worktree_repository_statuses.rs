@@ -10,6 +10,11 @@ pub struct Model {
     pub worktree_id: i64,
     #[sea_orm(primary_key)]
     pub work_directory_id: i64,
+    // TODO:
+    // The path here should be a Vec<String> like others, but it's a String for now.
+    // Because the sea-orm doesn't support Vec<String> as primary key.
+    // This is used in the database, so the path spearator of this path string should
+    // be `/`.
     #[sea_orm(primary_key)]
     pub repo_path: String,
     /// Old single-code status field, no longer used but kept here to mirror the DB schema.

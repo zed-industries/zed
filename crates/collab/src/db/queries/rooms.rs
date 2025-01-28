@@ -653,13 +653,17 @@ impl Database {
                         worktree.updated_entries.push(proto::Entry {
                             id: db_entry.id as u64,
                             is_dir: db_entry.is_dir,
-                            path: db_entry.path,
+                            path: Some(proto::CrossPlatformPath {
+                                path: db_entry.path,
+                            }),
                             inode: db_entry.inode as u64,
                             mtime: Some(proto::Timestamp {
                                 seconds: db_entry.mtime_seconds as u64,
                                 nanos: db_entry.mtime_nanos as u32,
                             }),
-                            canonical_path: db_entry.canonical_path,
+                            canonical_path: db_entry
+                                .canonical_path
+                                .map(|path| proto::CrossPlatformPath { path }),
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
                             // This is only used in the summarization backlog, so if it's None,
@@ -730,7 +734,9 @@ impl Database {
                         while let Some(db_status) = db_statuses.next().await {
                             let db_status: worktree_repository_statuses::Model = db_status?;
                             if db_status.is_deleted {
-                                removed_statuses.push(db_status.repo_path);
+                                removed_statuses.push(proto::CrossPlatformPath::from_db_string(
+                                    db_status.repo_path,
+                                ));
                             } else {
                                 updated_statuses.push(db_status_to_proto(db_status)?);
                             }
@@ -781,7 +787,7 @@ impl Database {
                     .find(|w| w.id == db_settings_file.worktree_id as u64)
                 {
                     worktree.settings_files.push(WorktreeSettingsFile {
-                        path: db_settings_file.path,
+                        path: proto::CrossPlatformPath::from_db_string(db_settings_file.path).path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
                     });

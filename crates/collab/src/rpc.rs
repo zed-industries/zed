@@ -1441,7 +1441,9 @@ fn notify_rejoined_projects(
             let message = proto::UpdateWorktree {
                 project_id: project.id.to_proto(),
                 worktree_id: worktree.id,
-                abs_path: worktree.abs_path.clone(),
+                abs_path: Some(proto::CrossPlatformPath {
+                    path: worktree.abs_path.clone(),
+                }),
                 root_name: worktree.root_name,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
@@ -1472,7 +1474,9 @@ fn notify_rejoined_projects(
                     proto::UpdateWorktreeSettings {
                         project_id: project.id.to_proto(),
                         worktree_id: worktree.id,
-                        path: settings_file.path,
+                        path: Some(proto::CrossPlatformPath {
+                            path: settings_file.path,
+                        }),
                         content: Some(settings_file.content),
                         kind: Some(settings_file.kind.to_proto().into()),
                     },
@@ -1835,7 +1839,9 @@ fn join_project_internal(
             id: *id,
             root_name: worktree.root_name.clone(),
             visible: worktree.visible,
-            abs_path: worktree.abs_path.clone(),
+            abs_path: Some(proto::CrossPlatformPath {
+                path: worktree.abs_path.clone(),
+            }),
         })
         .collect::<Vec<_>>();
 
@@ -1874,7 +1880,9 @@ fn join_project_internal(
         let message = proto::UpdateWorktree {
             project_id: project_id.to_proto(),
             worktree_id,
-            abs_path: worktree.abs_path.clone(),
+            abs_path: Some(proto::CrossPlatformPath {
+                path: worktree.abs_path.clone(),
+            }),
             root_name: worktree.root_name,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
@@ -1905,7 +1913,9 @@ fn join_project_internal(
                 proto::UpdateWorktreeSettings {
                     project_id: project_id.to_proto(),
                     worktree_id: worktree.id,
-                    path: settings_file.path,
+                    path: Some(proto::CrossPlatformPath {
+                        path: settings_file.path,
+                    }),
                     content: Some(settings_file.content),
                     kind: Some(settings_file.kind.to_proto() as i32),
                 },

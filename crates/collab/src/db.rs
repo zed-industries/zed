@@ -672,7 +672,9 @@ impl RejoinedProject {
                     id: worktree.id,
                     root_name: worktree.root_name.clone(),
                     visible: worktree.visible,
-                    abs_path: worktree.abs_path.clone(),
+                    abs_path: Some(proto::CrossPlatformPath {
+                        path: worktree.abs_path.clone(),
+                    }),
                 })
                 .collect(),
             collaborators: self
@@ -688,7 +690,7 @@ impl RejoinedProject {
 #[derive(Debug)]
 pub struct RejoinedWorktree {
     pub id: u64,
-    pub abs_path: String,
+    pub abs_path: Vec<String>,
     pub root_name: String,
     pub visible: bool,
     pub updated_entries: Vec<proto::Entry>,
@@ -756,7 +758,7 @@ pub struct LeftProject {
 
 pub struct Worktree {
     pub id: u64,
-    pub abs_path: String,
+    pub abs_path: Vec<String>,
     pub root_name: String,
     pub visible: bool,
     pub entries: Vec<proto::Entry>,
@@ -769,7 +771,7 @@ pub struct Worktree {
 
 #[derive(Debug)]
 pub struct WorktreeSettingsFile {
-    pub path: String,
+    pub path: Vec<String>,
     pub content: String,
     pub kind: LocalSettingsKind,
 }
@@ -854,7 +856,9 @@ fn db_status_to_proto(
             }
         };
     Ok(proto::StatusEntry {
-        repo_path: entry.repo_path,
+        repo_path: Some(proto::CrossPlatformPath {
+            path: entry.repo_path.split('/').map(String::from).collect(),
+        }),
         simple_status,
         status: Some(proto::GitFileStatus {
             variant: Some(variant),
@@ -891,7 +895,10 @@ fn proto_status_to_db(
             },
         );
     (
-        status_entry.repo_path,
+        status_entry
+            .repo_path
+            .map(|path| path.to_db_string())
+            .unwrap_or_default(),
         status_kind,
         first_status,
         second_status,

@@ -15,7 +15,8 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
-    path::Path,
+    path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -669,11 +670,59 @@ impl<T: AsRef<Path>> From<T> for CrossPlatformPath {
     }
 }
 
-pub fn join_paths<I: IntoIterator<Item = String>>(paths: I) -> String {
-    paths
-        .into_iter()
-        .collect::<Vec<_>>()
-        .join(std::path::MAIN_SEPARATOR_STR)
+impl From<CrossPlatformPath> for PathBuf {
+    fn from(path: CrossPlatformPath) -> Self {
+        path.path.iter().collect()
+    }
+}
+
+impl From<&CrossPlatformPath> for PathBuf {
+    fn from(path: &CrossPlatformPath) -> Self {
+        path.path.iter().collect()
+    }
+}
+
+impl From<CrossPlatformPath> for Arc<Path> {
+    fn from(path: CrossPlatformPath) -> Self {
+        PathBuf::from(path).into()
+    }
+}
+
+impl CrossPlatformPath {
+    pub fn from_db_string(path: String) -> Self {
+        #[cfg(target_os = "windows")]
+        let path = path.replace("/", "\\");
+        let path = PathBuf::from(path);
+        Self {
+            path: path
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into())
+                .collect(),
+        }
+    }
+
+    pub fn to_db_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            let path: PathBuf = self.into();
+            path.to_string_lossy().replace("\\", "/")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let path: PathBuf = self.into();
+            path.to_string_lossy().into()
+        }
+    }
+
+    pub fn to_native_string(&self) -> String {
+        let path: PathBuf = self.into();
+        path.to_string_lossy().into()
+    }
+}
+
+pub fn to_db_string(path: Vec<String>) -> String {
+    let path = CrossPlatformPath { path };
+    path.to_db_string()
 }
 
 #[cfg(any(test, feature = "test-support"))]
