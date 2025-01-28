@@ -5944,6 +5944,19 @@ pub fn open_paths(
                 .all(|file| !file.is_dir)
             {
                 cx.update(|cx| {
+                    if let Some(window) = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                    {
+                        if let Ok(workspace) = window.read(cx) {
+                            let project = workspace.project().read(cx);
+                            if project.is_local() && !project.is_via_collab() {
+                                existing = Some(window);
+                                open_visible = OpenVisible::None;
+                                return;
+                            }
+                        }
+                    }
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);
