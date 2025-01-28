@@ -78,7 +78,7 @@ use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DisplayDiffHunk {
+enum DisplayDiffHunk {
     Folded {
         display_row: DisplayRow,
     },
@@ -1552,16 +1552,19 @@ impl EditorElement {
             let hunk_display_start = snapshot.point_to_display_point(hunk_start_point, Bias::Left);
             let hunk_display_end = snapshot.point_to_display_point(hunk_end_point, Bias::Right);
 
-            let display_hunk = if hunk_display_start.column() != 0 || hunk_display_end.column() != 0
-            {
+            let display_hunk = if hunk_display_start.column() != 0 {
                 DisplayDiffHunk::Folded {
                     display_row: hunk_display_start.row(),
                 }
             } else {
+                let mut end_row = hunk_display_end.row();
+                if hunk_display_end.column() > 0 {
+                    end_row.0 += 1;
+                }
                 DisplayDiffHunk::Unfolded {
                     status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
-                    display_row_range: hunk_display_start.row()..hunk_display_end.row(),
+                    display_row_range: hunk_display_start.row()..end_row,
                     multi_buffer_range: Anchor::range_in_buffer(
                         hunk.excerpt_id,
                         hunk.buffer_id,
@@ -4225,7 +4228,7 @@ impl EditorElement {
         });
     }
 
-    pub(super) fn diff_hunk_bounds(
+    fn diff_hunk_bounds(
         snapshot: &EditorSnapshot,
         line_height: Pixels,
         gutter_bounds: Bounds<Pixels>,
@@ -4233,15 +4236,14 @@ impl EditorElement {
     ) -> Bounds<Pixels> {
         let scroll_position = snapshot.scroll_position();
         let scroll_top = scroll_position.y * line_height;
+        let gutter_strip_width = (0.275 * line_height).floor();
 
         match hunk {
             DisplayDiffHunk::Folded { display_row, .. } => {
                 let start_y = display_row.as_f32() * line_height - scroll_top;
                 let end_y = start_y + line_height;
-
-                let width = Self::diff_hunk_strip_width(line_height);
                 let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
-                let highlight_size = size(width, end_y - start_y);
+                let highlight_size = size(gutter_strip_width, end_y - start_y);
                 Bounds::new(highlight_origin, highlight_size)
             }
             DisplayDiffHunk::Unfolded {
@@ -4283,19 +4285,12 @@ impl EditorElement {
                     let start_y = start_row.as_f32() * line_height - scroll_top;
                     let end_y = end_row_in_current_excerpt.as_f32() * line_height - scroll_top;
 
-                    let width = Self::diff_hunk_strip_width(line_height);
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
-                    let highlight_size = size(width, end_y - start_y);
+                    let highlight_size = size(gutter_strip_width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
             }
         }
-    }
-
-    /// Returns the width of the diff strip that will be displayed in the gutter.
-    pub(super) fn diff_hunk_strip_width(line_height: Pixels) -> Pixels {
-        // We floor the value to prevent pixel rounding.
-        (0.275 * line_height).floor()
     }
 
     fn paint_gutter_indicators(
@@ -5213,7 +5208,7 @@ impl EditorElement {
             let editor = self.editor.clone();
             let text_hitbox = layout.text_hitbox.clone();
             let gutter_hitbox = layout.gutter_hitbox.clone();
-            let hovered_hunk =
+            let multi_buffer_range =
                 layout
                     .display_hunks
                     .iter()
@@ -5242,7 +5237,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                hovered_hunk.clone(),
+                                multi_buffer_range.clone(),
                                 &position_map,
                                 &text_hitbox,
                                 &gutter_hitbox,
