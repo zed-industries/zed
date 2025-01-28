@@ -20,7 +20,7 @@ use language::{
     BracketPairConfig,
     Capability::ReadWrite,
     FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
-    Override, ParsedMarkdown, Point,
+    Override, ParsedMarkdown, PlainTextEdit, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
 use multi_buffer::IndentGuide;
@@ -15423,12 +15423,10 @@ async fn assert_highlighted_edits(
 
     let text_anchor_edits = edits
         .into_iter()
-        .map(|(range, insertion)| {
-            (
-                snapshot.anchor_after(range.start).text_anchor
-                    ..snapshot.anchor_before(range.end).text_anchor,
-                insertion,
-            )
+        .map(|(range, insertion)| PlainTextEdit {
+            old_range: snapshot.anchor_after(range.start).text_anchor
+                ..snapshot.anchor_before(range.end).text_anchor,
+            new_text: insertion,
         })
         .collect::<Vec<_>>();
 
@@ -15448,15 +15446,12 @@ async fn assert_highlighted_edits(
         let excerpt_id = multibuffer_snapshot.excerpts().next().unwrap().0;
         edits
             .into_iter()
-            .map(|edit| EditWithInsertionHighlights {
-                range: multibuffer_snapshot
-                    .anchor_in_excerpt(excerpt_id, edit.range.start)
-                    .unwrap()
-                    ..multibuffer_snapshot
-                        .anchor_in_excerpt(excerpt_id, edit.range.end)
-                        .unwrap(),
-                insertion: edit.insertion,
-                insertion_highlights: edit.insertion_highlights,
+            .map(|edit| {
+                edit.map_position(|anchor| {
+                    multibuffer_snapshot
+                        .anchor_in_excerpt(excerpt_id, anchor)
+                        .unwrap()
+                })
             })
             .collect::<Vec<_>>()
     });

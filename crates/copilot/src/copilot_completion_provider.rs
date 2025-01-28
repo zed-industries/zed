@@ -4,7 +4,7 @@ use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, EditWithInsertionHighlights, OffsetRangeExt, ToOffset,
+    Buffer, OffsetRangeExt, PlainTextEdit, ToOffset,
 };
 use settings::Settings;
 use std::{path::Path, time::Duration};
@@ -255,11 +255,11 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             } else {
                 let position = cursor_position.bias_right(buffer);
                 Some(InlineCompletion {
-                    edits: vec![EditWithInsertionHighlights {
-                        range: position..position,
-                        insertion: completion_text.into(),
-                        insertion_highlights: vec![],
-                    }],
+                    edits: vec![PlainTextEdit {
+                        old_range: position..position,
+                        new_text: completion_text.into(),
+                    }
+                    .into()],
                 })
             }
         } else {

@@ -1,7 +1,7 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
-use language::{EditWithInsertionHighlights, Language, LanguageConfig};
+use language::{Language, LanguageConfig, PlainTextEdit, TextEdit, TextEditWithNewHighlights};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
 use text::{Point, ToOffset};
@@ -24,7 +24,7 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].insertion.as_str(), "-273.15");
+        assert_eq!(edits[0].new_text().as_str(), "-273.15");
     });
 
     accept_completion(&mut cx);
@@ -46,7 +46,7 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].insertion.as_str(), "3.14159");
+        assert_eq!(edits[0].new_text().as_str(), "3.14159");
     });
 
     accept_completion(&mut cx);
@@ -158,7 +158,7 @@ async fn test_indentation(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].insertion.as_str(), "    const function()");
+        assert_eq!(edits[0].new_text().as_str(), "    const function()");
     });
 
     // When the cursor is before the suggested indentation level, accepting a
@@ -278,7 +278,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<EditWithInsertionHighlights<Anchor>>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<TextEditWithNewHighlights<Anchor>>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
@@ -324,13 +324,12 @@ fn propose_edits<T: ToOffset>(
     cx: &mut EditorTestContext,
 ) {
     let snapshot = cx.buffer_snapshot();
-    let edits = edits.into_iter().map(|(range, text)| {
-        let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
-        EditWithInsertionHighlights {
-            range,
-            insertion: text.into(),
-            insertion_highlights: vec![],
+    let edits = edits.into_iter().map(|edit| {
+        PlainTextEdit {
+            old_range: snapshot.anchor_after(edit.0.start)..snapshot.anchor_before(edit.0.end),
+            new_text: edit.1.to_string(),
         }
+        .into()
     });
 
     cx.update(|_, cx| {

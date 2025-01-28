@@ -588,25 +588,127 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EditWithInsertionHighlights<A> {
-    // todo! rename to old_range + new_text?
-    pub range: Range<A>,
-    pub insertion: String,
-    pub insertion_highlights: Vec<(Range<usize>, HighlightId)>,
+pub trait TextEdit<T: Clone> {
+    fn old_range(&self) -> &Range<T>;
+    fn mut_old_range(&mut self) -> &mut Range<T>;
+    fn new_text(&self) -> &String;
+    fn with_prefix_dropped(&self, prefix_length: usize) -> Self;
+
+    // TODO: replace uses of tuples with PlainTextEdit.
+    fn to_tuple(&self) -> (Range<T>, String) {
+        (self.old_range().clone(), self.new_text().clone())
+    }
 }
 
-impl<A: Clone> EditWithInsertionHighlights<A> {
-    pub fn new(plain: &(Range<A>, String)) -> Self {
-        EditWithInsertionHighlights {
-            range: plain.0.clone(),
-            insertion: plain.1.clone(),
-            insertion_highlights: vec![],
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlainTextEdit<T> {
+    pub old_range: Range<T>,
+    pub new_text: String,
+}
+
+impl<T: Clone> TextEdit<T> for PlainTextEdit<T> {
+    fn old_range(&self) -> &Range<T> {
+        &self.old_range
+    }
+
+    fn mut_old_range(&mut self) -> &mut Range<T> {
+        &mut self.old_range
+    }
+
+    fn new_text(&self) -> &String {
+        &self.new_text
+    }
+
+    fn with_prefix_dropped(&self, prefix_length: usize) -> Self {
+        PlainTextEdit {
+            old_range: self.old_range.clone(),
+            new_text: self.new_text[prefix_length..].to_string(),
+        }
+    }
+}
+
+impl<T> PlainTextEdit<T> {
+    pub fn map_position<O>(self, f: impl Fn(T) -> O) -> PlainTextEdit<O> {
+        PlainTextEdit {
+            old_range: f(self.old_range.start)..f(self.old_range.end),
+            new_text: self.new_text.clone(),
         }
     }
 
-    pub fn plain(&self) -> (Range<A>, String) {
-        (self.range.clone(), self.insertion.clone())
+    pub fn maybe_map_position<O>(self, f: impl Fn(T) -> Option<O>) -> Option<PlainTextEdit<O>> {
+        Some(PlainTextEdit {
+            old_range: f(self.old_range.start)?..f(self.old_range.end)?,
+            new_text: self.new_text.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextEditWithNewHighlights<T> {
+    pub text_edit: PlainTextEdit<T>,
+    pub new_highlights: Vec<(Range<usize>, HighlightId)>,
+}
+
+impl<T: Clone> TextEdit<T> for TextEditWithNewHighlights<T> {
+    fn old_range(&self) -> &Range<T> {
+        &self.text_edit.old_range
+    }
+
+    fn mut_old_range(&mut self) -> &mut Range<T> {
+        &mut self.text_edit.old_range
+    }
+
+    fn new_text(&self) -> &String {
+        &self.text_edit.new_text
+    }
+
+    fn with_prefix_dropped(&self, prefix_length: usize) -> Self {
+        TextEditWithNewHighlights {
+            text_edit: self.text_edit.with_prefix_dropped(prefix_length),
+            new_highlights: self.new_highlights.clone(),
+        }
+    }
+}
+
+impl<T> TextEditWithNewHighlights<T> {
+    pub fn map_edit<O>(
+        self,
+        f: impl FnOnce(PlainTextEdit<T>) -> PlainTextEdit<O>,
+    ) -> TextEditWithNewHighlights<O> {
+        TextEditWithNewHighlights {
+            text_edit: f(self.text_edit),
+            new_highlights: self.new_highlights,
+        }
+    }
+
+    pub fn maybe_map_edit<O>(
+        self,
+        f: impl FnOnce(PlainTextEdit<T>) -> Option<PlainTextEdit<O>>,
+    ) -> Option<TextEditWithNewHighlights<O>> {
+        Some(TextEditWithNewHighlights {
+            text_edit: f(self.text_edit)?,
+            new_highlights: self.new_highlights,
+        })
+    }
+
+    pub fn map_position<O>(self, f: impl Fn(T) -> O) -> TextEditWithNewHighlights<O> {
+        self.map_edit(|edit| edit.map_position(f))
+    }
+
+    pub fn maybe_map_position<O>(
+        self,
+        f: impl Fn(T) -> Option<O>,
+    ) -> Option<TextEditWithNewHighlights<O>> {
+        self.maybe_map_edit(|edit| edit.maybe_map_position(f))
+    }
+}
+
+impl<T> From<PlainTextEdit<T>> for TextEditWithNewHighlights<T> {
+    fn from(text_edit: PlainTextEdit<T>) -> Self {
+        TextEditWithNewHighlights {
+            text_edit,
+            new_highlights: vec![],
+        }
     }
 }
 
@@ -619,7 +721,7 @@ pub struct HighlightedEdits {
 impl HighlightedEdits {
     pub fn highlight(
         current_snapshot: &BufferSnapshot,
-        edits: &[EditWithInsertionHighlights<Anchor>],
+        edits: &[TextEditWithNewHighlights<Anchor>],
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedEdits {
@@ -643,13 +745,8 @@ impl HighlightedEdits {
             ..Default::default()
         };
 
-        for EditWithInsertionHighlights {
-            range: edit_range,
-            insertion,
-            insertion_highlights,
-        } in edits
-        {
-            let edit_range = edit_range.to_offset(current_snapshot);
+        for edit in edits {
+            let edit_range = edit.text_edit.old_range.to_offset(current_snapshot);
             let unchanged_range = start_of_unchanged..edit_range.start;
             start_of_unchanged = edit_range.end;
 
@@ -675,11 +772,12 @@ impl HighlightedEdits {
                 );
             }
 
-            if !insertion.is_empty() {
+            let new_text = &edit.text_edit.new_text;
+            if !new_text.is_empty() {
                 let delta = text.len();
-                text.push_str(&insertion);
+                text.push_str(&new_text);
                 let mut offset = delta;
-                for (highlight_range, highlight_id) in insertion_highlights {
+                for (highlight_range, highlight_id) in edit.new_highlights.iter() {
                     let start = highlight_range.start + delta;
                     let end = highlight_range.end + delta;
                     let unhighlighted_range = offset..start;
@@ -753,14 +851,14 @@ impl HighlightedEdits {
     /// Offset range in `current_snapshot` that contains all edits, expanded to start at the
     /// beginning of the first line and end at the end of the last line.
     fn compute_visible_range(
-        edits: &[EditWithInsertionHighlights<Anchor>],
+        edits: &[TextEditWithNewHighlights<Anchor>],
         snapshot: &BufferSnapshot,
     ) -> Option<Range<usize>> {
-        let EditWithInsertionHighlights { range: first, .. } = edits.first()?;
-        let EditWithInsertionHighlights { range: last, .. } = edits.last()?;
+        let first_edit = edits.first()?;
+        let last_edit = edits.last()?;
 
-        let start = first.start.to_point(snapshot);
-        let end = last.end.to_point(snapshot);
+        let start = first_edit.old_range().start.to_point(snapshot);
+        let end = last_edit.old_range().end.to_point(snapshot);
 
         // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
         let range = Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row));
@@ -1023,9 +1121,9 @@ impl Buffer {
 
     pub fn highlight_edit_insertions(
         &self,
-        edits: Vec<(Range<Anchor>, String)>,
+        edits: Vec<PlainTextEdit<Anchor>>,
         background_executor: &BackgroundExecutor,
-    ) -> Task<Vec<EditWithInsertionHighlights<Anchor>>> {
+    ) -> Task<Vec<TextEditWithNewHighlights<Anchor>>> {
         let registry = self.language_registry();
         let language = self.language().cloned();
 
@@ -1035,7 +1133,7 @@ impl Buffer {
             if edits.is_empty() {
                 return vec![];
             }
-            branch_buffer.edit(edits.iter().cloned());
+            branch_buffer.edit(edits.iter().map(|edit| edit.to_tuple()));
             let snapshot = branch_buffer.snapshot();
             syntax_snapshot.interpolate(&snapshot);
             if let Some(language) = language {
@@ -1044,8 +1142,8 @@ impl Buffer {
 
             edits
                 .iter()
-                .map(|(anchor_range, insertion)| {
-                    let range = anchor_range.to_offset(&snapshot);
+                .map(|text_edit| {
+                    let range = text_edit.old_range().to_offset(&snapshot);
                     let captures = syntax_snapshot.captures(range.clone(), &snapshot, |grammar| {
                         grammar.highlights_query.as_ref()
                     });
@@ -1064,21 +1162,20 @@ impl Buffer {
                         None,
                     );
 
-                    let mut insertion_highlights = Vec::new();
+                    let mut new_highlights = Vec::new();
                     let mut offset = 0;
                     for chunk in chunks {
                         let start = offset;
                         let end = start + chunk.text.len();
                         offset = end;
                         if let Some(highlight_id) = chunk.syntax_highlight_id {
-                            insertion_highlights.push((start..end, highlight_id));
+                            new_highlights.push((start..end, highlight_id));
                         }
                     }
 
-                    EditWithInsertionHighlights {
-                        range: anchor_range.clone(),
-                        insertion: insertion.to_string(),
-                        insertion_highlights,
+                    TextEditWithNewHighlights {
+                        text_edit: text_edit.clone(),
+                        new_highlights,
                     }
                 })
                 .collect::<Vec<_>>()

@@ -44,7 +44,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    ChunkRendererContext, TextEdit,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -3442,13 +3442,13 @@ impl EditorElement {
                 let edit_start = edits
                     .first()
                     .unwrap()
-                    .range
+                    .old_range()
                     .start
                     .to_display_point(editor_snapshot);
                 let edit_end = edits
                     .last()
                     .unwrap()
-                    .range
+                    .old_range()
                     .end
                     .to_display_point(editor_snapshot);
 
@@ -3460,7 +3460,7 @@ impl EditorElement {
 
                 match display_mode {
                     EditDisplayMode::TabAccept => {
-                        let range = &edits.first()?.range;
+                        let range = &edits.first()?.old_range();
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
                         let target_line_end = DisplayPoint::new(

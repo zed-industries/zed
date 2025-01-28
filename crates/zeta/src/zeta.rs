@@ -14,8 +14,8 @@ use gpui::{
 };
 use http_client::{HttpClient, Method};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot,
-    EditWithInsertionHighlights, OffsetRangeExt, Point, ToOffset, ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
+    PlainTextEdit, Point, TextEdit, TextEditWithNewHighlights, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
@@ -74,7 +74,7 @@ pub struct InlineCompletion {
     path: Arc<Path>,
     excerpt_range: Range<usize>,
     cursor_offset: usize,
-    edits: Arc<[EditWithInsertionHighlights<Anchor>]>,
+    edits: Arc<[TextEditWithNewHighlights<Anchor>]>,
     snapshot: BufferSnapshot,
     input_outline: Arc<str>,
     input_events: Arc<str>,
@@ -93,60 +93,8 @@ impl InlineCompletion {
     fn interpolate(
         &self,
         new_snapshot: &BufferSnapshot,
-    ) -> Option<Vec<EditWithInsertionHighlights<Anchor>>> {
+    ) -> Option<Vec<TextEditWithNewHighlights<Anchor>>> {
         interpolate(&self.snapshot, new_snapshot, &self.edits)
-    }
-}
-
-trait Edit {
-    fn range(&self) -> &Range<Anchor>;
-    fn insertion(&self) -> &String;
-    fn set_range_and_drop_prefix(&self, range: Range<Anchor>, prefix_len: usize) -> Self;
-}
-
-impl Edit for EditWithInsertionHighlights<Anchor> {
-    fn range(&self) -> &Range<Anchor> {
-        &self.range
-    }
-
-    fn insertion(&self) -> &String {
-        &self.insertion
-    }
-
-    fn set_range_and_drop_prefix(&self, range: Range<Anchor>, prefix_length: usize) -> Self {
-        let insertion_highlights = self
-            .insertion_highlights
-            .iter()
-            .flat_map(|(range, highlight_id)| {
-                if range.end <= prefix_length {
-                    None
-                } else {
-                    Some((
-                        range.start.saturating_sub(prefix_length)..range.end - prefix_length,
-                        *highlight_id,
-                    ))
-                }
-            })
-            .collect::<Vec<_>>();
-        EditWithInsertionHighlights {
-            range,
-            insertion: self.insertion[prefix_length..].to_string(),
-            insertion_highlights,
-        }
-    }
-}
-
-impl Edit for (Range<Anchor>, String) {
-    fn range(&self) -> &Range<Anchor> {
-        &self.0
-    }
-
-    fn insertion(&self) -> &String {
-        &self.1
-    }
-
-    fn set_range_and_drop_prefix(&self, range: Range<Anchor>, prefix_length: usize) -> Self {
-        (range, self.1[prefix_length..].to_string())
     }
 }
 
@@ -156,7 +104,7 @@ fn interpolate<E>(
     current_edits: &[E],
 ) -> Option<Vec<E>>
 where
-    E: Clone + Edit,
+    E: Clone + TextEdit<Anchor>,
 {
     let mut edits = Vec::new();
 
@@ -164,8 +112,8 @@ where
         .edits_since::<usize>(&old_snapshot.version)
         .peekable();
     for model_edit in current_edits.iter() {
-        let model_old_range = model_edit.range();
-        let model_new_text = model_edit.insertion();
+        let model_old_range = model_edit.old_range();
+        let model_new_text = model_edit.new_text();
         let model_offset_range = model_old_range.to_offset(old_snapshot);
         while let Some(next_user_edit) = user_edits.peek() {
             if next_user_edit.old.end < model_offset_range.start {
@@ -185,10 +133,11 @@ where
 
                 if model_new_text.starts_with(&user_new_text) {
                     if user_new_text.len() < model_new_text.len() {
-                        let range = new_snapshot.anchor_after(user_edit.new.end)
+                        let mut modified_edit = model_edit.with_prefix_dropped(user_new_text.len());
+                        *modified_edit.mut_old_range() = new_snapshot
+                            .anchor_after(user_edit.new.end)
                             ..new_snapshot.anchor_before(user_edit.new.end);
-                        let prefix_length = user_new_text.len();
-                        edits.push(model_edit.set_range_and_drop_prefix(range, prefix_length));
+                        edits.push(modified_edit);
                     }
 
                     user_edits.next();
@@ -664,7 +613,7 @@ and then another
         cx.spawn(|cx| async move {
             let output_excerpt: Arc<str> = output_excerpt.into();
 
-            let edits: Vec<(Range<Anchor>, String)> = cx
+            let edits: Vec<PlainTextEdit<Anchor>> = cx
                 .background_executor()
                 .spawn({
                     let output_excerpt = output_excerpt.clone();
@@ -677,7 +626,7 @@ and then another
             let (edits, snapshot) = buffer.read_with(&cx, {
                 move |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
-                    let edits: Vec<(Range<Anchor>, String)> =
+                    let edits: Vec<PlainTextEdit<Anchor>> =
                         interpolate(&snapshot, &new_snapshot, &edits)
                             .context("Interpolated edits are empty")?;
 
@@ -711,7 +660,7 @@ and then another
         output_excerpt: Arc<str>,
         excerpt_range: Range<usize>,
         snapshot: &BufferSnapshot,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
+    ) -> Result<Vec<PlainTextEdit<Anchor>>> {
         let content = output_excerpt.replace(CURSOR_MARKER, "");
 
         let start_markers = content
@@ -769,7 +718,7 @@ and then another
         new_text: &str,
         offset: usize,
         snapshot: &BufferSnapshot,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<PlainTextEdit<Anchor>> {
         let diff = similar::TextDiff::from_words(old_text.as_str(), new_text);
 
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
@@ -822,10 +771,11 @@ and then another
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
                 let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
-                (
-                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end),
+                PlainTextEdit {
+                    old_range: snapshot.anchor_after(old_range.start)
+                        ..snapshot.anchor_before(old_range.end),
                     new_text,
-                )
+                }
             })
             .collect()
     }
@@ -1083,7 +1033,7 @@ impl CurrentInlineCompletion {
         if old_edits.len() == 1 && new_edits.len() == 1 {
             let old = &old_edits[0];
             let new = &new_edits[0];
-            new.range == old.range && new.insertion.starts_with(&old.insertion)
+            new.old_range() == old.old_range() && new.new_text().starts_with(old.new_text())
         } else {
             true
         }
@@ -1286,16 +1236,17 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         let (closest_edit_ix, closest_edit) =
             edits.iter().enumerate().min_by_key(|(_, edit)| {
                 let distance_from_start =
-                    cursor_row.abs_diff(edit.range.start.to_point(buffer).row);
-                let distance_from_end = cursor_row.abs_diff(edit.range.end.to_point(buffer).row);
+                    cursor_row.abs_diff(edit.old_range().start.to_point(buffer).row);
+                let distance_from_end =
+                    cursor_row.abs_diff(edit.old_range().end.to_point(buffer).row);
                 cmp::min(distance_from_start, distance_from_end)
             })?;
-        let closest_edit_range = &closest_edit.range;
+        let closest_edit_range = &closest_edit.old_range();
 
         let mut edit_start_ix = closest_edit_ix;
         for edit in edits[..edit_start_ix].iter().rev() {
-            let distance_from_closest_edit =
-                closest_edit_range.start.to_point(buffer).row - edit.range.end.to_point(buffer).row;
+            let distance_from_closest_edit = closest_edit_range.start.to_point(buffer).row
+                - edit.old_range().end.to_point(buffer).row;
             if distance_from_closest_edit <= 1 {
                 edit_start_ix -= 1;
             } else {
@@ -1305,8 +1256,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let mut edit_end_ix = closest_edit_ix + 1;
         for edit in &edits[edit_end_ix..] {
-            let distance_from_closest_edit =
-                edit.range.start.to_point(buffer).row - closest_edit_range.end.to_point(buffer).row;
+            let distance_from_closest_edit = edit.old_range().start.to_point(buffer).row
+                - closest_edit_range.end.to_point(buffer).row;
             if distance_from_closest_edit <= 1 {
                 edit_end_ix += 1;
             } else {
@@ -1336,7 +1287,7 @@ mod tests {
     #[gpui::test]
     async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
-        let edits: Vec<(Range<Anchor>, String)> = cx.update(|cx| {
+        let edits: Vec<PlainTextEdit<Anchor>> = cx.update(|cx| {
             to_completion_edits(
                 [(2..5, "REM".to_string()), (9..11, "".to_string())],
                 &buffer,
@@ -1505,7 +1456,11 @@ mod tests {
 
         let completion = completion_task.await.unwrap();
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(completion.edits.iter().map(|edit| edit.plain()), None, cx)
+            buffer.edit(
+                completion.edits.iter().map(|edit| edit.to_tuple()),
+                None,
+                cx,
+            )
         });
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.text()),
@@ -1517,21 +1472,19 @@ mod tests {
         iterator: impl IntoIterator<Item = (Range<usize>, String)>,
         buffer: &Entity<Buffer>,
         cx: &App,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<PlainTextEdit<Anchor>> {
         let buffer = buffer.read(cx);
         iterator
             .into_iter()
-            .map(|(range, text)| {
-                (
-                    buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                    text,
-                )
+            .map(|(range, text)| PlainTextEdit {
+                old_range: buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                new_text: text,
             })
             .collect()
     }
 
     fn from_completion_edits(
-        editor_edits: &[EditWithInsertionHighlights<Anchor>],
+        editor_edits: &[TextEditWithNewHighlights<Anchor>],
         buffer: &Entity<Buffer>,
         cx: &App,
     ) -> Vec<(Range<usize>, String)> {
@@ -1539,10 +1492,9 @@ mod tests {
         editor_edits
             .iter()
             .map(|edit| {
-                (
-                    edit.range.start.to_offset(buffer)..edit.range.end.to_offset(buffer),
-                    edit.insertion.clone(),
-                )
+                edit.clone()
+                    .map_position(|position| position.to_offset(buffer))
+                    .to_tuple()
             })
             .collect()
     }

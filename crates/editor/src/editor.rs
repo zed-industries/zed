@@ -96,9 +96,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, EditWithInsertionHighlights, HighlightedEdits,
-    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions,
+    CursorShape, Diagnostic, Documentation, HighlightedEdits, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextEdit, TextEditWithNewHighlights,
+    TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -499,7 +499,7 @@ pub(crate) enum EditDisplayMode {
 
 enum InlineCompletion {
     Edit {
-        edits: Vec<EditWithInsertionHighlights<Anchor>>,
+        edits: Vec<TextEditWithNewHighlights<Anchor>>,
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
     },
@@ -4853,13 +4853,13 @@ impl Editor {
                 }
 
                 let snapshot = self.buffer.read(cx).snapshot(cx);
-                let last_edit_end = edits.last().unwrap().range.end.bias_right(&snapshot);
+                let last_edit_end = edits.last().unwrap().old_range().end.bias_right(&snapshot);
 
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.edit(
                         edits
                             .iter()
-                            .map(|edit| (edit.range.clone(), edit.insertion.clone())),
+                            .map(|edit| (edit.old_range().clone(), edit.new_text().clone())),
                         None,
                         cx,
                     )
@@ -4906,9 +4906,9 @@ impl Editor {
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let cursor_offset = self.selections.newest::<usize>(cx).head();
                 let insertion = edits.iter().find_map(|edit| {
-                    let range = edit.range.to_offset(&snapshot);
+                    let range = edit.old_range().to_offset(&snapshot);
                     if range.is_empty() && range.start == cursor_offset {
-                        Some(&edit.insertion)
+                        Some(edit.new_text())
                     } else {
                         None
                     }
@@ -5044,31 +5044,19 @@ impl Editor {
         let edits = inline_completion
             .edits
             .into_iter()
-            .flat_map(
-                |EditWithInsertionHighlights {
-                     range,
-                     insertion,
-                     insertion_highlights,
-                 }| {
-                    let start = multibuffer.anchor_in_excerpt(excerpt_id, range.start)?;
-                    let end = multibuffer.anchor_in_excerpt(excerpt_id, range.end)?;
-                    Some(EditWithInsertionHighlights {
-                        range: start..end,
-                        insertion,
-                        insertion_highlights,
-                    })
-                },
-            )
+            .flat_map(|edit| {
+                edit.maybe_map_position(|anchor| multibuffer.anchor_in_excerpt(excerpt_id, anchor))
+            })
             .collect::<Vec<_>>();
         if edits.is_empty() {
             return None;
         }
 
-        let first_edit_start = edits.first().unwrap().range.start;
+        let first_edit_start = edits.first().unwrap().old_range().start;
         let first_edit_start_point = first_edit_start.to_point(&multibuffer);
         let edit_start_row = first_edit_start_point.row.saturating_sub(2);
 
-        let last_edit_end = edits.last().unwrap().range.end;
+        let last_edit_end = edits.last().unwrap().old_range().end;
         let last_edit_end_point = last_edit_end.to_point(&multibuffer);
         let edit_end_row = cmp::min(multibuffer.max_point().row, last_edit_end_point.row + 2);
 
@@ -5085,14 +5073,14 @@ impl Editor {
         } else {
             if edits
                 .iter()
-                .all(|edit| edit.range.to_offset(&multibuffer).is_empty())
+                .all(|edit| edit.old_range().to_offset(&multibuffer).is_empty())
             {
                 let mut inlays = Vec::new();
                 for edit in &edits {
                     let inlay = Inlay::inline_completion(
                         post_inc(&mut self.next_inlay_id),
-                        edit.range.start,
-                        edit.insertion.as_str(),
+                        edit.old_range().start,
+                        edit.new_text().as_str(),
                     );
                     inlay_ids.push(inlay.id);
                     inlays.push(inlay);
@@ -5102,7 +5090,7 @@ impl Editor {
             } else {
                 let background_color = cx.theme().status().deleted_background;
                 self.highlight_text::<InlineCompletionHighlight>(
-                    edits.iter().map(|edit| edit.range.clone()).collect(),
+                    edits.iter().map(|edit| edit.old_range().clone()).collect(),
                     HighlightStyle {
                         background_color: Some(background_color),
                         ..Default::default()
@@ -5116,7 +5104,7 @@ impl Editor {
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker()
                     && first_edit_start_point.row == last_edit_end_point.row
-                    && !edits.iter().any(|edit| edit.insertion.contains('\n'))
+                    && !edits.iter().any(|edit| edit.new_text().contains('\n'))
                 {
                     EditDisplayMode::TabAccept
                 } else {
@@ -15831,25 +15819,13 @@ pub fn diagnostic_block_renderer(
 
 fn inline_completion_edit_text(
     current_snapshot: &BufferSnapshot,
-    edits: &[EditWithInsertionHighlights<Anchor>],
+    edits: &[TextEditWithNewHighlights<Anchor>],
     include_deletions: bool,
     cx: &App,
 ) -> Option<HighlightedEdits> {
     let edits = edits
         .iter()
-        .map(
-            |EditWithInsertionHighlights {
-                 range,
-                 insertion,
-                 insertion_highlights,
-             }| {
-                EditWithInsertionHighlights {
-                    range: range.start.text_anchor..range.end.text_anchor,
-                    insertion: insertion.clone(),
-                    insertion_highlights: insertion_highlights.clone(),
-                }
-            },
-        )
+        .map(|edit| edit.clone().map_position(|anchor| anchor.text_anchor))
         .collect::<Vec<_>>();
 
     Some(HighlightedEdits::highlight(
@@ -16116,15 +16092,15 @@ impl Global for KillRing {}
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 fn all_edits_insertions_or_deletions(
-    edits: &Vec<EditWithInsertionHighlights<Anchor>>,
+    edits: &Vec<TextEditWithNewHighlights<Anchor>>,
     snapshot: &MultiBufferSnapshot,
 ) -> bool {
     let mut all_insertions = true;
     let mut all_deletions = true;
 
     for edit in edits.iter() {
-        let range_is_empty = edit.range.to_offset(&snapshot).is_empty();
-        let text_is_empty = edit.insertion.is_empty();
+        let range_is_empty = edit.old_range().to_offset(&snapshot).is_empty();
+        let text_is_empty = edit.new_text().is_empty();
 
         if range_is_empty != text_is_empty {
             if range_is_empty {

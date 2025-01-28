@@ -2674,17 +2674,15 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         let edits = buffer.read_with(cx, |buffer, _| {
             edits
                 .into_iter()
-                .map(|(range, text)| {
-                    (
-                        buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
-                        text.to_string(),
-                    )
+                .map(|(range, text)| PlainTextEdit {
+                    old_range: buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
+                    new_text: text.to_string(),
                 })
                 .collect::<Vec<_>>()
         });
         let edits = buffer
             .read_with(cx, |buffer, cx| {
-                buffer.highlight_edit_insertions(edits.clone(), cx.background_executor())
+                buffer.highlight_edit_insertions(edits, cx.background_executor())
             })
             .await;
         cx.read(|cx| HighlightedEdits::highlight(&buffer.read(cx).snapshot(), &edits, true, cx))
@@ -2712,16 +2710,16 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
 
     let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "first")], cx);
-    let edits_with_insertion_highlights = buffer
+    let edits_with_new_highlights = buffer
         .read_with(cx, |buffer, cx| {
-            buffer.highlight_edit_insertions(edits.clone(), cx.background_executor())
+            buffer.highlight_edit_insertions(edits, cx.background_executor())
         })
         .await;
 
     let highlighted_edits = cx.read(|cx| {
         HighlightedEdits::highlight(
             &buffer.read(cx).snapshot(),
-            &edits_with_insertion_highlights,
+            &edits_with_new_highlights,
             false,
             cx,
         )
@@ -2740,12 +2738,12 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
     let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "f")], cx);
     cx.update(|cx| {
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits.iter().cloned(), None, cx);
+            buffer.edit(edits.iter().map(|edit| edit.to_tuple()), None, cx);
         })
     });
 
     let edits = construct_edits(&buffer, [(Point::new(1, 5)..Point::new(1, 5), "irst")], cx);
-    let edits_with_insertion_highlights = buffer
+    let edits_with_new_highlights = buffer
         .read_with(cx, |buffer, cx| {
             buffer.highlight_edit_insertions(edits.clone(), cx.background_executor())
         })
@@ -2753,7 +2751,7 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
     let highlighted_edits = cx.read(|cx| {
         HighlightedEdits::highlight(
             &buffer.read(cx).snapshot(),
-            &edits_with_insertion_highlights,
+            &edits_with_new_highlights,
             false,
             cx,
         )
@@ -2771,15 +2769,13 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
         buffer: &Entity<Buffer>,
         edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
         cx: &mut TestAppContext,
-    ) -> Vec<(Range<Anchor>, String)> {
+    ) -> Vec<PlainTextEdit<Anchor>> {
         buffer.read_with(cx, |buffer, _| {
             edits
                 .into_iter()
-                .map(|(range, text)| {
-                    (
-                        buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                        text.to_string(),
-                    )
+                .map(|(range, text)| PlainTextEdit {
+                    old_range: buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                    new_text: text.to_string(),
                 })
                 .collect::<Vec<_>>()
         })

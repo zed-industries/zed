@@ -4,8 +4,8 @@ use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot,
-    EditWithInsertionHighlights,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, PlainTextEdit,
+    TextEditWithNewHighlights,
 };
 use std::{
     ops::{AddAssign, Range},
@@ -51,7 +51,7 @@ fn completion_from_diff(
         .text_for_range(delete_range.clone())
         .collect::<String>();
 
-    let mut edits: Vec<EditWithInsertionHighlights<Anchor>> = Vec::new();
+    let mut edits: Vec<TextEditWithNewHighlights<Anchor>> = Vec::new();
 
     let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
     let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
@@ -70,12 +70,11 @@ fn completion_from_diff(
                 if k != 0 {
                     let offset = snapshot.anchor_after(offset);
                     // the range from the current position to item is an inlay.
-                    let edit = EditWithInsertionHighlights {
-                        range: offset..offset,
-                        insertion: completion_graphemes[i..i + k].join(""),
-                        insertion_highlights: vec![],
+                    let edit = PlainTextEdit {
+                        old_range: offset..offset,
+                        new_text: completion_graphemes[i..i + k].join(""),
                     };
-                    edits.push(edit);
+                    edits.push(edit.into());
                 }
                 i += k + 1;
                 j += 1;
@@ -92,11 +91,13 @@ fn completion_from_diff(
     if j == buffer_graphemes.len() && i < completion_graphemes.len() {
         let offset = snapshot.anchor_after(offset);
         // there is leftover completion text, so drop it as an inlay.
-        edits.push(EditWithInsertionHighlights {
-            range: offset..offset,
-            insertion: completion_graphemes[i..].join(""),
-            insertion_highlights: vec![],
-        });
+        edits.push(
+            PlainTextEdit {
+                old_range: offset..offset,
+                new_text: completion_graphemes[i..].join(""),
+            }
+            .into(),
+        );
     }
 
     InlineCompletion { edits }
