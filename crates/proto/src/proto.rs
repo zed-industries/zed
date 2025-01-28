@@ -15,6 +15,7 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -653,6 +654,18 @@ impl From<Nonce> for u128 {
         let upper_half = (nonce.upper_half as u128) << 64;
         let lower_half = nonce.lower_half as u128;
         upper_half | lower_half
+    }
+}
+
+impl<T: AsRef<Path>> From<T> for CrossPlatformPath {
+    fn from(path: T) -> Self {
+        let path = path.as_ref();
+        Self {
+            path: path
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().into())
+                .collect(),
+        }
     }
 }
 
