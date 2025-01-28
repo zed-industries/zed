@@ -103,23 +103,23 @@ fn interpolate(
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
 
-    let mut user_edits = new_snapshot
-        .edits_since::<usize>(&old_snapshot.version)
-        .peekable();
-    for (model_old_range, model_new_text) in current_edits.iter() {
-        let model_offset_range = model_old_range.to_offset(old_snapshot);
-        while let Some(next_user_edit) = user_edits.peek() {
-            if next_user_edit.old.end < model_offset_range.start {
-                user_edits.next();
+    let mut model_edits = current_edits.into_iter().peekable();
+    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        while let Some((model_old_range, _)) = model_edits.peek() {
+            let model_old_range = model_old_range.to_offset(old_snapshot);
+            if !model_old_range.is_empty() {
+                return None;
+            } else if model_old_range.end < user_edit.old.start {
+                let (model_old_range, model_new_text) = model_edits.next().unwrap();
+                edits.push((model_old_range.clone(), model_new_text.clone()));
             } else {
                 break;
             }
         }
 
-        if let Some(user_edit) = user_edits.peek() {
-            if user_edit.old.start > model_offset_range.end {
-                edits.push((model_old_range.clone(), model_new_text.clone()));
-            } else if user_edit.old == model_offset_range {
+        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
+            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            if user_edit.old == model_old_offset_range {
                 let user_new_text = new_snapshot
                     .text_for_range(user_edit.new.clone())
                     .collect::<String>();
@@ -128,20 +128,26 @@ fn interpolate(
                     if !model_suffix.is_empty() {
                         edits.push((
                             new_snapshot.anchor_after(user_edit.new.end)
-                                ..new_snapshot.anchor_before(user_edit.new.end),
-                            model_suffix.into(),
+                                ..new_snapshot.anchor_after(user_edit.new.end),
+                            model_suffix.to_string(),
                         ));
                     }
 
-                    user_edits.next();
-                } else {
-                    return None;
+                    model_edits.next();
+                    continue;
                 }
-            } else {
-                return None;
             }
-        } else {
+        }
+
+        return None;
+    }
+
+    for (model_old_range, model_new_text) in model_edits {
+        let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+        if model_old_offset_range.is_empty() {
             edits.push((model_old_range.clone(), model_new_text.clone()));
+        } else {
+            return None;
         }
     }
 
@@ -1277,10 +1283,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
-        let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
+        let buffer = cx.new(|cx| Buffer::local("Lo ips dolor", cx));
         let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
             to_completion_edits(
-                [(2..5, "REM".to_string()), (9..11, "".to_string())],
+                [(2..2, "REM".to_string()), (6..6, "UM".to_string())],
                 &buffer,
                 cx,
             )
@@ -1314,18 +1320,32 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(2..2, "REM".to_string()), (6..6, "UM".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..2, "R")], None, cx));
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
                     cx
                 ),
-                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+                vec![(3..3, "EM".to_string()), (7..7, "UM".to_string())]
             );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(7..7, "U")], None, cx));
+            assert_eq!(
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(3..3, "EM".to_string()), (8..8, "M".to_string())]
+            );
+
+            // Editing after all the model edits should always keep the inline completion
+            buffer.update(cx, |buffer, cx| buffer.edit([(10..10, "X")], None, cx));
+            assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
 
             buffer.update(cx, |buffer, cx| buffer.undo(cx));
             assert_eq!(
@@ -1334,60 +1354,21 @@ mod tests {
                     &buffer,
                     cx
                 ),
-                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+                vec![(3..3, "EM".to_string()), (8..8, "M".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
+            buffer.update(cx, |buffer, cx| buffer.edit([(8..8, "M")], None, cx));
             assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
                     cx
                 ),
-                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+                vec![(3..3, "EM".to_string())]
             );
 
-            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
-            assert_eq!(
-                from_completion_edits(
-                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                    &buffer,
-                    cx
-                ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
-            );
-
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
-            assert_eq!(
-                from_completion_edits(
-                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                    &buffer,
-                    cx
-                ),
-                vec![(9..11, "".to_string())]
-            );
-
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
-            assert_eq!(
-                from_completion_edits(
-                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                    &buffer,
-                    cx
-                ),
-                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
-            );
-
-            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
-            assert_eq!(
-                from_completion_edits(
-                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                    &buffer,
-                    cx
-                ),
-                vec![(4..4, "M".to_string())]
-            );
-
-            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
+            // Editing before the model edits should always remove the inline completion
+            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "I")], None, cx));
             assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
         })
     }
