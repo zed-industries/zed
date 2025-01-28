@@ -669,6 +669,13 @@ impl<T: AsRef<Path>> From<T> for CrossPlatformPath {
     }
 }
 
+pub fn join_paths<I: IntoIterator<Item = String>>(paths: I) -> String {
+    paths
+        .into_iter()
+        .collect::<Vec<_>>()
+        .join(std::path::MAIN_SEPARATOR_STR)
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]

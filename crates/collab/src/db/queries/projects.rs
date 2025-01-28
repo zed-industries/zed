@@ -78,7 +78,11 @@ impl Database {
                     worktree::ActiveModel {
                         id: ActiveValue::set(worktree.id as i64),
                         project_id: ActiveValue::set(project.id),
-                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                        // TODO:
+                        // The unwrap here should be safe, right?
+                        abs_path: ActiveValue::set(
+                            worktree.abs_path.as_ref().unwrap().path.clone(),
+                        ),
                         root_name: ActiveValue::set(worktree.root_name.clone()),
                         visible: ActiveValue::set(worktree.visible),
                         scan_id: ActiveValue::set(0),
@@ -188,7 +192,9 @@ impl Database {
             worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
                 id: ActiveValue::set(worktree.id as i64),
                 project_id: ActiveValue::set(project_id),
-                abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                // TODO:
+                // The unwrap here should be safe, right?
+                abs_path: ActiveValue::set(worktree.abs_path.as_ref().unwrap().path.clone()),
                 root_name: ActiveValue::set(worktree.root_name.clone()),
                 visible: ActiveValue::set(worktree.visible),
                 scan_id: ActiveValue::set(0),
@@ -255,7 +261,9 @@ impl Database {
                 } else {
                     ActiveValue::default()
                 },
-                abs_path: ActiveValue::set(update.abs_path.clone()),
+                // TODO:
+                // The unwrap here should be safe, right?
+                abs_path: ActiveValue::set(update.abs_path.as_ref().unwrap().path.clone()),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -269,11 +277,15 @@ impl Database {
                         worktree_id: ActiveValue::set(worktree_id),
                         id: ActiveValue::set(entry.id as i64),
                         is_dir: ActiveValue::set(entry.is_dir),
-                        path: ActiveValue::set(entry.path.clone()),
+                        // TODO:
+                        // The unwrap here should be safe, right?
+                        path: ActiveValue::set(entry.path.clone().unwrap().path),
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
-                        canonical_path: ActiveValue::set(entry.canonical_path.clone()),
+                        canonical_path: ActiveValue::set(
+                            entry.canonical_path.clone().map(|path| path.path),
+                        ),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
@@ -487,7 +499,7 @@ impl Database {
             worktree_diagnostic_summary::Entity::insert(worktree_diagnostic_summary::ActiveModel {
                 project_id: ActiveValue::set(project_id),
                 worktree_id: ActiveValue::set(worktree_id),
-                path: ActiveValue::set(summary.path.clone()),
+                path: ActiveValue::set(summary.path.as_ref().context("Missing path")?.path.clone()),
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
                 warning_count: ActiveValue::set(summary.warning_count as i32),
@@ -586,7 +598,9 @@ impl Database {
                 worktree_settings_file::Entity::insert(worktree_settings_file::ActiveModel {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
-                    path: ActiveValue::Set(update.path.clone()),
+                    path: ActiveValue::Set(
+                        update.path.as_ref().context("Missing path")?.path.clone(),
+                    ),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
                 })
@@ -605,7 +619,9 @@ impl Database {
                 worktree_settings_file::Entity::delete(worktree_settings_file::ActiveModel {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
-                    path: ActiveValue::Set(update.path.clone()),
+                    path: ActiveValue::Set(
+                        update.path.as_ref().context("Missing path")?.path.clone(),
+                    ),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -687,7 +703,7 @@ impl Database {
                     db_worktree.id as u64,
                     Worktree {
                         id: db_worktree.id as u64,
-                        abs_path: db_worktree.abs_path,
+                        abs_path: proto::join_paths(db_worktree.abs_path),
                         root_name: db_worktree.root_name,
                         visible: db_worktree.visible,
                         entries: Default::default(),
@@ -717,13 +733,17 @@ impl Database {
                     worktree.entries.push(proto::Entry {
                         id: db_entry.id as u64,
                         is_dir: db_entry.is_dir,
-                        path: db_entry.path,
+                        path: Some(proto::CrossPlatformPath {
+                            path: db_entry.path,
+                        }),
                         inode: db_entry.inode as u64,
                         mtime: Some(proto::Timestamp {
                             seconds: db_entry.mtime_seconds as u64,
                             nanos: db_entry.mtime_nanos as u32,
                         }),
-                        canonical_path: db_entry.canonical_path,
+                        canonical_path: db_entry
+                            .canonical_path
+                            .map(|path| proto::CrossPlatformPath { path }),
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
                         // This is only used in the summarization backlog, so if it's None,
@@ -805,7 +825,9 @@ impl Database {
                     worktree
                         .diagnostic_summaries
                         .push(proto::DiagnosticSummary {
-                            path: db_summary.path,
+                            path: Some(proto::CrossPlatformPath {
+                                path: db_summary.path,
+                            }),
                             language_server_id: db_summary.language_server_id as u64,
                             error_count: db_summary.error_count as u32,
                             warning_count: db_summary.warning_count as u32,
@@ -824,7 +846,7 @@ impl Database {
                 let db_settings_file = db_settings_file?;
                 if let Some(worktree) = worktrees.get_mut(&(db_settings_file.worktree_id as u64)) {
                     worktree.settings_files.push(WorktreeSettingsFile {
-                        path: db_settings_file.path,
+                        path: proto::join_paths(db_settings_file.path),
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
                     });
