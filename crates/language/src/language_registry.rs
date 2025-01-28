@@ -57,9 +57,9 @@ impl LanguageName {
     }
 }
 
-impl Into<SharedString> for LanguageName {
-    fn into(self) -> SharedString {
-        self.0
+impl From<LanguageName> for SharedString {
+    fn from(value: LanguageName) -> Self {
+        value.0
     }
 }
 
