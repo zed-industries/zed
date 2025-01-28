@@ -833,7 +833,7 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                concat!("hello from ", path!("/dir/file_with.odd_extension:1:1", 1)).to_string(),
+                concat!("hello from ", path!("/dir/file_with.odd_extension:1:1")).to_string(),
                 concat!("opened now: ", path!("/dir")).to_string(),
             ],
             "Second opened buffer should fill the context, labels should be trimmed if long enough"
@@ -869,7 +869,7 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                concat!("hello from ", path!("/dir/file_without_extension:2:3", 1)).to_string(),
+                concat!("hello from ", path!("/dir/file_without_extension:2:3")).to_string(),
                 concat!("opened now: ", path!("/dir")).to_string(),
             ],
             "Opened buffer should fill the context, labels should be trimmed if long enough"
@@ -964,8 +964,8 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                concat!("Another task from file ", path!("/dir/a1.ts", 1)),
-                concat!("TypeScript task from file ", path!("/dir/a1.ts", 1)),
+                concat!("Another task from file ", path!("/dir/a1.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
                 "Task without variables",
             ],
             "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
@@ -974,7 +974,7 @@ mod tests {
         emulate_task_schedule(
             tasks_picker,
             &project,
-            concat!("TypeScript task from file ", path!("/dir/a1.ts", 1)),
+            concat!("TypeScript task from file ", path!("/dir/a1.ts")),
             cx,
         );
 
@@ -982,8 +982,8 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                concat!("TypeScript task from file ", path!("/dir/a1.ts", 1)),
-                concat!("Another task from file ", path!("/dir/a1.ts", 1)),
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a1.ts")),
                 "Task without variables",
             ],
             "After spawning the task and getting it into the history, it should be up in the sort as recently used.
@@ -1005,9 +1005,9 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                concat!("TypeScript task from file ", path!("/dir/a1.ts", 1)),
-                concat!("Another task from file ", path!("/dir/a2.ts", 1)),
-                concat!("TypeScript task from file ", path!("/dir/a2.ts", 1)),
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a2.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a2.ts")),
                 "Task without variables",
             ],
             "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
@@ -1043,9 +1043,9 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                concat!("TypeScript task from file ", path!("/dir/a1.ts", 1)),
-                concat!("Another task from file ", path!("/dir/a2.ts", 1)),
-                concat!("TypeScript task from file ", path!("/dir/a2.ts", 1)),
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a2.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a2.ts")),
                 "Task without variables",
             ],
             "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
