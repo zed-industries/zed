@@ -259,8 +259,13 @@ fn assign_inline_completion_provider(
                         });
                     }
                 }
-                let provider = cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
-                editor.set_inline_completion_provider(Some(provider), window, cx);
+
+                if let Some(workspace) = editor.workspace() {
+                    let provider = cx.new(|_| {
+                        zeta::ZetaInlineCompletionProvider::new(zeta, workspace.downgrade())
+                    });
+                    editor.set_inline_completion_provider(Some(provider), window, cx);
+                }
             }
         }
     }

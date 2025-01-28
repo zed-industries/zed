@@ -384,6 +384,8 @@ pub mod simple_message_notification {
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
+        tertiary_click_message: Option<SharedString>,
+        tertiary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -407,6 +409,8 @@ pub mod simple_message_notification {
                 click_message: None,
                 secondary_on_click: None,
                 secondary_click_message: None,
+                tertiary_on_click: None,
+                tertiary_click_message: None,
             }
         }
 
@@ -442,6 +446,22 @@ pub mod simple_message_notification {
             self
         }
 
+        pub fn with_tertiary_click_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.tertiary_click_message = Some(message.into());
+            self
+        }
+
+        pub fn on_tertiary_click<F>(mut self, on_click: F) -> Self
+        where
+            F: 'static + Fn(&mut Window, &mut Context<Self>),
+        {
+            self.tertiary_on_click = Some(Arc::new(on_click));
+            self
+        }
+
         pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
         }
@@ -467,6 +487,7 @@ pub mod simple_message_notification {
                 .child(
                     h_flex()
                         .gap_2()
+                        .flex_wrap()
                         .children(self.click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
                                 .label_size(LabelSize::Small)
@@ -490,6 +511,20 @@ pub mod simple_message_notification {
                                 .icon_color(Color::Error)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
+                                        (on_click)(window, cx)
+                                    };
+                                    this.dismiss(cx)
+                                }))
+                        }))
+                        .children(self.tertiary_click_message.iter().map(|message| {
+                            Button::new(message.clone(), message.clone())
+                                .label_size(LabelSize::Small)
+                                // .icon(IconName::Close)
+                                // .icon_position(IconPosition::Start)
+                                // .icon_size(IconSize::Small)
+                                // .icon_color(Color::Error)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    if let Some(on_click) = this.tertiary_on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };
                                     this.dismiss(cx)

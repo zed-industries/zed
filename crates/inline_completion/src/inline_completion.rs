@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity};
-use language::Buffer;
+use language::{Buffer, BufferSnapshot};
 use std::ops::Range;
 
 // TODO: Find a better home for `Direction`.
@@ -50,7 +50,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         direction: Direction,
         cx: &mut Context<Self>,
     );
-    fn accept(&mut self, cx: &mut Context<Self>);
+    fn accept(&mut self, snapshot: &BufferSnapshot, cx: &mut Context<Self>);
     fn discard(&mut self, cx: &mut Context<Self>);
     fn suggest(
         &mut self,
@@ -88,7 +88,7 @@ pub trait InlineCompletionProviderHandle {
         direction: Direction,
         cx: &mut App,
     );
-    fn accept(&self, cx: &mut App);
+    fn accept(&self, snapshot: &BufferSnapshot, cx: &mut App);
     fn discard(&self, cx: &mut App);
     fn suggest(
         &self,
@@ -163,8 +163,8 @@ where
         })
     }
 
-    fn accept(&self, cx: &mut App) {
-        self.update(cx, |this, cx| this.accept(cx))
+    fn accept(&self, snapshot: &BufferSnapshot, cx: &mut App) {
+        self.update(cx, |this, cx| this.accept(snapshot, cx))
     }
 
     fn discard(&self, cx: &mut App) {

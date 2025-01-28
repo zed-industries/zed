@@ -6,11 +6,12 @@ pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
-use client::{Client, UserStore};
+use client::{Client, ProjectId, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
+    WeakEntity,
 };
 use http_client::{HttpClient, Method};
 use language::{
@@ -19,6 +20,7 @@ use language::{
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use settings::WorktreeId;
 use std::{
     borrow::Cow,
     cmp,
@@ -33,12 +35,18 @@ use std::{
 use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    Workspace,
+};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
+const KVP_ZETA_DATA_COLLECTION_WORKTREE_OPTIONS_KEY: &str =
+    "zed_predict_data_collection_worktree_options";
 
 actions!(zeta, [ClearHistory]);
 
@@ -168,6 +176,7 @@ pub struct Zeta {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
+    data_collection_options: DataCollectionWorktreeOptions,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     tos_accepted: bool, // Terms of service accepted
@@ -197,6 +206,7 @@ impl Zeta {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
+        // let data_collection_options = load_data_collection_options(cx);
 
         Self {
             client,
@@ -204,6 +214,10 @@ impl Zeta {
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
+            data_collection_options: DataCollectionWorktreeOptions {
+                do_not_ask_again: false,
+                worktree_choices: HashMap::default(),
+            },
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -844,6 +858,57 @@ and then another
 
         new_snapshot
     }
+
+    fn set_worktree_data_collection_choice(
+        &mut self,
+        worktree_id: WorktreeId,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.data_collection_options
+            .worktree_choices
+            .insert(worktree_id, enabled);
+        // self.persist_data_collection();
+    }
+
+    fn set_data_collection_do_not_ask_again(&mut self, cx: &mut Context<Self>) {
+        self.data_collection_options.do_not_ask_again = true;
+        // self.persist_data_collection();
+    }
+
+    // fn persist_data_collection(&self) {
+    //     let thing = &self.data_collection_options;
+
+    //     let todoo = todo!("convert thing to json");
+
+    //     db::write_and_log(cx, move || async move {
+    //         KEY_VALUE_STORE
+    //             .write_kvp(KVP_ZETA_DATA_COLLECTION_PROJECT_OPTIONS_KEY, todoo)
+    //             .log_err();
+    //     });
+    // }
+}
+
+// fn load_data_collection_options(cx: &mut Context<'_, Zeta>) -> DataCollectionWorktreeOptions {
+//     let default = || DataCollectionWorktreeOptions {
+//         do_not_ask_again: false,
+//         worktree_choices: HashMap::default(),
+//     };
+
+//     let read_options = KEY_VALUE_STORE
+//         .read_kvp(
+//             KVP_ZETA_DATA_COLLECTION_PROJECT_OPTIONS_KEY,
+//             "JSON_GOES_HERE",
+//         )
+//         .log_err()
+//         .flatten();
+
+//     todo!("convert read_options from json")
+// }
+
+struct DataCollectionWorktreeOptions {
+    do_not_ask_again: bool,
+    worktree_choices: HashMap<WorktreeId, bool>,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -1045,6 +1110,7 @@ struct PendingCompletion {
 
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
+    workspace: WeakEntity<Workspace>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
@@ -1053,12 +1119,13 @@ pub struct ZetaInlineCompletionProvider {
 impl ZetaInlineCompletionProvider {
     pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
 
-    pub fn new(zeta: Entity<Zeta>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, workspace: WeakEntity<Workspace>) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
+            workspace,
         }
     }
 }
@@ -1197,8 +1264,75 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {
+    fn accept(&mut self, snapshot: &BufferSnapshot, cx: &mut Context<Self>) {
         self.pending_completions.clear();
+
+        let Some(file) = snapshot.file() else {
+            return;
+        };
+
+        let worktree_id = file.worktree_id(cx);
+
+        let zeta = self.zeta.read(cx);
+
+        if zeta.data_collection_options.do_not_ask_again
+            || zeta
+                .data_collection_options
+                .worktree_choices
+                .contains_key(&worktree_id)
+        {
+            return;
+        }
+
+        struct ZetaDataCollectionNotification;
+
+        let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_notification(notification_id, cx, |cx| {
+                    let zeta = self.zeta.clone();
+                    cx.new(move |_cx| {
+                        MessageNotification::new("hi")
+                            .with_click_message("Yes")
+                            .on_click({
+                                let zeta = zeta.clone();
+                                move |_window, cx| {
+                                    zeta.update(cx, |zeta, cx| {
+                                        zeta.set_worktree_data_collection_choice(
+                                            worktree_id,
+                                            true,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            })
+                            .with_secondary_click_message("No")
+                            .on_secondary_click({
+                                let zeta = zeta.clone();
+                                move |_window, cx| {
+                                    zeta.update(cx, |zeta, cx| {
+                                        zeta.set_worktree_data_collection_choice(
+                                            worktree_id,
+                                            false,
+                                            cx,
+                                        );
+                                    })
+                                }
+                            })
+                            .with_tertiary_click_message("Don't show me this anymor")
+                            .on_tertiary_click({
+                                let zeta = zeta.clone();
+                                move |_window, cx| {
+                                    zeta.update(cx, |zeta, cx| {
+                                        zeta.set_data_collection_do_not_ask_again(cx);
+                                    });
+                                }
+                            })
+                    })
+                });
+            })
+            .log_err();
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
