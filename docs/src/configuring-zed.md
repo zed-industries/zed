@@ -741,7 +741,7 @@ List of `string` values
 
 ### Tab Bar Buttons
 
-- Description: Whether or not to show the pane-related buttons in the tab bar.
+- Description: Whether or not to show the tab bar buttons.
 - Setting: `show_tab_bar_buttons`
 - Default: `true`
 

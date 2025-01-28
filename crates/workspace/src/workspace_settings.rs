@@ -160,7 +160,7 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: true
     pub show_nav_history_buttons: Option<bool>,
-    /// Whether or not to show the pane-related buttons in the tab bar.
+    /// Whether or not to show the tab bar buttons.
     ///
     /// Default: true
     pub show_tab_bar_buttons: Option<bool>,
