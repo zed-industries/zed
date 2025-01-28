@@ -23,6 +23,7 @@ pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn icon_stem_or_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
+    fn to_sanitized_string(&self) -> String;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -93,6 +94,20 @@ impl<T: AsRef<Path>> PathExt for T {
         }
 
         self.as_ref().file_name()?.to_str()?.split('.').last()
+    }
+
+    /// Returns a sanitized string representation of the path.
+    /// Note, on Windows, this assumes that the path is a valid UTF-8 string and
+    /// is not a UNC path.
+    fn to_sanitized_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            self.as_ref().to_string_lossy().replace("/", "\\")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.as_ref().to_string_lossy().to_string()
+        }
     }
 }
 

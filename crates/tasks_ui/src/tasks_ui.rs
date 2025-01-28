@@ -377,17 +377,15 @@ mod tests {
             })
             .await;
 
-        // TODO:
-        // Can we change VariableName::File to VariableName::File(PathBuf)?
         assert_eq!(
             first_context,
             TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, path!("/dir/rust/b.rs", 1).into()),
+                    (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, separator!("rust/b.rs").into()),
-                    (VariableName::Dirname, path!("/dir/rust", 1).into()),
+                    (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
@@ -413,10 +411,10 @@ mod tests {
             TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, path!("/dir/rust/b.rs", 1).into()),
+                    (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, separator!("rust/b.rs").into()),
-                    (VariableName::Dirname, path!("/dir/rust", 1).into()),
+                    (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
@@ -439,7 +437,7 @@ mod tests {
             TaskContext {
                 cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, path!("/dir/a.ts", 1).into()),
+                    (VariableName::File, path!("/dir/a.ts").into()),
                     (VariableName::Filename, "a.ts".into()),
                     (VariableName::RelativeFile, "a.ts".into()),
                     (VariableName::Dirname, path!("/dir").into()),
