@@ -1432,7 +1432,7 @@ mod tests {
             proto::GetLlmTokenResponse { token: "".into() },
         );
 
-        let completion = completion_task.await.unwrap();
+        let completion = completion_task.await.unwrap().unwrap();
         buffer.update(cx, |buffer, cx| {
             buffer.edit(completion.edits.iter().cloned(), None, cx)
         });
