@@ -7,8 +7,7 @@ use std::pin::Pin;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::types::{ContentBlockDelta, ContentBlockStopEvent, ConverseStreamOutput};
-use aws_sdk_bedrockruntime::types::ConverseStreamOutput::ContentBlockStop;
+use aws_sdk_bedrockruntime::types::{ContentBlockDelta};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;
 pub use bedrock::types::ConversationRole as BedrockRole;
@@ -90,7 +89,7 @@ pub async fn stream_completion(
 
 fn map_stream_output(output: BedrockStreamingResponse) -> Option<Result<String, BedrockError>> {
     match output {
-        ConverseStreamOutput::ContentBlockDelta(event) => {
+        BedrockStreamingResponse::ContentBlockDelta(event) => {
             if let Some(ContentBlockDelta::Text(text)) = event.delta {
                 Some(Ok(text))
             } else {
@@ -99,20 +98,20 @@ fn map_stream_output(output: BedrockStreamingResponse) -> Option<Result<String, 
                 ))))
             }
         }
-        ConverseStreamOutput::ContentBlockStart(event) => {
+        BedrockStreamingResponse::ContentBlockStart(event) => {
             //Todo: Implement tool use
             Some(Err(BedrockError::Other(anyhow!(
                 "Received tool use event"
             ))))
         }
-        ContentBlockStop(_) => {
+        BedrockStreamingResponse::ContentBlockStop(_) => {
             Some(Err(BedrockError::Other(anyhow!(
                 "Received tool use content block stop event"
             ))))
         }
-        ConverseStreamOutput::MessageStart(_) |
-        ConverseStreamOutput::MessageStop(_) |
-        ConverseStreamOutput::Metadata(_) => {
+        BedrockStreamingResponse::MessageStart(_) |
+        BedrockStreamingResponse::MessageStop(_) |
+        BedrockStreamingResponse::Metadata(_) => {
             // Todo: This shouldn't happen, but we'll see
             Some(Err(BedrockError::Other(anyhow!(
                 "Received unexpected event"
