@@ -43,9 +43,8 @@ macro_rules! debug_panic {
     };
 }
 
-/// A macro to add "C:" to the beginning of a path literal on Windows, and if a index
-/// is provided, it will add "C:" to the beginning of the path literal and replace the
-/// separator at the given index with `\`.
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
 /// But on non-Windows platforms, it will return the path literal as is.
 ///
 /// # Examples
@@ -53,26 +52,21 @@ macro_rules! debug_panic {
 /// use util::path;
 ///
 /// let path = path!("/Users/user/file.txt");
-/// assert_eq!(path, "C:/Users/user/file.txt");
-/// let path = path!("/Users/user/file.txt", 1);
-/// assert_eq!(path, "C:/Users\\user/file.txt");
-/// let path = path!("/Users/user/file.txt", 2);
-/// assert_eq!(path, "C:/Users/user\\file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
 /// ```
 #[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
 #[macro_export]
 macro_rules! path {
     ($path:literal) => {
-        concat!("C:", $path)
-    };
-    ($path:literal, $index:expr) => {
-        concat!("C:", util::separator!($path, $index))
+        concat!("C:", util::separator!($path))
     };
 }
 
-/// A macro to add "C:" to the beginning of a path literal on Windows, and if a index
-/// is provided, it will add "C:" to the beginning of the path literal and replace the
-/// separator at the given index with `\`.
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
 /// But on non-Windows platforms, it will return the path literal as is.
 ///
 /// # Examples
@@ -80,20 +74,16 @@ macro_rules! path {
 /// use util::path;
 ///
 /// let path = path!("/Users/user/file.txt");
-/// assert_eq!(path, "C:/Users/user/file.txt");
-/// let path = path!("/Users/user/file.txt", 1);
-/// assert_eq!(path, "C:/Users\\user/file.txt");
-/// let path = path!("/Users/user/file.txt", 2);
-/// assert_eq!(path, "C:/Users/user\\file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
 /// ```
 #[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
 #[macro_export]
 macro_rules! path {
     ($path:literal) => {
         $path
-    };
-    ($path:literal, $index:expr) => {
-        util::separator!($path, $index)
     };
 }
 
