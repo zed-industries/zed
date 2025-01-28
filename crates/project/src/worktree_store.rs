@@ -1093,7 +1093,7 @@ impl WorktreeStore {
     pub async fn handle_expand_all_for_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ExpandAllForProjectEntry>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ExpandAllForProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
