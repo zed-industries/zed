@@ -12077,7 +12077,7 @@ dependencies = [
  "paths",
  "schemars",
  "serde",
- "serde_json",
+ "serde_json_lenient",
  "snippet",
  "util",
 ]
