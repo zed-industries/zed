@@ -1188,7 +1188,7 @@ impl Worktree {
     pub async fn handle_expand_all_for_entry(
         this: Entity<Self>,
         request: proto::ExpandAllForProjectEntry,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ExpandAllForProjectEntryResponse> {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_all_for_entry(ProjectEntryId::from_proto(request.entry_id), cx)
