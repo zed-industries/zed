@@ -2929,7 +2929,3 @@ fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
         "reversed_line_indents({max_row})"
     );
 }
-
-// one ond
-//
-//

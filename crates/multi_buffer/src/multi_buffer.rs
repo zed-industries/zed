@@ -2196,7 +2196,6 @@ impl MultiBuffer {
     }
 
     pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
-        // something some
         self.expand_or_collapse_diff_hunks(ranges, true, cx);
     }
 
