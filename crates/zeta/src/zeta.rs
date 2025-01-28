@@ -1294,6 +1294,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     let zeta = self.zeta.clone();
                     cx.new(move |_cx| {
                         MessageNotification::new("hi")
+                            .show_close_button(false)
                             .with_click_message("Yes")
                             .on_click({
                                 let zeta = zeta.clone();

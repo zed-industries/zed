@@ -386,6 +386,7 @@ pub mod simple_message_notification {
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         tertiary_click_message: Option<SharedString>,
         tertiary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
+        show_close_button: bool,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -411,6 +412,7 @@ pub mod simple_message_notification {
                 secondary_click_message: None,
                 tertiary_on_click: None,
                 tertiary_click_message: None,
+                show_close_button: true,
             }
         }
 
@@ -465,6 +467,11 @@ pub mod simple_message_notification {
         pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
         }
+
+        pub fn show_close_button(mut self, show: bool) -> Self {
+            self.show_close_button = show;
+            self
+        }
     }
 
     impl Render for MessageNotification {
@@ -479,10 +486,12 @@ pub mod simple_message_notification {
                         .justify_between()
                         .items_start()
                         .child(div().max_w_96().child((self.build_content)(window, cx)))
-                        .child(
-                            IconButton::new("close", IconName::Close)
-                                .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
-                        ),
+                        .when(self.show_close_button, |this| {
+                            this.child(
+                                IconButton::new("close", IconName::Close)
+                                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+                            )
+                        }),
                 )
                 .child(
                     h_flex()
