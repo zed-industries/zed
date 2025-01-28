@@ -426,6 +426,7 @@
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
+      "ctrl-shift-g": "git_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
@@ -690,6 +691,34 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::FocusChanges",
+      "ctrl-enter": "git::CommitChanges",
+      "ctrl-shift-enter": "git::CommitAllChanges"
     }
   },
   {

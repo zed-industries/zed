@@ -118,14 +118,15 @@ impl AssistantPanel {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(|mut cx| async move {
             let tools = Arc::new(ToolWorkingSet::default());
-            let thread_store = workspace
-                .update(&mut cx, |workspace, cx| {
-                    let project = workspace.project().clone();
-                    ThreadStore::new(project, tools.clone(), cx)
-                })?
-                .await?;
+            log::info!("[assistant2-debug] initializing ThreadStore");
+            let thread_store = workspace.update(&mut cx, |workspace, cx| {
+                let project = workspace.project().clone();
+                ThreadStore::new(project, tools.clone(), cx)
+            })??;
+            log::info!("[assistant2-debug] finished initializing ThreadStore");
 
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+            log::info!("[assistant2-debug] initializing ContextStore");
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
                     let project = workspace.project().clone();
@@ -138,6 +139,7 @@ impl AssistantPanel {
                     )
                 })?
                 .await?;
+            log::info!("[assistant2-debug] finished initializing ContextStore");
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
                 cx.new(|cx| Self::new(workspace, thread_store, context_store, tools, window, cx))
@@ -153,6 +155,7 @@ impl AssistantPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        log::info!("[assistant2-debug] AssistantPanel::new");
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
@@ -609,9 +612,16 @@ impl AssistantPanel {
                     SharedString::from(context_editor.read(cx).title(cx).to_string())
                 })
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
-            ActiveView::History => "History / Thread".into(),
-            ActiveView::PromptEditorHistory => "History / Prompt Editor".into(),
+            ActiveView::History | ActiveView::PromptEditorHistory => "History".into(),
             ActiveView::Configuration => "Configuration".into(),
+        };
+
+        let sub_title = match self.active_view {
+            ActiveView::Thread => None,
+            ActiveView::PromptEditor => None,
+            ActiveView::History => Some("Thread"),
+            ActiveView::PromptEditorHistory => Some("Prompt Editor"),
+            ActiveView::Configuration => None,
         };
 
         h_flex()
@@ -624,7 +634,24 @@ impl AssistantPanel {
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(h_flex().child(Label::new(title)))
+            .child(
+                h_flex()
+                    .child(Label::new(title))
+                    .when(sub_title.is_some(), |this| {
+                        this.child(
+                            h_flex()
+                                .pl_1p5()
+                                .gap_1p5()
+                                .child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Disabled)
+                                        .alpha(0.5),
+                                )
+                                .child(Label::new(sub_title.unwrap())),
+                        )
+                    }),
+            )
             .child(
                 h_flex()
                     .h_full()
@@ -674,8 +701,8 @@ impl AssistantPanel {
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip(Tooltip::text("Configure Assistant"))
-                            .on_click(move |_event, _window, cx| {
-                                cx.dispatch_action(&OpenConfiguration);
+                            .on_click(move |_event, window, cx| {
+                                window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
                             }),
                     ),
             )

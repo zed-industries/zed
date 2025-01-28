@@ -5607,36 +5607,6 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub fn activate_workspace_for_project(
-    cx: &mut App,
-    predicate: impl Fn(&Project, &App) -> bool + Send + 'static,
-) -> Option<WindowHandle<Workspace>> {
-    for window in cx.windows() {
-        let Some(workspace) = window.downcast::<Workspace>() else {
-            continue;
-        };
-
-        let predicate = workspace
-            .update(cx, |workspace, window, cx| {
-                let project = workspace.project.read(cx);
-                if predicate(project, cx) {
-                    window.activate_window();
-                    true
-                } else {
-                    false
-                }
-            })
-            .log_err()
-            .unwrap_or(false);
-
-        if predicate {
-            return Some(workspace);
-        }
-    }
-
-    None
-}
-
 pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
@@ -5974,6 +5944,19 @@ pub fn open_paths(
                 .all(|file| !file.is_dir)
             {
                 cx.update(|cx| {
+                    if let Some(window) = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                    {
+                        if let Ok(workspace) = window.read(cx) {
+                            let project = workspace.project().read(cx);
+                            if project.is_local() && !project.is_via_collab() {
+                                existing = Some(window);
+                                open_visible = OpenVisible::None;
+                                return;
+                            }
+                        }
+                    }
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);

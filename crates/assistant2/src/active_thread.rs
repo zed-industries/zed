@@ -298,7 +298,7 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .py_1()
+                .pt_2p5()
                 .px_2p5()
                 .child(
                     v_flex()
@@ -350,7 +350,6 @@ impl Render for ActiveThread {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .pt_1p5()
             .child(list(self.list_state.clone()).flex_grow())
     }
 }

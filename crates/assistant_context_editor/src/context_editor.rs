@@ -23,11 +23,11 @@ use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
-    size, Animation, AnimationExt, AnyElement, AnyView, AnyWindowHandle, App, AsyncWindowContext,
-    ClipboardEntry, ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, WeakEntity,
+    size, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
+    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    WeakEntity,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
@@ -978,21 +978,20 @@ impl ContextEditor {
                     .unwrap();
                 let render_block: RenderBlock = Arc::new({
                     let this = this.clone();
-                    let window_handle = window.window_handle();
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext<'_, '_>| {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
                         let selected = cx.selected;
-                        this.update(&mut **cx, |this, cx| {
+                        this.update_in(cx, |this, window, cx| {
                             this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
                                 block_id,
                                 selected,
-                                window_handle,
+                                window,
                                 cx,
                             )
                         })
@@ -2198,15 +2197,12 @@ impl ContextEditor {
         gutter_width: Pixels,
         id: BlockId,
         selected: bool,
-        window_handle: AnyWindowHandle,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let snapshot = window_handle
-            .update(cx, |_, window, cx| {
-                self.editor
-                    .update(cx, |editor, cx| editor.snapshot(window, cx))
-            })
-            .ok()?;
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
         let excerpt_id = *excerpt_id;
         let anchor = snapshot

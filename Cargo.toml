@@ -32,6 +32,7 @@ members = [
     "crates/copilot",
     "crates/db",
     "crates/diagnostics",
+    "crates/deepseek",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -229,6 +230,7 @@ context_server = { path = "crates/context_server" }
 context_server_settings = { path = "crates/context_server_settings" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
+deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }

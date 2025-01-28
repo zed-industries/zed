@@ -85,6 +85,7 @@ impl JsonLspAdapter {
             cx,
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
+        let snippets_schema = snippet_provider::format::VSSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
@@ -125,8 +126,17 @@ impl JsonLspAdapter {
                             paths::local_tasks_file_relative_path()
                         ],
                         "schema": tasks_schema,
+                    },
+                    {
+                        "fileMatch": [
+                            schema_file_match(
+                                paths::snippets_dir()
+                                    .join("*.json")
+                                    .as_path()
+                            )
+                        ],
+                        "schema": snippets_schema,
                     }
-
                 ]
             }
         })
