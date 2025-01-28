@@ -2724,14 +2724,27 @@ impl Snapshot {
     }
 
     pub fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+        let options = ChildEntriesOptions {
+            include_files: true,
+            include_dirs: true,
+            include_ignored: true,
+        };
+        self.child_entries_with_options(parent_path, options)
+    }
+
+    pub fn child_entries_with_options<'a>(
+        &'a self,
+        parent_path: &'a Path,
+        options: ChildEntriesOptions,
+    ) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor(&());
         cursor.seek(&TraversalTarget::path(parent_path), Bias::Right, &());
         let traversal = Traversal {
             snapshot: self,
             cursor,
-            include_files: true,
-            include_dirs: true,
-            include_ignored: true,
+            include_files: options.include_files,
+            include_dirs: options.include_dirs,
+            include_ignored: options.include_ignored,
         };
         ChildEntriesIter {
             traversal,
@@ -6052,6 +6065,12 @@ impl<'a, 'b> SeekTarget<'a, PathSummary<Unit>, TraversalProgress<'a>> for Traver
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         self.cmp_progress(cursor_location)
     }
+}
+
+pub struct ChildEntriesOptions {
+    pub include_files: bool,
+    pub include_dirs: bool,
+    pub include_ignored: bool,
 }
 
 pub struct ChildEntriesIter<'a> {

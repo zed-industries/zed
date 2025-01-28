@@ -814,6 +814,9 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let git_state =
+                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
@@ -826,7 +829,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                git_state: None,
+                git_state,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -1009,6 +1012,9 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
+        let git_state =
+            Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx))).transpose()?;
+
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
@@ -1059,7 +1065,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                git_state: None,
+                git_state,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
