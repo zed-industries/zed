@@ -589,10 +589,6 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| multibuffer.undo(cx));
-    change_set.update(cx, |change_set, cx| {
-        let _ = change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx);
-    });
-    cx.run_until_parked();
     assert_new_snapshot(
         &multibuffer,
         &mut snapshot,
