@@ -102,7 +102,7 @@ impl<T: 'static> futures::Stream for Observation<T> {
 }
 
 /// observe returns a stream of the change events from the given `View` or `Model`
-pub fn observe<T: 'static>(entity: &impl Entity<T>, cx: &mut TestAppContext) -> Observation<()> {
+pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Observation<()> {
     let (tx, rx) = smol::channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {

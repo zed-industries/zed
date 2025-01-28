@@ -22,12 +22,12 @@ pub mod buffer_tests;
 pub mod markdown;
 
 use crate::language_settings::SoftWrap;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
@@ -46,7 +46,6 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
-use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -62,6 +61,7 @@ use std::{
         Arc, LazyLock,
     },
 };
+use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
@@ -86,7 +86,7 @@ pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 /// Initializes the `language` crate.
 ///
 /// This should be called before making use of items from the create.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     language_settings::init(cx);
 }
 
@@ -149,7 +149,7 @@ pub trait ToLspPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
 }
 
@@ -164,6 +164,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -199,6 +200,7 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
+            attach_kind: Default::default(),
         })
     }
 
@@ -211,7 +213,7 @@ impl CachedLspAdapter {
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
@@ -260,16 +262,49 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+    pub fn find_project_root(
+        &self,
+        path: &Path,
+        ancestor_depth: usize,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        self.adapter
+            .find_project_root(path, ancestor_depth, delegate)
+    }
+    pub fn attach_kind(&self) -> Attach {
+        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Attach {
+    /// Create a single language server instance per subproject root.
+    InstancePerRoot,
+    /// Use one shared language server instance for all subprojects within a project.
+    Shared,
+}
+
+impl Attach {
+    pub fn root_path(
+        &self,
+        root_subproject_path: (WorktreeId, Arc<Path>),
+    ) -> (WorktreeId, Arc<Path>) {
+        match self {
+            Attach::InstancePerRoot => root_subproject_path,
+            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
+        }
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
 // e.g. to display a notification or fetch data from the web.
 #[async_trait]
 pub trait LspAdapterDelegate: Send + Sync {
-    fn show_notification(&self, message: &str, cx: &mut AppContext);
+    fn show_notification(&self, message: &str, cx: &mut App);
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
@@ -293,7 +328,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         toolchains: Arc<dyn LanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        cx: &'a mut AsyncAppContext,
+        cx: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
             // First we check whether the adapter can give us a user-installed binary.
@@ -368,7 +403,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         _: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -381,7 +416,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn will_fetch_server(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
+        _: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
         None
     }
@@ -476,7 +511,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut AsyncAppContext,
+        _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
     }
@@ -508,13 +543,26 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
     }
+    fn attach_kind(&self) -> Attach {
+        Attach::Shared
+    }
+    fn find_project_root(
+        &self,
+
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        // By default all language servers are rooted at the root of the worktree.
+        Some(Arc::from("".as_ref()))
+    }
 }
 
 async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
     adapter: &L,
     delegate: &Arc<dyn LspAdapterDelegate>,
     container_dir: PathBuf,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<LanguageServerBinary> {
     if let Some(task) = adapter.will_fetch_server(delegate, cx) {
         task.await?;
@@ -1563,7 +1611,7 @@ impl LanguageScope {
             self.config_override().map(|o| &o.line_comments),
             Some(&self.language.config.line_comments),
         )
-        .map_or(&[] as &[_], |e| e.as_slice())
+        .map_or([].as_slice(), |e| e.as_slice())
     }
 
     pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
@@ -1805,7 +1853,7 @@ impl LspAdapter for FakeLspAdapter {
         &self,
         _: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.language_server_binary.clone())
     }
@@ -1816,7 +1864,7 @@ impl LspAdapter for FakeLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncAppContext,
+        _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move { Ok(self.language_server_binary.clone()) }.boxed_local()
     }

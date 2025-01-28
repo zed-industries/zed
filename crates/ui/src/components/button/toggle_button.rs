@@ -79,7 +79,7 @@ impl Disableable for ToggleButton {
 }
 
 impl Clickable for ToggleButton {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.base = self.base.on_click(handler);
         self
     }
@@ -105,7 +105,7 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -117,7 +117,7 @@ impl ButtonCommon for ToggleButton {
 }
 
 impl RenderOnce for ToggleButton {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 

@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
+use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
-use gpui::{AppContext, Pixels};
+use gpui::{App, Pixels};
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
@@ -46,6 +47,11 @@ pub enum AssistantProviderContentV1 {
         default_model: Option<LmStudioModel>,
         api_url: Option<String>,
     },
+    #[serde(rename = "deepseek")]
+    DeepSeek {
+        default_model: Option<DeepseekModel>,
+        api_url: Option<String>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -62,7 +68,7 @@ pub struct AssistantSettings {
 }
 
 impl AssistantSettings {
-    pub fn are_live_diffs_enabled(&self, cx: &AppContext) -> bool {
+    pub fn are_live_diffs_enabled(&self, cx: &App) -> bool {
         cx.is_staff() || self.enable_experimental_live_diffs
     }
 }
@@ -146,6 +152,12 @@ impl AssistantSettingsContent {
                             AssistantProviderContentV1::LmStudio { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "lmstudio".to_string(),
+                                    model: model.id().to_string(),
+                                })
+                            }
+                            AssistantProviderContentV1::DeepSeek { default_model, .. } => {
+                                default_model.map(|model| LanguageModelSelection {
+                                    provider: "deepseek".to_string(),
                                     model: model.id().to_string(),
                                 })
                             }
@@ -253,6 +265,18 @@ impl AssistantSettingsContent {
                             available_models,
                         });
                     }
+                    "deepseek" => {
+                        let api_url = match &settings.provider {
+                            Some(AssistantProviderContentV1::DeepSeek { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
+                        };
+                        settings.provider = Some(AssistantProviderContentV1::DeepSeek {
+                            default_model: DeepseekModel::from_id(&model).ok(),
+                            api_url,
+                        });
+                    }
                     _ => {}
                 },
                 VersionedAssistantSettingsContent::V2(settings) => {
@@ -341,6 +365,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
             "openai".into(),
             "zed.dev".into(),
             "copilot_chat".into(),
+            "deepseek".into(),
         ]),
         ..Default::default()
     }
@@ -380,7 +405,7 @@ pub struct AssistantSettingsContentV1 {
     default_height: Option<f32>,
     /// The provider of the assistant service.
     ///
-    /// This can be "openai", "anthropic", "ollama", "lmstudio", "zed.dev"
+    /// This can be "openai", "anthropic", "ollama", "lmstudio", "deepseek", "zed.dev"
     /// each with their respective default models and configurations.
     provider: Option<AssistantProviderContentV1>,
 }
@@ -422,7 +447,7 @@ impl Settings for AssistantSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         let mut settings = AssistantSettings::default();
 

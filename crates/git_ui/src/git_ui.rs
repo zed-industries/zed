@@ -1,19 +1,19 @@
 use ::settings::Settings;
 use git::status::FileStatus;
 use git_panel_settings::GitPanelSettings;
-use gpui::AppContext;
-use ui::{ActiveTheme, Color, Icon, IconName, IntoElement, WindowContext};
+use gpui::App;
+use ui::{ActiveTheme, Color, Icon, IconName, IntoElement};
 
 pub mod git_panel;
 mod git_panel_settings;
 pub mod repository_selector;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
 }
 
 // TODO: Add updated status colors to theme
-pub fn git_status_icon(status: FileStatus, cx: &WindowContext) -> impl IntoElement {
+pub fn git_status_icon(status: FileStatus, cx: &App) -> impl IntoElement {
     let (icon_name, color) = if status.is_conflicted() {
         (
             IconName::Warning,

@@ -4,7 +4,7 @@ use collections::HashMap;
 use futures::future::{self, BoxFuture, Shared};
 use futures::FutureExt as _;
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, BackgroundExecutor, Global, ReadGlobal, SharedString, Task};
+use gpui::{App, BackgroundExecutor, Global, ReadGlobal, SharedString, Task};
 use heed::{
     types::{SerdeBincode, SerdeJson, Str},
     Database, RoTxn,
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 /// Init starts loading the PromptStore in the background and assigns
 /// a shared future to a global.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     let db_path = paths::prompts_dir().join("prompts-library-db.0.mdb");
     let prompt_store_future = PromptStore::new(db_path, cx.background_executor().clone())
         .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
@@ -114,7 +114,7 @@ impl MetadataCache {
 }
 
 impl PromptStore {
-    pub fn global(cx: &AppContext) -> impl Future<Output = Result<Arc<Self>>> {
+    pub fn global(cx: &App) -> impl Future<Output = Result<Arc<Self>>> {
         let store = GlobalPromptStore::global(cx).0.clone();
         async move { store.await.map_err(|err| anyhow!(err)) }
     }

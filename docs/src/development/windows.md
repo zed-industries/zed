@@ -110,6 +110,8 @@ You can see the [build script](https://github.com/msys2/MINGW-packages/blob/mast
 
 > Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
 
+Note that `collab` is not supported for msys2.
+
 ## Troubleshooting
 
 ### Setting `RUSTFLAGS` env var breaks builds

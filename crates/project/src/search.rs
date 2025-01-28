@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
-use gpui::Model;
+use gpui::Entity;
 use language::{Buffer, BufferSnapshot, CharKind};
 use smol::future::yield_now;
 use std::{
@@ -17,7 +17,7 @@ use util::paths::PathMatcher;
 
 pub enum SearchResult {
     Buffer {
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         ranges: Vec<Range<Anchor>>,
     },
     LimitReached,
@@ -35,7 +35,7 @@ pub struct SearchInputs {
     query: Arc<str>,
     files_to_include: PathMatcher,
     files_to_exclude: PathMatcher,
-    buffers: Option<Vec<Model<Buffer>>>,
+    buffers: Option<Vec<Entity<Buffer>>>,
 }
 
 impl SearchInputs {
@@ -48,7 +48,7 @@ impl SearchInputs {
     pub fn files_to_exclude(&self) -> &PathMatcher {
         &self.files_to_exclude
     }
-    pub fn buffers(&self) -> &Option<Vec<Model<Buffer>>> {
+    pub fn buffers(&self) -> &Option<Vec<Entity<Buffer>>> {
         &self.buffers
     }
 }
@@ -88,7 +88,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
-        buffers: Option<Vec<Model<Buffer>>>,
+        buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let query = query.to_string();
         let search = AhoCorasickBuilder::new()
@@ -117,7 +117,7 @@ impl SearchQuery {
         include_ignored: bool,
         files_to_include: PathMatcher,
         files_to_exclude: PathMatcher,
-        buffers: Option<Vec<Model<Buffer>>>,
+        buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
@@ -426,7 +426,7 @@ impl SearchQuery {
         self.as_inner().files_to_exclude()
     }
 
-    pub fn buffers(&self) -> Option<&Vec<Model<Buffer>>> {
+    pub fn buffers(&self) -> Option<&Vec<Entity<Buffer>>> {
         self.as_inner().buffers.as_ref()
     }
 

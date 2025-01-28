@@ -71,7 +71,7 @@ impl Avatar {
 }
 
 impl RenderOnce for Avatar {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border_width = if self.border_color.is_some() {
             px(2.)
         } else {
@@ -79,7 +79,7 @@ impl RenderOnce for Avatar {
         };
 
         let image_size = self.size.unwrap_or_else(|| rems(1.).into());
-        let container_size = image_size.to_pixels(cx.rem_size()) + border_width * 2.;
+        let container_size = image_size.to_pixels(window.rem_size()) + border_width * 2.;
 
         div()
             .size(container_size)

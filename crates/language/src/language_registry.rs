@@ -6,7 +6,7 @@ use crate::{
     with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 
 use futures::{
@@ -14,7 +14,7 @@ use futures::{
     Future,
 };
 use globset::GlobSet;
-use gpui::{AppContext, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -96,6 +96,7 @@ struct LanguageRegistryState {
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
     lsp_adapters: HashMap<LanguageName, Vec<Arc<CachedLspAdapter>>>,
+    all_lsp_adapters: HashMap<LanguageServerName, Arc<CachedLspAdapter>>,
     available_lsp_adapters:
         HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
@@ -222,6 +223,7 @@ impl LanguageRegistry {
                 language_settings: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
+                all_lsp_adapters: Default::default(),
                 available_lsp_adapters: HashMap::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
@@ -344,12 +346,16 @@ impl LanguageRegistry {
         adapter: Arc<dyn LspAdapter>,
     ) -> Arc<CachedLspAdapter> {
         let cached = CachedLspAdapter::new(adapter);
-        self.state
-            .write()
+        let mut state = self.state.write();
+        state
             .lsp_adapters
             .entry(language_name)
             .or_default()
             .push(cached.clone());
+        state
+            .all_lsp_adapters
+            .insert(cached.name.clone(), cached.clone());
+
         cached
     }
 
@@ -389,12 +395,17 @@ impl LanguageRegistry {
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
         let initializer = adapter.initializer.take();
-        self.state
-            .write()
-            .lsp_adapters
-            .entry(language_name.clone())
-            .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+        let adapter = CachedLspAdapter::new(Arc::new(adapter));
+        {
+            let mut state = self.state.write();
+            state
+                .lsp_adapters
+                .entry(language_name.clone())
+                .or_default()
+                .push(adapter.clone());
+            state.all_lsp_adapters.insert(adapter.name(), adapter);
+        }
+
         self.register_fake_language_server(adapter_name, capabilities, initializer)
     }
 
@@ -407,12 +418,16 @@ impl LanguageRegistry {
         adapter: crate::FakeLspAdapter,
     ) {
         let language_name = language_name.into();
-        self.state
-            .write()
+        let mut state = self.state.write();
+        let cached_adapter = CachedLspAdapter::new(Arc::new(adapter));
+        state
             .lsp_adapters
             .entry(language_name.clone())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+            .push(cached_adapter.clone());
+        state
+            .all_lsp_adapters
+            .insert(cached_adapter.name(), cached_adapter);
     }
 
     /// Register a fake language server (without the adapter)
@@ -613,7 +628,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         file: &Arc<dyn File>,
         content: Option<&Rope>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<AvailableLanguage> {
         let user_file_types = all_language_settings(Some(file), cx);
 
@@ -880,6 +895,10 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
+        self.state.read().all_lsp_adapters.get(name).cloned()
+    }
+
     pub fn update_lsp_status(
         &self,
         server_name: LanguageServerName,
@@ -904,7 +923,7 @@ impl LanguageRegistry {
         server_id: LanguageServerId,
         name: &LanguageServerName,
         binary: lsp::LanguageServerBinary,
-        cx: gpui::AsyncAppContext,
+        cx: gpui::AsyncApp,
     ) -> Option<lsp::LanguageServer> {
         let mut state = self.state.write();
         let fake_entry = state.fake_server_entries.get_mut(&name)?;

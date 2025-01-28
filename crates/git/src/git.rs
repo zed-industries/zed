@@ -6,7 +6,7 @@ mod remote;
 pub mod repository;
 pub mod status;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use gpui::actions;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
