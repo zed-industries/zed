@@ -710,7 +710,7 @@ mod tests {
                         "label": label,
                         "command": "echo",
                         "args": vec![label],
-                        "pre": pre
+                        "prerequisite": pre
                     })
                 })
                 .collect_vec(),
@@ -782,7 +782,7 @@ mod tests {
                     json!({
                         "label": label,
                         "command": "echo",
-                        "pre": pre,
+                        "prerequisite": pre,
                         "args": vec![label],
                     })
                 })
@@ -817,7 +817,7 @@ mod tests {
                     json!({
                         "label": label,
                         "command": "echo",
-                        "pre": pre,
+                        "prerequisite": pre,
                         "args": vec![label],
                     })
                 })
