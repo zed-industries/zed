@@ -1166,6 +1166,9 @@
     },
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0"
+    },
+    "deepseek": {
+      "api_url": "https://api.deepseek.com"
     }
   },
   // Zed's Prettier integration settings.
