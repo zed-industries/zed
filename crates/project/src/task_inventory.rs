@@ -110,16 +110,21 @@ impl Inventory {
             .collect()
     }
 
-    /// Topological sort of the dependency graph of `task`, not including the original task
-    pub fn build_pre_task_queue(
+    /// Topological sort of the dependency graph of `base_task`, not including the original task
+    pub fn resolve_file_based_task_queue(
         &self,
         base_task: &ResolvedTask,
         task_source: &TaskSourceKind,
         task_context: &TaskContext,
     ) -> anyhow::Result<Vec<(TaskSourceKind, ResolvedTask)>> {
+        if base_task.resolved_pre_labels.is_empty() {
+            return Ok(vec![]);
+        }
+
         let worktree = match task_source {
             TaskSourceKind::Worktree { id, .. } => Some(*id),
-            _ => None,
+            TaskSourceKind::AbsPath { .. } => None,
+            _ => return Ok(vec![]),
         };
 
         let tasks_in_scope = self
@@ -741,7 +746,7 @@ mod tests {
 
         let pre_task_list = inventory.update(cx, |inventory, _| {
             inventory
-                .build_pre_task_queue(&base_task.1, &base_task.0, &task_cx)
+                .resolve_file_based_task_queue(&base_task.1, &base_task.0, &task_cx)
                 .unwrap()
         });
 
@@ -858,7 +863,7 @@ mod tests {
 
         let pre_task_list = inventory.update(cx, |inventory, _| {
             inventory
-                .build_pre_task_queue(&base_task.1, &base_task.0, &task_cx)
+                .resolve_file_based_task_queue(&base_task.1, &base_task.0, &task_cx)
                 .unwrap()
         });
 

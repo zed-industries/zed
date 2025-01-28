@@ -43,7 +43,7 @@ pub fn schedule_task(
 
         let pre_tasks = inventory
             .read(cx)
-            .build_pre_task_queue(&spawn_in_terminal, &task_source_kind, task_cx)
+            .resolve_file_based_task_queue(&spawn_in_terminal, &task_source_kind, task_cx)
             .notify_err(workspace, cx)
             .unwrap_or(vec![])
             .into_iter()

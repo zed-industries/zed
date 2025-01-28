@@ -323,7 +323,7 @@ impl PickerDelegate for TasksModalDelegate {
 
                 let pre_tasks = inventory
                     .read(cx)
-                    .build_pre_task_queue(&task, &task_source_kind, &self.task_context)
+                    .resolve_file_based_task_queue(&task, &task_source_kind, &self.task_context)
                     .notify_app_err(cx)
                     .unwrap_or(vec![])
                     .into_iter()
