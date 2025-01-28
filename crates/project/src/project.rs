@@ -1918,7 +1918,7 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_uncommitted_changes(buffer, cx)
+            buffer_store.open_unstaged_changes(buffer, cx)
         })
     }
 
