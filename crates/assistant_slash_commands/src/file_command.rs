@@ -20,6 +20,7 @@ use std::{
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
+use worktree::ChildEntriesOptions;
 
 pub struct FileSlashCommand;
 
@@ -42,8 +43,12 @@ impl FileSlashCommand {
                 .chain(project.worktrees(cx).flat_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let id = worktree.id();
-                    let entries =
-                        worktree.child_entries_with_options(Path::new(""), true, true, false);
+                    let options = ChildEntriesOptions {
+                        include_files: true,
+                        include_dirs: true,
+                        include_ignored: false,
+                    };
+                    let entries = worktree.child_entries_with_options(Path::new(""), options);
                     entries.map(move |entry| {
                         (
                             project::ProjectPath {
