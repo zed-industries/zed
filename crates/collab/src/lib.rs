@@ -407,7 +407,7 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
             config
                 .kinesis_region
                 .clone()
-                .ok_or_else(|| anyhow!("missing blob_store_region"))?,
+                .ok_or_else(|| anyhow!("missing kinesis_region"))?,
         ))
         .credentials_provider(keys)
         .load()
