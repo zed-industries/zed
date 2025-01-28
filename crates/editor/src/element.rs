@@ -333,14 +333,44 @@ impl EditorElement {
         register_action(editor, window, Editor::go_to_prev_diagnostic);
         register_action(editor, window, Editor::go_to_next_hunk);
         register_action(editor, window, Editor::go_to_prev_hunk);
-        register_action(editor, window, |editor, a, window, cx| {
+        register_action(editor, window, |editor, action, window, cx| {
             editor
-                .go_to_definition(a, window, cx)
+                .go_to_definition(action, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(editor, window, |editor, a, window, cx| {
+        register_action(editor, window, |editor, action, window, cx| {
             editor
-                .go_to_definition_split(a, window, cx)
+                .go_to_definition_split(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_declaration(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_declaration_split(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_implementation(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_implementation_split(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_type_definition(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_type_definition_split(action, window, cx)
                 .detach_and_log_err(cx);
         });
         register_action(editor, window, Editor::open_url);
