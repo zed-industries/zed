@@ -1,5 +1,5 @@
 use fs::Fs;
-use gpui::{AppContext, RenderOnce, SharedString};
+use gpui::{App, RenderOnce, SharedString};
 
 use crate::{update_settings_file, Settings};
 
@@ -15,7 +15,7 @@ pub trait EditableSettingControl: RenderOnce {
     fn name(&self) -> SharedString;
 
     /// Reads the setting value from the settings.
-    fn read(cx: &AppContext) -> Self::Value;
+    fn read(cx: &App) -> Self::Value;
 
     /// Applies the given setting file to the settings file contents.
     ///
@@ -23,11 +23,11 @@ pub trait EditableSettingControl: RenderOnce {
     fn apply(
         settings: &mut <Self::Settings as Settings>::FileContent,
         value: Self::Value,
-        cx: &AppContext,
+        cx: &App,
     );
 
     /// Writes the given setting value to the settings files.
-    fn write(value: Self::Value, cx: &AppContext) {
+    fn write(value: Self::Value, cx: &App) {
         let fs = <dyn Fs>::global(cx);
 
         update_settings_file::<Self::Settings>(fs, cx, move |settings, cx| {

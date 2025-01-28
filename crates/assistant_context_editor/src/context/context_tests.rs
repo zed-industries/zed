@@ -1,5 +1,5 @@
 use crate::{
-    AssistantEdit, AssistantEditKind, CacheStatus, Context, ContextEvent, ContextId,
+    AssistantContext, AssistantEdit, AssistantEditKind, CacheStatus, ContextEvent, ContextId,
     ContextOperation, InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
 use anyhow::Result;
@@ -15,7 +15,7 @@ use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakView};
+use gpui::{prelude::*, App, Entity, SharedString, Task, TestAppContext, WeakEntity};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
@@ -34,7 +34,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{IconName, WindowContext};
+use ui::{IconName, Window};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},
@@ -43,14 +43,14 @@ use util::{
 use workspace::Workspace;
 
 #[gpui::test]
-fn test_inserting_and_removing_messages(cx: &mut AppContext) {
+fn test_inserting_and_removing_messages(cx: &mut App) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry,
             None,
             None,
@@ -183,15 +183,15 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_message_splitting(cx: &mut AppContext) {
+fn test_message_splitting(cx: &mut App) {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
     LanguageModelRegistry::test(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry.clone(),
             None,
             None,
@@ -287,14 +287,14 @@ fn test_message_splitting(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_messages_for_offsets(cx: &mut AppContext) {
+fn test_messages_for_offsets(cx: &mut App) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry,
             None,
             None,
@@ -367,9 +367,9 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     );
 
     fn message_ids_for_offsets(
-        context: &Model<Context>,
+        context: &Entity<AssistantContext>,
         offsets: &[usize],
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<MessageId> {
         context
             .read(cx)
@@ -407,8 +407,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry.clone(),
             None,
             None,
@@ -608,7 +608,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     #[track_caller]
     fn assert_text_and_context_ranges(
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         ranges: &RefCell<ContextRanges>,
         expected_marked_text: &str,
         cx: &mut TestAppContext,
@@ -697,8 +697,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
     // Create a new context
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry.clone(),
             Some(project),
             None,
@@ -962,8 +962,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
     // Ensure steps are re-parsed when deserializing.
     let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-    let deserialized_context = cx.new_model(|cx| {
-        Context::deserialize(
+    let deserialized_context = cx.new(|cx| {
+        AssistantContext::deserialize(
             serialized_context,
             Default::default(),
             registry.clone(),
@@ -1006,7 +1006,11 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         cx,
     );
 
-    fn edit(context: &Model<Context>, new_text_marked_with_edits: &str, cx: &mut TestAppContext) {
+    fn edit(
+        context: &Entity<AssistantContext>,
+        new_text_marked_with_edits: &str,
+        cx: &mut TestAppContext,
+    ) {
         context.update(cx, |context, cx| {
             context.buffer.update(cx, |buffer, cx| {
                 buffer.edit_via_marked_text(&new_text_marked_with_edits.unindent(), None, cx);
@@ -1017,7 +1021,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
 
     #[track_caller]
     fn expect_patches(
-        context: &Model<Context>,
+        context: &Entity<AssistantContext>,
         expected_marked_text: &str,
         expected_suggestions: &[&[AssistantEdit]],
         cx: &mut TestAppContext,
@@ -1077,8 +1081,8 @@ async fn test_serialization(cx: &mut TestAppContext) {
     cx.update(LanguageModelRegistry::test);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry.clone(),
             None,
             None,
@@ -1121,8 +1125,8 @@ async fn test_serialization(cx: &mut TestAppContext) {
     );
 
     let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-    let deserialized_context = cx.new_model(|cx| {
-        Context::deserialize(
+    let deserialized_context = cx.new(|cx| {
+        AssistantContext::deserialize(
             serialized_context,
             Default::default(),
             registry.clone(),
@@ -1179,8 +1183,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let context_id = ContextId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
-        let context = cx.new_model(|cx| {
-            Context::new(
+        let context = cx.new(|cx| {
+            AssistantContext::new(
                 context_id.clone(),
                 i as ReplicaId,
                 language::Capability::ReadWrite,
@@ -1434,14 +1438,14 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 }
 
 #[gpui::test]
-fn test_mark_cache_anchors(cx: &mut AppContext) {
+fn test_mark_cache_anchors(cx: &mut App) {
     let settings_store = SettingsStore::test(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context = cx.new_model(|cx| {
-        Context::local(
+    let context = cx.new(|cx| {
+        AssistantContext::local(
             registry,
             None,
             None,
@@ -1594,7 +1598,7 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     );
 }
 
-fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, Range<usize>)> {
+fn messages(context: &Entity<AssistantContext>, cx: &App) -> Vec<(MessageId, Role, Range<usize>)> {
     context
         .read(cx)
         .messages(cx)
@@ -1603,8 +1607,8 @@ fn messages(context: &Model<Context>, cx: &AppContext) -> Vec<(MessageId, Role, 
 }
 
 fn messages_cache(
-    context: &Model<Context>,
-    cx: &AppContext,
+    context: &Entity<AssistantContext>,
+    cx: &App,
 ) -> Vec<(MessageId, Option<MessageCacheMetadata>)> {
     context
         .read(cx)
@@ -1633,8 +1637,9 @@ impl SlashCommand for FakeSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakEntity<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![]))
     }
@@ -1648,9 +1653,10 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakEntity<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window,
+        _cx: &mut App,
     ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),

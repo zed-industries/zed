@@ -24,7 +24,7 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
-use gpui::{actions, AppContext};
+use gpui::{actions, App};
 use prompt_library::PromptBuilder;
 use settings::Settings as _;
 
@@ -63,7 +63,7 @@ pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     AssistantSettings::register(cx);
     assistant_panel::init(cx);
@@ -84,7 +84,7 @@ pub fn init(
     feature_gate_assistant2_actions(cx);
 }
 
-fn feature_gate_assistant2_actions(cx: &mut AppContext) {
+fn feature_gate_assistant2_actions(cx: &mut App) {
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(NAMESPACE);
     });

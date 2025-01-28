@@ -3,13 +3,13 @@ use crate::channel_chat::ChannelChatEvent;
 use super::*;
 use client::{test::FakeServer, Client, UserStore};
 use clock::FakeSystemClock;
-use gpui::{AppContext, Context, Model, SemanticVersion, TestAppContext};
+use gpui::{App, AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::FakeHttpClient;
 use rpc::proto::{self};
 use settings::SettingsStore;
 
 #[gpui::test]
-fn test_update_channels(cx: &mut AppContext) {
+fn test_update_channels(cx: &mut App) {
     let channel_store = init_test(cx);
 
     update_channels(
@@ -77,7 +77,7 @@ fn test_update_channels(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_dangling_channel_paths(cx: &mut AppContext) {
+fn test_dangling_channel_paths(cx: &mut App) {
     let channel_store = init_test(cx);
 
     update_channels(
@@ -343,7 +343,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
     });
 }
 
-fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
+fn init_test(cx: &mut App) -> Entity<ChannelStore> {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
     release_channel::init(SemanticVersion::default(), cx);
@@ -352,7 +352,7 @@ fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
     let clock = Arc::new(FakeSystemClock::new());
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(clock, http.clone(), cx);
-    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
 
     client::init(&client, cx);
     crate::init(&client, user_store, cx);
@@ -361,9 +361,9 @@ fn init_test(cx: &mut AppContext) -> Model<ChannelStore> {
 }
 
 fn update_channels(
-    channel_store: &Model<ChannelStore>,
+    channel_store: &Entity<ChannelStore>,
     message: proto::UpdateChannels,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     let task = channel_store.update(cx, |store, cx| store.update_channels(message, cx));
     assert!(task.is_none());
@@ -371,9 +371,9 @@ fn update_channels(
 
 #[track_caller]
 fn assert_channels(
-    channel_store: &Model<ChannelStore>,
+    channel_store: &Entity<ChannelStore>,
     expected_channels: &[(usize, String)],
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     let actual = channel_store.update(cx, |store, _| {
         store

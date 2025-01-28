@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{svg, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
+use gpui::{svg, App, IntoElement, Rems, RenderOnce, Size, Styled, Window};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::{path_str, DerivePathStr};
@@ -69,7 +69,7 @@ impl Vector {
 }
 
 impl RenderOnce for Vector {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let width = self.size.width;
         let height = self.size.height;
 
@@ -97,7 +97,7 @@ pub mod story {
     pub struct VectorStory;
 
     impl Render for VectorStory {
-        fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             Story::container().child(StorySection::new().children(VectorName::iter().map(
                 |vector| StoryItem::new(format!("{:?}", vector), Vector::square(vector, rems(8.))),
             )))

@@ -1,5 +1,5 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, ViewContext};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -22,14 +22,14 @@ pub struct Paste {
 impl_actions!(vim, [Paste]);
 
 impl Vim {
-    pub fn paste(&mut self, action: &Paste, cx: &mut ViewContext<Self>) {
+    pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.record_current_action(cx);
-        self.store_visual_marks(cx);
+        self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
 
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
                 let selected_register = vim.selected_register.take();
@@ -159,7 +159,7 @@ impl Vim {
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
                 // otherwise vim will insert the next text at (or before) the current cursor position,
                 // the cursor will go to the last (or first, if is_multiline) inserted character.
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.replace_cursors_with(|map| {
                         let mut cursors = Vec::new();
                         for (anchor, line_mode, is_multiline) in &new_selections {
@@ -190,7 +190,7 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, cx);
+        self.switch_mode(Mode::Normal, true, window, cx);
     }
 }
 
