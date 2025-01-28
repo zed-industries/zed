@@ -8605,7 +8605,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 ".gitignore": "**/ignored_dir\n**/ignored_nested",
                 "dir1": {
@@ -8633,7 +8633,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -8662,12 +8662,12 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v root",
-                "    v dir1  <== selected",
-                "        > empty1/empty2/empty3",
-                "        > ignored_dir",
-                "        > subdir1",
-                "      .gitignore",
+                separator!("v root"),
+                separator!("    v dir1  <== selected"),
+                separator!("        > empty1/empty2/empty3"),
+                separator!("        > ignored_dir"),
+                separator!("        > subdir1"),
+                separator!("      .gitignore"),
             ],
             "Should show first level with auto-folded dirs and ignored dir visible"
         );
@@ -8684,18 +8684,18 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v root",
-                "    v dir1  <== selected",
-                "        v empty1",
-                "            v empty2",
-                "                v empty3",
-                "                      file.txt",
-                "        > ignored_dir",
-                "        v subdir1",
-                "            > ignored_nested",
-                "              file1.txt",
-                "              file2.txt",
-                "      .gitignore",
+                separator!("v root"),
+                separator!("    v dir1  <== selected"),
+                separator!("        v empty1"),
+                separator!("            v empty2"),
+                separator!("                v empty3"),
+                separator!("                      file.txt"),
+                separator!("        > ignored_dir"),
+                separator!("        v subdir1"),
+                separator!("            > ignored_nested"),
+                separator!("              file1.txt"),
+                separator!("              file2.txt"),
+                separator!("      .gitignore"),
             ],
             "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
         );
@@ -8720,12 +8720,12 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v root",
-                "    v dir1  <== selected",
-                "        > empty1",
-                "        > ignored_dir",
-                "        > subdir1",
-                "      .gitignore",
+                separator!("v root"),
+                separator!("    v dir1  <== selected"),
+                separator!("        > empty1"),
+                separator!("        > ignored_dir"),
+                separator!("        > subdir1"),
+                separator!("      .gitignore"),
             ],
             "With auto-fold disabled: should show all directories separately"
         );
@@ -8742,18 +8742,18 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v root",
-                "    v dir1  <== selected",
-                "        v empty1",
-                "            v empty2",
-                "                v empty3",
-                "                      file.txt",
-                "        > ignored_dir",
-                "        v subdir1",
-                "            > ignored_nested",
-                "              file1.txt",
-                "              file2.txt",
-                "      .gitignore",
+                separator!("v root"),
+                separator!("    v dir1  <== selected"),
+                separator!("        v empty1"),
+                separator!("            v empty2"),
+                separator!("                v empty3"),
+                separator!("                      file.txt"),
+                separator!("        > ignored_dir"),
+                separator!("        v subdir1"),
+                separator!("            > ignored_nested"),
+                separator!("              file1.txt"),
+                separator!("              file2.txt"),
+                separator!("      .gitignore"),
             ],
             "After expand_all without auto-fold: should expand all dirs normally, \
          expand ignored_dir itself but not its subdirs, and not expand ignored_nested"
@@ -8772,20 +8772,20 @@ mod tests {
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
             &[
-                "v root",
-                "    v dir1  <== selected",
-                "        v empty1",
-                "            v empty2",
-                "                v empty3",
-                "                      file.txt",
-                "        v ignored_dir",
-                "            v subdir",
-                "                  deep_file.txt",
-                "        v subdir1",
-                "            > ignored_nested",
-                "              file1.txt",
-                "              file2.txt",
-                "      .gitignore",
+                separator!("v root"),
+                separator!("    v dir1  <== selected"),
+                separator!("        v empty1"),
+                separator!("            v empty2"),
+                separator!("                v empty3"),
+                separator!("                      file.txt"),
+                separator!("        v ignored_dir"),
+                separator!("            v subdir"),
+                separator!("                  deep_file.txt"),
+                separator!("        v subdir1"),
+                separator!("            > ignored_nested"),
+                separator!("              file1.txt"),
+                separator!("              file2.txt"),
+                separator!("      .gitignore"),
             ],
             "After expand_all on ignored_dir: should expand all contents of the ignored directory"
         );
