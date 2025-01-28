@@ -142,9 +142,10 @@ fn interpolate(
         return None;
     }
 
+    let has_user_edits = !edits.is_empty();
     for (model_old_range, model_new_text) in model_edits {
         let model_old_offset_range = model_old_range.to_offset(old_snapshot);
-        if model_old_offset_range.is_empty() {
+        if !has_user_edits || model_old_offset_range.is_empty() {
             edits.push((model_old_range.clone(), model_new_text.clone()));
         } else {
             return None;
@@ -311,7 +312,7 @@ impl Zeta {
         position: language::Anchor,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
-    ) -> Task<Result<InlineCompletion>>
+    ) -> Task<Result<Option<InlineCompletion>>>
     where
         F: FnOnce(Arc<Client>, LlmApiToken, PredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
@@ -529,7 +530,7 @@ and then another
         position: language::Anchor,
         response: PredictEditsResponse,
         cx: &mut Context<Self>,
-    ) -> Task<Result<InlineCompletion>> {
+    ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
         self.request_completion_impl(buffer, position, cx, |_, _, _| ready(Ok(response)))
@@ -540,7 +541,7 @@ and then another
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Task<Result<InlineCompletion>> {
+    ) -> Task<Result<Option<InlineCompletion>>> {
         self.request_completion_impl(buffer, position, cx, Self::perform_predict_edits)
     }
 
@@ -607,7 +608,7 @@ and then another
         input_excerpt: String,
         request_sent_at: Instant,
         cx: &AsyncApp,
-    ) -> Task<Result<InlineCompletion>> {
+    ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = snapshot.clone();
         cx.spawn(|cx| async move {
             let output_excerpt: Arc<str> = output_excerpt.into();
@@ -623,22 +624,25 @@ and then another
                 .await?
                 .into();
 
-            let (edits, snapshot, edit_preview) = buffer.read_with(&cx, {
+            let Some((edits, snapshot, edit_preview)) = buffer.read_with(&cx, {
                 let edits = edits.clone();
                 |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
                     let edits: Arc<[(Range<Anchor>, String)]> =
-                        interpolate(&snapshot, &new_snapshot, edits)
-                            .context("Interpolated edits are empty")?
-                            .into();
+                        interpolate(&snapshot, &new_snapshot, edits)?.into();
 
-                    anyhow::Ok((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                    Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
                 }
-            })??;
+            })?
+            else {
+                // The interpolation failed, which means that the user typed
+                // something in the meantime that invalidated the suggestion
+                return Ok(None);
+            };
 
             let edit_preview = edit_preview.await;
 
-            Ok(InlineCompletion {
+            Ok(Some(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
@@ -652,7 +656,7 @@ and then another
                 output_excerpt,
                 request_sent_at,
                 response_received_at: Instant::now(),
-            })
+            }))
         })
     }
 
@@ -1132,14 +1136,22 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             });
 
             let completion = match completion_request {
-                Ok(completion_request) => {
-                    let completion_request = completion_request.await;
-                    completion_request.map(|completion| CurrentInlineCompletion {
-                        buffer_id: buffer.entity_id(),
-                        completion,
-                    })
-                }
+                Ok(completion_request) => completion_request.await,
                 Err(error) => Err(error),
+            };
+
+            let new_completion = {
+                let Some(completion) = completion
+                    .context("zeta prediction failed")
+                    .log_err()
+                    .flatten()
+                else {
+                    return;
+                };
+                CurrentInlineCompletion {
+                    buffer_id: buffer.entity_id(),
+                    completion,
+                }
             };
 
             this.update(&mut cx, |this, cx| {
@@ -1149,22 +1161,19 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     this.pending_completions.clear();
                 }
 
-                if let Some(new_completion) = completion.context("zeta prediction failed").log_err()
-                {
-                    if let Some(old_completion) = this.current_completion.as_ref() {
-                        let snapshot = buffer.read(cx).snapshot();
-                        if new_completion.should_replace_completion(&old_completion, &snapshot) {
-                            this.zeta.update(cx, |zeta, cx| {
-                                zeta.completion_shown(&new_completion.completion, cx);
-                            });
-                            this.current_completion = Some(new_completion);
-                        }
-                    } else {
+                if let Some(old_completion) = this.current_completion.as_ref() {
+                    let snapshot = buffer.read(cx).snapshot();
+                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
                         this.current_completion = Some(new_completion);
                     }
+                } else {
+                    this.zeta.update(cx, |zeta, cx| {
+                        zeta.completion_shown(&new_completion.completion, cx);
+                    });
+                    this.current_completion = Some(new_completion);
                 }
 
                 cx.notify();
