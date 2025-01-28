@@ -12,7 +12,6 @@ pub enum Direction {
     Next,
 }
 
-#[derive(Clone)]
 pub struct InlineCompletion {
     pub edits: Vec<(Range<language::Anchor>, String)>,
     pub edit_preview: Option<language::EditPreview>,

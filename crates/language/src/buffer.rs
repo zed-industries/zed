@@ -608,15 +608,24 @@ impl EditPreview {
         include_deletions: bool,
         cx: &App,
     ) -> HighlightedEdits {
-        let mut text = String::new();
-        let mut highlights = Vec::new();
-        let Some(range) = self.compute_visible_range(edits, current_snapshot) else {
+        let Some(range) = Self::compute_visible_range(edits, current_snapshot) else {
             return HighlightedEdits::default();
         };
+
+        let mut text = String::new();
+        let mut highlights = Vec::new();
         let mut offset = range.start;
         let mut delta = 0isize;
 
         let status_colors = cx.theme().status();
+        let insertion_highlight_style = HighlightStyle {
+            background_color: Some(status_colors.created_background),
+            ..Default::default()
+        };
+        let deletion_highlight_style = HighlightStyle {
+            background_color: Some(status_colors.deleted_background),
+            ..Default::default()
+        };
 
         for (range, edit_text) in edits {
             let edit_range = range.to_offset(current_snapshot);
@@ -627,33 +636,38 @@ impl EditPreview {
 
             if !prev_range.is_empty() {
                 let start = text.len();
-                self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
+                Self::highlight_text(
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    prev_range,
+                    &mut text,
+                    &mut highlights,
+                    None,
+                    cx,
+                );
                 offset += text.len() - start;
             }
 
             if include_deletions && !edit_range.is_empty() {
-                let start = text.len();
-                text.extend(current_snapshot.text_for_range(edit_range.clone()));
-                let end = text.len();
-
-                highlights.push((
-                    start..end,
-                    HighlightStyle {
-                        background_color: Some(status_colors.deleted_background),
-                        ..Default::default()
-                    },
-                ));
+                Self::highlight_text(
+                    &current_snapshot.text,
+                    &current_snapshot.syntax,
+                    edit_range.clone(),
+                    &mut text,
+                    &mut highlights,
+                    Some(deletion_highlight_style),
+                    cx,
+                );
             }
 
             if !edit_text.is_empty() {
-                self.highlight_text(
+                Self::highlight_text(
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
                     new_edit_range,
                     &mut text,
                     &mut highlights,
-                    Some(HighlightStyle {
-                        background_color: Some(status_colors.created_background),
-                        ..Default::default()
-                    }),
+                    Some(insertion_highlight_style),
                     cx,
                 );
 
@@ -663,8 +677,16 @@ impl EditPreview {
             delta += edit_text.len() as isize - edit_range.len() as isize;
         }
 
-        self.highlight_text(
-            offset..(range.end as isize + delta) as usize,
+        //TODO: While the cmp::min fixes the panic, the preview can still be incorrect,
+        // when the current_snapshot text has been changed before the start of the first edit
+        let end = cmp::min(
+            (range.end as isize + delta) as usize,
+            self.applied_edits_snapshot.len(),
+        );
+        Self::highlight_text(
+            &self.applied_edits_snapshot,
+            &self.syntax_snapshot,
+            offset..end,
             &mut text,
             &mut highlights,
             None,
@@ -678,14 +700,19 @@ impl EditPreview {
     }
 
     fn highlight_text(
-        &self,
+        buffer_snapshot: &text::BufferSnapshot,
+        syntax_snapshot: &SyntaxSnapshot,
         range: Range<usize>,
         text: &mut String,
         highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
         override_style: Option<HighlightStyle>,
         cx: &App,
     ) {
-        for chunk in self.highlighted_chunks(range) {
+        if range.end <= range.start {
+            return;
+        }
+
+        for chunk in Self::highlighted_chunks(buffer_snapshot, syntax_snapshot, range) {
             let start = text.len();
             text.push_str(chunk.text);
             let end = text.len();
@@ -704,12 +731,14 @@ impl EditPreview {
         }
     }
 
-    fn highlighted_chunks(&self, range: Range<usize>) -> BufferChunks {
-        let captures =
-            self.syntax_snapshot
-                .captures(range.clone(), &self.applied_edits_snapshot, |grammar| {
-                    grammar.highlights_query.as_ref()
-                });
+    fn highlighted_chunks<'a>(
+        buffer_snapshot: &'a text::BufferSnapshot,
+        syntax_snapshot: &'a SyntaxSnapshot,
+        range: Range<usize>,
+    ) -> BufferChunks<'a> {
+        let captures = syntax_snapshot.captures(range.clone(), buffer_snapshot, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
 
         let highlight_maps = captures
             .grammars()
@@ -718,7 +747,7 @@ impl EditPreview {
             .collect();
 
         BufferChunks::new(
-            self.applied_edits_snapshot.as_rope(),
+            buffer_snapshot.as_rope(),
             range,
             Some((captures, highlight_maps)),
             false,
@@ -727,7 +756,6 @@ impl EditPreview {
     }
 
     fn compute_visible_range(
-        &self,
         edits: &[(Range<Anchor>, String)],
         snapshot: &BufferSnapshot,
     ) -> Option<Range<usize>> {
