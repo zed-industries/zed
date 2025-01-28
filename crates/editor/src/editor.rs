@@ -73,7 +73,7 @@ use zed_predict_tos::ZedPredictTos;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionEntry, CompletionsMenu, ContextMenuOrigin,
+    CompletionsMenu, ContextMenuOrigin,
 };
 use git::blame::GitBlame;
 use gpui::{
@@ -2603,9 +2603,11 @@ impl Editor {
         }
 
         if self.hide_context_menu(window, cx).is_some() {
+            /* todo!
             if self.show_inline_completions_in_menu(cx) && self.has_active_inline_completion() {
                 self.update_visible_inline_completion(window, cx);
             }
+            */
             return true;
         }
 
@@ -3898,9 +3900,11 @@ impl Editor {
                         menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
 
                         if editor.show_inline_completions_in_menu(cx) {
+                            /* todo!
                             if let Some(hint) = editor.inline_completion_menu_hint(window, cx) {
                                 menu.show_inline_completion_hint(hint);
                             }
+                            */
                         } else {
                             editor.discard_inline_completion(false, cx);
                         }
@@ -3965,6 +3969,7 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
+        /* todo! address these cases in new design
         {
             let context_menu = self.context_menu.borrow();
             if let CodeContextMenu::Completions(menu) = context_menu.as_ref()? {
@@ -3992,6 +3997,7 @@ impl Editor {
                 }
             }
         }
+        */
 
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(window, cx)? {
@@ -4002,19 +4008,9 @@ impl Editor {
 
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
-        let mat = match mat {
-            CompletionEntry::InlineCompletionHint(_) => {
-                self.accept_inline_completion(&AcceptInlineCompletion, window, cx);
-                cx.stop_propagation();
-                return Some(Task::ready(Ok(())));
-            }
-            CompletionEntry::Match(mat) => {
-                if self.show_inline_completions_in_menu(cx) {
-                    self.discard_inline_completion(true, cx);
-                }
-                mat
-            }
-        };
+        if self.show_inline_completions_in_menu(cx) {
+            self.discard_inline_completion(true, cx);
+        }
         let candidate_id = mat.candidate_id;
         drop(entries);
 
@@ -5134,6 +5130,7 @@ impl Editor {
             invalidation_range,
         });
 
+        /* todo!
         if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
             if let Some(hint) = self.inline_completion_menu_hint(window, cx) {
                 match self.context_menu.borrow_mut().as_mut() {
@@ -5144,6 +5141,7 @@ impl Editor {
                 }
             }
         }
+        */
 
         cx.notify();
 
@@ -5195,6 +5193,7 @@ impl Editor {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }
 
+    // todo! remove?
     fn show_inline_completions_in_menu(&self, cx: &App) -> bool {
         let by_provider = matches!(
             self.menu_inline_completions_policy,
@@ -5426,6 +5425,7 @@ impl Editor {
             .map_or(false, |menu| menu.visible())
     }
 
+    /* todo!
     #[cfg(feature = "test-support")]
     pub fn context_menu_contains_inline_completion(&self) -> bool {
         self.context_menu
@@ -5440,6 +5440,7 @@ impl Editor {
                 CodeContextMenu::CodeActions(_) => false,
             })
     }
+    */
 
     fn context_menu_origin(&self, cursor_position: DisplayPoint) -> Option<ContextMenuOrigin> {
         self.context_menu
