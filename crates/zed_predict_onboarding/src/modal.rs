@@ -19,7 +19,6 @@ pub struct ZedPredictModal {
     focus_handle: FocusHandle,
     sign_in_status: SignInStatus,
     terms_of_service: bool,
-    data_collection: bool,
 }
 
 #[derive(PartialEq, Eq)]
@@ -46,7 +45,6 @@ impl ZedPredictModal {
             focus_handle: cx.focus_handle(),
             sign_in_status: SignInStatus::Idle,
             terms_of_service: false,
-            data_collection: false,
         }
     }
 
@@ -268,16 +266,6 @@ impl Render for ZedPredictModal {
                                 .on_click(cx.listener(Self::view_terms)),
                         ),
                 )
-                .child(CheckboxWithLabel::new(
-                    "data-checkbox",
-                    Label::new("Understood that Zed AI collects completion data")
-                        .color(Color::Muted),
-                    self.data_collection.into(),
-                    cx.listener(move |this, state, _window, cx| {
-                        this.data_collection = *state == ToggleState::Selected;
-                        cx.notify()
-                    }),
-                ))
                 .child(
                     v_flex()
                         .mt_2()
@@ -285,7 +273,7 @@ impl Render for ZedPredictModal {
                         .w_full()
                         .child(
                             Button::new("accept-tos", "Enable Edit Predictions")
-                                .disabled(!self.terms_of_service || !self.data_collection)
+                                .disabled(!self.terms_of_service)
                                 .style(ButtonStyle::Tinted(TintColor::Accent))
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
