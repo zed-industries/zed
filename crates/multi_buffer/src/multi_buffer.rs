@@ -91,6 +91,7 @@ pub enum Event {
     ExcerptsEdited {
         ids: Vec<ExcerptId>,
     },
+    DiffHunksToggled,
     Edited {
         singleton_buffer_edited: bool,
         edited_buffer: Option<Entity<Buffer>>,
@@ -2265,6 +2266,7 @@ impl MultiBuffer {
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
         );
+        cx.emit(Event::DiffHunksToggled);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,

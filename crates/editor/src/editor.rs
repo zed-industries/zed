@@ -13381,6 +13381,9 @@ impl Editor {
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
+            multi_buffer::Event::DiffHunksToggled => {
+                self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+            }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, window, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
