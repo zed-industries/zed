@@ -2,15 +2,18 @@ use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context as _;
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    System::SystemServices::*,
-    UI::{
-        Controls::*,
-        HiDpi::*,
-        Input::{Ime::*, KeyboardAndMouse::*},
-        WindowsAndMessaging::*,
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::SystemServices::*,
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            WindowsAndMessaging::*,
+        },
     },
 };
 
@@ -88,8 +91,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
-        WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(handle, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -1187,6 +1189,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
 
 fn handle_system_settings_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
@@ -1198,6 +1201,22 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.update(handle).log_err();
     drop(lock);
+
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    handle_system_theme_changed(handle, state_ptr);
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
@@ -1227,7 +1246,7 @@ fn handle_system_theme_changed(
         .take()?;
     callback();
     state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-    set_dwm_window_appearance(handle);
+    configure_dwm_dark_mode(handle);
     Some(0)
 }
 
