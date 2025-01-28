@@ -75,6 +75,7 @@ impl WorktreeStore {
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
+        client.add_model_request_handler(Self::handle_expand_all_for_project_entry);
         client.add_model_request_handler(Self::handle_git_branches);
         client.add_model_request_handler(Self::handle_update_branch);
     }
@@ -1087,6 +1088,18 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_expand_all_for_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExpandAllForProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ExpandAllForProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let worktree = this
+            .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
+            .ok_or_else(|| anyhow!("invalid request"))?;
+        Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
     }
 
     pub async fn handle_git_branches(
