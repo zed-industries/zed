@@ -1,7 +1,7 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
-use language::{Language, LanguageConfig};
+use language::{EditWithInsertionHighlights, Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
 use text::{Point, ToOffset};
@@ -24,7 +24,7 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "-273.15");
+        assert_eq!(edits[0].insertion.as_str(), "-273.15");
     });
 
     accept_completion(&mut cx);
@@ -46,7 +46,7 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "3.14159");
+        assert_eq!(edits[0].insertion.as_str(), "3.14159");
     });
 
     accept_completion(&mut cx);
@@ -158,7 +158,7 @@ async fn test_indentation(cx: &mut gpui::TestAppContext) {
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].1.as_str(), "    const function()");
+        assert_eq!(edits[0].insertion.as_str(), "    const function()");
     });
 
     // When the cursor is before the suggested indentation level, accepting a
@@ -278,7 +278,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
+    assert: impl FnOnce(MultiBufferSnapshot, &Vec<EditWithInsertionHighlights<Anchor>>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
@@ -326,14 +326,17 @@ fn propose_edits<T: ToOffset>(
     let snapshot = cx.buffer_snapshot();
     let edits = edits.into_iter().map(|(range, text)| {
         let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
-        (range, text.into())
+        EditWithInsertionHighlights {
+            range,
+            insertion: text.into(),
+            insertion_highlights: vec![],
+        }
     });
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
             provider.set_inline_completion(Some(inline_completion::InlineCompletion {
                 edits: edits.collect(),
-                edit_preview: None,
             }))
         })
     });

@@ -15421,39 +15421,50 @@ async fn assert_highlighted_edits(
         })
         .unwrap();
 
-    let edits = edits
+    let text_anchor_edits = edits
         .into_iter()
-        .map(|(range, edit)| {
+        .map(|(range, insertion)| {
             (
-                snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end),
-                edit,
+                snapshot.anchor_after(range.start).text_anchor
+                    ..snapshot.anchor_before(range.end).text_anchor,
+                insertion,
             )
         })
         .collect::<Vec<_>>();
 
-    let text_anchor_edits = edits
-        .clone()
-        .into_iter()
-        .map(|(range, edit)| (range.start.text_anchor..range.end.text_anchor, edit))
-        .collect::<Vec<_>>();
-
-    let edit_preview = window
-        .update(cx, |_, _window, cx| {
+    let edits = cx
+        .update(|_window, cx| {
             buffer
                 .read(cx)
                 .as_singleton()
                 .unwrap()
                 .read(cx)
-                .preview_edits(text_anchor_edits.into(), cx)
+                .highlight_edit_insertions(text_anchor_edits, cx.background_executor())
         })
-        .unwrap()
         .await;
+
+    let edits = cx.update(|_window, cx| {
+        let multibuffer_snapshot = buffer.read(cx).snapshot(cx);
+        let excerpt_id = multibuffer_snapshot.excerpts().next().unwrap().0;
+        edits
+            .into_iter()
+            .map(|edit| EditWithInsertionHighlights {
+                range: multibuffer_snapshot
+                    .anchor_in_excerpt(excerpt_id, edit.range.start)
+                    .unwrap()
+                    ..multibuffer_snapshot
+                        .anchor_in_excerpt(excerpt_id, edit.range.end)
+                        .unwrap(),
+                insertion: edit.insertion,
+                insertion_highlights: edit.insertion_highlights,
+            })
+            .collect::<Vec<_>>()
+    });
 
     cx.update(|_window, cx| {
         let highlighted_edits = inline_completion_edit_text(
             &snapshot.as_singleton().unwrap().2,
             &edits,
-            &edit_preview,
             include_deletions,
             cx,
         )

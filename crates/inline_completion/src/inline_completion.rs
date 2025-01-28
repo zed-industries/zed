@@ -1,6 +1,5 @@
 use gpui::{App, Context, Entity};
-use language::Buffer;
-use std::ops::Range;
+use language::{Buffer, EditWithInsertionHighlights};
 
 // TODO: Find a better home for `Direction`.
 //
@@ -14,8 +13,7 @@ pub enum Direction {
 
 #[derive(Clone)]
 pub struct InlineCompletion {
-    pub edits: Vec<(Range<language::Anchor>, String)>,
-    pub edit_preview: Option<language::EditPreview>,
+    pub edits: Vec<EditWithInsertionHighlights<language::Anchor>>,
 }
 
 pub trait InlineCompletionProvider: 'static + Sized {

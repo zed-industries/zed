@@ -3432,7 +3432,6 @@ impl EditorElement {
             }
             InlineCompletion::Edit {
                 edits,
-                edit_preview,
                 display_mode,
                 snapshot,
             } => {
@@ -3443,13 +3442,13 @@ impl EditorElement {
                 let edit_start = edits
                     .first()
                     .unwrap()
-                    .0
+                    .range
                     .start
                     .to_display_point(editor_snapshot);
                 let edit_end = edits
                     .last()
                     .unwrap()
-                    .0
+                    .range
                     .end
                     .to_display_point(editor_snapshot);
 
@@ -3461,7 +3460,7 @@ impl EditorElement {
 
                 match display_mode {
                     EditDisplayMode::TabAccept => {
-                        let range = &edits.first()?.0;
+                        let range = &edits.first()?.range;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
                         let target_line_end = DisplayPoint::new(
@@ -3487,9 +3486,8 @@ impl EditorElement {
                     EditDisplayMode::DiffPopover => {}
                 }
 
-                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
-                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
-                })?;
+                let highlighted_edits =
+                    crate::inline_completion_edit_text(&snapshot, edits, false, cx)?;
 
                 let line_count = highlighted_edits.text.lines().count() + 1;
 

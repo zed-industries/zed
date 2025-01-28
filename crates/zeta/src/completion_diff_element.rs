@@ -26,8 +26,9 @@ impl CompletionDiffElement {
         let mut cursor_offset_in_diff = None;
         let mut delta = 0;
         let mut diff_highlights = Vec::new();
-        for (old_range, new_text) in completion.edits.iter() {
-            let old_range = old_range.to_offset(&completion.snapshot);
+        for edit in completion.edits.iter() {
+            let old_range = edit.range.to_offset(&completion.snapshot);
+            let new_text = &edit.insertion;
 
             if cursor_offset_in_diff.is_none() && completion.cursor_offset <= old_range.end {
                 cursor_offset_in_diff =
@@ -51,7 +52,8 @@ impl CompletionDiffElement {
             }
 
             if !new_text.is_empty() {
-                diff.insert_str(old_end_in_diff, new_text);
+                // todo! use insertion_highlights
+                diff.insert_str(old_end_in_diff, new_text.as_str());
                 diff_highlights.push((
                     old_end_in_diff..old_end_in_diff + new_text.len(),
                     HighlightStyle {
