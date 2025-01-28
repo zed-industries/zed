@@ -1507,26 +1507,42 @@ impl SearchableItem for Editor {
                 search_within_ranges
             };
 
-            for (search_buffer, search_range, excerpt_id) in
-                buffer.ranges_to_buffer_ranges(search_within_ranges.into_iter())
-            {
-                ranges.extend(
-                    query
-                        .search(search_buffer, Some(search_range.clone()))
-                        .await
-                        .into_iter()
-                        .map(|match_range| {
-                            let start =
-                                search_buffer.anchor_after(search_range.start + match_range.start);
-                            let end =
-                                search_buffer.anchor_before(search_range.start + match_range.end);
-                            Anchor::range_in_buffer(
-                                excerpt_id,
-                                search_buffer.remote_id(),
-                                start..end,
-                            )
-                        }),
-                );
+            for range in search_within_ranges {
+                for (search_buffer, search_range, excerpt_id, deleted_hunk_anchor) in
+                    buffer.range_to_buffer_ranges_with_deleted_hunks(range)
+                {
+                    ranges.extend(
+                        query
+                            .search(search_buffer, Some(search_range.clone()))
+                            .await
+                            .into_iter()
+                            .map(|match_range| {
+                                if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
+                                    let start = search_buffer
+                                        .anchor_after(search_range.start + match_range.start);
+                                    let end = search_buffer
+                                        .anchor_before(search_range.start + match_range.end);
+                                    Anchor {
+                                        diff_base_anchor: Some(start),
+                                        ..deleted_hunk_anchor
+                                    }..Anchor {
+                                        diff_base_anchor: Some(end),
+                                        ..deleted_hunk_anchor
+                                    }
+                                } else {
+                                    let start = search_buffer
+                                        .anchor_after(search_range.start + match_range.start);
+                                    let end = search_buffer
+                                        .anchor_before(search_range.start + match_range.end);
+                                    Anchor::range_in_buffer(
+                                        excerpt_id,
+                                        search_buffer.remote_id(),
+                                        start..end,
+                                    )
+                                }
+                            }),
+                    );
+                }
             }
 
             ranges
