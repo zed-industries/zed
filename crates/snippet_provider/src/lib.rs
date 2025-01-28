@@ -98,7 +98,8 @@ async fn process_updates(
                 let Some(file_contents) = contents else {
                     return;
                 };
-                let Ok(as_json) = serde_json::from_str::<VSSnippetsFile>(&file_contents) else {
+                let Ok(as_json) = serde_json_lenient::from_str::<VSSnippetsFile>(&file_contents)
+                else {
                     return;
                 };
                 let snippets = file_to_snippets(as_json);

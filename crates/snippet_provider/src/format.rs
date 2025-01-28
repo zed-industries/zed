@@ -5,7 +5,7 @@ use schemars::{
     JsonSchema,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json_lenient::Value;
 
 #[derive(Deserialize)]
 pub struct VSSnippetsFile {
@@ -20,7 +20,7 @@ impl VSSnippetsFile {
             .into_generator()
             .into_root_schema_for::<Self>();
 
-        serde_json::to_value(schema).unwrap()
+        serde_json_lenient::to_value(schema).unwrap()
     }
 }
 
