@@ -1569,7 +1569,7 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::path;
+    use util::{path, separator};
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
@@ -2654,8 +2654,8 @@ mod tests {
             opened_paths,
             vec![
                 None,
-                Some(".git/HEAD".to_string()),
-                Some("excluded_dir/file".to_string()),
+                Some(separator!(".git/HEAD").to_string()),
+                Some(separator!("excluded_dir/file").to_string()),
             ],
             "Excluded files should get opened, excluded dir should not get opened"
         );
@@ -2681,7 +2681,7 @@ mod tests {
                 opened_buffer_paths.sort();
                 assert_eq!(
                     opened_buffer_paths,
-                    vec![".git/HEAD".to_string(), "excluded_dir/file".to_string()],
+                    vec![separator!(".git/HEAD").to_string(), separator!("excluded_dir/file").to_string()],
                     "Despite not being present in the worktrees, buffers for excluded files are opened and added to the pane"
                 );
             });
