@@ -2,12 +2,12 @@ use std::any::{Any, TypeId};
 
 use editor::{Editor, EditorEvent};
 use gpui::{
-    actions, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Render, Task,
-    WeakEntity,
+    actions, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    Subscription, Task, WeakEntity,
 };
 use language::Capability;
 use multi_buffer::MultiBuffer;
-use project::{Project, ProjectPath};
+use project::{git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use workspace::{
@@ -23,6 +23,8 @@ pub(crate) struct ProjectDiff {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+
+    git_state_subscription: Subscription,
 }
 
 impl ProjectDiff {
@@ -71,13 +73,60 @@ impl ProjectDiff {
             diff_display_editor
         });
 
+        let git_state = project.read(cx).git_state().clone();
+        let git_state_subscription = cx.subscribe_in(
+            &git_state,
+            window,
+            move |this, git_state, event, window, cx| match event {
+                project::git::Event::RepositoriesUpdated => {
+                    this.update(git_state, window, cx);
+                }
+            },
+        );
+
         Self {
             project,
             workspace,
             focus_handle,
             editor,
             multibuffer,
+            git_state_subscription,
         }
+    }
+
+    pub fn update(
+        &mut self,
+        git_state: &Entity<GitState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repo) = git_state.read(cx).active_repository() else {
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.clear(cx);
+            });
+            return;
+        };
+        for entry in repo.status() {
+            match entry.status {
+                Status::Untracked => {
+                    self.multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.insert_text(entry.path, cx);
+                    });
+                }
+                Status::Modified => {
+                    self.multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.insert_text(entry.path, cx);
+                    });
+                }
+                Status::Deleted => {
+                    self.multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.insert_text(entry.path, cx);
+                    });
+                }
+            }
+        }
+        self.editor
+            .update(cx, |editor, cx| editor.update(window, cx));
     }
 }
 

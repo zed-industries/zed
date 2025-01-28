@@ -153,7 +153,7 @@ impl GitPanel {
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
-        let git_state = project.read(cx).git_state().cloned();
+        let git_state = project.read(cx).git_state().clone();
         let active_repository = project.read(cx).active_repository(cx);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
         let workspace = cx.entity().downgrade();
@@ -171,19 +171,17 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            if let Some(git_state) = git_state {
-                cx.subscribe_in(
-                    &git_state,
-                    window,
-                    move |this, git_state, event, window, cx| match event {
-                        project::git::Event::RepositoriesUpdated => {
-                            this.active_repository = git_state.read(cx).active_repository();
-                            this.schedule_update(window, cx);
-                        }
-                    },
-                )
-                .detach();
-            }
+            cx.subscribe_in(
+                &git_state,
+                window,
+                move |this, git_state, event, window, cx| match event {
+                    project::git::Event::RepositoriesUpdated => {
+                        this.active_repository = git_state.read(cx).active_repository();
+                        this.schedule_update(window, cx);
+                    }
+                },
+            )
+            .detach();
 
             let mut git_panel = Self {
                 focus_handle: cx.focus_handle(),
