@@ -8797,7 +8797,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "dir1": {
                     "subdir1": {
@@ -8819,7 +8819,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -8836,15 +8836,15 @@ mod tests {
             assert_eq!(
                 visible_entries_as_strings(&panel, 0..20, cx),
                 &[
-                    "v root",
-                    "    v dir1",
-                    "        v subdir1",
-                    "            v nested1",
-                    "                  file1.txt",
-                    "                  file2.txt",
-                    "        v subdir2  <== selected",
-                    "              file4.txt",
-                    "    > dir2",
+                    separator!("v root"),
+                    separator!("    v dir1"),
+                    separator!("        v subdir1"),
+                    separator!("            v nested1"),
+                    separator!("                  file1.txt"),
+                    separator!("                  file2.txt"),
+                    separator!("        v subdir2  <== selected"),
+                    separator!("              file4.txt"),
+                    separator!("    > dir2"),
                 ],
                 "Initial state with everything expanded"
             );
@@ -8886,13 +8886,13 @@ mod tests {
             assert_eq!(
                 visible_entries_as_strings(&panel, 0..20, cx),
                 &[
-                    "v root",
-                    "    v dir1",
-                    "        v subdir1/nested1  <== selected",
-                    "              file1.txt",
-                    "              file2.txt",
-                    "        > subdir2",
-                    "    > dir2/single_file",
+                    separator!("v root"),
+                    separator!("    v dir1"),
+                    separator!("        v subdir1/nested1  <== selected"),
+                    separator!("              file1.txt"),
+                    separator!("              file2.txt"),
+                    separator!("        > subdir2"),
+                    separator!("    > dir2/single_file"),
                 ],
                 "Initial state with some dirs expanded"
             );
@@ -8909,11 +8909,11 @@ mod tests {
             assert_eq!(
                 visible_entries_as_strings(&panel, 0..20, cx),
                 &[
-                    "v root",
-                    "    v dir1  <== selected",
-                    "        > subdir1/nested1",
-                    "        > subdir2",
-                    "    > dir2/single_file",
+                    separator!("v root"),
+                    separator!("    v dir1  <== selected"),
+                    separator!("        > subdir1/nested1"),
+                    separator!("        > subdir2"),
+                    separator!("    > dir2/single_file"),
                 ],
                 "Subdirs should be collapsed and folded with auto-fold enabled"
             );
@@ -8941,14 +8941,14 @@ mod tests {
             assert_eq!(
                 visible_entries_as_strings(&panel, 0..20, cx),
                 &[
-                    "v root",
-                    "    v dir1",
-                    "        v subdir1",
-                    "            v nested1  <== selected",
-                    "                  file1.txt",
-                    "                  file2.txt",
-                    "        > subdir2",
-                    "    > dir2",
+                    separator!("v root"),
+                    separator!("    v dir1"),
+                    separator!("        v subdir1"),
+                    separator!("            v nested1  <== selected"),
+                    separator!("                  file1.txt"),
+                    separator!("                  file2.txt"),
+                    separator!("        > subdir2"),
+                    separator!("    > dir2"),
                 ],
                 "Initial state with some dirs expanded and auto-fold disabled"
             );
@@ -8965,11 +8965,11 @@ mod tests {
             assert_eq!(
                 visible_entries_as_strings(&panel, 0..20, cx),
                 &[
-                    "v root",
-                    "    v dir1  <== selected",
-                    "        > subdir1",
-                    "        > subdir2",
-                    "    > dir2",
+                    separator!("v root"),
+                    separator!("    v dir1  <== selected"),
+                    separator!("        > subdir1"),
+                    separator!("        > subdir2"),
+                    separator!("    > dir2"),
                 ],
                 "Subdirs should be collapsed but not folded with auto-fold disabled"
             );
