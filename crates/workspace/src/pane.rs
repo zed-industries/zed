@@ -304,6 +304,7 @@ pub struct Pane {
             &mut Context<Pane>,
         ) -> (Option<AnyElement>, Option<AnyElement>),
     >,
+    show_tab_bar_buttons: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
@@ -509,6 +510,7 @@ impl Pane {
                     .into();
                 (None, right_children)
             }),
+            show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
             ),
@@ -659,9 +661,13 @@ impl Pane {
     }
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
-            *display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
+            *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
         }
+        self.show_tab_bar_buttons = tab_bar_settings.show_tab_bar_buttons;
+
         if !PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = None;
         }
@@ -2581,12 +2587,15 @@ impl Pane {
                 },
             )
             .map(|tab_bar| {
-                let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                let (left_children, right_children) = render_tab_buttons(self, window, cx);
-
-                tab_bar
-                    .start_children(left_children)
-                    .end_children(right_children)
+                if self.show_tab_bar_buttons {
+                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                    let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                    tab_bar
+                        .start_children(left_children)
+                        .end_children(right_children)
+                } else {
+                    tab_bar
+                }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
                 h_flex()
