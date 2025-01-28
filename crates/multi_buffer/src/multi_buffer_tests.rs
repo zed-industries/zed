@@ -1856,7 +1856,7 @@ impl ReferenceMultibuffer {
                 .buffer_range
                 .end
                 .cmp(&excerpt.range.start, &buffer)
-                .is_le();
+                .is_lt();
             let hunk_follows_excerpt = hunk
                 .buffer_range
                 .start
