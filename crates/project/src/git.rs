@@ -30,7 +30,7 @@ pub struct RepositoryHandle {
     git_state: WeakEntity<GitState>,
     worktree_id: WorktreeId,
     repository_entry: RepositoryEntry,
-    git_repo: Arc<dyn GitRepository>,
+    git_repo: Option<Arc<dyn GitRepository>>,
     commit_message: Entity<Buffer>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
@@ -100,7 +100,7 @@ impl GitState {
 
         GitState {
             languages,
-            repositories: vec![],
+            repositories: Vec::new(),
             active_index: None,
             update_sender,
             _subscription,
@@ -128,13 +128,11 @@ impl GitState {
             for worktree in worktree_store.worktrees() {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
-                    let Some(local) = worktree.as_local() else {
-                        return;
-                    };
                     for repo in snapshot.repositories().iter() {
-                        let Some(local_repo) = local.get_local_repo(repo) else {
-                            continue;
-                        };
+                        let git_repo = worktree
+                            .as_local()
+                            .and_then(|local_worktree| local_worktree.get_local_repo(repo))
+                            .map(|local_repo| local_repo.repo().clone());
                         let existing = self
                             .repositories
                             .iter()
@@ -166,7 +164,7 @@ impl GitState {
                                 git_state: this.clone(),
                                 worktree_id: worktree.id(),
                                 repository_entry: repo.clone(),
-                                git_repo: local_repo.repo().clone(),
+                                git_repo,
                                 commit_message,
                                 update_sender: self.update_sender.clone(),
                             }
@@ -247,8 +245,11 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
         self.update_sender
-            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Stage(git_repo, entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
         Ok(())
     }
@@ -261,8 +262,11 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
         self.update_sender
-            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Unstage(git_repo, entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
         Ok(())
     }
@@ -314,11 +318,13 @@ impl RepositoryHandle {
     }
 
     pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return;
+        };
         let message = self.commit_message.read(cx).as_rope().clone();
-        let result = self.update_sender.unbounded_send((
-            Message::Commit(self.git_repo.clone(), message),
-            err_sender.clone(),
-        ));
+        let result = self
+            .update_sender
+            .unbounded_send((Message::Commit(git_repo, message), err_sender.clone()));
         if result.is_err() {
             cx.spawn(|_| async move {
                 err_sender
@@ -335,6 +341,9 @@ impl RepositoryHandle {
     }
 
     pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return;
+        };
         let to_stage = self
             .repository_entry
             .status()
@@ -343,7 +352,7 @@ impl RepositoryHandle {
             .collect::<Vec<_>>();
         let message = self.commit_message.read(cx).as_rope().clone();
         let result = self.update_sender.unbounded_send((
-            Message::StageAndCommit(self.git_repo.clone(), message, to_stage),
+            Message::StageAndCommit(git_repo, message, to_stage),
             err_sender.clone(),
         ));
         if result.is_err() {

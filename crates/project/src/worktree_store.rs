@@ -1026,9 +1026,10 @@ impl WorktreeStore {
             {
                 // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
                 // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
-                return Err(anyhow!(
+                log::debug!(
                     "Invalid UTF-8 sequence in file {abs_path:?} at byte position {starting_position}"
-                ));
+                );
+                continue;
             }
 
             if query.detect(file).unwrap_or(false) {

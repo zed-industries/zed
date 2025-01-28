@@ -2,7 +2,9 @@ use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
-use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
+};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, App, AsyncWindowContext,
@@ -463,19 +465,22 @@ impl InlineCompletionButton {
     ) -> Entity<ContextMenu> {
         let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
-            self.build_language_settings_menu(menu, cx)
-                .separator()
-                .entry(
-                    "Rate Completions",
-                    Some(RateCompletions.boxed_clone()),
-                    move |window, cx| {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                RateCompletionModal::toggle(workspace, window, cx)
-                            })
-                            .ok();
-                    },
-                )
+            self.build_language_settings_menu(menu, cx).when(
+                cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
+                |this| {
+                    this.separator().entry(
+                        "Rate Completions",
+                        Some(RateCompletions.boxed_clone()),
+                        move |window, cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, window, cx)
+                                })
+                                .ok();
+                        },
+                    )
+                },
+            )
         })
     }
 
