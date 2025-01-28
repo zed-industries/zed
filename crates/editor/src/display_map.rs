@@ -1433,7 +1433,10 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{movement, test::marked_display_snapshot};
+    use crate::{
+        movement,
+        test::{marked_display_snapshot, retrieve_test_font},
+    };
     use block_map::BlockPlacement;
     use gpui::{
         div, font, observe, px, App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba,
@@ -1492,11 +1495,7 @@ pub mod tests {
             }
         });
 
-        let font = if cfg!(windows) {
-            font("Courier New")
-        } else {
-            font("Helvetica")
-        };
+        let font = retrieve_test_font();
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),

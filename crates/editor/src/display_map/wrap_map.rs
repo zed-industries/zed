@@ -1169,9 +1169,10 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+        test::retrieve_test_font,
         MultiBuffer,
     };
-    use gpui::{font, px, test::observe};
+    use gpui::{px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
@@ -1196,10 +1197,8 @@ mod tests {
             Some(px(rng.gen_range(0.0..=1000.0)))
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        #[cfg(not(target_os = "windows"))]
-        let font = font("Helvetica");
-        #[cfg(target_os = "windows")]
-        let font = font("Courier New");
+
+        let font = retrieve_test_font();
         let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
 
