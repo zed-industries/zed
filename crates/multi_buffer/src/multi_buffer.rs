@@ -2253,46 +2253,34 @@ impl MultiBuffer {
         let snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
         for range in ranges.iter() {
+            let end_excerpt_id = range.end.excerpt_id;
             let range = range.to_point(&snapshot);
-
-            let mut start = snapshot.anchor_before(Point::new(range.start.row, 0));
-            let mut end = snapshot.anchor_before(Point::new(
-                range.end.row,
-                snapshot.line_len(MultiBufferRow(range.end.row)),
-            ));
-            let peek_end = if range.end.row < snapshot.max_row().0 {
-                Point::new(range.end.row + 1, 0)
-            } else {
-                range.end
+            let mut peek_end = range.end;
+            if range.end.row < snapshot.max_row().0 {
+                peek_end = Point::new(range.end.row + 1, 0);
             };
 
             for diff_hunk in snapshot.diff_hunks_in_range(range.start..peek_end) {
-                if diff_hunk.row_range.start.0 <= range.start.row
-                    && diff_hunk.row_range.end.0 >= range.start.row
-                    && diff_hunk.excerpt_id == start.excerpt_id
-                {
-                    start = Anchor::in_buffer(
-                        diff_hunk.excerpt_id,
-                        diff_hunk.buffer_id,
-                        diff_hunk.buffer_range.start,
-                    );
+                if diff_hunk.excerpt_id.cmp(&end_excerpt_id, &snapshot).is_gt() {
+                    continue;
                 }
-                if diff_hunk.row_range.start.0 <= peek_end.row
-                    && diff_hunk.excerpt_id == end.excerpt_id
-                {
-                    end = Anchor::in_buffer(
-                        diff_hunk.excerpt_id,
-                        diff_hunk.buffer_id,
-                        diff_hunk.buffer_range.end,
-                    );
-                }
+                let start = Anchor::in_buffer(
+                    diff_hunk.excerpt_id,
+                    diff_hunk.buffer_id,
+                    diff_hunk.buffer_range.start,
+                );
+                let end = Anchor::in_buffer(
+                    diff_hunk.excerpt_id,
+                    diff_hunk.buffer_id,
+                    diff_hunk.buffer_range.end,
+                );
+                let start = snapshot.excerpt_offset_for_anchor(&start);
+                let end = snapshot.excerpt_offset_for_anchor(&end);
+                excerpt_edits.push(text::Edit {
+                    old: start..end,
+                    new: start..end,
+                });
             }
-            let start = snapshot.excerpt_offset_for_anchor(&start);
-            let end = snapshot.excerpt_offset_for_anchor(&end);
-            excerpt_edits.push(text::Edit {
-                old: start..end,
-                new: start..end,
-            });
         }
 
         self.sync_diff_transforms(
