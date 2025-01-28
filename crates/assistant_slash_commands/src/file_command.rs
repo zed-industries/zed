@@ -42,7 +42,9 @@ impl FileSlashCommand {
                 .chain(project.worktrees(cx).flat_map(|worktree| {
                     let worktree = worktree.read(cx);
                     let id = worktree.id();
-                    worktree.child_entries(Path::new("")).map(move |entry| {
+                    let entries =
+                        worktree.child_entries_with_options(Path::new(""), true, true, false);
+                    entries.map(move |entry| {
                         (
                             project::ProjectPath {
                                 worktree_id: id,

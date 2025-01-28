@@ -2658,14 +2658,24 @@ impl Snapshot {
     }
 
     pub fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+        self.child_entries_with_options(parent_path, true, true, true)
+    }
+
+    pub fn child_entries_with_options<'a>(
+        &'a self,
+        parent_path: &'a Path,
+        include_files: bool,
+        include_dirs: bool,
+        include_ignored: bool,
+    ) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor(&());
         cursor.seek(&TraversalTarget::path(parent_path), Bias::Right, &());
         let traversal = Traversal {
             snapshot: self,
             cursor,
-            include_files: true,
-            include_dirs: true,
-            include_ignored: true,
+            include_files,
+            include_dirs,
+            include_ignored,
         };
         ChildEntriesIter {
             traversal,
