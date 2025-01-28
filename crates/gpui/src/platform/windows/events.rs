@@ -49,9 +49,8 @@ pub(crate) fn handle_msg(
         WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
-        WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
+        WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
-        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -263,26 +262,7 @@ fn handle_mouse_move_msg(
     wparam: WPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
@@ -316,18 +296,6 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
-}
-
-fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.hovered = false;
-    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-        drop(lock);
-        callback(false);
-        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-    }
-
-    Some(0)
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -987,26 +955,7 @@ fn handle_nc_mouse_move_msg(
         return None;
     }
 
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE | TME_NONCLIENT,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
@@ -1534,6 +1483,31 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+fn start_tracking_mouse(
+    handle: HWND,
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    flags: TRACKMOUSEEVENT_FLAGS,
+) {
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: flags,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
     }
 }
 
