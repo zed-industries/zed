@@ -5148,47 +5148,6 @@ impl Editor {
         Some(())
     }
 
-    fn inline_completion_menu_hint(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<InlineCompletionMenuHint> {
-        let provider = self.inline_completion_provider()?;
-        if self.has_active_inline_completion() {
-            let editor_snapshot = self.snapshot(window, cx);
-
-            let text = match &self.active_inline_completion.as_ref()?.completion {
-                InlineCompletion::Edit {
-                    edits,
-                    edit_preview,
-                    display_mode: _,
-                    snapshot,
-                } => edit_preview
-                    .as_ref()
-                    .and_then(|edit_preview| {
-                        inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
-                    })
-                    .map(InlineCompletionText::Edit),
-                InlineCompletion::Move(target) => {
-                    let target_point =
-                        target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
-                    let target_line = target_point.row + 1;
-                    Some(InlineCompletionText::Move(
-                        format!("Jump to edit in line {}", target_line).into(),
-                    ))
-                }
-            };
-
-            Some(InlineCompletionMenuHint::Loaded { text: text? })
-        } else if provider.is_refreshing(cx) {
-            Some(InlineCompletionMenuHint::Loading)
-        } else if provider.needs_terms_acceptance(cx) {
-            Some(InlineCompletionMenuHint::PendingTermsAcceptance)
-        } else {
-            Some(InlineCompletionMenuHint::None)
-        }
-    }
-
     pub fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }

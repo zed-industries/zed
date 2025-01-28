@@ -3130,6 +3130,7 @@ impl EditorElement {
         else {
             return;
         };
+
         let target_position = content_origin
             + match context_menu_origin {
                 crate::ContextMenuOrigin::EditorPoint(display_point) => {
@@ -3203,9 +3204,56 @@ impl EditorElement {
 
         let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
 
+        let mut completions_menu_y_offset = px(0.);
+
         // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
         let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
+            editor
+                .render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
+                .map(|menu| {
+                    if editor.has_active_completions_menu()
+                        && editor.show_inline_completions_in_menu(cx)
+                    {
+                        let zeta_popover_height = rems_from_px(32.);
+                        let zeta_and_menu_gap = rems_from_px(4.);
+
+                        completions_menu_y_offset =
+                            (zeta_popover_height + zeta_and_menu_gap).to_pixels(window.rem_size());
+
+                        v_flex()
+                            .gap(zeta_and_menu_gap)
+                            .when(y_flipped, |parent| parent.flex_col_reverse())
+                            .child(
+                                h_flex()
+                                    .h(zeta_popover_height)
+                                    .flex_1()
+                                    .gap_3()
+                                    .elevation_2(cx)
+                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .px_2()
+                                            .gap_2()
+                                            .child(Icon::new(IconName::ZedPredict))
+                                            .child("Edit Prediction"),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .border_l_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .px_2()
+                                            .child("⌥")
+                                            .child("Preview"),
+                                    ),
+                            )
+                            .child(menu)
+                            .into_any()
+                    } else {
+                        menu
+                    }
+                })
         }) else {
             return;
         };
@@ -3225,7 +3273,22 @@ impl EditorElement {
         };
         window.defer_draw(menu_element, menu_position, 1);
 
-        // Layout documentation aside
+        // Layout documentation aside (aligned with completions menu)
+
+        let menu_size = size(
+            menu_size.width,
+            menu_size.height - completions_menu_y_offset,
+        );
+        let menu_position = point(
+            menu_position.x,
+            menu_position.y
+                + if y_flipped {
+                    px(0.)
+                } else {
+                    completions_menu_y_offset
+                },
+        );
+
         let menu_bounds = Bounds::new(menu_position, menu_size);
         let max_menu_size = size(menu_size.width, unconstrained_max_height);
         let max_menu_bounds = if y_flipped {
