@@ -114,7 +114,7 @@ impl From<ButtonStyle> for Color {
 }
 
 /// The visual appearance of a button.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Default)]
 pub enum ButtonStyle {
     /// A filled button with a solid background color. Provides emphasis versus
     /// the more common subtle button.
@@ -133,6 +133,9 @@ pub enum ButtonStyle {
     ///
     /// TODO: Better docs for this.
     Transparent,
+
+    /// Highlight the border and apply
+    HighlightBorder(Box<Self>),
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -165,9 +168,8 @@ fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut App) ->
 
 impl ButtonStyle {
     pub(crate) fn enabled(
-        self,
+        &self,
         elevation: Option<ElevationIndex>,
-
         cx: &mut App,
     ) -> ButtonLikeStyles {
         match self {
@@ -190,20 +192,23 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::HighlightBorder(style) => {
+                let mut style = style.enabled(elevation, cx);
+                style.border_color = cx.theme().status().error_border;
+                style
+            }
         }
     }
 
     pub(crate) fn hovered(
-        self,
+        &self,
         elevation: Option<ElevationIndex>,
-
         cx: &mut App,
     ) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
                 filled_background.fade_out(0.92);
-
                 ButtonLikeStyles {
                     background: filled_background,
                     border_color: transparent_black(),
@@ -231,10 +236,15 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
+            ButtonStyle::HighlightBorder(style) => {
+                let mut style = style.hovered(elevation, cx);
+                style.border_color = cx.theme().status().error_border;
+                style
+            }
         }
     }
 
-    pub(crate) fn active(self, cx: &mut App) -> ButtonLikeStyles {
+    pub(crate) fn active(&self, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_active,
@@ -257,11 +267,16 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
+            ButtonStyle::HighlightBorder(style) => {
+                let mut style = style.active(cx);
+                style.border_color = cx.theme().status().error_border;
+                style
+            }
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn focused(self, window: &mut Window, cx: &mut App) -> ButtonLikeStyles {
+    #[allow(dead_code)]
+    pub(crate) fn focused(&self, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_background,
@@ -282,16 +297,16 @@ impl ButtonStyle {
                 label_color: Color::Accent.color(cx),
                 icon_color: Color::Accent.color(cx),
             },
+            ButtonStyle::HighlightBorder(style) => {
+                let mut style = style.focused(cx);
+                style.border_color = cx.theme().status().error_border;
+                style
+            }
         }
     }
 
-    #[allow(unused)]
-    pub(crate) fn disabled(
-        self,
-        elevation: Option<ElevationIndex>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ButtonLikeStyles {
+    #[allow(dead_code)]
+    pub(crate) fn disabled(&self, cx: &mut App) -> ButtonLikeStyles {
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
@@ -312,6 +327,11 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
+            ButtonStyle::HighlightBorder(style) => {
+                let mut style = style.disabled(cx);
+                style.border_color = cx.theme().status().error_border;
+                style
+            }
         }
     }
 }
@@ -354,7 +374,8 @@ pub struct ButtonLike {
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
-    pub(super) layer: Option<ElevationIndex>,
+    bordered: bool,
+    layer: Option<ElevationIndex>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -374,18 +395,24 @@ impl ButtonLike {
             selected_style: None,
             width: None,
             height: None,
+            layer: None,
+            bordered: false,
             size: ButtonSize::Default,
             rounding: Some(ButtonLikeRounding::All),
             tooltip: None,
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
             on_click: None,
-            layer: None,
         }
     }
 
     pub fn new_rounded_left(id: impl Into<ElementId>) -> Self {
         Self::new(id).rounding(ButtonLikeRounding::Left)
+    }
+
+    pub fn bordered(mut self) -> Self {
+        self.bordered = true;
+        self
     }
 
     pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
@@ -523,6 +550,11 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::None => this,
             })
             .bg(style.enabled(self.layer, cx).background)
+            .when(self.bordered, |this| this.border_1())
+            .when(self.selected, |this| {
+                this.border_color(style.active(cx).label_color)
+                    .bg(style.active(cx).background)
+            })
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
                 this.cursor_pointer()

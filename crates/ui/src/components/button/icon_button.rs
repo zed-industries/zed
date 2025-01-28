@@ -173,7 +173,7 @@ impl RenderOnce for IconButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
-        let selected_style = self.base.selected_style;
+        let selected_style = self.base.selected_style.clone();
 
         let color = self.icon_color.color(cx).opacity(self.alpha.unwrap_or(1.0));
         self.base

@@ -19,7 +19,7 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
 use text::SelectionGoal;
-use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, TintColor, Tooltip};
+use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -510,8 +510,8 @@ fn render_fold_icon_button(
 
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
-            // TODO: after design pass, give proper styling to this
-            .selected_style(ButtonStyle::Tinted(TintColor::Warning))
+            .bordered()
+            .selected_style(ButtonStyle::HighlightBorder(ButtonStyle::Filled.into()))
             .toggle_state(is_in_text_selection)
             .layer(ElevationIndex::EditorSurface)
             .child(Icon::new(icon))
