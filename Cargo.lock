@@ -384,7 +384,6 @@ dependencies = [
  "context_server",
  "ctor",
  "db",
- "deepseek",
  "editor",
  "env_logger 0.11.6",
  "feature_flags",
