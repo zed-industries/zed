@@ -8,7 +8,7 @@ pub struct Model {
     pub id: i64,
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
-    pub abs_path: String,
+    pub abs_path: Vec<String>,
     pub root_name: String,
     pub visible: bool,
     /// The last scan for which we've observed entries. It may be in progress.

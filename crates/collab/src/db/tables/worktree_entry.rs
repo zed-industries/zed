@@ -11,7 +11,8 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub is_dir: bool,
-    pub path: String,
+    // pub path: String,
+    pub path: Vec<String>,
     pub inode: i64,
     pub mtime_seconds: i64,
     pub mtime_nanos: i32,
@@ -21,7 +22,8 @@ pub struct Model {
     pub is_deleted: bool,
     pub scan_id: i64,
     pub is_fifo: bool,
-    pub canonical_path: Option<String>,
+    // pub canonical_path: Option<String>,
+    pub canonical_path: Option<Vec<String>>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

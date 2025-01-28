@@ -499,7 +499,14 @@ impl Database {
             worktree_diagnostic_summary::Entity::insert(worktree_diagnostic_summary::ActiveModel {
                 project_id: ActiveValue::set(project_id),
                 worktree_id: ActiveValue::set(worktree_id),
-                path: ActiveValue::set(summary.path.as_ref().context("Missing path")?.path.clone()),
+                path: ActiveValue::set(
+                    summary
+                        .path
+                        .as_ref()
+                        .context("Missing path")?
+                        .path
+                        .join("/"),
+                ),
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
                 warning_count: ActiveValue::set(summary.warning_count as i32),
@@ -599,7 +606,7 @@ impl Database {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(
-                        update.path.as_ref().context("Missing path")?.path.clone(),
+                        update.path.as_ref().context("Missing path")?.path.join("/"),
                     ),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
@@ -620,7 +627,7 @@ impl Database {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(
-                        update.path.as_ref().context("Missing path")?.path.clone(),
+                        update.path.as_ref().context("Missing path")?.path.join("/"),
                     ),
                     ..Default::default()
                 })
@@ -826,7 +833,7 @@ impl Database {
                         .diagnostic_summaries
                         .push(proto::DiagnosticSummary {
                             path: Some(proto::CrossPlatformPath {
-                                path: db_summary.path,
+                                path: db_summary.path.split('/').map(Into::into).collect(),
                             }),
                             language_server_id: db_summary.language_server_id as u64,
                             error_count: db_summary.error_count as u32,
@@ -846,7 +853,7 @@ impl Database {
                 let db_settings_file = db_settings_file?;
                 if let Some(worktree) = worktrees.get_mut(&(db_settings_file.worktree_id as u64)) {
                     worktree.settings_files.push(WorktreeSettingsFile {
-                        path: proto::join_paths(db_settings_file.path),
+                        path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
                     });
