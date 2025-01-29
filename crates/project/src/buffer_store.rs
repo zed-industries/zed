@@ -2654,13 +2654,37 @@ impl BufferChangeSet {
             .hunks_intersecting_range_rev(range, buffer_snapshot)
     }
 
+    /// Used in cases where the change set isn't derived from git.
     pub fn set_base_text(
         &mut self,
-        base_text: Rope,
+        base_buffer: Entity<language::Buffer>,
         buffer: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
-        todo!()
+        let (tx, rx) = oneshot::channel();
+        let this = cx.weak_entity();
+        let base_buffer = base_buffer.read(cx).snapshot();
+        cx.spawn(|_, mut cx| async move {
+            let diff = cx
+                .background_executor()
+                .spawn({
+                    let base_buffer = base_buffer.clone();
+                    async move { git::diff::BufferDiff::build(&base_buffer.text(), &buffer) }
+                })
+                .await;
+            let Some(this) = this.upgrade() else {
+                tx.send(()).ok();
+                return;
+            };
+            this.update(&mut cx, |this, _| {
+                this.base_text = Some(base_buffer);
+                this.diff_to_buffer = diff;
+            })
+            .log_err();
+            tx.send(()).ok();
+        })
+        .detach();
+        rx
     }
 
     #[cfg(any(test, feature = "test-support"))]
