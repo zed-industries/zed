@@ -1,7 +1,7 @@
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use crate::{Project, ProjectPath};
 use anyhow::{anyhow, Context as _};
-use client::{Client, ProjectId};
+use client::ProjectId;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use git::{
@@ -12,7 +12,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
-use rpc::proto;
+use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::sync::Arc;
 use text::Rope;
@@ -21,7 +21,7 @@ use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
     project_id: Option<ProjectId>,
-    client: Option<Arc<Client>>,
+    client: Option<AnyProtoClient>,
     repositories: Vec<RepositoryHandle>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
@@ -32,8 +32,8 @@ pub struct GitState {
 #[derive(Clone)]
 pub struct RepositoryHandle {
     git_state: WeakEntity<GitState>,
-    pub(super) worktree_id: WorktreeId,
-    pub(super) repository_entry: RepositoryEntry,
+    pub worktree_id: WorktreeId,
+    pub repository_entry: RepositoryEntry,
     git_repo: Option<GitRepo>,
     commit_message: Entity<Buffer>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
@@ -44,7 +44,7 @@ enum GitRepo {
     Local(Arc<dyn GitRepository>),
     Remote {
         project_id: ProjectId,
-        client: Arc<Client>,
+        client: AnyProtoClient,
         worktree_id: WorktreeId,
         work_directory_id: ProjectEntryId,
     },
@@ -83,7 +83,7 @@ impl GitState {
     pub fn new(
         worktree_store: &Entity<WorktreeStore>,
         languages: Arc<LanguageRegistry>,
-        client: Option<Arc<Client>>,
+        client: Option<AnyProtoClient>,
         project_id: Option<ProjectId>,
         cx: &mut Context<'_, Self>,
     ) -> Self {

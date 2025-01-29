@@ -825,7 +825,7 @@ impl Project {
                 GitState::new(
                     &worktree_store,
                     languages.clone(),
-                    Some(client.clone()),
+                    Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
                 )
@@ -1031,7 +1031,7 @@ impl Project {
             GitState::new(
                 &worktree_store,
                 languages.clone(),
-                Some(client.clone()),
+                Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
             )
