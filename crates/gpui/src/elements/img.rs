@@ -1,8 +1,8 @@
 use crate::{
-    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, AppContext, Asset, AssetLogger, Bounds,
+    px, swap_rgba_pa_to_bgra, AbsoluteLength, AnyElement, App, Asset, AssetLogger, Bounds,
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, WindowContext,
+    SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
 };
 use anyhow::{anyhow, Result};
 
@@ -45,7 +45,7 @@ pub enum ImageSource {
     /// Cached image data
     Image(Arc<Image>),
     /// A custom loading function to use
-    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
+    Custom(Arc<dyn Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>>>),
 }
 
 fn is_uri(uri: &str) -> bool {
@@ -114,8 +114,9 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static>
-    From<F> for ImageSource
+impl<
+        F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static,
+    > From<F> for ImageSource
 {
     fn from(value: F) -> Self {
         Self::Custom(Arc::new(value))
@@ -248,14 +249,15 @@ impl Element for Img {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let mut layout_state = ImgLayoutState {
             frame_index: 0,
             replacement: None,
         };
 
-        cx.with_optional_element_state(global_id, |state, cx| {
+        window.with_optional_element_state(global_id, |state, window| {
             let mut state = state.map(|state| {
                 state.unwrap_or(ImgState {
                     frame_index: 0,
@@ -266,12 +268,14 @@ impl Element for Img {
 
             let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
-            let layout_id = self
-                .interactivity
-                .request_layout(global_id, cx, |mut style, cx| {
+            let layout_id = self.interactivity.request_layout(
+                global_id,
+                window,
+                cx,
+                |mut style, window, cx| {
                     let mut replacement_id = None;
 
-                    match self.source.use_data(cx) {
+                    match self.source.use_data(window, cx) {
                         Some(Ok(data)) => {
                             if let Some(state) = &mut state {
                                 let frame_count = data.frame_count();
@@ -324,13 +328,13 @@ impl Element for Img {
                             }
 
                             if global_id.is_some() && data.frame_count() > 1 {
-                                cx.request_animation_frame();
+                                window.request_animation_frame();
                             }
                         }
                         Some(_err) => {
                             if let Some(fallback) = self.style.fallback.as_ref() {
                                 let mut element = fallback();
-                                replacement_id = Some(element.request_layout(cx));
+                                replacement_id = Some(element.request_layout(window, cx));
                                 layout_state.replacement = Some(element);
                             }
                             if let Some(state) = &mut state {
@@ -343,15 +347,16 @@ impl Element for Img {
                                     if started_loading.elapsed() > LOADING_DELAY {
                                         if let Some(loading) = self.style.loading.as_ref() {
                                             let mut element = loading();
-                                            replacement_id = Some(element.request_layout(cx));
+                                            replacement_id =
+                                                Some(element.request_layout(window, cx));
                                             layout_state.replacement = Some(element);
                                         }
                                     }
                                 } else {
-                                    let parent_view_id = cx.parent_view_id();
-                                    let task = cx.spawn(|mut cx| async move {
+                                    let parent_view_id = window.parent_view_id().unwrap();
+                                    let task = window.spawn(cx, |mut cx| async move {
                                         cx.background_executor().timer(LOADING_DELAY).await;
-                                        cx.update(|cx| {
+                                        cx.update(move |_, cx| {
                                             cx.notify(parent_view_id);
                                         })
                                         .ok();
@@ -362,8 +367,9 @@ impl Element for Img {
                         }
                     }
 
-                    cx.request_layout(style, replacement_id)
-                });
+                    window.request_layout(style, replacement_id, cx)
+                },
+            );
 
             layout_state.frame_index = frame_index;
 
@@ -376,16 +382,23 @@ impl Element for Img {
         global_id: Option<&GlobalElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self::PrepaintState {
-        self.interactivity
-            .prepaint(global_id, bounds, bounds.size, cx, |_, _, hitbox, cx| {
+        self.interactivity.prepaint(
+            global_id,
+            bounds,
+            bounds.size,
+            window,
+            cx,
+            |_, _, hitbox, window, cx| {
                 if let Some(replacement) = &mut request_layout.replacement {
-                    replacement.prepaint(cx);
+                    replacement.prepaint(window, cx);
                 }
 
                 hitbox
-            })
+            },
+        )
     }
 
     fn paint(
@@ -394,30 +407,38 @@ impl Element for Img {
         bounds: Bounds<Pixels>,
         layout_state: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         let source = self.source.clone();
-        self.interactivity
-            .paint(global_id, bounds, hitbox.as_ref(), cx, |style, cx| {
-                let corner_radii = style.corner_radii.to_pixels(bounds.size, cx.rem_size());
+        self.interactivity.paint(
+            global_id,
+            bounds,
+            hitbox.as_ref(),
+            window,
+            cx,
+            |style, window, cx| {
+                let corner_radii = style.corner_radii.to_pixels(bounds.size, window.rem_size());
 
-                if let Some(Ok(data)) = source.use_data(cx) {
+                if let Some(Ok(data)) = source.use_data(window, cx) {
                     let new_bounds = self
                         .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
-                    cx.paint_image(
-                        new_bounds,
-                        corner_radii,
-                        data.clone(),
-                        layout_state.frame_index,
-                        self.style.grayscale,
-                    )
-                    .log_err();
+                    window
+                        .paint_image(
+                            new_bounds,
+                            corner_radii,
+                            data.clone(),
+                            layout_state.frame_index,
+                            self.style.grayscale,
+                        )
+                        .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {
-                    replacement.paint(cx);
+                    replacement.paint(window, cx);
                 }
-            })
+            },
+        )
     }
 }
 
@@ -448,13 +469,14 @@ impl StatefulInteractiveElement for Img {}
 impl ImageSource {
     pub(crate) fn use_data(
         &self,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
         match self {
-            ImageSource::Resource(resource) => cx.use_asset::<ImgResourceLoader>(&resource),
-            ImageSource::Custom(loading_fn) => loading_fn(cx),
+            ImageSource::Resource(resource) => window.use_asset::<ImgResourceLoader>(&resource, cx),
+            ImageSource::Custom(loading_fn) => loading_fn(window, cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
-            ImageSource::Image(data) => cx.use_asset::<AssetLogger<ImageDecoder>>(data),
+            ImageSource::Image(data) => window.use_asset::<AssetLogger<ImageDecoder>>(data, cx),
         }
     }
 }
@@ -468,7 +490,7 @@ impl Asset for ImageDecoder {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let renderer = cx.svg_renderer();
         async move { source.to_image_data(renderer).map_err(Into::into) }
@@ -485,7 +507,7 @@ impl Asset for ImageAssetLoader {
 
     fn load(
         source: Self::Source,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let client = cx.http_client();
         // TODO: Can we make SVGs always rescale?

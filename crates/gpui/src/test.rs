@@ -32,6 +32,7 @@ use smol::channel;
 use std::{
     env,
     panic::{self, RefUnwindSafe},
+    pin::Pin,
 };
 
 /// Run the given test function with the configured parameters.
@@ -85,7 +86,7 @@ pub fn run_test(
 
 /// A test struct for converting an observation callback into a stream.
 pub struct Observation<T> {
-    rx: channel::Receiver<T>,
+    rx: Pin<Box<channel::Receiver<T>>>,
     _subscription: Subscription,
 }
 
@@ -101,13 +102,14 @@ impl<T: 'static> futures::Stream for Observation<T> {
 }
 
 /// observe returns a stream of the change events from the given `View` or `Model`
-pub fn observe<T: 'static>(entity: &impl Entity<T>, cx: &mut TestAppContext) -> Observation<()> {
+pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Observation<()> {
     let (tx, rx) = smol::channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {
             let _ = smol::block_on(tx.send(()));
         })
     });
+    let rx = Box::pin(rx);
 
     Observation { rx, _subscription }
 }

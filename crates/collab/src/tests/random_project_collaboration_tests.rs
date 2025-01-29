@@ -6,9 +6,8 @@ use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
-use futures::StreamExt;
-use git::repository::GitFileStatus;
-use gpui::{BackgroundExecutor, Model, TestAppContext};
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
+use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use language::{
     range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
 };
@@ -128,7 +127,7 @@ enum GitOperation {
     },
     WriteGitStatuses {
         repo_path: PathBuf,
-        statuses: Vec<(PathBuf, GitFileStatus)>,
+        statuses: Vec<(PathBuf, FileStatus)>,
         git_operation: bool,
     },
 }
@@ -873,7 +872,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if detach { "detaching" } else { "awaiting" }
                 );
 
-                let mut search = project.update(cx, |project, cx| {
+                let search = project.update(cx, |project, cx| {
                     project.search(
                         SearchQuery::text(
                             query,
@@ -891,7 +890,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 drop(project);
                 let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
-                    while let Some(result) = search.next().await {
+                    while let Ok(result) = search.recv().await {
                         if let SearchResult::Buffer { buffer, ranges } = result {
                             results.entry(buffer).or_insert(ranges);
                         }
@@ -1134,7 +1133,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let end = PointUtf16::new(end_row, end_column);
                                     let range = if start > end { end..start } else { start..end };
                                     highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()),
+                                        range: range_to_lsp(range.clone()).unwrap(),
                                         kind: Some(lsp::DocumentHighlightKind::READ),
                                     });
                                 }
@@ -1222,7 +1221,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         id,
                                         guest_project.remote_id(),
                                     );
-                                    assert_eq!(guest_snapshot.repositories().collect::<Vec<_>>(), host_snapshot.repositories().collect::<Vec<_>>(),
+                                    assert_eq!(guest_snapshot.repositories().iter().collect::<Vec<_>>(), host_snapshot.repositories().iter().collect::<Vec<_>>(),
                                         "{} has different repositories than the host for worktree {:?} and project {:?}",
                                         client.username,
                                         host_snapshot.abs_path(),
@@ -1343,7 +1342,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             .get_unstaged_changes(host_buffer.read(cx).remote_id())
                             .unwrap()
                             .read(cx)
-                            .base_text_string(cx)
+                            .base_text_string()
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
@@ -1352,7 +1351,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             .get_unstaged_changes(guest_buffer.read(cx).remote_id())
                             .unwrap()
                             .read(cx)
-                            .base_text_string(cx)
+                            .base_text_string()
                     });
                     assert_eq!(
                             guest_diff_base, host_diff_base,
@@ -1459,17 +1458,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
             let statuses = file_paths
                 .into_iter()
-                .map(|paths| {
-                    (
-                        paths,
-                        match rng.gen_range(0..3_u32) {
-                            0 => GitFileStatus::Added,
-                            1 => GitFileStatus::Modified,
-                            2 => GitFileStatus::Conflict,
-                            _ => unreachable!(),
-                        },
-                    )
-                })
+                .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
 
             let git_operation = rng.gen::<bool>();
@@ -1486,10 +1475,10 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
 fn buffer_for_full_path(
     client: &TestClient,
-    project: &Model<Project>,
+    project: &Entity<Project>,
     full_path: &PathBuf,
     cx: &TestAppContext,
-) -> Option<Model<language::Buffer>> {
+) -> Option<Entity<language::Buffer>> {
     client
         .buffers_for_project(project)
         .iter()
@@ -1505,7 +1494,7 @@ fn project_for_root_name(
     client: &TestClient,
     root_name: &str,
     cx: &TestAppContext,
-) -> Option<Model<Project>> {
+) -> Option<Entity<Project>> {
     if let Some(ix) = project_ix_for_root_name(client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
@@ -1517,7 +1506,7 @@ fn project_for_root_name(
 }
 
 fn project_ix_for_root_name(
-    projects: &[Model<Project>],
+    projects: &[Entity<Project>],
     root_name: &str,
     cx: &TestAppContext,
 ) -> Option<usize> {
@@ -1529,7 +1518,7 @@ fn project_ix_for_root_name(
     })
 }
 
-fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> String {
+fn root_name_for_project(project: &Entity<Project>, cx: &TestAppContext) -> String {
     project.read_with(cx, |project, cx| {
         project
             .visible_worktrees(cx)
@@ -1542,7 +1531,7 @@ fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> Strin
 }
 
 fn project_path_for_full_path(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     full_path: &Path,
     cx: &TestAppContext,
 ) -> Option<ProjectPath> {
@@ -1563,7 +1552,7 @@ fn project_path_for_full_path(
 }
 
 async fn ensure_project_shared(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     client: &TestClient,
     cx: &mut TestAppContext,
 ) {
@@ -1596,7 +1585,7 @@ async fn ensure_project_shared(
     }
 }
 
-fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Model<Project>> {
+fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Entity<Project>> {
     client
         .local_projects()
         .deref()
@@ -1613,4 +1602,42 @@ fn gen_file_name(rng: &mut StdRng) -> String {
         name.push(letter);
     }
     name
+}
+
+fn gen_status(rng: &mut StdRng) -> FileStatus {
+    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
+        match rng.gen_range(0..7) {
+            0 => StatusCode::Modified,
+            1 => StatusCode::TypeChanged,
+            2 => StatusCode::Added,
+            3 => StatusCode::Deleted,
+            4 => StatusCode::Renamed,
+            5 => StatusCode::Copied,
+            6 => StatusCode::Unmodified,
+            _ => unreachable!(),
+        }
+    }
+
+    fn gen_unmerged_status_code(rng: &mut StdRng) -> UnmergedStatusCode {
+        match rng.gen_range(0..3) {
+            0 => UnmergedStatusCode::Updated,
+            1 => UnmergedStatusCode::Added,
+            2 => UnmergedStatusCode::Deleted,
+            _ => unreachable!(),
+        }
+    }
+
+    match rng.gen_range(0..4) {
+        0 => FileStatus::Untracked,
+        1 => FileStatus::Ignored,
+        2 => FileStatus::Unmerged(UnmergedStatus {
+            first_head: gen_unmerged_status_code(rng),
+            second_head: gen_unmerged_status_code(rng),
+        }),
+        3 => FileStatus::Tracked(TrackedStatus {
+            index_status: gen_status_code(rng),
+            worktree_status: gen_status_code(rng),
+        }),
+        _ => unreachable!(),
+    }
 }

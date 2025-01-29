@@ -21,7 +21,7 @@ use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
 use db::TokenUsage;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
-use futures::{Stream, StreamExt as _};
+use futures::{FutureExt, Stream, StreamExt as _};
 use reqwest_client::ReqwestClient;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
@@ -440,9 +440,14 @@ async fn predict_edits(
     _country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PredictEditsParams>,
 ) -> Result<impl IntoResponse> {
-    if !claims.is_staff {
-        return Err(anyhow!("not found"))?;
+    if !claims.is_staff && !claims.has_predict_edits_feature_flag {
+        return Err(Error::http(
+            StatusCode::FORBIDDEN,
+            "no access to Zed's edit prediction feature".to_string(),
+        ));
     }
+
+    let sample_input_output = claims.is_staff && rand::random::<f32>() < 0.1;
 
     let api_url = state
         .config
@@ -459,32 +464,124 @@ async fn predict_edits(
         .prediction_model
         .as_ref()
         .context("no PREDICTION_MODEL configured on the server")?;
+
+    let outline_prefix = params
+        .outline
+        .as_ref()
+        .map(|outline| format!("### Outline for current file:\n{}\n", outline))
+        .unwrap_or_default();
+
     let prompt = include_str!("./llm/prediction_prompt.md")
+        .replace("<outline>", &outline_prefix)
         .replace("<events>", &params.input_events)
         .replace("<excerpt>", &params.input_excerpt);
-    let mut response = open_ai::complete_text(
+
+    let request_start = std::time::Instant::now();
+    let timeout = state
+        .executor
+        .sleep(std::time::Duration::from_secs(2))
+        .fuse();
+    let response = fireworks::complete(
         &state.http_client,
         api_url,
         api_key,
-        open_ai::CompletionRequest {
+        fireworks::CompletionRequest {
             model: model.to_string(),
             prompt: prompt.clone(),
-            max_tokens: 1024,
+            max_tokens: 2048,
             temperature: 0.,
-            prediction: Some(open_ai::Prediction::Content {
-                content: params.input_excerpt,
+            prediction: Some(fireworks::Prediction::Content {
+                content: params.input_excerpt.clone(),
             }),
             rewrite_speculation: Some(true),
         },
     )
-    .await?;
-    let choice = response
-        .choices
-        .pop()
-        .context("no output from completion response")?;
-    Ok(Json(PredictEditsResponse {
-        output_excerpt: choice.text,
-    }))
+    .fuse();
+    futures::pin_mut!(timeout);
+    futures::pin_mut!(response);
+
+    futures::select! {
+        _ = timeout => {
+            state.executor.spawn_detached({
+                let kinesis_client = state.kinesis_client.clone();
+                let kinesis_stream = state.config.kinesis_stream.clone();
+                let model = model.clone();
+                async move {
+                    SnowflakeRow::new(
+                        "Fireworks Completion Timeout",
+                        claims.metrics_id,
+                        claims.is_staff,
+                        claims.system_id.clone(),
+                        json!({
+                            "model": model.to_string(),
+                            "prompt": prompt,
+                        }),
+                    )
+                    .write(&kinesis_client, &kinesis_stream)
+                    .await
+                    .log_err();
+                }
+            });
+            Err(anyhow!("request timed out"))?
+        },
+        response = response => {
+            let duration = request_start.elapsed();
+
+            let mut response = response?;
+            let choice = response
+                .completion
+                .choices
+                .pop()
+                .context("no output from completion response")?;
+
+            state.executor.spawn_detached({
+                let kinesis_client = state.kinesis_client.clone();
+                let kinesis_stream = state.config.kinesis_stream.clone();
+                let model = model.clone();
+                let output = choice.text.clone();
+
+                async move {
+                    let properties = if sample_input_output {
+                        json!({
+                            "model": model.to_string(),
+                            "headers": response.headers,
+                            "usage": response.completion.usage,
+                            "duration": duration.as_secs_f64(),
+                            "prompt": prompt,
+                            "input_excerpt": params.input_excerpt,
+                            "input_events": params.input_events,
+                            "outline": params.outline,
+                            "output": output,
+                            "is_sampled": true,
+                        })
+                    } else {
+                        json!({
+                            "model": model.to_string(),
+                            "headers": response.headers,
+                            "usage": response.completion.usage,
+                            "duration": duration.as_secs_f64(),
+                            "is_sampled": false,
+                        })
+                    };
+
+                    SnowflakeRow::new(
+                        "Fireworks Completion Requested",
+                        claims.metrics_id,
+                        claims.is_staff,
+                        claims.system_id.clone(),
+                        properties,
+                    )
+                    .write(&kinesis_client, &kinesis_stream)
+                    .await
+                    .log_err();
+                }
+            });
+
+            Ok(Json(PredictEditsResponse {
+                output_excerpt: choice.text,
+            }))
+        },
+    }
 }
 
 /// The maximum monthly spending an individual user can reach on the free tier

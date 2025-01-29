@@ -1,25 +1,24 @@
 mod event_coalescer;
 
-use crate::{ChannelId, TelemetrySettings};
+use crate::TelemetrySettings;
 use anyhow::Result;
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, Task};
+use gpui::{App, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Write;
+use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
-    AppEvent, AssistantEvent, CallEvent, EditEvent, Event, EventRequestBody, EventWrapper,
-    InlineCompletionEvent,
+    AppEvent, AssistantEvent, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -84,7 +83,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
-static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
+static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
     option_env!("ZED_CLIENT_CHECKSUM_SEED")
         .map(|s| s.as_bytes().into())
         .or_else(|| {
@@ -179,7 +178,7 @@ impl Telemetry {
     pub fn new(
         clock: Arc<dyn SystemClock>,
         client: Arc<HttpClientWithUrl>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Arc<Self> {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
@@ -300,7 +299,7 @@ impl Telemetry {
         system_id: Option<String>,
         installation_id: Option<String>,
         session_id: String,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
@@ -334,38 +333,26 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_inline_completion_event(
-        self: &Arc<Self>,
-        provider: String,
-        suggestion_accepted: bool,
-        file_extension: Option<String>,
-    ) {
-        let event = Event::InlineCompletion(InlineCompletionEvent {
-            provider,
-            suggestion_accepted,
-            file_extension,
-        });
-
-        self.report_event(event)
-    }
-
     pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
-        self.report_event(Event::Assistant(event));
-    }
+        let event_type = match event.phase {
+            AssistantPhase::Response => "Assistant Responded",
+            AssistantPhase::Invoked => "Assistant Invoked",
+            AssistantPhase::Accepted => "Assistant Response Accepted",
+            AssistantPhase::Rejected => "Assistant Response Rejected",
+        };
 
-    pub fn report_call_event(
-        self: &Arc<Self>,
-        operation: &'static str,
-        room_id: Option<u64>,
-        channel_id: Option<ChannelId>,
-    ) {
-        let event = Event::Call(CallEvent {
-            operation: operation.to_string(),
-            room_id,
-            channel_id: channel_id.map(|cid| cid.0),
-        });
-
-        self.report_event(event)
+        telemetry::event!(
+            event_type,
+            conversation_id = event.conversation_id,
+            kind = event.kind,
+            phase = event.phase,
+            message_id = event.message_id,
+            model = event.model,
+            model_provider = event.model_provider,
+            response_latency = event.response_latency,
+            error_message = event.error_message,
+            language_name = event.language_name,
+        );
     }
 
     pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {

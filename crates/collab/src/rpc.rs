@@ -333,6 +333,9 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::CopyProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::DeleteProjectEntry>)
             .add_request_handler(forward_mutating_project_request::<proto::ExpandProjectEntry>)
+            .add_request_handler(
+                forward_mutating_project_request::<proto::ExpandAllForProjectEntry>,
+            )
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
@@ -2418,6 +2421,8 @@ async fn get_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
+            email: user.email_address,
+            name: user.name,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
@@ -2449,6 +2454,8 @@ async fn fuzzy_search_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
+            name: user.name,
+            email: user.email_address,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
@@ -4025,6 +4032,7 @@ async fn get_llm_api_token(
     let flags = db.get_user_flags(session.user_id()).await?;
     let has_language_models_feature_flag = flags.iter().any(|flag| flag == "language-models");
     let has_llm_closed_beta_feature_flag = flags.iter().any(|flag| flag == "llm-closed-beta");
+    let has_predict_edits_feature_flag = flags.iter().any(|flag| flag == "predict-edits");
 
     if !session.is_staff() && !has_language_models_feature_flag {
         Err(anyhow!("permission denied"))?
@@ -4061,6 +4069,7 @@ async fn get_llm_api_token(
         session.is_staff(),
         billing_preferences,
         has_llm_closed_beta_feature_flag,
+        has_predict_edits_feature_flag,
         has_llm_subscription,
         session.current_plan(&db).await?,
         session.system_id.clone(),

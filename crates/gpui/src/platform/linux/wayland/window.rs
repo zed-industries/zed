@@ -781,6 +781,19 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn inner_window_bounds(&self) -> WindowBounds {
+        let state = self.borrow();
+        if state.fullscreen {
+            WindowBounds::Fullscreen(state.window_bounds)
+        } else if state.maximized {
+            WindowBounds::Maximized(state.window_bounds)
+        } else {
+            let inset = state.inset.unwrap_or(px(0.));
+            drop(state);
+            WindowBounds::Windowed(self.bounds().inset(inset))
+        }
+    }
+
     fn content_size(&self) -> Size<Pixels> {
         self.borrow().bounds.size
     }

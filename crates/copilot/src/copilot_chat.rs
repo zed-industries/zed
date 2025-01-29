@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{prelude::*, AppContext, AsyncAppContext, Global};
+use gpui::{prelude::*, App, AsyncApp, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
@@ -34,9 +34,9 @@ pub enum Model {
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
-    #[serde(alias = "o1-preview", rename = "o1-preview-2024-09-12")]
-    O1Preview,
-    #[serde(alias = "o1-mini", rename = "o1-mini-2024-09-12")]
+    #[serde(alias = "o1", rename = "o1")]
+    O1,
+    #[serde(alias = "o1-mini", rename = "o1-mini")]
     O1Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,
@@ -46,7 +46,7 @@ impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
             Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
-            Self::O1Mini | Self::O1Preview => false,
+            Self::O1Mini | Self::O1 => false,
         }
     }
 
@@ -55,7 +55,7 @@ impl Model {
             "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
-            "o1-preview" => Ok(Self::O1Preview),
+            "o1" => Ok(Self::O1),
             "o1-mini" => Ok(Self::O1Mini),
             "claude-3-5-sonnet" => Ok(Self::Claude3_5Sonnet),
             _ => Err(anyhow!("Invalid model id: {}", id)),
@@ -68,7 +68,7 @@ impl Model {
             Self::Gpt4 => "gpt-4",
             Self::Gpt4o => "gpt-4o",
             Self::O1Mini => "o1-mini",
-            Self::O1Preview => "o1-preview",
+            Self::O1 => "o1",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
         }
     }
@@ -79,7 +79,7 @@ impl Model {
             Self::Gpt4 => "GPT-4",
             Self::Gpt4o => "GPT-4o",
             Self::O1Mini => "o1-mini",
-            Self::O1Preview => "o1-preview",
+            Self::O1 => "o1",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
         }
     }
@@ -90,7 +90,7 @@ impl Model {
             Self::Gpt4 => 32768,
             Self::Gpt3_5Turbo => 12288,
             Self::O1Mini => 20000,
-            Self::O1Preview => 20000,
+            Self::O1 => 20000,
             Self::Claude3_5Sonnet => 200_000,
         }
     }
@@ -181,7 +181,7 @@ impl TryFrom<ApiTokenResponse> for ApiToken {
     }
 }
 
-struct GlobalCopilotChat(gpui::Model<CopilotChat>);
+struct GlobalCopilotChat(gpui::Entity<CopilotChat>);
 
 impl Global for GlobalCopilotChat {}
 
@@ -191,8 +191,8 @@ pub struct CopilotChat {
     client: Arc<dyn HttpClient>,
 }
 
-pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
-    let copilot_chat = cx.new_model(|cx| CopilotChat::new(fs, client, cx));
+pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut App) {
+    let copilot_chat = cx.new(|cx| CopilotChat::new(fs, client, cx));
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
@@ -215,12 +215,12 @@ fn copilot_chat_config_paths() -> [PathBuf; 2] {
 }
 
 impl CopilotChat {
-    pub fn global(cx: &AppContext) -> Option<gpui::Model<Self>> {
+    pub fn global(cx: &App) -> Option<gpui::Entity<Self>> {
         cx.try_global::<GlobalCopilotChat>()
             .map(|model| model.0.clone())
     }
 
-    pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &AppContext) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
         let config_paths = copilot_chat_config_paths();
 
         let resolve_config_path = {
@@ -268,7 +268,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
             return Err(anyhow!("Copilot chat is not enabled"));

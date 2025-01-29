@@ -1,5 +1,5 @@
 use crate::{ConnectionState, RoomUpdate, Sid};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     base::{CFRelease, CFRetain, TCFType},

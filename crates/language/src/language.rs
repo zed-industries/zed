@@ -22,11 +22,12 @@ pub mod buffer_tests;
 pub mod markdown;
 
 use crate::language_settings::SoftWrap;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use fs::Fs;
 use futures::Future;
-use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
@@ -78,14 +79,14 @@ pub use language_registry::{
 };
 pub use lsp::LanguageServerId;
 pub use outline::*;
-pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, TreeSitterOptions};
+pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, ToTreeSitterPoint, TreeSitterOptions};
 pub use text::{AnchorRangeExt, LineEnding};
 pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
 
 /// Initializes the `language` crate.
 ///
 /// This should be called before making use of items from the create.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     language_settings::init(cx);
 }
 
@@ -148,7 +149,7 @@ pub trait ToLspPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
-    pub buffer: Model<Buffer>,
+    pub buffer: Entity<Buffer>,
     pub range: Range<Anchor>,
 }
 
@@ -210,7 +211,7 @@ impl CachedLspAdapter {
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         let cached_binary = self.cached_binary.lock().await;
         self.adapter
@@ -265,7 +266,7 @@ impl CachedLspAdapter {
 // e.g. to display a notification or fetch data from the web.
 #[async_trait]
 pub trait LspAdapterDelegate: Send + Sync {
-    fn show_notification(&self, message: &str, cx: &mut AppContext);
+    fn show_notification(&self, message: &str, cx: &mut App);
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
@@ -292,7 +293,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         toolchains: Arc<dyn LanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        cx: &'a mut AsyncAppContext,
+        cx: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
             // First we check whether the adapter can give us a user-installed binary.
@@ -367,7 +368,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         &self,
         _: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
     }
@@ -380,8 +381,17 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn will_fetch_server(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncAppContext,
+        _: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
+        None
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        _version: &(dyn 'static + Send + Any),
+        _container_dir: &PathBuf,
+        _delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
         None
     }
 
@@ -455,6 +465,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -462,9 +473,10 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut AsyncAppContext,
+        _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
     }
@@ -502,7 +514,7 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
     adapter: &L,
     delegate: &Arc<dyn LspAdapterDelegate>,
     container_dir: PathBuf,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<LanguageServerBinary> {
     if let Some(task) = adapter.will_fetch_server(delegate, cx) {
         task.await?;
@@ -516,14 +528,23 @@ async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>
         .fetch_latest_server_version(delegate.as_ref())
         .await?;
 
-    log::info!("downloading language server {:?}", name.0);
-    delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
-    let binary = adapter
-        .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
-        .await;
+    if let Some(binary) = adapter
+        .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
+        .await
+    {
+        log::info!("language server {:?} is already installed", name.0);
+        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        Ok(binary)
+    } else {
+        log::info!("downloading language server {:?}", name.0);
+        delegate.update_status(adapter.name(), LanguageServerBinaryStatus::Downloading);
+        let binary = adapter
+            .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+            .await;
 
-    delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
-    binary
+        delegate.update_status(name.clone(), LanguageServerBinaryStatus::None);
+        binary
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -644,8 +665,7 @@ pub struct LanguageConfigOverride {
     pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
-    #[serde(skip_deserializing)]
-    #[schemars(skip)]
+    #[serde(skip)]
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
@@ -746,6 +766,14 @@ pub struct FakeLspAdapter {
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub label_for_completion: Option<
+        Box<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(&lsp::CompletionItem, &Arc<Language>) -> Option<CodeLabel>,
+        >,
+    >,
 }
 
 /// Configuration of handling bracket pairs for a given language.
@@ -758,7 +786,7 @@ pub struct BracketPairConfig {
     pub pairs: Vec<BracketPair>,
     /// A list of tree-sitter scopes for which a given bracket should not be active.
     /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
-    #[schemars(skip)]
+    #[serde(skip)]
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 
@@ -1255,23 +1283,45 @@ impl Language {
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
+        let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
+        let mut injection_content_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("language", &mut language_capture_ix),
+                ("injection.language", &mut injection_language_capture_ix),
                 ("content", &mut content_capture_ix),
+                ("injection.content", &mut injection_content_capture_ix),
             ],
         );
+        language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
+            (None, Some(ix)) => Some(ix),
+            (Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "both language and injection.language captures are present"
+                ));
+            }
+            _ => language_capture_ix,
+        };
+        content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
+            (None, Some(ix)) => Some(ix),
+            (Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "both content and injection.content captures are present"
+                ));
+            }
+            _ => content_capture_ix,
+        };
         let patterns = (0..query.pattern_count())
             .map(|ix| {
                 let mut config = InjectionPatternConfig::default();
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
-                        "language" => {
+                        "language" | "injection.language" => {
                             config.language.clone_from(&setting.value);
                         }
-                        "combined" => {
+                        "combined" | "injection.combined" => {
                             config.combined = true;
                         }
                         _ => {}
@@ -1521,7 +1571,7 @@ impl LanguageScope {
             self.config_override().map(|o| &o.line_comments),
             Some(&self.language.config.line_comments),
         )
-        .map_or(&[] as &[_], |e| e.as_slice())
+        .map_or([].as_slice(), |e| e.as_slice())
     }
 
     pub fn block_comment_delimiters(&self) -> Option<(&Arc<str>, &Arc<str>)> {
@@ -1747,6 +1797,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            label_for_completion: None,
         }
     }
 }
@@ -1762,7 +1813,7 @@ impl LspAdapter for FakeLspAdapter {
         &self,
         _: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.language_server_binary.clone())
     }
@@ -1773,7 +1824,7 @@ impl LspAdapter for FakeLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncAppContext,
+        _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move { Ok(self.language_server_binary.clone()) }.boxed_local()
     }
@@ -1814,9 +1865,19 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
+    }
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        let label_for_completion = self.label_for_completion.as_ref()?;
+        label_for_completion(item, language)
     }
 }
 
@@ -1839,10 +1900,18 @@ pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
     Unclipped(PointUtf16::new(point.line, point.character))
 }
 
-pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
-    lsp::Range {
-        start: point_to_lsp(range.start),
-        end: point_to_lsp(range.end),
+pub fn range_to_lsp(range: Range<PointUtf16>) -> Result<lsp::Range> {
+    if range.start > range.end {
+        Err(anyhow!(
+            "Inverted range provided to an LSP request: {:?}-{:?}",
+            range.start,
+            range.end
+        ))
+    } else {
+        Ok(lsp::Range {
+            start: point_to_lsp(range.start),
+            end: point_to_lsp(range.end),
+        })
     }
 }
 
@@ -1850,6 +1919,7 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
+        log::warn!("range_from_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     start..end

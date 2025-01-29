@@ -299,6 +299,10 @@ impl Platform for TestPlatform {
         rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        true
+    }
+
     fn reveal_path(&self, _path: &std::path::Path) {
         unimplemented!()
     }

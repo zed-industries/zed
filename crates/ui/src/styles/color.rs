@@ -1,4 +1,4 @@
-use gpui::{Hsla, WindowContext};
+use gpui::{App, Hsla};
 use theme::ActiveTheme;
 
 /// Sets a color that has a consistent meaning across all themes.
@@ -62,7 +62,7 @@ pub enum Color {
 
 impl Color {
     /// Returns the Color's HSLA value.
-    pub fn color(&self, cx: &WindowContext) -> Hsla {
+    pub fn color(&self, cx: &App) -> Hsla {
         match self {
             Color::Default => cx.theme().colors().text,
             Color::Muted => cx.theme().colors().text_muted,

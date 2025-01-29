@@ -6,7 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint,
 };
-use gpui::ViewContext;
+use gpui::{Context, Window};
 use language::SelectionGoal;
 
 use crate::{
@@ -16,8 +16,14 @@ use crate::{
 };
 
 impl Vim {
-    pub fn create_mark(&mut self, text: Arc<str>, tail: bool, cx: &mut ViewContext<Self>) {
-        let Some(anchors) = self.update_editor(cx, |_, editor, _| {
+    pub fn create_mark(
+        &mut self,
+        text: Arc<str>,
+        tail: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(anchors) = self.update_editor(window, cx, |_, editor, _, _| {
             editor
                 .selections
                 .disjoint_anchors()
@@ -28,23 +34,28 @@ impl Vim {
             return;
         };
         self.marks.insert(text.to_string(), anchors);
-        self.clear_operator(cx);
+        self.clear_operator(window, cx);
     }
 
     // When handling an action, you must create visual marks if you will switch to normal
     // mode without the default selection behavior.
-    pub(crate) fn store_visual_marks(&mut self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn store_visual_marks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode.is_visual() {
-            self.create_visual_marks(self.mode, cx);
+            self.create_visual_marks(self.mode, window, cx);
         }
     }
 
-    pub(crate) fn create_visual_marks(&mut self, mode: Mode, cx: &mut ViewContext<Self>) {
+    pub(crate) fn create_visual_marks(
+        &mut self,
+        mode: Mode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut starts = vec![];
         let mut ends = vec![];
         let mut reversed = vec![];
 
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(window, cx, |_, editor, _, cx| {
             let (map, selections) = editor.selections.all_display(cx);
             for selection in selections {
                 let end = movement::saturating_left(&map, selection.end);
@@ -65,11 +76,17 @@ impl Vim {
         self.stored_visual_mode.replace((mode, reversed));
     }
 
-    pub fn jump(&mut self, text: Arc<str>, line: bool, cx: &mut ViewContext<Self>) {
-        self.pop_operator(cx);
+    pub fn jump(
+        &mut self,
+        text: Arc<str>,
+        line: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pop_operator(window, cx);
 
         let anchors = match &*text {
-            "{" | "}" => self.update_editor(cx, |_, editor, cx| {
+            "{" | "}" => self.update_editor(window, cx, |_, editor, _, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
                 selections
                     .into_iter()
@@ -98,12 +115,13 @@ impl Vim {
                         anchor: *anchor,
                         line,
                     },
+                    window,
                     cx,
                 )
             }
         } else {
-            self.update_editor(cx, |_, editor, cx| {
-                let map = editor.snapshot(cx);
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                let map = editor.snapshot(window, cx);
                 let mut ranges: Vec<Range<Anchor>> = Vec::new();
                 for mut anchor in anchors {
                     if line {
@@ -118,7 +136,7 @@ impl Vim {
                         ranges.push(anchor..anchor);
                     }
                 }
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.select_anchor_ranges(ranges)
                 })
             });

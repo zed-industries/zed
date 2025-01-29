@@ -53,7 +53,16 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("New", workspace::NewFile),
                 MenuItem::action("New Window", workspace::NewWindow),
                 MenuItem::separator(),
-                MenuItem::action("Open…", workspace::Open),
+                #[cfg(not(target_os = "macos"))]
+                MenuItem::action("Open File...", workspace::OpenFiles),
+                MenuItem::action(
+                    if cfg!(not(target_os = "macos")) {
+                        "Open Folder..."
+                    } else {
+                        "Open…"
+                    },
+                    workspace::Open,
+                ),
                 MenuItem::action(
                     "Open Recent...",
                     zed_actions::OpenRecent {
@@ -156,7 +165,10 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Go to File...", workspace::ToggleFileFinder::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
-                MenuItem::action("Go to Symbol in Editor...", editor::actions::ToggleOutline),
+                MenuItem::action(
+                    "Go to Symbol in Editor...",
+                    zed_actions::outline::ToggleOutline,
+                ),
                 MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),

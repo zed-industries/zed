@@ -2,7 +2,7 @@ mod supported_countries;
 
 use std::{pin::Pin, str::FromStr};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::http::{HeaderMap, HeaderValue};
@@ -30,6 +30,8 @@ pub enum Model {
     #[default]
     #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
+    #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
+    Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
     #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
@@ -48,6 +50,8 @@ pub enum Model {
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
         default_temperature: Option<f32>,
+        #[serde(default)]
+        extra_beta_headers: Vec<String>,
     },
 }
 
@@ -55,6 +59,8 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
             Ok(Self::Claude3_5Sonnet)
+        } else if id.starts_with("claude-3-5-haiku") {
+            Ok(Self::Claude3_5Haiku)
         } else if id.starts_with("claude-3-opus") {
             Ok(Self::Claude3Opus)
         } else if id.starts_with("claude-3-sonnet") {
@@ -69,9 +75,10 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-latest",
-            Model::Claude3Haiku => "claude-3-haiku-latest",
+            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }
@@ -79,6 +86,7 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
+            Self::Claude3_5Haiku => "Claude 3.5 Haiku",
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -90,11 +98,13 @@ impl Model {
 
     pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
         match self {
-            Self::Claude3_5Sonnet | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
-                min_total_token: 2_048,
-                should_speculate: true,
-                max_cache_anchors: 4,
-            }),
+            Self::Claude3_5Sonnet | Self::Claude3_5Haiku | Self::Claude3Haiku => {
+                Some(AnthropicModelCacheConfiguration {
+                    min_total_token: 2_048,
+                    should_speculate: true,
+                    max_cache_anchors: 4,
+                })
+            }
             Self::Custom {
                 cache_configuration,
                 ..
@@ -106,6 +116,7 @@ impl Model {
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Claude3_5Sonnet
+            | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 200_000,
@@ -116,7 +127,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
-            Self::Claude3_5Sonnet => 8_192,
+            Self::Claude3_5Sonnet | Self::Claude3_5Haiku => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -126,6 +137,7 @@ impl Model {
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::Claude3_5Sonnet
+            | Self::Claude3_5Haiku
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => 1.0,
@@ -134,6 +146,24 @@ impl Model {
                 ..
             } => default_temperature.unwrap_or(1.0),
         }
+    }
+
+    pub fn beta_headers(&self) -> String {
+        let mut headers = vec!["prompt-caching-2024-07-31".to_string()];
+
+        if let Self::Custom {
+            extra_beta_headers, ..
+        } = self
+        {
+            headers.extend(
+                extra_beta_headers
+                    .iter()
+                    .filter(|header| !header.trim().is_empty())
+                    .cloned(),
+            );
+        }
+
+        headers.join(",")
     }
 
     pub fn tool_model_id(&self) -> &str {
@@ -156,11 +186,12 @@ pub async fn complete(
     request: Request,
 ) -> Result<Response, AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
+    let model = Model::from_id(&request.model)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header("Anthropic-Beta", "prompt-caching-2024-07-31")
+        .header("Anthropic-Beta", model.beta_headers())
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
@@ -271,14 +302,12 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
     let uri = format!("{api_url}/v1/messages");
+    let model = Model::from_id(&request.base.model)?;
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
-        .header(
-            "Anthropic-Beta",
-            "tools-2024-04-04,prompt-caching-2024-07-31,max-tokens-3-5-sonnet-2024-07-15",
-        )
+        .header("Anthropic-Beta", model.beta_headers())
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     let serialized_request =

@@ -7,7 +7,7 @@ runs:
     - name: Install Rust
       shell: bash -euxo pipefail {0}
       run: |
-        cargo install cargo-nextest
+        cargo install cargo-nextest --locked
 
     - name: Install Node
       uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4

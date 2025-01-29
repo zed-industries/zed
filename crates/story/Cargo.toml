@@ -1,8 +1,8 @@
 [package]
 name = "story"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lib]
@@ -13,5 +13,5 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
-itertools = { package = "itertools", version = "0.13" }
+itertools.workspace = true
 smallvec.workspace = true

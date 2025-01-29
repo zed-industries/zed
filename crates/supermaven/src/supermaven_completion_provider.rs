@@ -1,7 +1,7 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use futures::StreamExt as _;
-use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
@@ -15,21 +15,21 @@ use unicode_segmentation::UnicodeSegmentation;
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 
 pub struct SupermavenCompletionProvider {
-    supermaven: Model<Supermaven>,
+    supermaven: Entity<Supermaven>,
     buffer_id: Option<EntityId>,
     completion_id: Option<SupermavenCompletionStateId>,
     file_extension: Option<String>,
-    pending_refresh: Task<Result<()>>,
+    pending_refresh: Option<Task<Result<()>>>,
 }
 
 impl SupermavenCompletionProvider {
-    pub fn new(supermaven: Model<Supermaven>) -> Self {
+    pub fn new(supermaven: Entity<Supermaven>) -> Self {
         Self {
             supermaven,
             buffer_id: None,
             completion_id: None,
             file_extension: None,
-            pending_refresh: Task::ready(Ok(())),
+            pending_refresh: None,
         }
     }
 }
@@ -90,7 +90,10 @@ fn completion_from_diff(
         edits.push((edit_range, edit_text));
     }
 
-    InlineCompletion { edits }
+    InlineCompletion {
+        edits,
+        edit_preview: None,
+    }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
@@ -106,7 +109,11 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         false
     }
 
-    fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
+    fn show_completions_in_normal_mode() -> bool {
+        false
+    }
+
+    fn is_enabled(&self, buffer: &Entity<Buffer>, cursor_position: Anchor, cx: &App) -> bool {
         if !self.supermaven.read(cx).is_enabled() {
             return false;
         }
@@ -118,12 +125,16 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
     }
 
+    fn is_refreshing(&self) -> bool {
+        self.pending_refresh.is_some()
+    }
+
     fn refresh(
         &mut self,
-        buffer_handle: Model<Buffer>,
+        buffer_handle: Entity<Buffer>,
         cursor_position: Anchor,
         debounce: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let Some(mut completion) = self.supermaven.update(cx, |supermaven, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
@@ -131,7 +142,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             return;
         };
 
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
@@ -148,37 +159,38 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
                                 .to_string(),
                         )
                     });
+                    this.pending_refresh = None;
                     cx.notify();
                 })?;
             }
             Ok(())
-        });
+        }));
     }
 
     fn cycle(
         &mut self,
-        _buffer: Model<Buffer>,
+        _buffer: Entity<Buffer>,
         _cursor_position: Anchor,
         _direction: Direction,
-        _cx: &mut ModelContext<Self>,
+        _cx: &mut Context<Self>,
     ) {
     }
 
-    fn accept(&mut self, _cx: &mut ModelContext<Self>) {
-        self.pending_refresh = Task::ready(Ok(()));
+    fn accept(&mut self, _cx: &mut Context<Self>) {
+        self.pending_refresh = None;
         self.completion_id = None;
     }
 
-    fn discard(&mut self, _cx: &mut ModelContext<Self>) {
-        self.pending_refresh = Task::ready(Ok(()));
+    fn discard(&mut self, _cx: &mut Context<Self>) {
+        self.pending_refresh = None;
         self.completion_id = None;
     }
 
     fn suggest(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: Anchor,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<InlineCompletion> {
         let completion_text = self
             .supermaven

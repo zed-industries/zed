@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use crate::prelude::*;
+use crate::{prelude::*, KeyBinding};
 use gpui::{AnyElement, SharedString};
 
 /// Which side of the preview to show labels on
@@ -30,20 +30,20 @@ pub trait ComponentPreview: IntoElement {
         ExampleLabelSide::default()
     }
 
-    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>>;
+    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Self>>;
 
-    fn custom_example(_cx: &WindowContext) -> impl Into<Option<AnyElement>> {
+    fn custom_example(_window: &mut Window, _cx: &mut App) -> impl Into<Option<AnyElement>> {
         None::<AnyElement>
     }
 
-    fn component_previews(cx: &mut WindowContext) -> Vec<AnyElement> {
-        Self::examples(cx)
+    fn component_previews(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
+        Self::examples(window, cx)
             .into_iter()
             .map(|example| Self::render_example_group(example))
             .collect()
     }
 
-    fn render_component_previews(cx: &mut WindowContext) -> AnyElement {
+    fn render_component_previews(window: &mut Window, cx: &mut App) -> AnyElement {
         let title = Self::title();
         let (source, title) = title
             .rsplit_once("::")
@@ -78,10 +78,11 @@ pub trait ComponentPreview: IntoElement {
                         )
                     }),
             )
-            .when_some(Self::custom_example(cx).into(), |this, custom_example| {
-                this.child(custom_example)
-            })
-            .children(Self::component_previews(cx))
+            .when_some(
+                Self::custom_example(window, cx).into(),
+                |this, custom_example| this.child(custom_example),
+            )
+            .children(Self::component_previews(window, cx))
             .into_any_element()
     }
 
@@ -197,4 +198,8 @@ pub fn example_group_with_title<T>(
     examples: Vec<ComponentExample<T>>,
 ) -> ComponentExampleGroup<T> {
     ComponentExampleGroup::with_title(title, examples)
+}
+
+pub fn theme_preview_keybinding(keystrokes: &str) -> KeyBinding {
+    KeyBinding::new(gpui::KeyBinding::new(keystrokes, gpui::NoAction {}, None))
 }

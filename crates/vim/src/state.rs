@@ -1,6 +1,3 @@
-use std::borrow::BorrowMut;
-use std::{fmt::Display, ops::Range, sync::Arc};
-
 use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
@@ -10,15 +7,18 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use editor::{Anchor, ClipboardSelection, Editor};
 use gpui::{
-    Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, View, WeakView,
+    Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
 use language::Point;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use ui::{SharedString, ViewContext};
+use std::borrow::BorrowMut;
+use std::{fmt::Display, ops::Range, sync::Arc};
+use ui::{Context, SharedString};
 use workspace::searchable::Direction;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]
 pub enum Mode {
     Normal,
     Insert,
@@ -59,29 +59,53 @@ impl Default for Mode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum Operator {
     Change,
     Delete,
     Yank,
     Replace,
-    Object { around: bool },
-    FindForward { before: bool },
-    FindBackward { after: bool },
-    AddSurrounds { target: Option<SurroundsType> },
-    ChangeSurrounds { target: Option<Object> },
+    Object {
+        around: bool,
+    },
+    FindForward {
+        before: bool,
+    },
+    FindBackward {
+        after: bool,
+    },
+    Sneak {
+        first_char: Option<char>,
+    },
+    SneakBackward {
+        first_char: Option<char>,
+    },
+    AddSurrounds {
+        #[serde(skip)]
+        target: Option<SurroundsType>,
+    },
+    ChangeSurrounds {
+        target: Option<Object>,
+    },
     DeleteSurrounds,
     Mark,
-    Jump { line: bool },
+    Jump {
+        line: bool,
+    },
     Indent,
     Outdent,
     AutoIndent,
     Rewrap,
+    ShellCommand,
     Lowercase,
     Uppercase,
     OppositeCase,
-    Digraph { first_char: Option<char> },
-    Literal { prefix: Option<String> },
+    Digraph {
+        first_char: Option<char>,
+    },
+    Literal {
+        prefix: Option<String>,
+    },
     Register,
     RecordRegister,
     ReplayRegister,
@@ -175,15 +199,15 @@ pub struct VimGlobals {
     pub registers: HashMap<char, Register>,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
-    pub focused_vim: Option<WeakView<Vim>>,
+    pub focused_vim: Option<WeakEntity<Vim>>,
 }
 impl Global for VimGlobals {}
 
 impl VimGlobals {
-    pub(crate) fn register(cx: &mut AppContext) {
+    pub(crate) fn register(cx: &mut App) {
         cx.set_global(VimGlobals::default());
 
-        cx.observe_keystrokes(|event, cx| {
+        cx.observe_keystrokes(|event, _, cx| {
             let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
                 return;
             };
@@ -218,7 +242,7 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
@@ -292,7 +316,7 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -337,7 +361,7 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(&self, cx: &ViewContext<Editor>) -> bool {
+    fn system_clipboard_is_newer(&self, cx: &mut Context<Editor>) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()
@@ -394,19 +418,19 @@ impl VimGlobals {
         }
     }
 
-    pub fn focused_vim(&self) -> Option<View<Vim>> {
+    pub fn focused_vim(&self) -> Option<Entity<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
 }
 
 impl Vim {
-    pub fn globals(cx: &mut AppContext) -> &mut VimGlobals {
+    pub fn globals(cx: &mut App) -> &mut VimGlobals {
         cx.global_mut::<VimGlobals>()
     }
 
     pub fn update_globals<C, R>(cx: &mut C, f: impl FnOnce(&mut VimGlobals, &mut C) -> R) -> R
     where
-        C: BorrowMut<AppContext>,
+        C: BorrowMut<App>,
     {
         cx.update_global(f)
     }
@@ -460,6 +484,8 @@ impl Operator {
             Operator::Literal { .. } => "^V",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
+            Operator::Sneak { .. } => "s",
+            Operator::SneakBackward { .. } => "S",
             Operator::FindBackward { after: false } => "F",
             Operator::FindBackward { after: true } => "T",
             Operator::AddSurrounds { .. } => "ys",
@@ -470,6 +496,7 @@ impl Operator {
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
             Operator::AutoIndent => "eq",
+            Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
@@ -491,6 +518,7 @@ impl Operator {
                 prefix: Some(prefix),
             } => format!("^V{prefix}"),
             Operator::AutoIndent => "=".to_string(),
+            Operator::ShellCommand => "=".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -502,6 +530,8 @@ impl Operator {
             | Operator::Mark
             | Operator::Jump { .. }
             | Operator::FindBackward { .. }
+            | Operator::Sneak { .. }
+            | Operator::SneakBackward { .. }
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister
@@ -517,6 +547,7 @@ impl Operator {
             | Operator::Indent
             | Operator::Outdent
             | Operator::AutoIndent
+            | Operator::ShellCommand
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::Object { .. }

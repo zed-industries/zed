@@ -7,7 +7,7 @@ use crate::{IconButton, IconName};
 pub struct IconButtonStory;
 
 impl Render for IconButtonStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let default_button = StoryItem::new(
             "Default",
             IconButton::new("default_icon_button", IconName::Hash),
@@ -60,9 +60,11 @@ impl Render for IconButtonStory {
 
         let with_on_click_button = StoryItem::new(
             "With `on_click`",
-            IconButton::new("with_on_click_button", IconName::Ai).on_click(|_event, _cx| {
-                println!("Clicked!");
-            }),
+            IconButton::new("with_on_click_button", IconName::Ai).on_click(
+                |_event, _window, _cx| {
+                    println!("Clicked!");
+                },
+            ),
         )
         .description("Displays an icon button which triggers an event on click.")
         .usage(
@@ -76,13 +78,13 @@ impl Render for IconButtonStory {
         let with_tooltip_button = StoryItem::new(
             "With `tooltip`",
             IconButton::new("with_tooltip_button", IconName::MessageBubbles)
-                .tooltip(|cx| Tooltip::text("Open messages", cx)),
+                .tooltip(Tooltip::text("Open messages")),
         )
         .description("Displays an icon button that has a tooltip when hovered.")
         .usage(
             r#"
             IconButton::new("with_tooltip_button", Icon::MessageBubbles)
-                .tooltip(|cx| Tooltip::text("Open messages", cx))
+                .tooltip(Tooltip::text_f("Open messages"))
         "#,
         );
 
@@ -90,14 +92,14 @@ impl Render for IconButtonStory {
             "Selected with `tooltip`",
             IconButton::new("selected_with_tooltip_button", IconName::InlayHint)
                 .toggle_state(true)
-                .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx)),
+                .tooltip(Tooltip::text("Toggle inlay hints")),
         )
         .description("Displays a selected icon button with tooltip.")
         .usage(
             r#"
             IconButton::new("selected_with_tooltip_button", Icon::InlayHint)
                 .selected(true)
-                .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx))
+                .tooltip(Tooltip::text_f("Toggle inlay hints"))
         "#,
         );
 

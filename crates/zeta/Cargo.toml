@@ -1,8 +1,8 @@
 [package]
 name = "zeta"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 exclude = ["fixtures"]
 
@@ -21,7 +21,9 @@ anyhow.workspace = true
 arrayvec.workspace = true
 client.workspace = true
 collections.workspace = true
+command_palette_hooks.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -39,6 +41,7 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 ui.workspace = true
+util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 

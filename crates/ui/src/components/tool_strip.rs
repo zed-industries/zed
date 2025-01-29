@@ -1,7 +1,8 @@
 #![allow(missing_docs)]
 
+use gpui::Axis;
+
 use crate::prelude::*;
-use gpui::*;
 
 #[derive(IntoElement)]
 pub struct ToolStrip {
@@ -35,7 +36,7 @@ impl ToolStrip {
 }
 
 impl RenderOnce for ToolStrip {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let group = format!("tool_strip_{}", self.id.clone());
 
         div()

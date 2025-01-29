@@ -4,8 +4,14 @@ use crate::{
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
-use git::{repository::GitFileStatus, GITIGNORE};
-use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
+use git::{
+    status::{
+        FileStatus, GitSummary, StatusCode, TrackedStatus, TrackedSummary, UnmergedStatus,
+        UnmergedStatusCode,
+    },
+    GITIGNORE,
+};
+use gpui::{BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
@@ -19,7 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{test::temp_tree, ResultExt};
+use util::{test::TempTree, ResultExt};
 
 #[gpui::test]
 async fn test_traversal(cx: &mut TestAppContext) {
@@ -346,7 +352,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     const NEW_NAME: &str = "AAA.rs";
 
     let fs = Arc::new(RealFs::default());
-    let temp_root = temp_tree(json!({
+    let temp_root = TempTree::new(json!({
         OLD_NAME: "",
     }));
 
@@ -738,7 +744,10 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         Path::new("/root/tree/.git"),
-        &[(Path::new("tracked-dir/tracked-file2"), GitFileStatus::Added)],
+        &[(
+            Path::new("tracked-dir/tracked-file2"),
+            StatusCode::Added.index(),
+        )],
     );
 
     fs.create_file(
@@ -766,7 +775,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         assert_entry_git_state(
             tree,
             "tracked-dir/tracked-file2",
-            Some(GitFileStatus::Added),
+            Some(StatusCode::Added),
             false,
         );
         assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file2", None, false);
@@ -822,14 +831,14 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         Path::new("/root/.git"),
-        &[(Path::new("b.txt"), GitFileStatus::Added)],
+        &[(Path::new("b.txt"), StatusCode::Added.index())],
     );
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert_entry_git_state(tree, "a.xml", None, true);
-        assert_entry_git_state(tree, "b.txt", Some(GitFileStatus::Added), false);
+        assert_entry_git_state(tree, "b.txt", Some(StatusCode::Added), false);
     });
 }
 
@@ -837,7 +846,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
 async fn test_write_file(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".git": {},
         ".gitignore": "ignored-dir\n",
         "tracked-dir": {},
@@ -854,8 +863,8 @@ async fn test_write_file(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    fs::linux_watcher::global(|_| {}).unwrap();
+    #[cfg(not(target_os = "macos"))]
+    fs::fs_watcher::global(|_| {}).unwrap();
 
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
@@ -894,7 +903,7 @@ async fn test_write_file(cx: &mut TestAppContext) {
 async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules\ntop_level.txt\n",
         "target": {
             "index": "blah2"
@@ -964,7 +973,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
 async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules\n",
         "target": {
             "index": "blah2"
@@ -1022,7 +1031,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
 async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules/\n",
         "target": {
             "index": "blah2"
@@ -1099,7 +1108,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
 async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".gitignore": "**/target\n/node_modules\n",
         "target": {
             "index": "blah2"
@@ -1197,7 +1206,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".git": {
             "HEAD": "ref: refs/heads/main\n",
             "foo": "bar",
@@ -1340,7 +1349,7 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
 async fn test_fs_events_in_dot_git_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".git": {
             "HEAD": "ref: refs/heads/main\n",
             "foo": "foo contents",
@@ -1492,17 +1501,18 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // detected.
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/.git"),
-        &[(Path::new("b/c.txt"), GitFileStatus::Modified)],
+        &[(Path::new("b/c.txt"), StatusCode::Modified.index())],
     );
     cx.executor().run_until_parked();
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
-    check_propagated_statuses(
+
+    check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Modified)),
-            (Path::new("a.txt"), None),
-            (Path::new("b/c.txt"), Some(GitFileStatus::Modified)),
+            (Path::new(""), MODIFIED),
+            (Path::new("a.txt"), GitSummary::UNCHANGED),
+            (Path::new("b/c.txt"), MODIFIED),
         ],
     );
 }
@@ -1552,7 +1562,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
     });
 
     let fs_real = Arc::new(RealFs::default());
-    let temp_root = temp_tree(json!({
+    let temp_root = TempTree::new(json!({
         "a": {}
     }));
 
@@ -1872,9 +1882,9 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
 
 // The worktree's `UpdatedEntries` event can be used to follow along with
 // all changes to the worktree's snapshot.
-fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Worktree>) {
+fn check_worktree_change_events(tree: &mut Worktree, cx: &mut Context<Worktree>) {
     let mut entries = tree.entries(true, 0).cloned().collect::<Vec<_>>();
-    cx.subscribe(&cx.handle(), move |tree, _, event, _| {
+    cx.subscribe(&cx.entity(), move |tree, _, event, _| {
         if let Event::UpdatedEntries(changes) = event {
             for (path, _, change_type) in changes.iter() {
                 let entry = tree.entry_for_path(path).cloned();
@@ -1911,7 +1921,7 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
 fn randomly_mutate_worktree(
     worktree: &mut Worktree,
     rng: &mut impl Rng,
-    cx: &mut ModelContext<Worktree>,
+    cx: &mut Context<Worktree>,
 ) -> Task<Result<()>> {
     log::info!("mutating worktree");
     let worktree = worktree.as_local_mut().unwrap();
@@ -2141,11 +2151,16 @@ fn random_filename(rng: &mut impl Rng) -> String {
         .collect()
 }
 
+const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
+    first_head: UnmergedStatusCode::Updated,
+    second_head: UnmergedStatusCode::Updated,
+});
+
 #[gpui::test]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "projects": {
             "project1": {
                 "a": "",
@@ -2178,15 +2193,15 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let tree = tree.read(cx);
-        let (work_dir, _) = tree.repositories().next().unwrap();
-        assert_eq!(work_dir.as_ref(), Path::new("projects/project1"));
+        let repo = tree.repositories().iter().next().unwrap();
+        assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
-            Some(GitFileStatus::Modified)
+            Some(StatusCode::Modified.worktree()),
         );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/b")),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
     });
 
@@ -2199,15 +2214,15 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let tree = tree.read(cx);
-        let (work_dir, _) = tree.repositories().next().unwrap();
-        assert_eq!(work_dir.as_ref(), Path::new("projects/project2"));
+        let repo = tree.repositories().iter().next().unwrap();
+        assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
-            Some(GitFileStatus::Modified)
+            Some(StatusCode::Modified.worktree()),
         );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/b")),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
     });
 }
@@ -2216,7 +2231,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "c.txt": "",
         "dir1": {
             ".git": {},
@@ -2253,23 +2268,13 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 
         assert!(tree.repository_for_path("c.txt".as_ref()).is_none());
 
-        let entry = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
-        assert_eq!(
-            entry
-                .work_directory(tree)
-                .map(|directory| directory.as_ref().to_owned()),
-            Some(Path::new("dir1").to_owned())
-        );
+        let repo = tree.repository_for_path("dir1/src/b.txt".as_ref()).unwrap();
+        assert_eq!(repo.path.as_ref(), Path::new("dir1"));
 
-        let entry = tree
+        let repo = tree
             .repository_for_path("dir1/deps/dep1/src/a.txt".as_ref())
             .unwrap();
-        assert_eq!(
-            entry
-                .work_directory(tree)
-                .map(|directory| directory.as_ref().to_owned()),
-            Some(Path::new("dir1/deps/dep1").to_owned())
-        );
+        assert_eq!(repo.path.as_ref(), Path::new("dir1/deps/dep1"));
 
         let entries = tree.files(false, 0);
 
@@ -2278,10 +2283,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
             .map(|(entry, repo)| {
                 (
                     entry.path.as_ref(),
-                    repo.and_then(|repo| {
-                        repo.work_directory(tree)
-                            .map(|work_directory| work_directory.0.to_path_buf())
-                    }),
+                    repo.map(|repo| repo.path.to_path_buf()),
                 )
             })
             .collect::<Vec<_>>();
@@ -2334,12 +2336,12 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_git_status(cx: &mut TestAppContext) {
+async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
     const IGNORE_RULE: &str = "**/target";
 
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "project": {
             "a.txt": "a",
             "b.txt": "bb",
@@ -2392,18 +2394,18 @@ async fn test_git_status(cx: &mut TestAppContext) {
     // Check that the right git state is observed on startup
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        assert_eq!(snapshot.repositories().count(), 1);
-        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
-        assert_eq!(dir.as_ref(), Path::new("project"));
+        assert_eq!(snapshot.repositories().iter().count(), 1);
+        let repo_entry = snapshot.repositories().iter().next().unwrap();
+        assert_eq!(repo_entry.path.as_ref(), Path::new("project"));
         assert!(repo_entry.location_in_repo.is_none());
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
     });
 
@@ -2417,7 +2419,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(A_TXT)),
-            Some(GitFileStatus::Modified)
+            Some(StatusCode::Modified.worktree()),
         );
     });
 
@@ -2433,7 +2435,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
         assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
@@ -2455,11 +2457,11 @@ async fn test_git_status(cx: &mut TestAppContext) {
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(E_TXT)),
-            Some(GitFileStatus::Modified)
+            Some(StatusCode::Modified.worktree()),
         );
     });
 
@@ -2494,7 +2496,7 @@ async fn test_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(renamed_dir_name).join(RENAMED_FILE)),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
         );
     });
 
@@ -2518,7 +2520,177 @@ async fn test_git_status(cx: &mut TestAppContext) {
                     .join(Path::new(renamed_dir_name))
                     .join(RENAMED_FILE)
             ),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_git_repository_status(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "a.txt": "a",    // Modified
+            "b.txt": "bb",   // Added
+            "c.txt": "ccc",  // Unchanged
+            "d.txt": "dddd", // Deleted
+        },
+
+    }));
+
+    // Set up git repository before creating the worktree.
+    let work_dir = root.path().join("project");
+    let repo = git_init(work_dir.as_path());
+    git_add("a.txt", &repo);
+    git_add("c.txt", &repo);
+    git_add("d.txt", &repo);
+    git_commit("Initial commit", &repo);
+    std::fs::remove_file(work_dir.join("d.txt")).unwrap();
+    std::fs::write(work_dir.join("a.txt"), "aa").unwrap();
+
+    let tree = Worktree::local(
+        root.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    // Check that the right git state is observed on startup
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let repo = snapshot.repositories().iter().next().unwrap();
+        let entries = repo.status().collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].status, StatusCode::Modified.worktree());
+        assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
+        assert_eq!(entries[1].status, FileStatus::Untracked);
+        assert_eq!(entries[2].repo_path.as_ref(), Path::new("d.txt"));
+        assert_eq!(entries[2].status, StatusCode::Deleted.worktree());
+    });
+
+    std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
+    eprintln!("File c.txt has been modified");
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let repository = snapshot.repositories().iter().next().unwrap();
+        let entries = repository.status().collect::<Vec<_>>();
+
+        std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].status, StatusCode::Modified.worktree());
+        assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
+        assert_eq!(entries[1].status, FileStatus::Untracked);
+        // Status updated
+        assert_eq!(entries[2].repo_path.as_ref(), Path::new("c.txt"));
+        assert_eq!(entries[2].status, StatusCode::Modified.worktree());
+        assert_eq!(entries[3].repo_path.as_ref(), Path::new("d.txt"));
+        assert_eq!(entries[3].status, StatusCode::Deleted.worktree());
+    });
+
+    git_add("a.txt", &repo);
+    git_add("c.txt", &repo);
+    git_remove_index(Path::new("d.txt"), &repo);
+    git_commit("Another commit", &repo);
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    std::fs::remove_file(work_dir.join("a.txt")).unwrap();
+    std::fs::remove_file(work_dir.join("b.txt")).unwrap();
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let repo = snapshot.repositories().iter().next().unwrap();
+        let entries = repo.status().collect::<Vec<_>>();
+
+        // Deleting an untracked entry, b.txt, should leave no status
+        // a.txt was tracked, and so should have a status
+        assert_eq!(
+            entries.len(),
+            1,
+            "Entries length was incorrect\n{:#?}",
+            &entries
+        );
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
+        assert_eq!(entries[0].status, StatusCode::Deleted.worktree());
+    });
+}
+
+#[gpui::test]
+async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "sub": {},
+            "a.txt": "",
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let repo = git_init(work_dir.as_path());
+    // a.txt exists in HEAD and the working copy but is deleted in the index.
+    git_add("a.txt", &repo);
+    git_commit("Initial commit", &repo);
+    git_remove_index("a.txt".as_ref(), &repo);
+    // `sub` is a nested git repository.
+    let _sub = git_init(&work_dir.join("sub"));
+
+    let tree = Worktree::local(
+        root.path(),
+        true,
+        Arc::new(RealFs::default()),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _cx| {
+        let snapshot = tree.snapshot();
+        let repo = snapshot.repositories().iter().next().unwrap();
+        let entries = repo.status().collect::<Vec<_>>();
+
+        // `sub` doesn't appear in our computed statuses.
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
+        // a.txt appears with a combined `DA` status.
+        assert_eq!(
+            entries[0].status,
+            TrackedStatus {
+                index_status: StatusCode::Deleted,
+                worktree_status: StatusCode::Added
+            }
+            .into()
         );
     });
 }
@@ -2528,7 +2700,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let root = temp_tree(json!({
+    let root = TempTree::new(json!({
         "my-repo": {
             // .git folder will go here
             "a.txt": "a",
@@ -2574,23 +2746,23 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     // Ensure that the git status is loaded correctly
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        assert_eq!(snapshot.repositories().count(), 1);
-        let (dir, repo_entry) = snapshot.repositories().next().unwrap();
+        assert_eq!(snapshot.repositories().iter().count(), 1);
+        let repo = snapshot.repositories().iter().next().unwrap();
         // Path is blank because the working directory of
         // the git repository is located at the root of the project
-        assert_eq!(dir.as_ref(), Path::new(""));
+        assert_eq!(repo.path.as_ref(), Path::new(""));
 
         // This is the missing path between the root of the project (sub-folder-2) and its
         // location relative to the root of the repository.
         assert_eq!(
-            repo_entry.location_in_repo,
+            repo.location_in_repo,
             Some(Arc::from(Path::new("sub-folder-1/sub-folder-2")))
         );
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);
         assert_eq!(
             snapshot.status_for_file("d/e.txt"),
-            Some(GitFileStatus::Added)
+            Some(FileStatus::Untracked)
         );
     });
 
@@ -2605,11 +2777,98 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
 
-        assert!(snapshot.repositories().next().is_some());
+        assert!(snapshot.repositories().iter().next().is_some());
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);
         assert_eq!(snapshot.status_for_file("d/e.txt"), None);
     });
+}
+
+#[gpui::test]
+async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1.txt": "foo",
+                "x2.txt": "bar",
+                "y": {
+                    ".git": {},
+                    "y1.txt": "baz",
+                    "y2.txt": "qux"
+                },
+                "z.txt": "sneaky..."
+            },
+            "z": {
+                ".git": {},
+                "z1.txt": "quux",
+                "z2.txt": "quuux"
+            }
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/.git"),
+        &[
+            (Path::new("x2.txt"), StatusCode::Modified.index()),
+            (Path::new("z.txt"), StatusCode::Added.index()),
+        ],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/y/.git"),
+        &[(Path::new("y1.txt"), CONFLICT)],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/z/.git"),
+        &[(Path::new("z2.txt"), StatusCode::Added.index())],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    let mut traversal = snapshot
+        .traverse_from_path(true, false, true, Path::new("x"))
+        .with_git_statuses();
+
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/x1.txt"));
+    assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/x2.txt"));
+    assert_eq!(entry.git_summary, MODIFIED);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/y/y1.txt"));
+    assert_eq!(entry.git_summary, GitSummary::CONFLICT);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/y/y2.txt"));
+    assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("x/z.txt"));
+    assert_eq!(entry.git_summary, ADDED);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("z/z1.txt"));
+    assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
+    let entry = traversal.next().unwrap();
+    assert_eq!(entry.path.as_ref(), Path::new("z/z2.txt"));
+    assert_eq!(entry.git_summary, ADDED);
 }
 
 #[gpui::test]
@@ -2638,7 +2897,6 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
                 "h1.txt": "",
                 "h2.txt": ""
             },
-
         }),
     )
     .await;
@@ -2646,9 +2904,9 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/.git"),
         &[
-            (Path::new("a/b/c1.txt"), GitFileStatus::Added),
-            (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
-            (Path::new("g/h2.txt"), GitFileStatus::Conflict),
+            (Path::new("a/b/c1.txt"), StatusCode::Added.index()),
+            (Path::new("a/d/e2.txt"), StatusCode::Modified.index()),
+            (Path::new("g/h2.txt"), CONFLICT),
         ],
     );
 
@@ -2668,46 +2926,289 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Conflict)),
-            (Path::new("a"), Some(GitFileStatus::Modified)),
-            (Path::new("a/b"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d"), Some(GitFileStatus::Modified)),
-            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("f"), None),
-            (Path::new("f/no-status.txt"), None),
-            (Path::new("g"), Some(GitFileStatus::Conflict)),
-            (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new(""), GitSummary::CONFLICT + MODIFIED + ADDED),
+            (Path::new("g"), GitSummary::CONFLICT),
+            (Path::new("g/h2.txt"), GitSummary::CONFLICT),
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
-            (Path::new("a/b"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d"), Some(GitFileStatus::Modified)),
-            (Path::new("a/d/e1.txt"), None),
-            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("f"), None),
-            (Path::new("f/no-status.txt"), None),
-            (Path::new("g"), Some(GitFileStatus::Conflict)),
+            (Path::new(""), GitSummary::CONFLICT + ADDED + MODIFIED),
+            (Path::new("a"), ADDED + MODIFIED),
+            (Path::new("a/b"), ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
+            (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
+            (Path::new("a/d"), MODIFIED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
+            (Path::new("f"), GitSummary::UNCHANGED),
+            (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
+            (Path::new("g"), GitSummary::CONFLICT),
+            (Path::new("g/h2.txt"), GitSummary::CONFLICT),
         ],
     );
 
-    check_propagated_statuses(
+    check_git_statuses(
         &snapshot,
         &[
-            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d/e1.txt"), None),
-            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("f/no-status.txt"), None),
+            (Path::new("a/b"), ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
+            (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
+            (Path::new("a/d"), MODIFIED),
+            (Path::new("a/d/e1.txt"), GitSummary::UNCHANGED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
+            (Path::new("f"), GitSummary::UNCHANGED),
+            (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
+            (Path::new("g"), GitSummary::CONFLICT),
+        ],
+    );
+
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("a/b/c1.txt"), ADDED),
+            (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
+            (Path::new("a/d/e1.txt"), GitSummary::UNCHANGED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
+            (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1.txt": "foo",
+                "x2.txt": "bar"
+            },
+            "y": {
+                ".git": {},
+                "y1.txt": "baz",
+                "y2.txt": "qux"
+            },
+            "z": {
+                ".git": {},
+                "z1.txt": "quux",
+                "z2.txt": "quuux"
+            }
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/.git"),
+        &[(Path::new("x1.txt"), StatusCode::Added.index())],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/y/.git"),
+        &[
+            (Path::new("y1.txt"), CONFLICT),
+            (Path::new("y2.txt"), StatusCode::Modified.index()),
+        ],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/z/.git"),
+        &[(Path::new("z2.txt"), StatusCode::Modified.index())],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    check_git_statuses(
+        &snapshot,
+        &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
+    );
+
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
+            (Path::new("y/y1.txt"), GitSummary::CONFLICT),
+            (Path::new("y/y2.txt"), MODIFIED),
+        ],
+    );
+
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("z"), MODIFIED),
+            (Path::new("z/z2.txt"), MODIFIED),
+        ],
+    );
+
+    check_git_statuses(
+        &snapshot,
+        &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
+    );
+
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("x"), ADDED),
+            (Path::new("x/x1.txt"), ADDED),
+            (Path::new("x/x2.txt"), GitSummary::UNCHANGED),
+            (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
+            (Path::new("y/y1.txt"), GitSummary::CONFLICT),
+            (Path::new("y/y2.txt"), MODIFIED),
+            (Path::new("z"), MODIFIED),
+            (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
+            (Path::new("z/z2.txt"), MODIFIED),
+        ],
+    );
+}
+
+#[gpui::test]
+async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1.txt": "foo",
+                "x2.txt": "bar",
+                "y": {
+                    ".git": {},
+                    "y1.txt": "baz",
+                    "y2.txt": "qux"
+                },
+                "z.txt": "sneaky..."
+            },
+            "z": {
+                ".git": {},
+                "z1.txt": "quux",
+                "z2.txt": "quuux"
+            }
+        }),
+    )
+    .await;
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/.git"),
+        &[
+            (Path::new("x2.txt"), StatusCode::Modified.index()),
+            (Path::new("z.txt"), StatusCode::Added.index()),
+        ],
+    );
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/x/y/.git"),
+        &[(Path::new("y1.txt"), CONFLICT)],
+    );
+
+    fs.set_status_for_repo_via_git_operation(
+        Path::new("/root/z/.git"),
+        &[(Path::new("z2.txt"), StatusCode::Added.index())],
+    );
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
+
+    // Sanity check the propagation for x/y and z
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("x/y"), GitSummary::CONFLICT),
+            (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
+            (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
+        ],
+    );
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("z"), ADDED),
+            (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
+            (Path::new("z/z2.txt"), ADDED),
+        ],
+    );
+
+    // Test one of the fundamental cases of propagation blocking, the transition from one git repository to another
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/y"), GitSummary::CONFLICT),
+            (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
+        ],
+    );
+
+    // Sanity check everything around it
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
+            (Path::new("x/x2.txt"), MODIFIED),
+            (Path::new("x/y"), GitSummary::CONFLICT),
+            (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
+            (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
+            (Path::new("x/z.txt"), ADDED),
+        ],
+    );
+
+    // Test the other fundamental case, transitioning from git repository to non-git repository
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), GitSummary::UNCHANGED),
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
+        ],
+    );
+
+    // And all together now
+    check_git_statuses(
+        &snapshot,
+        &[
+            (Path::new(""), GitSummary::UNCHANGED),
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
+            (Path::new("x/x2.txt"), MODIFIED),
+            (Path::new("x/y"), GitSummary::CONFLICT),
+            (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
+            (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
+            (Path::new("x/z.txt"), ADDED),
+            (Path::new("z"), ADDED),
+            (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
+            (Path::new("z/z2.txt"), ADDED),
         ],
     );
 }
@@ -2736,23 +3237,32 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
 }
 
 #[track_caller]
-fn check_propagated_statuses(
-    snapshot: &Snapshot,
-    expected_statuses: &[(&Path, Option<GitFileStatus>)],
-) {
-    let mut entries = expected_statuses
+fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, GitSummary)]) {
+    let mut traversal = snapshot
+        .traverse_from_path(true, true, false, "".as_ref())
+        .with_git_statuses();
+    let found_statuses = expected_statuses
         .iter()
-        .map(|(path, _)| snapshot.entry_for_path(path).unwrap().clone())
+        .map(|&(path, _)| {
+            let git_entry = traversal
+                .find(|git_entry| &*git_entry.path == path)
+                .unwrap_or_else(|| panic!("Traversal has no entry for {path:?}"));
+            (path, git_entry.git_summary)
+        })
         .collect::<Vec<_>>();
-    snapshot.propagate_git_statuses(&mut entries);
-    assert_eq!(
-        entries
-            .iter()
-            .map(|e| (e.path.as_ref(), e.git_status))
-            .collect::<Vec<_>>(),
-        expected_statuses
-    );
+    assert_eq!(found_statuses, expected_statuses);
 }
+
+const ADDED: GitSummary = GitSummary {
+    index: TrackedSummary::ADDED,
+    count: 1,
+    ..GitSummary::UNCHANGED
+};
+const MODIFIED: GitSummary = GitSummary {
+    index: TrackedSummary::MODIFIED,
+    count: 1,
+    ..GitSummary::UNCHANGED
+};
 
 #[track_caller]
 fn git_init(path: &Path) -> git2::Repository {
@@ -2763,14 +3273,14 @@ fn git_init(path: &Path) -> git2::Repository {
 fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
     let path = path.as_ref();
     let mut index = repo.index().expect("Failed to get index");
-    index.add_path(path).expect("Failed to add a.txt");
+    index.add_path(path).expect("Failed to add file");
     index.write().expect("Failed to write index");
 }
 
 #[track_caller]
 fn git_remove_index(path: &Path, repo: &git2::Repository) {
     let mut index = repo.index().expect("Failed to get index");
-    index.remove_path(path).expect("Failed to add a.txt");
+    index.remove_path(path).expect("Failed to add file");
     index.write().expect("Failed to write index");
 }
 
@@ -2895,13 +3405,21 @@ fn init_test(cx: &mut gpui::TestAppContext) {
 fn assert_entry_git_state(
     tree: &Worktree,
     path: &str,
-    git_status: Option<GitFileStatus>,
+    index_status: Option<StatusCode>,
     is_ignored: bool,
 ) {
     let entry = tree.entry_for_path(path).expect("entry {path} not found");
+    let status = tree.status_for_file(Path::new(path));
+    let expected = index_status.map(|index_status| {
+        TrackedStatus {
+            index_status,
+            worktree_status: StatusCode::Unmodified,
+        }
+        .into()
+    });
     assert_eq!(
-        entry.git_status, git_status,
-        "expected {path} to have git status: {git_status:?}"
+        status, expected,
+        "expected {path} to have git status: {expected:?}"
     );
     assert_eq!(
         entry.is_ignored, is_ignored,

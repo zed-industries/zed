@@ -269,6 +269,7 @@ pub struct Panic {
     pub app_version: String,
     /// Zed release channel (stable, preview, dev)
     pub release_channel: String,
+    pub target: Option<String>,
     pub os_name: String,
     pub os_version: Option<String>,
     pub architecture: String,

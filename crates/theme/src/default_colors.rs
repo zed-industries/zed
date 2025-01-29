@@ -8,6 +8,25 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
+const ADDED_COLOR: Hsla = Hsla {
+    h: 142. / 360.,
+    s: 0.68,
+    l: 0.45,
+    a: 1.0,
+};
+const MODIFIED_COLOR: Hsla = Hsla {
+    h: 48. / 360.,
+    s: 0.76,
+    l: 0.47,
+    a: 1.0,
+};
+const REMOVED_COLOR: Hsla = Hsla {
+    h: 355. / 360.,
+    s: 0.65,
+    l: 0.65,
+    a: 1.0,
+};
+
 /// The default colors for the theme.
 ///
 /// Themes that do not specify all colors are refined off of these defaults.
@@ -76,6 +95,7 @@ impl ThemeColors {
             editor_active_line_background: neutral().light_alpha().step_3(),
             editor_highlighted_line_background: neutral().light_alpha().step_3(),
             editor_line_number: neutral().light().step_10(),
+            editor_hover_line_number: neutral().light().step_12(),
             editor_active_line_number: neutral().light().step_11(),
             editor_invisible: neutral().light().step_10(),
             editor_wrap_guide: neutral().light_alpha().step_7(),
@@ -115,6 +135,16 @@ impl ThemeColors {
             terminal_ansi_dim_cyan: cyan().light().step_10(),
             terminal_ansi_dim_white: neutral().light().step_11(),
             link_text_hover: orange().light().step_10(),
+            version_control_added: ADDED_COLOR,
+            version_control_added_background: ADDED_COLOR.opacity(0.1),
+            version_control_deleted: REMOVED_COLOR,
+            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
+            version_control_modified: MODIFIED_COLOR,
+            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
+            version_control_renamed: MODIFIED_COLOR,
+            version_control_conflict: orange().light().step_12(),
+            version_control_conflict_background: orange().light().step_12().opacity(0.1),
+            version_control_ignored: gray().light().step_12(),
         }
     }
 
@@ -164,7 +194,7 @@ impl ThemeColors {
             tab_active_background: neutral().dark().step_1(),
             search_match_background: neutral().dark().step_5(),
             panel_background: neutral().dark().step_2(),
-            panel_focused_border: blue().dark().step_12(),
+            panel_focused_border: blue().dark().step_8(),
             panel_indent_guide: neutral().dark_alpha().step_4(),
             panel_indent_guide_hover: neutral().dark_alpha().step_6(),
             panel_indent_guide_active: neutral().dark_alpha().step_6(),
@@ -182,7 +212,8 @@ impl ThemeColors {
             editor_active_line_background: neutral().dark_alpha().step_3(),
             editor_highlighted_line_background: neutral().dark_alpha().step_4(),
             editor_line_number: neutral().dark_alpha().step_10(),
-            editor_active_line_number: neutral().dark_alpha().step_12(),
+            editor_hover_line_number: neutral().dark_alpha().step_12(),
+            editor_active_line_number: neutral().dark_alpha().step_11(),
             editor_invisible: neutral().dark_alpha().step_4(),
             editor_wrap_guide: neutral().dark_alpha().step_4(),
             editor_active_wrap_guide: neutral().dark_alpha().step_4(),
@@ -221,6 +252,16 @@ impl ThemeColors {
             terminal_ansi_bright_white: neutral().dark().step_11(),
             terminal_ansi_dim_white: neutral().dark().step_10(),
             link_text_hover: orange().dark().step_10(),
+            version_control_added: ADDED_COLOR,
+            version_control_added_background: ADDED_COLOR.opacity(0.1),
+            version_control_deleted: REMOVED_COLOR,
+            version_control_deleted_background: REMOVED_COLOR.opacity(0.1),
+            version_control_modified: MODIFIED_COLOR,
+            version_control_modified_background: MODIFIED_COLOR.opacity(0.1),
+            version_control_renamed: MODIFIED_COLOR,
+            version_control_conflict: orange().dark().step_12(),
+            version_control_conflict_background: orange().dark().step_12().opacity(0.1),
+            version_control_ignored: gray().dark().step_12(),
         }
     }
 }

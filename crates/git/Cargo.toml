@@ -1,8 +1,8 @@
 [package]
 name = "git"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -35,6 +35,7 @@ util.workspace = true
 unindent.workspace = true
 serde_json.workspace = true
 pretty_assertions.workspace = true
+text = {workspace = true, features = ["test-support"]}
 
 [features]
 test-support = []

@@ -8,7 +8,7 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{Context, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
 use lsp::LanguageServerName;
@@ -25,7 +25,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::test::temp_tree;
+use util::test::TempTree;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -149,6 +149,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         authors: Vec::new(),
                         repository: None,
                         themes: Default::default(),
+                        icon_themes: Vec::new(),
                         lib: Default::default(),
                         languages: vec!["languages/erb".into(), "languages/ruby".into()],
                         grammars: [
@@ -181,6 +182,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                             "themes/monokai-pro.json".into(),
                             "themes/monokai.json".into(),
                         ],
+                        icon_themes: Vec::new(),
                         lib: Default::default(),
                         languages: Default::default(),
                         grammars: BTreeMap::default(),
@@ -258,6 +260,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ]
         .into_iter()
         .collect(),
+        icon_themes: BTreeMap::default(),
     };
 
     let proxy = Arc::new(ExtensionHostProxy::new());
@@ -267,7 +270,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     language_extension::init(proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
-    let store = cx.new_model(|cx| {
+    let store = cx.new(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
@@ -344,6 +347,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 authors: vec![],
                 repository: None,
                 themes: vec!["themes/gruvbox.json".into()],
+                icon_themes: Vec::new(),
                 lib: Default::default(),
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
@@ -392,7 +396,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
     // Create new extension store, as if Zed were restarting.
     drop(store);
-    let store = cx.new_model(|cx| {
+    let store = cx.new(|cx| {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
@@ -466,11 +470,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
     let fs = Arc::new(RealFs::default());
-    let extensions_dir = temp_tree(json!({
+    let extensions_dir = TempTree::new(json!({
         "installed": {},
         "work": {}
     }));
-    let project_dir = temp_tree(json!({
+    let project_dir = TempTree::new(json!({
         "test.gleam": ""
     }));
 
@@ -573,7 +577,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let builder_client =
         Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
-    let extension_store = cx.new_model(|cx| {
+    let extension_store = cx.new(|cx| {
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
