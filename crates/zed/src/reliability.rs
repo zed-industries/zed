@@ -1,10 +1,10 @@
 use crate::stdout_is_a_pty;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{AppContext, SemanticVersion};
+use gpui::{App, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
@@ -163,7 +163,7 @@ pub fn init(
     system_id: Option<String>,
     installation_id: Option<String>,
     session_id: String,
-    cx: &mut AppContext,
+    cx: &mut App,
 ) {
     #[cfg(target_os = "macos")]
     monitor_main_thread_hangs(http_client.clone(), installation_id.clone(), cx);
@@ -182,7 +182,7 @@ pub fn init(
         cx,
     );
 
-    cx.observe_new_models(move |project: &mut Project, cx| {
+    cx.observe_new(move |project: &mut Project, _, cx| {
         let http_client = http_client.clone();
         let panic_report_url = panic_report_url.clone();
         let session_id = session_id.clone();
@@ -233,7 +233,7 @@ pub fn init(
 pub fn monitor_main_thread_hangs(
     http_client: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
-    cx: &AppContext,
+    cx: &App,
 ) {
     // This is too noisy to ship to stable for now.
     if !matches!(
@@ -435,7 +435,7 @@ fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
     panic_report_url: Url,
     installation_id: Option<String>,
-    cx: &AppContext,
+    cx: &App,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()

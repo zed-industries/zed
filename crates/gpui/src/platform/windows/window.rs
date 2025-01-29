@@ -11,7 +11,7 @@ use std::{
 };
 
 use ::util::ResultExt;
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
@@ -443,7 +443,7 @@ impl WindowsWindow {
         let state_ptr = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
-
+        configure_dwm_dark_mode(hwnd);
         state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,

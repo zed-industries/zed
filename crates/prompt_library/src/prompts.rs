@@ -2,7 +2,7 @@ use anyhow::Result;
 use assets::Assets;
 use fs::Fs;
 use futures::StreamExt;
-use gpui::AssetSource;
+use gpui::{App, AssetSource};
 use handlebars::{Handlebars, RenderError};
 use language::{BufferSnapshot, LanguageName, Point};
 use parking_lot::Mutex;
@@ -48,7 +48,7 @@ pub struct ProjectSlashCommandPromptContext {
 pub struct PromptLoadingParams<'a> {
     pub fs: Arc<dyn Fs>,
     pub repo_path: Option<PathBuf>,
-    pub cx: &'a gpui::AppContext,
+    pub cx: &'a gpui::App,
 }
 
 pub struct PromptBuilder {
@@ -56,6 +56,19 @@ pub struct PromptBuilder {
 }
 
 impl PromptBuilder {
+    pub fn load(fs: Arc<dyn Fs>, stdout_is_a_pty: bool, cx: &mut App) -> Arc<Self> {
+        Self::new(Some(PromptLoadingParams {
+            fs: fs.clone(),
+            repo_path: stdout_is_a_pty
+                .then(|| std::env::current_dir().log_err())
+                .flatten(),
+            cx,
+        }))
+        .log_err()
+        .map(Arc::new)
+        .unwrap_or_else(|| Arc::new(Self::new(None).unwrap()))
+    }
+
     pub fn new(loading_params: Option<PromptLoadingParams>) -> Result<Self> {
         let mut handlebars = Handlebars::new();
         Self::register_built_in_templates(&mut handlebars)?;
@@ -211,7 +224,7 @@ impl PromptBuilder {
         buffer: BufferSnapshot,
         range: Range<usize>,
     ) -> Result<String, RenderError> {
-        let content_type = match language_name.as_ref().map(|l| l.0.as_ref()) {
+        let content_type = match language_name.as_ref().map(|l| l.as_ref()) {
             None | Some("Markdown" | "Plain Text") => "text",
             Some(_) => "code",
         };

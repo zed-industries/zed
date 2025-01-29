@@ -1,6 +1,7 @@
 pub mod anthropic;
 pub mod cloud;
 pub mod copilot_chat;
+pub mod deepseek;
 pub mod google;
 pub mod lmstudio;
 pub mod ollama;

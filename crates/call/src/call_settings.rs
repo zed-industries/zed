@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::AppContext;
+use gpui::App;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -29,7 +29,7 @@ impl Settings for CallSettings {
 
     type FileContent = CallSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
 }

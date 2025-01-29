@@ -108,6 +108,7 @@ thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
+lyon = "1.0"
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -117,6 +118,7 @@ rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
+lyon = { version = "1.0", features = ["extra"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
@@ -212,7 +214,6 @@ flume = "0.11"
 rand.workspace = true
 windows.workspace = true
 windows-core = "0.58"
-
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
@@ -222,16 +223,20 @@ name = "image"
 path = "examples/image/image.rs"
 
 [[example]]
-name = "set_menus"
-path = "examples/set_menus.rs"
-
-[[example]]
-name = "window_shadow"
-path = "examples/window_shadow.rs"
-
-[[example]]
 name = "input"
 path = "examples/input.rs"
+
+[[example]]
+name = "opacity"
+path = "examples/opacity.rs"
+
+[[example]]
+name = "pattern"
+path = "examples/pattern.rs"
+
+[[example]]
+name = "set_menus"
+path = "examples/set_menus.rs"
 
 [[example]]
 name = "shadow"
@@ -246,9 +251,9 @@ name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
-name = "opacity"
-path = "examples/opacity.rs"
-
-[[example]]
 name = "uniform_list"
 path = "examples/uniform_list.rs"
+
+[[example]]
+name = "window_shadow"
+path = "examples/window_shadow.rs"

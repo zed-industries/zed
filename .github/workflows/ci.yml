@@ -7,16 +7,10 @@ on:
       - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
-    paths-ignore:
-      - "docs/**/*"
-      - ".github/workflows/community_*"
 
   pull_request:
     branches:
       - "**"
-    paths-ignore:
-      - "docs/**/*"
-      - ".github/workflows/community_*"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -289,7 +283,7 @@ jobs:
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
         with:
           node-version: "18"
 

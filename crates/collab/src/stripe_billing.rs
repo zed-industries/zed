@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{llm, Cents, Result};
-use anyhow::Context;
+use anyhow::Context as _;
 use chrono::{Datelike, Utc};
 use collections::HashMap;
 use serde::{Deserialize, Serialize};

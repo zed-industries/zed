@@ -703,17 +703,17 @@ mod tests {
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
         Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
     };
-    use gpui::{font, px, Context as _};
+    use gpui::{font, px, AppContext as _};
     use language::Capability;
     use project::Project;
     use settings::SettingsStore;
     use util::post_inc;
 
     #[gpui::test]
-    fn test_previous_word_start(cx: &mut gpui::AppContext) {
+    fn test_previous_word_start(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_word_start(&snapshot, display_points[1]),
@@ -738,10 +738,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_previous_subword_start(cx: &mut gpui::AppContext) {
+    fn test_previous_subword_start(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 previous_subword_start(&snapshot, display_points[1]),
@@ -773,12 +773,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_preceding_boundary(cx: &mut gpui::AppContext) {
+    fn test_find_preceding_boundary(cx: &mut gpui::App) {
         init_test(cx);
 
         fn assert(
             marked_text: &str,
-            cx: &mut gpui::AppContext,
+            cx: &mut gpui::App,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
@@ -811,7 +811,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::AppContext) {
+    fn test_find_preceding_boundary_with_inlays(cx: &mut gpui::App) {
         init_test(cx);
 
         let input_text = "abcdefghijklmnopqrstuvwxys";
@@ -820,7 +820,7 @@ mod tests {
         let buffer = MultiBuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
 
-        let display_map = cx.new_model(|cx| {
+        let display_map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,
                 font,
@@ -884,10 +884,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_next_word_end(cx: &mut gpui::AppContext) {
+    fn test_next_word_end(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_word_end(&snapshot, display_points[0]),
@@ -909,10 +909,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_next_subword_end(cx: &mut gpui::AppContext) {
+    fn test_next_subword_end(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 next_subword_end(&snapshot, display_points[0]),
@@ -943,12 +943,12 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_find_boundary(cx: &mut gpui::AppContext) {
+    fn test_find_boundary(cx: &mut gpui::App) {
         init_test(cx);
 
         fn assert(
             marked_text: &str,
-            cx: &mut gpui::AppContext,
+            cx: &mut gpui::App,
             is_boundary: impl FnMut(char, char) -> bool,
         ) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
@@ -981,10 +981,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_surrounding_word(cx: &mut gpui::AppContext) {
+    fn test_surrounding_word(cx: &mut gpui::App) {
         init_test(cx);
 
-        fn assert(marked_text: &str, cx: &mut gpui::AppContext) {
+        fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
             assert_eq!(
                 surrounding_word(&snapshot, display_points[1]),
@@ -1013,14 +1013,13 @@ mod tests {
         let mut cx = EditorTestContext::new(cx).await;
         let editor = cx.editor.clone();
         let window = cx.window;
-        _ = cx.update_window(window, |_, cx| {
-            let text_layout_details =
-                editor.update(cx, |editor, cx| editor.text_layout_details(cx));
+        _ = cx.update_window(window, |_, window, cx| {
+            let text_layout_details = editor.read(cx).text_layout_details(window);
 
             let font = font("Helvetica");
 
-            let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
-            let multibuffer = cx.new_model(|cx| {
+            let buffer = cx.new(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
+            let multibuffer = cx.new(|cx| {
                 let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
@@ -1038,7 +1037,7 @@ mod tests {
                 );
                 multibuffer
             });
-            let display_map = cx.new_model(|cx| {
+            let display_map = cx.new(|cx| {
                 DisplayMap::new(
                     multibuffer,
                     font,
@@ -1182,7 +1181,7 @@ mod tests {
         });
     }
 
-    fn init_test(cx: &mut gpui::AppContext) {
+    fn init_test(cx: &mut gpui::App) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         theme::init(theme::LoadThemes::JustBase, cx);

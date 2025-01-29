@@ -1,11 +1,10 @@
-use crate::assistant_panel::ContextEditor;
+use crate::context_editor::ContextEditor;
 use anyhow::Result;
-use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::SlashCommand;
-use assistant_slash_command::SlashCommandWorkingSet;
+use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
+use gpui::{App, Context, Entity, Task, WeakEntity, Window};
 use language::{Anchor, Buffer, Documentation, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
 use project::CompletionIntent;
@@ -21,25 +20,18 @@ use std::{
 };
 use workspace::Workspace;
 
-pub(crate) struct SlashCommandCompletionProvider {
+pub struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    editor: Option<WeakView<ContextEditor>>,
-    workspace: Option<WeakView<Workspace>>,
-}
-
-pub(crate) struct SlashCommandLine {
-    /// The range within the line containing the command name.
-    pub name: Range<usize>,
-    /// Ranges within the line containing the command arguments.
-    pub arguments: Vec<Range<usize>>,
+    editor: Option<WeakEntity<ContextEditor>>,
+    workspace: Option<WeakEntity<Workspace>>,
 }
 
 impl SlashCommandCompletionProvider {
     pub fn new(
         slash_commands: Arc<SlashCommandWorkingSet>,
-        editor: Option<WeakView<ContextEditor>>,
-        workspace: Option<WeakView<Workspace>>,
+        editor: Option<WeakEntity<ContextEditor>>,
+        workspace: Option<WeakEntity<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
@@ -54,7 +46,8 @@ impl SlashCommandCompletionProvider {
         command_name: &str,
         command_range: Range<Anchor>,
         name_range: Range<Anchor>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<project::Completion>>> {
         let slash_commands = self.slash_commands.clone();
         let candidates = slash_commands
@@ -66,7 +59,7 @@ impl SlashCommandCompletionProvider {
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        cx.spawn(|mut cx| async move {
+        window.spawn(cx, |mut cx| async move {
             let matches = match_strings(
                 &candidates,
                 &command_name,
@@ -77,7 +70,7 @@ impl SlashCommandCompletionProvider {
             )
             .await;
 
-            cx.update(|cx| {
+            cx.update(|_, cx| {
                 matches
                     .into_iter()
                     .filter_map(|mat| {
@@ -99,28 +92,31 @@ impl SlashCommandCompletionProvider {
                                     let editor = editor.clone();
                                     let workspace = workspace.clone();
                                     Arc::new(
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if !requires_argument
-                                                && (!accepts_arguments || intent.is_complete())
-                                            {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.run_command(
-                                                            command_range.clone(),
-                                                            &command_name,
-                                                            &[],
-                                                            true,
-                                                            workspace.clone(),
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                                false
-                                            } else {
-                                                requires_argument || accepts_arguments
-                                            }
-                                        },
-                                    ) as Arc<_>
+                                    move |intent: CompletionIntent,
+                                          window: &mut Window,
+                                          cx: &mut App| {
+                                        if !requires_argument
+                                            && (!accepts_arguments || intent.is_complete())
+                                        {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.run_command(
+                                                        command_range.clone(),
+                                                        &command_name,
+                                                        &[],
+                                                        true,
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                            false
+                                        } else {
+                                            requires_argument || accepts_arguments
+                                        }
+                                    },
+                                ) as Arc<_>
                                 });
                         Some(project::Completion {
                             old_range: name_range.clone(),
@@ -138,6 +134,7 @@ impl SlashCommandCompletionProvider {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_command_argument(
         &self,
         command_name: &str,
@@ -145,7 +142,8 @@ impl SlashCommandCompletionProvider {
         command_range: Range<Anchor>,
         argument_range: Range<Anchor>,
         last_argument_range: Range<Anchor>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Task<Result<Vec<project::Completion>>> {
         let new_cancel_flag = Arc::new(AtomicBool::new(false));
         let mut flag = self.cancel_flag.lock();
@@ -156,6 +154,7 @@ impl SlashCommandCompletionProvider {
                 arguments,
                 new_cancel_flag.clone(),
                 self.workspace.clone(),
+                window,
                 cx,
             );
             let command_name: Arc<str> = command_name.into();
@@ -183,7 +182,9 @@ impl SlashCommandCompletionProvider {
 
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
+                                        move |intent: CompletionIntent,
+                                              window: &mut Window,
+                                              cx: &mut App| {
                                             if new_argument.after_completion.run()
                                                 || intent.is_complete()
                                             {
@@ -195,6 +196,7 @@ impl SlashCommandCompletionProvider {
                                                             &completed_arguments,
                                                             true,
                                                             workspace.clone(),
+                                                            window,
                                                             cx,
                                                         );
                                                     })
@@ -238,10 +240,11 @@ impl SlashCommandCompletionProvider {
 impl CompletionProvider for SlashCommandCompletionProvider {
     fn completions(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, arguments, command_range, last_argument_range)) =
             buffer.update(cx, |buffer, _cx| {
@@ -296,30 +299,31 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                 command_range,
                 argument_range,
                 last_argument_range,
+                window,
                 cx,
             )
         } else {
-            self.complete_command_name(&name, command_range, last_argument_range, cx)
+            self.complete_command_name(&name, command_range, last_argument_range, window, cx)
         }
     }
 
     fn resolve_completions(
         &self,
-        _: Model<Buffer>,
+        _: Entity<Buffer>,
         _: Vec<usize>,
         _: Rc<RefCell<Box<[project::Completion]>>>,
-        _: &mut ViewContext<Editor>,
+        _: &mut Context<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))
     }
 
     fn is_completion_trigger(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
         let position = position.to_point(buffer);
@@ -334,59 +338,5 @@ impl CompletionProvider for SlashCommandCompletionProvider {
 
     fn sort_completions(&self) -> bool {
         false
-    }
-}
-
-impl SlashCommandLine {
-    pub(crate) fn parse(line: &str) -> Option<Self> {
-        let mut call: Option<Self> = None;
-        let mut ix = 0;
-        for c in line.chars() {
-            let next_ix = ix + c.len_utf8();
-            if let Some(call) = &mut call {
-                // The command arguments start at the first non-whitespace character
-                // after the command name, and continue until the end of the line.
-                if let Some(argument) = call.arguments.last_mut() {
-                    if c.is_whitespace() {
-                        if (*argument).is_empty() {
-                            argument.start = next_ix;
-                            argument.end = next_ix;
-                        } else {
-                            argument.end = ix;
-                            call.arguments.push(next_ix..next_ix);
-                        }
-                    } else {
-                        argument.end = next_ix;
-                    }
-                }
-                // The command name ends at the first whitespace character.
-                else if !call.name.is_empty() {
-                    if c.is_whitespace() {
-                        call.arguments = vec![next_ix..next_ix];
-                    } else {
-                        call.name.end = next_ix;
-                    }
-                }
-                // The command name must begin with a letter.
-                else if c.is_alphabetic() {
-                    call.name.end = next_ix;
-                } else {
-                    return None;
-                }
-            }
-            // Commands start with a slash.
-            else if c == '/' {
-                call = Some(SlashCommandLine {
-                    name: next_ix..next_ix,
-                    arguments: Vec::new(),
-                });
-            }
-            // The line can't contain anything before the slash except for whitespace.
-            else if !c.is_whitespace() {
-                return None;
-            }
-            ix = next_ix;
-        }
-        call
     }
 }

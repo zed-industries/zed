@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use client::{Client, UserStore};
 use fs::Fs;
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{App, Context, Entity};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use provider::deepseek::DeepSeekLanguageModelProvider;
 
 mod logging;
 pub mod provider;
@@ -22,12 +23,7 @@ pub use crate::settings::*;
 pub use logging::report_assistant_event;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
 
-pub fn init(
-    user_store: Model<UserStore>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut App) {
     crate::settings::init(fs, cx);
     let registry = LanguageModelRegistry::global(cx);
     registry.update(cx, |registry, cx| {
@@ -37,9 +33,9 @@ pub fn init(
 
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
-    user_store: Model<UserStore>,
+    user_store: Entity<UserStore>,
     client: Arc<Client>,
-    cx: &mut ModelContext<LanguageModelRegistry>,
+    cx: &mut Context<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
 
@@ -59,6 +55,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         LmStudioLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        DeepSeekLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(

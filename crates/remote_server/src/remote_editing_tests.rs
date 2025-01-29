@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{Context, Model, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
@@ -86,9 +86,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .await
         .unwrap();
 
-    change_set.update(cx, |change_set, cx| {
+    change_set.update(cx, |change_set, _| {
         assert_eq!(
-            change_set.base_text_string(cx).unwrap(),
+            change_set.base_text_string().unwrap(),
             "fn one() -> usize { 0 }"
         );
     });
@@ -150,9 +150,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    change_set.update(cx, |change_set, cx| {
+    change_set.update(cx, |change_set, _| {
         assert_eq!(
-            change_set.base_text_string(cx).unwrap(),
+            change_set.base_text_string().unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
@@ -186,7 +186,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     cx.run_until_parked();
 
-    async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
+    async fn do_search(project: &Entity<Project>, mut cx: TestAppContext) -> Entity<Buffer> {
         let receiver = project.update(&mut cx, |project, cx| {
             project.search(
                 SearchQuery::text(
@@ -401,7 +401,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     )
     .await;
 
-    cx.update_model(&project, |project, _| {
+    cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -578,7 +578,7 @@ async fn test_remote_cancel_language_server_work(
     )
     .await;
 
-    cx.update_model(&project, |project, _| {
+    cx.update_entity(&project, |project, _| {
         project.languages().register_test_language(LanguageConfig {
             name: "Rust".into(),
             matcher: LanguageMatcher {
@@ -1136,6 +1136,46 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let entry = worktree
+        .update(cx, |worktree, cx| {
+            let entry = worktree.entry_for_path("README.md").unwrap();
+            worktree.rename_entry(entry.id, Path::new("README.rst"), cx)
+        })
+        .await
+        .unwrap()
+        .to_included()
+        .unwrap();
+
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _| {
+        assert_eq!(worktree.entry_for_path("README.rst").unwrap().id, entry.id)
+    });
+}
+#[gpui::test]
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -1235,7 +1275,7 @@ pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
-) -> (Model<Project>, Model<HeadlessProject>) {
+) -> (Entity<Project>, Entity<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
@@ -1251,7 +1291,7 @@ pub async fn init_test(
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| {
+    let headless = server_cx.new(|cx| {
         client::init_settings(cx);
 
         HeadlessProject::new(
@@ -1284,7 +1324,7 @@ fn init_logger() {
     }
 }
 
-fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
     cx.update(|cx| {
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -1301,7 +1341,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
     });
 
     let node = NodeRuntime::unavailable();
-    let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+    let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 
