@@ -77,12 +77,13 @@ use code_context_menus::{
 };
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, point, prelude::*, px, relative, size, Action, AnyElement, App,
-    AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
-    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    Modifiers, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
-    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    div, impl_actions, percentage, point, prelude::*, pulsating_between, px, relative, size,
+    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Bounds,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler,
+    EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global,
+    HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton, PaintQuad,
+    ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task,
+    TextStyle, TextStyleRefinement, Transformation, UTF16Selection, UnderlineStyle,
     UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -686,6 +687,7 @@ pub struct Editor {
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_inline_completion: Option<InlineCompletionState>,
+    stale_inline_completion: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
     enable_inline_completions: bool,
@@ -1378,6 +1380,7 @@ impl Editor {
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
             active_inline_completion: None,
+            stale_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -4944,7 +4947,7 @@ impl Editor {
             provider.discard(cx);
         }
 
-        self.take_active_inline_completion(cx).is_some()
+        self.take_active_inline_completion(cx)
     }
 
     fn report_inline_completion_event(&self, accepted: bool, cx: &App) {
@@ -4981,14 +4984,15 @@ impl Editor {
         self.active_inline_completion.is_some()
     }
 
-    fn take_active_inline_completion(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<InlineCompletion> {
-        let active_inline_completion = self.active_inline_completion.take()?;
+    fn take_active_inline_completion(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(active_inline_completion) = self.active_inline_completion.take() else {
+            return false;
+        };
+
         self.splice_inlays(active_inline_completion.inlay_ids, Default::default(), cx);
         self.clear_highlights::<InlineCompletionHighlight>(cx);
-        Some(active_inline_completion.completion)
+        self.stale_inline_completion = Some(active_inline_completion);
+        true
     }
 
     fn update_inline_completion_preview(
@@ -5147,6 +5151,7 @@ impl Editor {
                 multibuffer.line_len(MultiBufferRow(invalidation_row_range.end)),
             ));
 
+        self.stale_inline_completion = None;
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
@@ -5457,6 +5462,67 @@ impl Editor {
                 (zeta_popover_height + zeta_and_menu_gap).to_pixels(window.rem_size())
             };
 
+            let is_loading = self
+                .inline_completion_provider
+                .as_ref()
+                .map_or(false, |provider| provider.provider.is_refreshing(cx));
+
+            let right_side = h_flex()
+                .gap_1()
+                .border_l_1()
+                .border_color(cx.theme().colors().border_variant)
+                .px_2()
+                .child(
+                    #[cfg(not(target_os = "macos"))]
+                    "alt",
+                    #[cfg(target_os = "macos")]
+                    Icon::new(IconName::Option),
+                )
+                .child("Preview")
+                .into_any_element();
+
+            let completion_preview = match self
+                .active_inline_completion
+                .as_ref()
+                .or(self.stale_inline_completion.as_ref())
+            {
+                Some(completion) => {
+                    Label::new("display_info()")
+                        .size(LabelSize::Small)
+                        .map(|label| {
+                            if is_loading {
+                                label
+                                    .with_animation(
+                                        "pulsating-stale-completion",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 0.8)),
+                                        |label, delta| label.alpha(delta),
+                                    )
+                                    .into_any_element()
+                            } else {
+                                label.into_any_element()
+                            }
+                        })
+                }
+                None => {
+                    if is_loading {
+                        Label::new("...")
+                            .size(LabelSize::Small)
+                            .with_animation(
+                                "pulsating-prediction-ellipsis",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        Label::new("No Prediction").into_any_element()
+                    }
+                }
+            };
+
             let container = v_flex()
                 .gap(zeta_and_menu_gap)
                 .when(y_flipped, |parent| parent.flex_col_reverse())
@@ -5464,35 +5530,19 @@ impl Editor {
                     h_flex()
                         .h(zeta_popover_height)
                         .flex_1()
+                        .px_2()
                         .gap_3()
                         .elevation_2(cx)
+                        // .opacity(if is_loading { 0.6 } else { 1.0 })
                         .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                         .child(
                             h_flex()
                                 .w_full()
-                                .px_2()
                                 .gap_2()
                                 .child(Icon::new(IconName::ZedPredict))
-                                .child(if self.has_active_inline_completion() {
-                                    "TODO: show code"
-                                } else {
-                                    "None"
-                                }),
+                                .child(completion_preview),
                         )
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .border_l_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .px_2()
-                                .child(
-                                    #[cfg(not(target_os = "macos"))]
-                                    "alt",
-                                    #[cfg(target_os = "macos")]
-                                    Icon::new(IconName::Option),
-                                )
-                                .child("Preview"),
-                        ),
+                        .child(right_side),
                 )
                 .child(menu)
                 .into_any();
