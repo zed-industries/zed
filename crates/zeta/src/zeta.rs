@@ -40,7 +40,7 @@ const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 
-actions!(zeta, [ClearHistory]);
+actions!(edit_prediction, [ClearHistory]);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct InlineCompletionId(Uuid);
@@ -1067,7 +1067,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 }
                 Err(error) => Err(error),
             };
-            let Some(new_completion) = completion.log_err().flatten() else {
+            let Some(new_completion) = completion
+                .context("edit prediction failed")
+                .log_err()
+                .flatten()
+            else {
                 return;
             };
 
