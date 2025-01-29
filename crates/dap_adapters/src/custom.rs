@@ -1,6 +1,7 @@
 use std::{ffi::OsString, path::PathBuf, sync::Arc};
 
 use dap::transport::{StdioTransport, TcpTransport, Transport};
+use gpui::AsyncApp;
 use serde_json::Value;
 use task::DebugAdapterConfig;
 
@@ -44,6 +45,7 @@ impl DebugAdapter for CustomDebugAdapter {
         _: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         _: Option<PathBuf>,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
             command: self.custom_args.command.clone(),
@@ -70,6 +72,7 @@ impl DebugAdapter for CustomDebugAdapter {
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
         _: Option<PathBuf>,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         bail!("Custom debug adapters cannot be installed")
     }

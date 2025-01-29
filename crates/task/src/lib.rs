@@ -102,7 +102,7 @@ impl ResolvedTask {
     }
 
     /// Get the configuration for the debug adapter that should be used for this task.
-    pub fn debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+    pub fn resolved_debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
         match self.original_task.task_type.clone() {
             TaskType::Script => None,
             TaskType::Debug(mut adapter_config) => {

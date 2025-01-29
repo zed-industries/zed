@@ -38,7 +38,8 @@ use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     debugger_settings::DebuggerSettings,
     messages::Message,
-    session::DebugSessionId,
+    session::{DebugSession, DebugSessionId},
+    DebugAdapterConfig,
 };
 
 use collections::{BTreeSet, HashMap, HashSet};
@@ -663,6 +664,15 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+            let toolchain_store = cx.new(|cx| {
+                ToolchainStore::local(
+                    languages.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
+            });
+
             let dap_store = cx.new(|cx| {
                 DapStore::new_local(
                     client.http_client(),
@@ -670,6 +680,7 @@ impl Project {
                     fs.clone(),
                     languages.clone(),
                     environment.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
                     cx,
                 )
             });
@@ -694,14 +705,6 @@ impl Project {
                 )
             });
 
-            let toolchain_store = cx.new(|cx| {
-                ToolchainStore::local(
-                    languages.clone(),
-                    worktree_store.clone(),
-                    environment.clone(),
-                    cx,
-                )
-            });
             let task_store = cx.new(|cx| {
                 TaskStore::local(
                     fs.clone(),
@@ -861,8 +864,7 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let dap_store =
-                cx.new(|cx| DapStore::new_remote(SSH_PROJECT_ID, client.clone().into(), cx));
+            let dap_store = cx.new(|_| DapStore::new_remote(SSH_PROJECT_ID, client.clone().into()));
             let git_state =
                 Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
 
@@ -1031,8 +1033,9 @@ impl Project {
         })?;
 
         let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
+
         let dap_store = cx.new(|cx| {
-            let mut dap_store = DapStore::new_remote(remote_id, client.clone().into(), cx);
+            let mut dap_store = DapStore::new_remote(remote_id, client.clone().into());
 
             dap_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
             dap_store.set_debug_sessions_from_proto(response.payload.debug_sessions, cx);
@@ -1306,30 +1309,29 @@ impl Project {
         })
     }
 
-    pub fn start_debug_adapter_client_from_task(
+    pub fn start_debug_session(
         &mut self,
-        debug_task: task::ResolvedTask,
+        config: DebugAdapterConfig,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(config) = debug_task.debug_adapter_config() {
-            self.dap_store.update(cx, |store, cx| {
-                store.start_debug_session(config, cx).detach_and_log_err(cx);
-            });
-        }
+    ) -> Task<Result<(Entity<DebugSession>, Arc<DebugAdapterClient>)>> {
+        let worktree = maybe!({
+            if let Some(cwd) = &config.cwd {
+                Some(self.find_worktree(cwd.as_path(), cx)?.0)
+            } else {
+                self.worktrees(cx).next()
+            }
+        });
+
+        let Some(worktree) = &worktree else {
+            return Task::ready(Err(anyhow!("Failed to find a worktree")));
+        };
+
+        self.dap_store.update(cx, |dap_store, cx| {
+            dap_store.start_debug_session(config, worktree, cx)
+        })
     }
 
     /// Get all serialized breakpoints that belong to a buffer
-    ///
-    /// # Parameters
-    /// `buffer_id`: The buffer id to get serialized breakpoints of
-    /// `cx`: The context of the editor
-    ///
-    /// # Return
-    /// `None`: If the buffer associated with buffer id doesn't exist or this editor
-    ///     doesn't belong to a project
-    ///
-    /// `(Path, Vec<SerializedBreakpoint)`: Returns worktree path (used when saving workspace)
-    ///     and a vector of the serialized breakpoints
     pub fn serialize_breakpoints_for_project_path(
         &self,
         project_path: &ProjectPath,

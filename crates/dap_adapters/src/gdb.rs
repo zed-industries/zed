@@ -3,6 +3,7 @@ use std::ffi::OsStr;
 use anyhow::Result;
 use async_trait::async_trait;
 use dap::transport::{StdioTransport, Transport};
+use gpui::AsyncApp;
 use task::DebugAdapterConfig;
 
 use crate::*;
@@ -32,6 +33,7 @@ impl DebugAdapter for GdbDebugAdapter {
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         user_installed_path: Option<std::path::PathBuf>,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let user_setting_path = user_installed_path
             .filter(|p| p.exists())
@@ -74,6 +76,7 @@ impl DebugAdapter for GdbDebugAdapter {
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
         _: Option<std::path::PathBuf>,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         unimplemented!("GDB cannot be installed by Zed (yet)")
     }

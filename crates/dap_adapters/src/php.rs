@@ -1,5 +1,6 @@
 use adapters::latest_github_release;
 use dap::transport::{TcpTransport, Transport};
+use gpui::AsyncApp;
 use std::{net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use crate::*;
@@ -37,14 +38,11 @@ impl DebugAdapter for PhpDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
     ) -> Result<AdapterVersion> {
-        let http_client = delegate
-            .http_client()
-            .ok_or_else(|| anyhow!("Failed to download adapter: couldn't connect to GitHub"))?;
         let release = latest_github_release(
             &format!("{}/{}", "xdebug", Self::ADAPTER_NAME),
             true,
             false,
-            http_client,
+            delegate.http_client(),
         )
         .await?;
 
@@ -67,6 +65,7 @@ impl DebugAdapter for PhpDebugAdapter {
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
@@ -82,12 +81,9 @@ impl DebugAdapter for PhpDebugAdapter {
             .ok_or_else(|| anyhow!("Couldn't find PHP dap directory"))?
         };
 
-        let node_runtime = delegate
-            .node_runtime()
-            .ok_or(anyhow!("Couldn't get npm runtime"))?;
-
         Ok(DebugAdapterBinary {
-            command: node_runtime
+            command: delegate
+                .node_runtime()
                 .binary_path()
                 .await?
                 .to_string_lossy()

@@ -1,5 +1,5 @@
 use gpui::{Entity, TestAppContext, WindowHandle};
-use project::Project;
+use project::{Project, Worktree};
 use settings::SettingsStore;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
@@ -71,4 +71,11 @@ pub fn active_debug_panel_item(
                 .unwrap()
         })
         .unwrap()
+}
+
+pub fn worktree_from_project(
+    project: &Entity<Project>,
+    cx: &mut TestAppContext,
+) -> Entity<Worktree> {
+    project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap())
 }

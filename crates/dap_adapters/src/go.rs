@@ -1,4 +1,5 @@
 use dap::transport::{TcpTransport, Transport};
+use gpui::AsyncApp;
 use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf, sync::Arc};
 
 use crate::*;
@@ -10,8 +11,7 @@ pub(crate) struct GoDebugAdapter {
 }
 
 impl GoDebugAdapter {
-    const _ADAPTER_NAME: &'static str = "delve";
-    // const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
+    const ADAPTER_NAME: &'static str = "delve";
 
     pub(crate) async fn new(host: &TCPHost) -> Result<Self> {
         Ok(GoDebugAdapter {
@@ -25,7 +25,7 @@ impl GoDebugAdapter {
 #[async_trait(?Send)]
 impl DebugAdapter for GoDebugAdapter {
     fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::_ADAPTER_NAME.into())
+        DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
     fn transport(&self) -> Arc<dyn Transport> {
@@ -37,8 +37,9 @@ impl DebugAdapter for GoDebugAdapter {
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
+        cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        self.get_installed_binary(delegate, config, user_installed_path)
+        self.get_installed_binary(delegate, config, user_installed_path, cx)
             .await
     }
 
@@ -69,6 +70,7 @@ impl DebugAdapter for GoDebugAdapter {
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         _: Option<PathBuf>,
+        _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let delve_path = delegate
             .which(OsStr::new("dlv"))

@@ -35,12 +35,11 @@ use dap::{
 use dap_adapters::build_adapter;
 use fs::Fs;
 use futures::future::Shared;
-use futures::FutureExt;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{
     proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
-    Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus,
+    Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore,
 };
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -65,6 +64,7 @@ use std::{
 use task::{AttachConfig, DebugAdapterConfig, DebugRequestType};
 use text::Point;
 use util::{merge_json_value_into, ResultExt as _};
+use worktree::Worktree;
 
 pub enum DapStoreEvent {
     DebugClientStarted((DebugSessionId, DebugAdapterClientId)),
@@ -92,10 +92,14 @@ pub enum DapStoreMode {
 }
 
 pub struct LocalDapStore {
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
     next_client_id: AtomicUsize,
     next_session_id: AtomicUsize,
-    delegate: DapAdapterDelegate,
+    http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
+    language_registry: Arc<LanguageRegistry>,
+    toolchain_store: Arc<dyn LanguageToolchainStore>,
     sessions: HashMap<DebugSessionId, Entity<DebugSession>>,
     client_by_session: HashMap<DebugAdapterClientId, DebugSessionId>,
 }
@@ -182,25 +186,24 @@ impl DapStore {
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
-        languages: Arc<LanguageRegistry>,
+        language_registry: Arc<LanguageRegistry>,
         environment: Entity<ProjectEnvironment>,
+        toolchain_store: Arc<dyn LanguageToolchainStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
 
         Self {
             mode: DapStoreMode::Local(LocalDapStore {
+                fs,
                 environment,
+                http_client,
+                node_runtime,
+                toolchain_store,
+                language_registry,
                 sessions: HashMap::default(),
                 next_client_id: Default::default(),
                 next_session_id: Default::default(),
-                delegate: DapAdapterDelegate::new(
-                    Some(http_client.clone()),
-                    Some(node_runtime.clone()),
-                    fs.clone(),
-                    languages.clone(),
-                    Task::ready(None).shared(),
-                ),
                 client_by_session: Default::default(),
             }),
             downstream_client: None,
@@ -210,11 +213,7 @@ impl DapStore {
         }
     }
 
-    pub fn new_remote(
-        project_id: u64,
-        upstream_client: AnyProtoClient,
-        _: &mut Context<Self>,
-    ) -> Self {
+    pub fn new_remote(project_id: u64, upstream_client: AnyProtoClient) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
                 upstream_client: Some(upstream_client),
@@ -668,6 +667,7 @@ impl DapStore {
     fn start_client_internal(
         &mut self,
         session_id: DebugSessionId,
+        delegate: Arc<dyn DapDelegate>,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
     ) -> Task<Result<Arc<DebugAdapterClient>>> {
@@ -675,14 +675,7 @@ impl DapStore {
             return Task::ready(Err(anyhow!("cannot start client on remote side")));
         };
 
-        let mut adapter_delegate = local_store.delegate.clone();
-        let worktree_abs_path = config.cwd.as_ref().map(|p| Arc::from(p.as_path()));
-        adapter_delegate.refresh_shell_env_task(local_store.environment.update(cx, |env, cx| {
-            env.get_environment(None, worktree_abs_path, cx)
-        }));
-        let adapter_delegate = Arc::new(adapter_delegate);
-
-        let client_id = self.as_local().unwrap().next_client_id();
+        let client_id = local_store.next_client_id();
 
         cx.spawn(|this, mut cx| async move {
             let adapter = build_adapter(&config.kind).await?;
@@ -701,11 +694,11 @@ impl DapStore {
             })?;
 
             let (adapter, binary) = match adapter
-                .get_binary(adapter_delegate.as_ref(), &config, binary)
+                .get_binary(delegate.as_ref(), &config, binary, &mut cx)
                 .await
             {
                 Err(error) => {
-                    adapter_delegate.update_status(
+                    delegate.update_status(
                         adapter.name(),
                         DapStatus::Failed {
                             error: error.to_string(),
@@ -715,9 +708,9 @@ impl DapStore {
                     return Err(error);
                 }
                 Ok(mut binary) => {
-                    adapter_delegate.update_status(adapter.name(), DapStatus::None);
+                    delegate.update_status(adapter.name(), DapStatus::None);
 
-                    let shell_env = adapter_delegate.shell_env().await;
+                    let shell_env = delegate.shell_env().await;
                     let mut envs = binary.envs.unwrap_or_default();
                     envs.extend(shell_env);
                     binary.envs = Some(envs);
@@ -755,14 +748,29 @@ impl DapStore {
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
+        worktree: &Entity<Worktree>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Entity<DebugSession>, Arc<DebugAdapterClient>)>> {
         let Some(local_store) = self.as_local() else {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
         };
 
+        let delegate = Arc::new(DapAdapterDelegate::new(
+            local_store.fs.clone(),
+            worktree.read(cx).id(),
+            local_store.node_runtime.clone(),
+            local_store.http_client.clone(),
+            local_store.language_registry.clone(),
+            local_store.toolchain_store.clone(),
+            local_store.environment.update(cx, |env, cx| {
+                let worktree = worktree.read(cx);
+                env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
+            }),
+        ));
+
         let session_id = local_store.next_session_id();
-        let start_client_task = self.start_client_internal(session_id, config.clone(), cx);
+        let start_client_task =
+            self.start_client_internal(session_id, delegate, config.clone(), cx);
 
         cx.spawn(|this, mut cx| async move {
             let session = cx.new(|_| DebugSession::new_local(session_id, config))?;
@@ -2363,46 +2371,49 @@ impl SerializedBreakpoint {
 #[derive(Clone)]
 pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
-    http_client: Option<Arc<dyn HttpClient>>,
-    node_runtime: Option<NodeRuntime>,
+    worktree_id: WorktreeId,
+    node_runtime: NodeRuntime,
+    http_client: Arc<dyn HttpClient>,
+    language_registry: Arc<LanguageRegistry>,
+    toolchain_store: Arc<dyn LanguageToolchainStore>,
     updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
-    languages: Arc<LanguageRegistry>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
 }
 
 impl DapAdapterDelegate {
     pub fn new(
-        http_client: Option<Arc<dyn HttpClient>>,
-        node_runtime: Option<NodeRuntime>,
         fs: Arc<dyn Fs>,
-        languages: Arc<LanguageRegistry>,
+        worktree_id: WorktreeId,
+        node_runtime: NodeRuntime,
+        http_client: Arc<dyn HttpClient>,
+        language_registry: Arc<LanguageRegistry>,
+        toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
     ) -> Self {
         Self {
             fs,
-            languages,
+            worktree_id,
             http_client,
             node_runtime,
+            toolchain_store,
+            language_registry,
             load_shell_env_task,
             updated_adapters: Default::default(),
         }
-    }
-
-    pub(crate) fn refresh_shell_env_task(
-        &mut self,
-        load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
-    ) {
-        self.load_shell_env_task = load_shell_env_task;
     }
 }
 
 #[async_trait(?Send)]
 impl dap::adapters::DapDelegate for DapAdapterDelegate {
-    fn http_client(&self) -> Option<Arc<dyn HttpClient>> {
+    fn worktree_id(&self) -> WorktreeId {
+        self.worktree_id.clone()
+    }
+
+    fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
-    fn node_runtime(&self) -> Option<NodeRuntime> {
+    fn node_runtime(&self) -> NodeRuntime {
         self.node_runtime.clone()
     }
 
@@ -2423,7 +2434,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
             DapStatus::CheckingForUpdate => LanguageServerBinaryStatus::CheckingForUpdate,
         };
 
-        self.languages
+        self.language_registry
             .update_dap_status(LanguageServerName(name), status);
     }
 
@@ -2434,5 +2445,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     async fn shell_env(&self) -> HashMap<String, String> {
         let task = self.load_shell_env_task.clone();
         task.await.unwrap_or_default()
+    }
+
+    fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
+        self.toolchain_store.clone()
     }
 }

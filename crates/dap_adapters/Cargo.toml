@@ -7,9 +7,10 @@ license = "GPL-3.0-or-later"
 
 [features]
 test-support = [
-    "util/test-support",
-    "task/test-support",
     "dap/test-support",
+    "gpui/test-support",
+    "task/test-support",
+    "util/test-support",
 ]
 
 [lints]
@@ -23,6 +24,8 @@ doctest = false
 anyhow.workspace = true
 async-trait.workspace = true
 dap.workspace = true
+gpui.workspace = true
+language.workspace = true
 paths.workspace = true
 regex.workspace = true
 serde.workspace = true
@@ -33,5 +36,6 @@ util.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
