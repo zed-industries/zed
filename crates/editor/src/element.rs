@@ -3410,6 +3410,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
+        newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
         window: &mut Window,
@@ -3568,14 +3569,35 @@ impl EditorElement {
                             edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
                         )
                 } else {
-                    let target_above =
-                        DisplayRow(edit_start.row().0.saturating_sub(line_count as u32));
-                    let row_target = if visible_row_range
-                        .contains(&DisplayRow(target_above.0.saturating_sub(1)))
-                    {
-                        target_above
+                    // Avoid overlapping both the edited rows and the user's cursor.
+                    let target_above = DisplayRow(
+                        edit_start
+                            .row()
+                            .0
+                            .min(
+                                newest_selection_head
+                                    .map_or(u32::MAX, |cursor_row| cursor_row.row().0),
+                            )
+                            .saturating_sub(line_count as u32),
+                    );
+                    let mut row_target;
+                    if visible_row_range.contains(&DisplayRow(target_above.0.saturating_sub(1))) {
+                        row_target = target_above;
                     } else {
-                        DisplayRow(edit_end.row().0 + 1)
+                        row_target = DisplayRow(
+                            edit_end.row().0.max(
+                                newest_selection_head.map_or(0, |cursor_row| cursor_row.row().0),
+                            ) + 1,
+                        );
+                        if !visible_row_range.contains(&row_target) {
+                            // Not visible, so fallback on displaying immediately below the cursor.
+                            if let Some(cursor) = newest_selection_head {
+                                row_target = DisplayRow(cursor.row().0 + 1);
+                            } else {
+                                // Not visible and no cursor visible, so fallback on displaying at the top of the editor.
+                                row_target = DisplayRow(0);
+                            }
+                        }
                     };
 
                     text_bounds.origin
@@ -7089,6 +7111,7 @@ impl Element for EditorElement {
                         &line_layouts,
                         line_height,
                         scroll_pixel_position,
+                        newest_selection_head,
                         editor_width,
                         &style,
                         window,
