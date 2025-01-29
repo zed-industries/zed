@@ -81,6 +81,7 @@ pub enum Operator {
         first_char: Option<char>,
     },
     AddSurrounds {
+        // Typically no need to configure this as `SendKeystrokes` can be used - see #23088.
         #[serde(skip)]
         target: Option<SurroundsType>,
     },
