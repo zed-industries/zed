@@ -444,6 +444,11 @@ impl InlineCompletionButton {
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
 
+        menu = menu.separator().header("Data Collection:");
+
+        // Not wired yet
+        menu = menu.toggleable_entry("Turned On", true, IconPosition::Start, None, |_, _| {});
+
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu
                 .separator()
