@@ -5492,6 +5492,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_tokio"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "tokio",
+ "util",
+]
+
+[[package]]
 name = "grid"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10746,6 +10755,7 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "language",
  "language_extension",
@@ -16439,6 +16449,7 @@ dependencies = [
  "git_ui",
  "go_to_line",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "image_viewer",
  "inline_completion_button",

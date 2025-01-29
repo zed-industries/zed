@@ -9,6 +9,7 @@ use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
+use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -425,6 +426,7 @@ pub fn execute_run(
         settings::init(cx);
         let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
+        gpui_tokio::init(cx);
 
         HeadlessProject::init(cx);
 
@@ -445,18 +447,21 @@ pub fn execute_run(
 
             let proxy_url = read_proxy_settings(cx);
 
-            let http_client = Arc::new(
-                ReqwestClient::proxy_and_user_agent(
-                    proxy_url,
-                    &format!(
-                        "Zed-Server/{} ({}; {})",
-                        env!("CARGO_PKG_VERSION"),
-                        std::env::consts::OS,
-                        std::env::consts::ARCH
-                    ),
+            let http_client = {
+                let _guard = Tokio::handle(cx).enter();
+                Arc::new(
+                    ReqwestClient::proxy_and_user_agent(
+                        proxy_url,
+                        &format!(
+                            "Zed-Server/{} ({}; {})",
+                            env!("CARGO_PKG_VERSION"),
+                            std::env::consts::OS,
+                            std::env::consts::ARCH
+                        ),
+                    )
+                    .expect("Could not start HTTP client"),
                 )
-                .expect("Could not start HTTP client"),
-            );
+            };
 
             let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
 
