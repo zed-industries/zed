@@ -223,6 +223,9 @@ impl Render for BufferSearchBar {
 
         let search_line = h_flex()
             .gap_2()
+            .when(!supported_options.next_prev, |el| {
+                el.child(Label::new("Find in results").color(Color::Hint))
+            })
             .child(
                 input_base_styles()
                     .id("editor-scroll")
@@ -380,6 +383,18 @@ impl Render for BufferSearchBar {
                                 ),
                             ))
                         })
+                    })
+                    .when(!supported_options.next_prev, |el| {
+                        el.child(
+                            IconButton::new(SharedString::from("Close"), IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |window, cx| {
+                                    Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
+                                })
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.dismiss(&Dismiss, window, cx)
+                                })),
+                        )
                     }),
             );
 
@@ -468,30 +483,24 @@ impl Render for BufferSearchBar {
             .when(self.supported_options(cx).selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
-            .child(
-                h_flex()
-                    .relative()
-                    .child(search_line.w_full())
-                    .when(!narrow_mode, |div| {
-                        div.child(
-                            h_flex().absolute().right_0().child(
-                                IconButton::new(SharedString::from("Close"), IconName::Close)
-                                    .shape(IconButtonShape::Square)
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::for_action(
-                                            "Close Search Bar",
-                                            &Dismiss,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                        this.dismiss(&Dismiss, window, cx)
-                                    })),
-                            ),
-                        )
-                    }),
-            )
+            .child(h_flex().relative().child(search_line.w_full()).when(
+                !narrow_mode && supported_options.next_prev,
+                |div| {
+                    div.child(
+                        h_flex().absolute().right_0().child(
+                            IconButton::new(SharedString::from("Close"), IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(move |window, cx| {
+                                    Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
+                                })
+                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                    this.dismiss(&Dismiss, window, cx)
+                                })),
+                        ),
+                    )
+                    .w_full()
+                },
+            ))
             .children(replace_line)
     }
 }
@@ -533,10 +542,15 @@ impl ToolbarItemView for BufferSearchBar {
                     }),
                 ));
 
+            let is_project_search = !searchable_item_handle.supported_options(cx).next_prev;
             self.active_searchable_item = Some(searchable_item_handle);
             drop(self.update_matches(true, window, cx));
             if !self.dismissed {
-                return ToolbarItemLocation::Secondary;
+                if is_project_search {
+                    self.dismiss(&Default::default(), window, cx);
+                } else {
+                    return ToolbarItemLocation::Secondary;
+                }
             }
         }
         ToolbarItemLocation::Hidden

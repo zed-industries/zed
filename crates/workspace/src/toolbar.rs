@@ -82,7 +82,7 @@ impl Toolbar {
     }
 
     fn secondary_items(&self) -> impl Iterator<Item = &dyn ToolbarItemViewHandle> {
-        self.items.iter().filter_map(|(item, location)| {
+        self.items.iter().rev().filter_map(|(item, location)| {
             if *location == ToolbarItemLocation::Secondary {
                 Some(item.as_ref())
             } else {

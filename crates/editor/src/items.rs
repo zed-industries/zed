@@ -1341,9 +1341,9 @@ impl SearchableItem for Editor {
                 case: true,
                 word: true,
                 regex: true,
-                replacement: false,
-                selection: false,
-                next_prev: false,
+                replacement: true,
+                selection: true,
+                next_prev: true,
             }
         }
     }
