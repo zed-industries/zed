@@ -73,7 +73,8 @@ message Envelope {
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;
         ExpandProjectEntryResponse expand_project_entry_response = 52;
-
+        ExpandAllForProjectEntry expand_all_for_project_entry = 291;
+        ExpandAllForProjectEntryResponse expand_all_for_project_entry_response = 292;
         UpdateDiagnosticSummary update_diagnostic_summary = 53;
         StartLanguageServer start_language_server = 54;
         UpdateLanguageServer update_language_server = 55;
@@ -308,33 +309,33 @@ message Envelope {
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
 
-        SynchronizeBreakpoints Synchronize_breakpoints = 291;
-        SetActiveDebugLine set_active_debug_line = 292;
-        RemoveActiveDebugLine remove_active_debug_line = 293;
-        SetDebuggerPanelItem set_debugger_panel_item = 294;
-        UpdateDebugAdapter update_debug_adapter = 295;
-        ShutdownDebugClient shutdown_debug_client = 296;
-        SetDebugClientCapabilities set_debug_client_capabilities = 297;
+        SynchronizeBreakpoints Synchronize_breakpoints = 293;
+        SetActiveDebugLine set_active_debug_line = 294;
+        RemoveActiveDebugLine remove_active_debug_line = 295;
+        SetDebuggerPanelItem set_debugger_panel_item = 296;
+        UpdateDebugAdapter update_debug_adapter = 297;
+        ShutdownDebugClient shutdown_debug_client = 298;
+        SetDebugClientCapabilities set_debug_client_capabilities = 299;
 
-        DapNextRequest dap_next_request = 298;
-        DapStepInRequest dap_step_in_request = 299;
-        DapStepOutRequest dap_step_out_request = 300;
-        DapStepBackRequest dap_step_back_request = 301;
-        DapContinueRequest dap_continue_request = 302;
-        DapContinueResponse dap_continue_response = 303;
-        DapPauseRequest dap_pause_request = 304;
-        DapDisconnectRequest dap_disconnect_request = 305;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 306;
-        DapTerminateRequest dap_terminate_request = 307;
-        DapRestartRequest dap_restart_request = 308;
-        DapShutdownSession dap_shutdown_session = 309;
-        UpdateThreadStatus update_thread_status = 310;
-        VariablesRequest variables_request = 311;
-        DapVariables dap_variables = 312;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 313;
-        IgnoreBreakpointState ignore_breakpoint_state = 314;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 315;
-        DebuggerSessionEnded debugger_session_ended = 316; // current max
+        DapNextRequest dap_next_request = 300;
+        DapStepInRequest dap_step_in_request = 301;
+        DapStepOutRequest dap_step_out_request = 302;
+        DapStepBackRequest dap_step_back_request = 303;
+        DapContinueRequest dap_continue_request = 304;
+        DapContinueResponse dap_continue_response = 305;
+        DapPauseRequest dap_pause_request = 306;
+        DapDisconnectRequest dap_disconnect_request = 307;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 308;
+        DapTerminateRequest dap_terminate_request = 309;
+        DapRestartRequest dap_restart_request = 310;
+        DapShutdownSession dap_shutdown_session = 311;
+        UpdateThreadStatus update_thread_status = 312;
+        VariablesRequest variables_request = 313;
+        DapVariables dap_variables = 314;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 315;
+        IgnoreBreakpointState ignore_breakpoint_state = 316;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 317;
+        DebuggerSessionEnded debugger_session_ended = 318; // current max
     }
 
     reserved 87 to 88;
@@ -658,6 +659,15 @@ message ExpandProjectEntry {
 }
 
 message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
+message ExpandAllForProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandAllForProjectEntryResponse {
     uint64 worktree_scan_id = 1;
 }
 

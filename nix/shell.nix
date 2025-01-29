@@ -29,6 +29,7 @@ pkgs.mkShell rec {
       pkgs.libgit2
       pkgs.openssl
       pkgs.sqlite
+      pkgs.stdenv.cc.cc
       pkgs.zlib
       pkgs.zstd
       pkgs.rustToolchain
@@ -42,17 +43,14 @@ pkgs.mkShell rec {
     ]
     ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
 
-  LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
+  LD_LIBRARY_PATH = lib.makeLibraryPath buildInputs;
+
+  PROTOC="${pkgs.protobuf}/bin/protoc";
 
   # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones,
   # because we need Swift 6.0 and nixpkgs doesn't have it.
   # Xcode is required for development anyways
-  shellHook =
-    ''
-      export LD_LIBRARY_PATH="${lib.makeLibraryPath buildInputs}:$LD_LIBRARY_PATH"
-      export PROTOC="${pkgs.protobuf}/bin/protoc"
-    ''
-    + lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+  shellHook = lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
       export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
       export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer";
     '';

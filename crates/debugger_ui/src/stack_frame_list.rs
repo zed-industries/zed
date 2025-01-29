@@ -6,13 +6,12 @@ use dap::proto_conversions::ProtoConversion;
 use dap::session::DebugSessionId;
 use dap::StackFrame;
 use gpui::{
-    list, AnyElement, EventEmitter, FocusHandle, ListState, Subscription, Task, View, WeakView,
+    list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
+    WeakEntity,
 };
-use gpui::{FocusableView, Model};
 use project::dap_store::DapStore;
 use project::ProjectPath;
 use rpc::proto::{DebuggerStackFrameList, UpdateDebugAdapter};
-use ui::ViewContext;
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
@@ -31,11 +30,11 @@ pub struct StackFrameList {
     list: ListState,
     focus_handle: FocusHandle,
     session_id: DebugSessionId,
-    dap_store: Model<DapStore>,
+    dap_store: Entity<DapStore>,
     current_stack_frame_id: u64,
     stack_frames: Vec<StackFrame>,
     entries: Vec<StackFrameEntry>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
     fetch_stack_frames_task: Option<Task<Result<()>>>,
@@ -48,27 +47,39 @@ pub enum StackFrameEntry {
 }
 
 impl StackFrameList {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
-        workspace: &WeakView<Workspace>,
-        debug_panel_item: &View<DebugPanelItem>,
-        dap_store: &Model<DapStore>,
+        workspace: &WeakEntity<Workspace>,
+        debug_panel_item: &Entity<DebugPanelItem>,
+        dap_store: &Entity<DapStore>,
         client_id: &DebugAdapterClientId,
         session_id: &DebugSessionId,
         thread_id: u64,
-        cx: &mut ViewContext<Self>,
+        window: &Window,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let weakview = cx.view().downgrade();
+        let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
-        let list = ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
-            weakview
-                .upgrade()
-                .map(|view| view.update(cx, |this, cx| this.render_entry(ix, cx)))
-                .unwrap_or(div().into_any())
-        });
+        let list = ListState::new(
+            0,
+            gpui::ListAlignment::Top,
+            px(1000.),
+            move |ix, _window, cx| {
+                weak_entity
+                    .upgrade()
+                    .map(|stack_frame_list| {
+                        stack_frame_list.update(cx, |this, cx| this.render_entry(ix, cx))
+                    })
+                    .unwrap_or(div().into_any())
+            },
+        );
 
-        let _subscriptions =
-            vec![cx.subscribe(debug_panel_item, Self::handle_debug_panel_item_event)];
+        let _subscriptions = vec![cx.subscribe_in(
+            debug_panel_item,
+            window,
+            Self::handle_debug_panel_item_event,
+        )];
 
         Self {
             list,
@@ -102,7 +113,7 @@ impl StackFrameList {
     pub(crate) fn set_from_proto(
         &mut self,
         stack_frame_list: DebuggerStackFrameList,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.thread_id = stack_frame_list.thread_id;
         self.client_id = DebugAdapterClientId::from_proto(stack_frame_list.client_id);
@@ -135,20 +146,21 @@ impl StackFrameList {
 
     fn handle_debug_panel_item_event(
         &mut self,
-        _: View<DebugPanelItem>,
+        _: &Entity<DebugPanelItem>,
         event: &debugger_panel_item::DebugPanelItemEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         match event {
             Stopped { go_to_stack_frame } => {
-                self.fetch_stack_frames(*go_to_stack_frame, cx);
+                self.fetch_stack_frames(*go_to_stack_frame, window, cx);
             }
             _ => {}
         }
     }
 
-    pub fn invalidate(&mut self, cx: &mut ViewContext<Self>) {
-        self.fetch_stack_frames(true, cx);
+    pub fn invalidate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fetch_stack_frames(true, window, cx);
     }
 
     fn build_entries(&mut self) {
@@ -180,7 +192,12 @@ impl StackFrameList {
         self.list.reset(self.entries.len());
     }
 
-    fn fetch_stack_frames(&mut self, go_to_stack_frame: bool, cx: &mut ViewContext<Self>) {
+    fn fetch_stack_frames(
+        &mut self,
+        go_to_stack_frame: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         // If this is a remote debug session we never need to fetch stack frames ourselves
         // because the host will fetch and send us stack frames whenever there's a stop event
         if self.dap_store.read(cx).as_remote().is_some() {
@@ -191,10 +208,10 @@ impl StackFrameList {
             store.stack_frames(&self.client_id, self.thread_id, cx)
         });
 
-        self.fetch_stack_frames_task = Some(cx.spawn(|this, mut cx| async move {
+        self.fetch_stack_frames_task = Some(cx.spawn_in(window, |this, mut cx| async move {
             let mut stack_frames = task.await?;
 
-            let task = this.update(&mut cx, |this, cx| {
+            let task = this.update_in(&mut cx, |this, window, cx| {
                 std::mem::swap(&mut this.stack_frames, &mut stack_frames);
 
                 this.build_entries();
@@ -207,7 +224,7 @@ impl StackFrameList {
                     .cloned()
                     .ok_or_else(|| anyhow!("No stack frame found to select"))?;
 
-                anyhow::Ok(this.select_stack_frame(&stack_frame, go_to_stack_frame, cx))
+                anyhow::Ok(this.select_stack_frame(&stack_frame, go_to_stack_frame, window, cx))
             })?;
 
             task?.await?;
@@ -222,7 +239,8 @@ impl StackFrameList {
         &mut self,
         stack_frame: &StackFrame,
         go_to_stack_frame: bool,
-        cx: &mut ViewContext<Self>,
+        window: &Window,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.current_stack_frame_id = stack_frame.id;
 
@@ -253,12 +271,19 @@ impl StackFrameList {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
-        cx.spawn({
+        cx.spawn_in(window, {
             let client_id = self.client_id;
             move |this, mut cx| async move {
-                this.update(&mut cx, |this, cx| {
+                this.update_in(&mut cx, |this, window, cx| {
                     this.workspace.update(cx, |workspace, cx| {
-                        workspace.open_path_preview(project_path.clone(), None, false, true, cx)
+                        workspace.open_path_preview(
+                            project_path.clone(),
+                            None,
+                            false,
+                            true,
+                            window,
+                            cx,
+                        )
                     })
                 })??
                 .await?;
@@ -275,7 +300,7 @@ impl StackFrameList {
     pub fn project_path_from_stack_frame(
         &self,
         stack_frame: &StackFrame,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<ProjectPath> {
         let path = stack_frame.source.as_ref().and_then(|s| s.path.as_ref())?;
 
@@ -288,7 +313,7 @@ impl StackFrameList {
             .ok()?
     }
 
-    pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut ViewContext<Self>) {
+    pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) {
         self.dap_store.update(cx, |store, cx| {
             store
                 .restart_stack_frame(&self.client_id, stack_frame_id, cx)
@@ -296,11 +321,7 @@ impl StackFrameList {
         });
     }
 
-    fn render_normal_entry(
-        &self,
-        stack_frame: &StackFrame,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement {
+    fn render_normal_entry(&self, stack_frame: &StackFrame, cx: &mut Context<Self>) -> AnyElement {
         let source = stack_frame.source.clone();
         let is_selected_frame = stack_frame.id == self.current_stack_frame_id;
 
@@ -330,8 +351,8 @@ impl StackFrameList {
             .id(("stack-frame", stack_frame.id))
             .tooltip({
                 let formatted_path = formatted_path.clone();
-                move |cx| {
-                    cx.new_view(|_| {
+                move |_window, app| {
+                    app.new(|_| {
                         let mut tooltip = Tooltip::new(formatted_path.clone());
 
                         if let Some(origin) = &origin {
@@ -349,8 +370,8 @@ impl StackFrameList {
             })
             .on_click(cx.listener({
                 let stack_frame = stack_frame.clone();
-                move |this, _, cx| {
-                    this.select_stack_frame(&stack_frame, true, cx)
+                move |this, _, window, cx| {
+                    this.select_stack_frame(&stack_frame, true, window, cx)
                         .detach_and_log_err(cx);
                 }
             }))
@@ -400,11 +421,13 @@ impl StackFrameList {
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener({
                                     let stack_frame_id = stack_frame.id;
-                                    move |this, _, cx| {
+                                    move |this, _, _window, cx| {
                                         this.restart_stack_frame(stack_frame_id, cx);
                                     }
                                 }))
-                                .tooltip(move |cx| Tooltip::text("Restart Stack Frame", cx)),
+                                .tooltip(move |window, cx| {
+                                    Tooltip::text("Restart Stack Frame")(window, cx)
+                                }),
                             ),
                     )
                 },
@@ -416,7 +439,7 @@ impl StackFrameList {
         &mut self,
         ix: usize,
         stack_frames: &Vec<StackFrame>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.entries.splice(
             ix..ix + 1,
@@ -432,7 +455,7 @@ impl StackFrameList {
         &self,
         ix: usize,
         stack_frames: &Vec<StackFrame>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let first_stack_frame = &stack_frames[0];
 
@@ -445,7 +468,7 @@ impl StackFrameList {
             .p_1()
             .on_click(cx.listener({
                 let stack_frames = stack_frames.clone();
-                move |this, _, cx| {
+                move |this, _, _window, cx| {
                     this.expand_collapsed_entry(ix, &stack_frames, cx);
                 }
             }))
@@ -468,7 +491,7 @@ impl StackFrameList {
             .into_any()
     }
 
-    fn render_entry(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_entry(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         match &self.entries[ix] {
             StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(stack_frame, cx),
             StackFrameEntry::Collapsed(stack_frames) => {
@@ -479,7 +502,7 @@ impl StackFrameList {
 }
 
 impl Render for StackFrameList {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .p_1()
@@ -487,8 +510,8 @@ impl Render for StackFrameList {
     }
 }
 
-impl FocusableView for StackFrameList {
-    fn focus_handle(&self, _: &gpui::AppContext) -> gpui::FocusHandle {
+impl Focusable for StackFrameList {
+    fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }

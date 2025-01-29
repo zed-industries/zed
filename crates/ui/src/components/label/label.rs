@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{StyleRefinement, WindowContext};
+use gpui::{App, StyleRefinement, Window};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 
@@ -175,7 +175,7 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         self.base.child(self.label)
     }
 }

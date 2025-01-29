@@ -47,6 +47,7 @@ util.workspace = true
 telemetry.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+git_ui.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

@@ -1,8 +1,6 @@
 use anyhow::Result;
 use dap::{client::DebugAdapterClientId, LoadedSourceEvent, Source};
-use gpui::{
-    list, AnyElement, FocusHandle, FocusableView, ListState, Model, Subscription, Task, View,
-};
+use gpui::{list, AnyElement, Entity, FocusHandle, Focusable, ListState, Subscription, Task};
 use project::dap_store::DapStore;
 use ui::prelude::*;
 
@@ -12,27 +10,34 @@ pub struct LoadedSourceList {
     list: ListState,
     sources: Vec<Source>,
     focus_handle: FocusHandle,
-    dap_store: Model<DapStore>,
+    dap_store: Entity<DapStore>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
 }
 
 impl LoadedSourceList {
     pub fn new(
-        debug_panel_item: &View<DebugPanelItem>,
-        dap_store: Model<DapStore>,
+        debug_panel_item: &Entity<DebugPanelItem>,
+        dap_store: Entity<DapStore>,
         client_id: &DebugAdapterClientId,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let weakview = cx.view().downgrade();
+        let weak_entity = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
-        let list = ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
-            weakview
-                .upgrade()
-                .map(|view| view.update(cx, |this, cx| this.render_entry(ix, cx)))
-                .unwrap_or(div().into_any())
-        });
+        let list = ListState::new(
+            0,
+            gpui::ListAlignment::Top,
+            px(1000.),
+            move |ix, _window, cx| {
+                weak_entity
+                    .upgrade()
+                    .map(|loaded_sources| {
+                        loaded_sources.update(cx, |this, cx| this.render_entry(ix, cx))
+                    })
+                    .unwrap_or(div().into_any())
+            },
+        );
 
         let _subscriptions =
             vec![cx.subscribe(debug_panel_item, Self::handle_debug_panel_item_event)];
@@ -49,9 +54,9 @@ impl LoadedSourceList {
 
     fn handle_debug_panel_item_event(
         &mut self,
-        _: View<DebugPanelItem>,
+        _: Entity<DebugPanelItem>,
         event: &debugger_panel_item::DebugPanelItemEvent,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             DebugPanelItemEvent::Stopped { .. } => {
@@ -61,11 +66,7 @@ impl LoadedSourceList {
         }
     }
 
-    pub fn on_loaded_source_event(
-        &mut self,
-        event: &LoadedSourceEvent,
-        cx: &mut ViewContext<Self>,
-    ) {
+    pub fn on_loaded_source_event(&mut self, event: &LoadedSourceEvent, cx: &mut Context<Self>) {
         match event.reason {
             dap::LoadedSourceEventReason::New => self.sources.push(event.source.clone()),
             dap::LoadedSourceEventReason::Changed => {
@@ -97,7 +98,7 @@ impl LoadedSourceList {
         cx.notify();
     }
 
-    fn fetch_loaded_sources(&self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn fetch_loaded_sources(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let task = self
             .dap_store
             .update(cx, |store, cx| store.loaded_sources(&self.client_id, cx));
@@ -114,7 +115,7 @@ impl LoadedSourceList {
         })
     }
 
-    fn render_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let source = &self.sources[ix];
 
         v_flex()
@@ -139,14 +140,14 @@ impl LoadedSourceList {
     }
 }
 
-impl FocusableView for LoadedSourceList {
-    fn focus_handle(&self, _: &gpui::AppContext) -> gpui::FocusHandle {
+impl Focusable for LoadedSourceList {
+    fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 impl Render for LoadedSourceList {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .p_1()

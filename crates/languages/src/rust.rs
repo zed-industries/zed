@@ -1,9 +1,9 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
@@ -78,7 +78,7 @@ impl LspAdapter for RustLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which("rust-analyzer".as_ref()).await?;
         let env = delegate.shell_env().await;
@@ -462,7 +462,7 @@ impl ContextProvider for RustContextProvider {
         location: &Location,
         project_env: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
@@ -507,7 +507,7 @@ impl ContextProvider for RustContextProvider {
     fn associated_tasks(
         &self,
         file: Option<Arc<dyn language::File>>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         let package_to_run = language_settings(Some("Rust".into()), file.as_ref(), cx)
@@ -523,7 +523,7 @@ impl ContextProvider for RustContextProvider {
         Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
-                    "cargo check -p {}",
+                    "Check (package: {})",
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -536,7 +536,7 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "cargo check --workspace --all-targets".into(),
+                label: "Check all targets (workspace)".into(),
                 command: "cargo".into(),
                 args: vec!["check".into(), "--workspace".into(), "--all-targets".into()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -544,9 +544,9 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo test -p {} {} -- --nocapture",
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "Test '{}' (package: {})",
                     VariableName::Symbol.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
                 args: vec![
@@ -563,9 +563,9 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo test -p {} {}",
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "Test '{}' (package: {})",
                     VariableName::Stem.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
                 args: vec![
@@ -580,10 +580,10 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo run -p {} --{} {}",
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "Run {} {} (package: {})",
                     RUST_BIN_KIND_TASK_VARIABLE.template_value(),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
+                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
                 args: vec![
@@ -599,7 +599,7 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo test -p {}",
+                    "Test (package: {})",
                     RUST_PACKAGE_TASK_VARIABLE.template_value()
                 ),
                 command: "cargo".into(),
@@ -612,14 +612,14 @@ impl ContextProvider for RustContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "cargo run".into(),
+                label: "Run".into(),
                 command: "cargo".into(),
                 args: run_task_args,
                 cwd: Some("$ZED_DIRNAME".to_owned()),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
-                label: "cargo clean".into(),
+                label: "Clean".into(),
                 command: "cargo".into(),
                 args: vec!["clean".into()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -813,7 +813,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{BorrowAppContext, Context, Hsla, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
@@ -1042,7 +1042,7 @@ mod tests {
 
         let language = crate::language("rust", tree_sitter_rust::LANGUAGE.into());
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // indent between braces

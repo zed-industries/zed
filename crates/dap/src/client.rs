@@ -8,7 +8,7 @@ use dap_types::{
     requests::Request,
 };
 use futures::{channel::oneshot, select, FutureExt as _};
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor};
+use gpui::{App, AsyncApp, BackgroundExecutor};
 use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,
@@ -53,7 +53,7 @@ impl DebugAdapterClient {
         id: DebugAdapterClientId,
         adapter: Arc<dyn DebugAdapter>,
         binary: DebugAdapterBinary,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Self {
         let transport_delegate = TransportDelegate::new(adapter.transport());
 
@@ -67,9 +67,9 @@ impl DebugAdapterClient {
         }
     }
 
-    pub async fn reconnect<F>(&mut self, message_handler: F, cx: &mut AsyncAppContext) -> Result<()>
+    pub async fn reconnect<F>(&mut self, message_handler: F, cx: &mut AsyncApp) -> Result<()>
     where
-        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = self.transport_delegate.reconnect(cx).await?;
         log::info!("Successfully reconnected to debug adapter");
@@ -95,9 +95,9 @@ impl DebugAdapterClient {
         })
     }
 
-    pub async fn start<F>(&mut self, message_handler: F, cx: &mut AsyncAppContext) -> Result<()>
+    pub async fn start<F>(&mut self, message_handler: F, cx: &mut AsyncApp) -> Result<()>
     where
-        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
     {
         let (server_rx, server_tx) = self.transport_delegate.start(&self.binary, cx).await?;
         log::info!("Successfully connected to debug adapter");
@@ -128,10 +128,10 @@ impl DebugAdapterClient {
         server_rx: Receiver<Message>,
         client_tx: Sender<Message>,
         mut event_handler: F,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()>
     where
-        F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
+        F: FnMut(Message, &mut App) + 'static + Send + Sync + Clone,
     {
         let result = loop {
             let message = match server_rx.recv().await {

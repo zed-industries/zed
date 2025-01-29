@@ -82,7 +82,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
     // assert we don't have a debug panel item yet
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
@@ -108,7 +108,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
     // assert we added a debug panel item
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -133,7 +133,7 @@ async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut Test
 
     // assert we don't have a debug panel item anymore because the client shutdown
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
@@ -199,7 +199,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
 
     // assert we don't have a debug panel item yet
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
@@ -225,7 +225,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
 
     // assert we added a debug panel item
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -256,7 +256,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
 
     // assert we added a debug panel item
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -281,7 +281,7 @@ async fn test_we_can_only_have_one_panel_per_debug_thread(
 
     // assert we don't have a debug panel item anymore because the client shutdown
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
@@ -347,7 +347,7 @@ async fn test_client_can_open_multiple_thread_panels(
 
     // assert we don't have a debug panel item yet
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
@@ -373,7 +373,7 @@ async fn test_client_can_open_multiple_thread_panels(
 
     // assert we added a debug panel item
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -404,7 +404,7 @@ async fn test_client_can_open_multiple_thread_panels(
 
     // assert we added a debug panel item and the new one is active
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -429,7 +429,7 @@ async fn test_client_can_open_multiple_thread_panels(
 
     // assert we don't have a debug panel item anymore because the client shutdown
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
 
             debug_panel.update(cx, |this, cx| {
@@ -517,7 +517,7 @@ async fn test_handle_successful_run_in_terminal_reverse_request(
     );
 
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
 
             let panel = terminal_panel.read(cx).pane().unwrap().read(cx);
@@ -623,7 +623,7 @@ async fn test_handle_error_run_in_terminal_reverse_request(
     );
 
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
 
             assert_eq!(
@@ -990,7 +990,7 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let worktree_id = workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             })
@@ -1022,12 +1022,13 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         .await
         .unwrap();
 
-    let (editor, cx) = cx.add_window_view(|cx| {
+    let (editor, cx) = cx.add_window_view(|window, cx| {
         Editor::new(
             EditorMode::Full,
             MultiBuffer::build_from_buffer(buffer, cx),
             Some(project.clone()),
             true,
+            window,
             cx,
         )
     });
@@ -1094,9 +1095,9 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         })
         .await;
 
-    editor.update(cx, |editor, cx| {
-        editor.move_down(&actions::MoveDown, cx);
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_down(&actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
     });
 
     cx.run_until_parked();
@@ -1134,13 +1135,15 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
         })
         .await;
 
-    editor.update(cx, |editor, cx| {
-        editor.move_up(&actions::MoveUp, cx);
-        editor.insert("new text\n", cx);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.move_up(&actions::MoveUp, window, cx);
+        editor.insert("new text\n", window, cx);
     });
 
     editor
-        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .update_in(cx, |editor, window, cx| {
+            editor.save(true, project.clone(), window, cx)
+        })
         .await
         .unwrap();
 
@@ -1181,7 +1184,7 @@ async fn test_it_send_breakpoint_request_if_breakpoint_buffer_is_unopened(
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let worktree_id = workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             })
@@ -1333,7 +1336,7 @@ async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
     });
 
     let (session, client) = task.await.unwrap();
-    let session_id = cx.update(|cx| session.read(cx).id());
+    let session_id = cx.update(|_window, cx| session.read(cx).id());
 
     client
         .on_request::<Initialize, _>(move |_, _| {

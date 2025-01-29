@@ -36,9 +36,7 @@ use dap_adapters::build_adapter;
 use fs::Fs;
 use futures::future::Shared;
 use futures::FutureExt;
-use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SharedString, Task,
-};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
 use language::{
     proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
@@ -97,8 +95,8 @@ pub struct LocalDapStore {
     next_client_id: AtomicUsize,
     next_session_id: AtomicUsize,
     delegate: DapAdapterDelegate,
-    environment: Model<ProjectEnvironment>,
-    sessions: HashMap<DebugSessionId, Model<DebugSession>>,
+    environment: Entity<ProjectEnvironment>,
+    sessions: HashMap<DebugSessionId, Entity<DebugSession>>,
     client_by_session: HashMap<DebugAdapterClientId, DebugSessionId>,
 }
 
@@ -114,7 +112,7 @@ impl LocalDapStore {
     pub fn session_by_client_id(
         &self,
         client_id: &DebugAdapterClientId,
-    ) -> Option<Model<DebugSession>> {
+    ) -> Option<Entity<DebugSession>> {
         self.sessions
             .get(self.client_by_session.get(client_id)?)
             .cloned()
@@ -124,7 +122,7 @@ impl LocalDapStore {
 pub struct RemoteDapStore {
     upstream_client: Option<AnyProtoClient>,
     upstream_project_id: u64,
-    sessions: HashMap<DebugSessionId, Model<DebugSession>>,
+    sessions: HashMap<DebugSessionId, Entity<DebugSession>>,
     client_by_session: HashMap<DebugAdapterClientId, DebugSessionId>,
     event_queue: Option<VecDeque<DapStoreEvent>>,
 }
@@ -133,7 +131,7 @@ impl RemoteDapStore {
     pub fn session_by_client_id(
         &self,
         client_id: &DebugAdapterClientId,
-    ) -> Option<Model<DebugSession>> {
+    ) -> Option<Entity<DebugSession>> {
         self.client_by_session
             .get(client_id)
             .and_then(|session_id| self.sessions.get(session_id).cloned())
@@ -154,30 +152,30 @@ impl DapStore {
     const INDEX_STARTS_AT_ONE: bool = true;
 
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_message_handler(DapStore::handle_remove_active_debug_line);
-        client.add_model_message_handler(DapStore::handle_shutdown_debug_client);
-        client.add_model_message_handler(DapStore::handle_set_active_debug_line);
-        client.add_model_message_handler(DapStore::handle_set_debug_client_capabilities);
-        client.add_model_message_handler(DapStore::handle_set_debug_panel_item);
-        client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
-        client.add_model_message_handler(DapStore::handle_update_debug_adapter);
-        client.add_model_message_handler(DapStore::handle_update_thread_status);
-        client.add_model_message_handler(DapStore::handle_ignore_breakpoint_state);
-        client.add_model_message_handler(DapStore::handle_session_has_shutdown);
+        client.add_model_message_handler(Self::handle_remove_active_debug_line);
+        client.add_model_message_handler(Self::handle_shutdown_debug_client);
+        client.add_model_message_handler(Self::handle_set_active_debug_line);
+        client.add_model_message_handler(Self::handle_set_debug_client_capabilities);
+        client.add_model_message_handler(Self::handle_set_debug_panel_item);
+        client.add_model_message_handler(Self::handle_synchronize_breakpoints);
+        client.add_model_message_handler(Self::handle_update_debug_adapter);
+        client.add_model_message_handler(Self::handle_update_thread_status);
+        client.add_model_message_handler(Self::handle_ignore_breakpoint_state);
+        client.add_model_message_handler(Self::handle_session_has_shutdown);
 
-        client.add_model_request_handler(DapStore::handle_dap_command::<NextCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<StepInCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<StepOutCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<StepBackCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<ContinueCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<PauseCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<DisconnectCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<TerminateThreadsCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<TerminateCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<RestartCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<VariablesCommand>);
-        client.add_model_request_handler(DapStore::handle_dap_command::<RestartStackFrameCommand>);
-        client.add_model_request_handler(DapStore::handle_shutdown_session_request);
+        client.add_model_request_handler(Self::handle_dap_command::<NextCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<StepInCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<StepOutCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<StepBackCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<ContinueCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<PauseCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<DisconnectCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<TerminateThreadsCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<TerminateCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<RestartCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<VariablesCommand>);
+        client.add_model_request_handler(Self::handle_dap_command::<RestartStackFrameCommand>);
+        client.add_model_request_handler(Self::handle_shutdown_session_request);
     }
 
     pub fn new_local(
@@ -185,8 +183,8 @@ impl DapStore {
         node_runtime: NodeRuntime,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
-        environment: Model<ProjectEnvironment>,
-        cx: &mut ModelContext<Self>,
+        environment: Entity<ProjectEnvironment>,
+        cx: &mut Context<Self>,
     ) -> Self {
         cx.on_app_quit(Self::shutdown_sessions).detach();
 
@@ -215,7 +213,7 @@ impl DapStore {
     pub fn new_remote(
         project_id: u64,
         upstream_client: AnyProtoClient,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) -> Self {
         Self {
             mode: DapStoreMode::Remote(RemoteDapStore {
@@ -285,20 +283,17 @@ impl DapStore {
         &mut self,
         session_id: DebugSessionId,
         ignore: Option<bool>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match &mut self.mode {
             DapStoreMode::Remote(remote) => {
-                remote
-                    .sessions
-                    .entry(session_id)
-                    .or_insert(cx.new_model(|_| {
-                        DebugSession::new_remote(
-                            session_id,
-                            "Remote-Debug".to_owned(),
-                            ignore.unwrap_or(false),
-                        )
-                    }));
+                remote.sessions.entry(session_id).or_insert(cx.new(|_| {
+                    DebugSession::new_remote(
+                        session_id,
+                        "Remote-Debug".to_owned(),
+                        ignore.unwrap_or(false),
+                    )
+                }));
             }
             _ => {}
         }
@@ -323,7 +318,7 @@ impl DapStore {
         }
     }
 
-    pub fn remove_session(&mut self, session_id: DebugSessionId, cx: &mut ModelContext<Self>) {
+    pub fn remove_session(&mut self, session_id: DebugSessionId, cx: &mut Context<Self>) {
         match &mut self.mode {
             DapStoreMode::Local(local) => {
                 if let Some(session) = local.sessions.remove(&session_id) {
@@ -344,14 +339,14 @@ impl DapStore {
         }
     }
 
-    pub fn sessions(&self) -> impl Iterator<Item = Model<DebugSession>> + '_ {
+    pub fn sessions(&self) -> impl Iterator<Item = Entity<DebugSession>> + '_ {
         match &self.mode {
             DapStoreMode::Local(local) => local.sessions.values().cloned(),
             DapStoreMode::Remote(remote) => remote.sessions.values().cloned(),
         }
     }
 
-    pub fn session_by_id(&self, session_id: &DebugSessionId) -> Option<Model<DebugSession>> {
+    pub fn session_by_id(&self, session_id: &DebugSessionId) -> Option<Entity<DebugSession>> {
         match &self.mode {
             DapStoreMode::Local(local) => local.sessions.get(session_id).cloned(),
             DapStoreMode::Remote(remote) => remote.sessions.get(session_id).cloned(),
@@ -361,7 +356,7 @@ impl DapStore {
     pub fn session_by_client_id(
         &self,
         client_id: &DebugAdapterClientId,
-    ) -> Option<Model<DebugSession>> {
+    ) -> Option<Entity<DebugSession>> {
         match &self.mode {
             DapStoreMode::Local(local) => local.session_by_client_id(client_id),
             DapStoreMode::Remote(remote) => remote.session_by_client_id(client_id),
@@ -371,8 +366,8 @@ impl DapStore {
     pub fn client_by_id(
         &self,
         client_id: &DebugAdapterClientId,
-        cx: &ModelContext<Self>,
-    ) -> Option<(Model<DebugSession>, Arc<DebugAdapterClient>)> {
+        cx: &Context<Self>,
+    ) -> Option<(Entity<DebugSession>, Arc<DebugAdapterClient>)> {
         let local_session = self.session_by_client_id(client_id)?;
         let client = local_session.read(cx).as_local()?.client_by_id(client_id)?;
 
@@ -391,7 +386,7 @@ impl DapStore {
         session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
         capabilities: &Capabilities,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(old_capabilities) = self.capabilities.get_mut(client_id) {
             *old_capabilities = old_capabilities.merge(capabilities.clone());
@@ -422,7 +417,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         project_path: &ProjectPath,
         row: u32,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.active_debug_line = Some((*client_id, project_path.clone(), row));
         cx.emit(DapStoreEvent::ActiveDebugLineChanged);
@@ -432,7 +427,7 @@ impl DapStore {
     pub fn remove_active_debug_line_for_client(
         &mut self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(active_line) = &self.active_debug_line {
             if active_line.0 == *client_id {
@@ -460,9 +455,9 @@ impl DapStore {
     }
 
     async fn handle_session_has_shutdown(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::DebuggerSessionEnded>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.remove_session(DebugSessionId::from_proto(envelope.payload.session_id), cx);
@@ -472,9 +467,9 @@ impl DapStore {
     }
 
     async fn handle_ignore_breakpoint_state(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::IgnoreBreakpointState>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let session_id = DebugSessionId::from_proto(envelope.payload.session_id);
 
@@ -493,7 +488,7 @@ impl DapStore {
         &mut self,
         session_id: &DebugSessionId,
         ignore: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(session) = self.session_by_id(session_id) {
             session.update(cx, |session, cx| {
@@ -502,7 +497,7 @@ impl DapStore {
         }
     }
 
-    pub fn ignore_breakpoints(&self, session_id: &DebugSessionId, cx: &AppContext) -> bool {
+    pub fn ignore_breakpoints(&self, session_id: &DebugSessionId, cx: &App) -> bool {
         self.session_by_id(session_id)
             .map(|session| session.read(cx).ignore_breakpoints())
             .unwrap_or_default()
@@ -511,7 +506,7 @@ impl DapStore {
     pub fn toggle_ignore_breakpoints(
         &mut self,
         session_id: &DebugSessionId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         if let Some(session) = self.session_by_id(session_id) {
             session.update(cx, |session, cx| {
@@ -537,8 +532,8 @@ impl DapStore {
     pub fn on_open_buffer(
         &mut self,
         project_path: &ProjectPath,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
     ) {
         let entry = self.breakpoints.remove(project_path).unwrap_or_default();
         let mut set_bp: HashSet<Breakpoint> = HashSet::default();
@@ -577,8 +572,8 @@ impl DapStore {
 
     pub fn sync_open_breakpoints_to_closed_breakpoints(
         &mut self,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Self>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
     ) {
         let Some(project_path) = buffer.read(cx).project_path(cx) else {
             return;
@@ -604,7 +599,7 @@ impl DapStore {
         adapter: Arc<dyn DebugAdapter>,
         binary: DebugAdapterBinary,
         config: DebugAdapterConfig,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if !adapter.supports_attach() && matches!(config.request, DebugRequestType::Attach(_)) {
             return Task::ready(Err(anyhow!(
@@ -674,7 +669,7 @@ impl DapStore {
         &mut self,
         session_id: DebugSessionId,
         config: DebugAdapterConfig,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Arc<DebugAdapterClient>>> {
         let Some(local_store) = self.as_local_mut() else {
             return Task::ready(Err(anyhow!("cannot start client on remote side")));
@@ -760,8 +755,8 @@ impl DapStore {
     pub fn start_debug_session(
         &mut self,
         config: DebugAdapterConfig,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Model<DebugSession>, Arc<DebugAdapterClient>)>> {
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Entity<DebugSession>, Arc<DebugAdapterClient>)>> {
         let Some(local_store) = self.as_local() else {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
         };
@@ -770,7 +765,7 @@ impl DapStore {
         let start_client_task = self.start_client_internal(session_id, config.clone(), cx);
 
         cx.spawn(|this, mut cx| async move {
-            let session = cx.new_model(|_| DebugSession::new_local(session_id, config))?;
+            let session = cx.new(|_| DebugSession::new_local(session_id, config))?;
 
             let client = match start_client_task.await {
                 Ok(client) => client,
@@ -810,7 +805,7 @@ impl DapStore {
         &mut self,
         session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!(
@@ -855,7 +850,7 @@ impl DapStore {
         &mut self,
         session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((session, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!(
@@ -898,7 +893,7 @@ impl DapStore {
         session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
         process_id: u32,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((session, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!(
@@ -939,7 +934,7 @@ impl DapStore {
     pub fn modules(
         &mut self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Module>>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Client was not found")));
@@ -967,7 +962,7 @@ impl DapStore {
     pub fn loaded_sources(
         &mut self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Source>>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Client was not found")));
@@ -993,7 +988,7 @@ impl DapStore {
         &mut self,
         client_id: &DebugAdapterClientId,
         thread_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<StackFrame>>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Client was not found")));
@@ -1016,7 +1011,7 @@ impl DapStore {
         &mut self,
         client_id: &DebugAdapterClientId,
         stack_frame_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if !self
             .capabilities_by_id(client_id)
@@ -1033,7 +1028,7 @@ impl DapStore {
         &mut self,
         client_id: &DebugAdapterClientId,
         stack_frame_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Scope>>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Client was not found")));
@@ -1052,7 +1047,7 @@ impl DapStore {
     pub fn configuration_done(
         &self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
@@ -1079,7 +1074,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         seq: u64,
         args: Option<StartDebuggingRequestArguments>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((session, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!(
@@ -1210,7 +1205,7 @@ impl DapStore {
         success: bool,
         seq: u64,
         body: Option<Value>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!(
@@ -1237,7 +1232,7 @@ impl DapStore {
         &self,
         client_id: &DebugAdapterClientId,
         thread_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<ContinueResponse>> {
         let command = ContinueCommand {
             args: ContinueArguments {
@@ -1253,7 +1248,7 @@ impl DapStore {
         &self,
         client_id: &DebugAdapterClientId,
         request: R,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
@@ -1294,7 +1289,7 @@ impl DapStore {
         upstream_project_id: u64,
         client_id: &DebugAdapterClientId,
         request: R,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<R::Response>> {
         let message = request.to_proto(&client_id, upstream_project_id);
         cx.background_executor().spawn(async move {
@@ -1308,7 +1303,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         thread_id: u64,
         granularity: SteppingGranularity,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let capabilities = self.capabilities_by_id(client_id);
         let supports_single_thread_execution_requests = capabilities
@@ -1334,7 +1329,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         thread_id: u64,
         granularity: SteppingGranularity,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let capabilities = self.capabilities_by_id(client_id);
         let supports_single_thread_execution_requests = capabilities
@@ -1360,7 +1355,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         thread_id: u64,
         granularity: SteppingGranularity,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let capabilities = self.capabilities_by_id(client_id);
         let supports_single_thread_execution_requests = capabilities
@@ -1386,7 +1381,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         thread_id: u64,
         granularity: SteppingGranularity,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let capabilities = self.capabilities_by_id(client_id);
         if !capabilities.supports_step_back.unwrap_or_default() {
@@ -1419,7 +1414,7 @@ impl DapStore {
         scope_id: u64,
         session_id: DebugSessionId,
         variables_reference: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Variable>>> {
         let command = VariablesCommand {
             stack_frame_id,
@@ -1443,7 +1438,7 @@ impl DapStore {
         expression: String,
         context: EvaluateArgumentsContext,
         source: Option<Source>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<EvaluateResponse>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
@@ -1470,7 +1465,7 @@ impl DapStore {
         stack_frame_id: u64,
         text: String,
         completion_column: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CompletionItem>>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
@@ -1498,7 +1493,7 @@ impl DapStore {
         name: String,
         value: String,
         evaluate_name: Option<String>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
@@ -1538,7 +1533,7 @@ impl DapStore {
         &mut self,
         client_id: &DebugAdapterClientId,
         thread_id: u64,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.request_dap(client_id, PauseCommand { thread_id }, cx)
     }
@@ -1548,7 +1543,7 @@ impl DapStore {
         session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
         thread_ids: Option<Vec<u64>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if self
             .capabilities_by_id(client_id)
@@ -1564,7 +1559,7 @@ impl DapStore {
     pub fn disconnect_client(
         &mut self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let command = DisconnectCommand {
             restart: Some(false),
@@ -1579,7 +1574,7 @@ impl DapStore {
         &mut self,
         client_id: &DebugAdapterClientId,
         args: Option<Value>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let supports_restart = self
             .capabilities_by_id(client_id)
@@ -1603,7 +1598,7 @@ impl DapStore {
         }
     }
 
-    pub fn shutdown_sessions(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
+    pub fn shutdown_sessions(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let Some(local_store) = self.as_local() else {
             if let Some((upstream_client, project_id)) = self.upstream_client() {
                 return cx.background_executor().spawn(async move {
@@ -1635,7 +1630,7 @@ impl DapStore {
     pub fn shutdown_session(
         &mut self,
         session_id: &DebugSessionId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(local_store) = self.as_local_mut() else {
             if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -1685,9 +1680,9 @@ impl DapStore {
 
     fn shutdown_client(
         &mut self,
-        session: &Model<DebugSession>,
+        session: &Entity<DebugSession>,
         client: Arc<DebugAdapterClient>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(local_store) = self.as_local_mut() else {
             return Task::ready(Err(anyhow!("Cannot shutdown client on remote side")));
@@ -1736,7 +1731,7 @@ impl DapStore {
     pub fn set_debug_sessions_from_proto(
         &mut self,
         debug_sessions: Vec<proto::DebuggerSession>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         for session in debug_sessions.into_iter() {
             let session_id = DebugSessionId::from_proto(session.session_id);
@@ -1774,7 +1769,7 @@ impl DapStore {
     pub fn set_breakpoints_from_proto(
         &mut self,
         breakpoints: Vec<proto::SynchronizeBreakpoints>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut new_breakpoints = BTreeMap::new();
         for project_breakpoints in breakpoints {
@@ -1797,9 +1792,9 @@ impl DapStore {
     }
 
     async fn handle_shutdown_session_request(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::DapShutdownSession>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         if let Some(session_id) = envelope.payload.session_id {
             this.update(&mut cx, |dap_store, cx| {
@@ -1815,9 +1810,9 @@ impl DapStore {
     }
 
     async fn handle_dap_command<T: DapCommand>(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<T::ProtoRequest>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
     where
         <T::DapRequest as dap::requests::Request>::Arguments: Send,
@@ -1837,9 +1832,9 @@ impl DapStore {
     }
 
     async fn handle_synchronize_breakpoints(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBreakpoints>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let project_path = ProjectPath::from_proto(
             envelope
@@ -1872,9 +1867,9 @@ impl DapStore {
     }
 
     async fn handle_set_debug_panel_item(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::SetDebuggerPanelItem>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(DapStoreEvent::SetDebugPanelItem(envelope.payload));
@@ -1882,9 +1877,9 @@ impl DapStore {
     }
 
     async fn handle_update_debug_adapter(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateDebugAdapter>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(DapStoreEvent::UpdateDebugAdapter(envelope.payload));
@@ -1892,9 +1887,9 @@ impl DapStore {
     }
 
     async fn handle_update_thread_status(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateThreadStatus>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(DapStoreEvent::UpdateThreadStatus(envelope.payload));
@@ -1902,9 +1897,9 @@ impl DapStore {
     }
 
     async fn handle_set_debug_client_capabilities(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::SetDebugClientCapabilities>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |dap_store, cx| {
             dap_store.update_capabilities_for_client(
@@ -1917,9 +1912,9 @@ impl DapStore {
     }
 
     async fn handle_shutdown_debug_client(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::ShutdownDebugClient>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |dap_store, cx| {
             let client_id = DebugAdapterClientId::from_proto(envelope.payload.client_id);
@@ -1932,9 +1927,9 @@ impl DapStore {
     }
 
     async fn handle_set_active_debug_line(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::SetActiveDebugLine>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let project_path = ProjectPath::from_proto(
             envelope
@@ -1956,9 +1951,9 @@ impl DapStore {
     }
 
     async fn handle_remove_active_debug_line(
-        this: Model<Self>,
+        this: Entity<Self>,
         _: TypedEnvelope<proto::RemoveActiveDebugLine>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |store, cx| {
             store.active_debug_line.take();
@@ -1973,7 +1968,7 @@ impl DapStore {
         project_path: &ProjectPath,
         mut breakpoint: Breakpoint,
         edit_action: BreakpointEditAction,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let upstream_client = self.upstream_client();
 
@@ -2027,7 +2022,7 @@ impl DapStore {
         mut breakpoints: Vec<SourceBreakpoint>,
         ignore: bool,
         source_changed: bool,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
@@ -2068,7 +2063,7 @@ impl DapStore {
         absolute_path: PathBuf,
         buffer_snapshot: Option<BufferSnapshot>,
         source_changed: bool,
-        cx: &ModelContext<Self>,
+        cx: &Context<Self>,
     ) -> Task<Result<()>> {
         let Some(local_store) = self.as_local() else {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
@@ -2116,7 +2111,7 @@ impl DapStore {
         &mut self,
         project_id: u64,
         downstream_client: AnyProtoClient,
-        _: &mut ModelContext<Self>,
+        _: &mut Context<Self>,
     ) {
         self.downstream_client = Some((downstream_client.clone(), project_id));
 
@@ -2134,7 +2129,7 @@ impl DapStore {
         }
     }
 
-    pub fn unshared(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn unshared(&mut self, cx: &mut Context<Self>) {
         self.downstream_client.take();
 
         cx.notify();

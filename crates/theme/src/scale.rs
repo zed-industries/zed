@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AppContext, Hsla, SharedString};
+use gpui::{App, Hsla, SharedString};
 
 use crate::{ActiveTheme, Appearance};
 
@@ -282,14 +282,14 @@ impl ColorScaleSet {
         &self.dark_alpha
     }
 
-    pub fn step(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
+    pub fn step(&self, cx: &App, step: ColorScaleStep) -> Hsla {
         match cx.theme().appearance {
             Appearance::Light => self.light().step(step),
             Appearance::Dark => self.dark().step(step),
         }
     }
 
-    pub fn step_alpha(&self, cx: &AppContext, step: ColorScaleStep) -> Hsla {
+    pub fn step_alpha(&self, cx: &App, step: ColorScaleStep) -> Hsla {
         match cx.theme().appearance {
             Appearance::Light => self.light_alpha.step(step),
             Appearance::Dark => self.dark_alpha.step(step),

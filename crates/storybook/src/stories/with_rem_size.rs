@@ -6,7 +6,7 @@ use ui::{prelude::*, utils::WithRemSize};
 pub struct WithRemSizeStory;
 
 impl Render for WithRemSizeStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container().child(
             Example::new(16., gpui::red())
                 .child(
@@ -47,7 +47,7 @@ impl ParentElement for Example {
 }
 
 impl RenderOnce for Example {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         WithRemSize::new(self.rem_size).child(
             v_flex()
                 .gap_2()

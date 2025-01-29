@@ -6,9 +6,8 @@ use dap::{
 };
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
-    actions, anchored, deferred, list, AnyElement, ClipboardItem, DismissEvent, FocusHandle,
-    FocusableView, Hsla, ListOffset, ListState, Model, MouseDownEvent, Point, Subscription, Task,
-    View,
+    actions, anchored, deferred, list, AnyElement, ClipboardItem, Context, DismissEvent, Entity,
+    FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::dap_store::DapStore;
@@ -331,41 +330,47 @@ type ScopeId = u64;
 pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
-    dap_store: Model<DapStore>,
+    dap_store: Entity<DapStore>,
     session_id: DebugSessionId,
     open_entries: Vec<OpenEntry>,
     client_id: DebugAdapterClientId,
-    set_variable_editor: View<Editor>,
+    set_variable_editor: Entity<Editor>,
     _subscriptions: Vec<Subscription>,
     selection: Option<VariableListEntry>,
-    stack_frame_list: View<StackFrameList>,
+    stack_frame_list: Entity<StackFrameList>,
     scopes: HashMap<StackFrameId, Vec<Scope>>,
     set_variable_state: Option<SetVariableState>,
     fetch_variables_task: Option<Task<Result<()>>>,
     entries: HashMap<StackFrameId, Vec<VariableListEntry>>,
     variables: BTreeMap<(StackFrameId, ScopeId), ScopeVariableIndex>,
-    open_context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
+    open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 impl VariableList {
     pub fn new(
-        stack_frame_list: &View<StackFrameList>,
-        dap_store: Model<DapStore>,
+        stack_frame_list: &Entity<StackFrameList>,
+        dap_store: Entity<DapStore>,
         client_id: &DebugAdapterClientId,
         session_id: &DebugSessionId,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let weakview = cx.view().downgrade();
+        let weak_variable_list = cx.weak_entity();
         let focus_handle = cx.focus_handle();
 
-        let list = ListState::new(0, gpui::ListAlignment::Top, px(1000.), move |ix, cx| {
-            weakview
-                .upgrade()
-                .map(|view| view.update(cx, |this, cx| this.render_entry(ix, cx)))
-                .unwrap_or(div().into_any())
-        });
+        let list = ListState::new(
+            0,
+            gpui::ListAlignment::Top,
+            px(1000.),
+            move |ix, _window, cx| {
+                weak_variable_list
+                    .upgrade()
+                    .map(|var_list| var_list.update(cx, |this, cx| this.render_entry(ix, cx)))
+                    .unwrap_or(div().into_any())
+            },
+        );
 
-        let set_variable_editor = cx.new_view(Editor::single_line);
+        let set_variable_editor = cx.new(|cx| Editor::single_line(window, cx));
 
         cx.subscribe(
             &set_variable_editor,
@@ -432,7 +437,7 @@ impl VariableList {
     pub(crate) fn set_from_proto(
         &mut self,
         state: &proto::DebuggerVariableList,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.variables = state
             .variables
@@ -501,9 +506,9 @@ impl VariableList {
 
     fn handle_stack_frame_list_events(
         &mut self,
-        _: View<StackFrameList>,
+        _: Entity<StackFrameList>,
         event: &StackFrameListEvent,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged => {
@@ -552,7 +557,7 @@ impl VariableList {
             .collect()
     }
 
-    pub fn completion_variables(&self, cx: &mut ViewContext<Self>) -> Vec<VariableContainer> {
+    pub fn completion_variables(&self, cx: &mut Context<Self>) -> Vec<VariableContainer> {
         let stack_frame_id = self.stack_frame_list.read(cx).first_stack_frame_id();
 
         self.variables
@@ -561,7 +566,7 @@ impl VariableList {
             .collect()
     }
 
-    fn render_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
         let Some(entries) = self.entries.get(&stack_frame_id) else {
@@ -599,7 +604,7 @@ impl VariableList {
         scope_id: u64,
         variable: &Variable,
         depth: usize,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
@@ -663,7 +668,7 @@ impl VariableList {
         }))
     }
 
-    pub fn toggle_entry(&mut self, entry_id: &OpenEntry, cx: &mut ViewContext<Self>) {
+    pub fn toggle_entry(&mut self, entry_id: &OpenEntry, cx: &mut Context<Self>) {
         match self.open_entries.binary_search(&entry_id) {
             Ok(ix) => {
                 self.open_entries.remove(ix);
@@ -680,7 +685,7 @@ impl VariableList {
         &mut self,
         open_first_scope: bool,
         keep_open_entries: bool,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
@@ -830,7 +835,7 @@ impl VariableList {
         container_reference: u64,
         depth: usize,
         open_entries: &Vec<OpenEntry>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<Vec<VariableContainer>>> {
         let stack_frame_list = self.stack_frame_list.read(cx);
         let thread_id = stack_frame_list.thread_id();
@@ -891,7 +896,7 @@ impl VariableList {
         &self,
         stack_frame_id: u64,
         open_entries: &Vec<OpenEntry>,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<Scope>, HashMap<u64, Vec<VariableContainer>>)>> {
         let scopes_task = self.dap_store.update(cx, |store, cx| {
             store.scopes(&self.client_id, stack_frame_id, cx)
@@ -917,7 +922,7 @@ impl VariableList {
         })
     }
 
-    fn fetch_variables(&mut self, cx: &mut ViewContext<Self>) {
+    fn fetch_variables(&mut self, cx: &mut Context<Self>) {
         if self.dap_store.read(cx).upstream_client().is_some() {
             return;
         }
@@ -996,10 +1001,9 @@ impl VariableList {
         scope: &Scope,
         variable: &Variable,
         position: Point<Pixels>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        let this = cx.view().clone();
-
         let support_set_variable = self
             .dap_store
             .read(cx)
@@ -1007,67 +1011,60 @@ impl VariableList {
             .supports_set_variable
             .unwrap_or_default();
 
-        let context_menu = ContextMenu::build(cx, |menu, cx| {
-            menu.entry(
-                "Copy name",
-                None,
-                cx.handler_for(&this, {
-                    let variable_name = variable.name.clone();
-                    move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
-                    }
-                }),
-            )
-            .entry(
-                "Copy value",
-                None,
-                cx.handler_for(&this, {
-                    let variable_value = variable.value.clone();
-                    let variable_name = variable.name.clone();
-                    let evaluate_name = variable.evaluate_name.clone();
-                    let source = scope.source.clone();
-                    move |this, cx| {
-                        this.dap_store.update(cx, |dap_store, cx| {
-                            if dap_store
-                                .capabilities_by_id(&this.client_id)
-                                .supports_clipboard_context
-                                .unwrap_or_default()
-                            {
-                                let task = dap_store.evaluate(
-                                    &this.client_id,
-                                    this.stack_frame_list.read(cx).current_stack_frame_id(),
-                                    evaluate_name.clone().unwrap_or(variable_name.clone()),
-                                    dap::EvaluateArgumentsContext::Clipboard,
-                                    source.clone(),
-                                    cx,
-                                );
+        let this = cx.entity();
 
-                                cx.spawn(|_, cx| async move {
-                                    let response = task.await?;
+        let context_menu = ContextMenu::build(window, cx, |menu, window, _cx| {
+            menu.entry("Copy name", None, {
+                let variable_name = variable.name.clone();
+                move |_window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(variable_name.clone()))
+                }
+            })
+            .entry("Copy value", None, {
+                let source = scope.source.clone();
+                let variable_value = variable.value.clone();
+                let variable_name = variable.name.clone();
+                let evaluate_name = variable.evaluate_name.clone();
 
-                                    cx.update(|cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            response.result,
-                                        ))
-                                    })
+                window.handler_for(&this.clone(), move |this, _window, cx| {
+                    this.dap_store.update(cx, |dap_store, cx| {
+                        if dap_store
+                            .capabilities_by_id(&this.client_id)
+                            .supports_clipboard_context
+                            .unwrap_or_default()
+                        {
+                            let task = dap_store.evaluate(
+                                &this.client_id,
+                                this.stack_frame_list.read(cx).current_stack_frame_id(),
+                                evaluate_name.clone().unwrap_or(variable_name.clone()),
+                                dap::EvaluateArgumentsContext::Clipboard,
+                                source.clone(),
+                                cx,
+                            );
+
+                            cx.spawn(|_, cx| async move {
+                                let response = task.await?;
+
+                                cx.update(|cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        response.result,
+                                    ))
                                 })
-                                .detach_and_log_err(cx);
-                            } else {
-                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                    variable_value.clone(),
-                                ))
-                            }
-                        });
-                    }
-                }),
-            )
+                            })
+                            .detach_and_log_err(cx);
+                        } else {
+                            cx.write_to_clipboard(ClipboardItem::new_string(variable_value.clone()))
+                        }
+                    });
+                })
+            })
             .when_some(
                 variable.memory_reference.clone(),
                 |menu, memory_reference| {
                     menu.entry(
                         "Copy memory reference",
                         None,
-                        cx.handler_for(&this, move |_, cx| {
+                        window.handler_for(&this, move |_, _window, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(
                                 memory_reference.clone(),
                             ))
@@ -1075,14 +1072,14 @@ impl VariableList {
                     )
                 },
             )
-            .when(support_set_variable, move |menu| {
+            .when(support_set_variable, |menu| {
                 let variable = variable.clone();
                 let scope = scope.clone();
 
                 menu.entry(
                     "Set value",
                     None,
-                    cx.handler_for(&this, move |this, cx| {
+                    window.handler_for(&this, move |this, window, cx| {
                         this.set_variable_state = Some(SetVariableState {
                             parent_variables_reference,
                             name: variable.name.clone(),
@@ -1093,9 +1090,9 @@ impl VariableList {
                         });
 
                         this.set_variable_editor.update(cx, |editor, cx| {
-                            editor.set_text(variable.value.clone(), cx);
-                            editor.select_all(&SelectAll, cx);
-                            editor.focus(cx);
+                            editor.set_text(variable.value.clone(), window, cx);
+                            editor.select_all(&SelectAll, window, cx);
+                            window.focus(&editor.focus_handle(cx))
                         });
 
                         this.build_entries(false, true, cx);
@@ -1104,22 +1101,25 @@ impl VariableList {
             })
         });
 
-        cx.focus_view(&context_menu);
-        let subscription =
-            cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+        cx.focus_view(&context_menu, window);
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _entity, _event: &DismissEvent, window, cx| {
                 if this.open_context_menu.as_ref().is_some_and(|context_menu| {
-                    context_menu.0.focus_handle(cx).contains_focused(cx)
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
                 }) {
-                    cx.focus_self();
+                    cx.focus_self(window);
                 }
                 this.open_context_menu.take();
                 cx.notify();
-            });
+            },
+        );
 
         self.open_context_menu = Some((context_menu, position, subscription));
     }
 
-    fn cancel_set_variable_value(&mut self, cx: &mut ViewContext<Self>) {
+    fn cancel_set_variable_value(&mut self, cx: &mut Context<Self>) {
         if self.set_variable_state.take().is_none() {
             return;
         };
@@ -1127,11 +1127,11 @@ impl VariableList {
         self.build_entries(false, true, cx);
     }
 
-    fn set_variable_value(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    fn set_variable_value(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let new_variable_value = self.set_variable_editor.update(cx, |editor, cx| {
             let new_variable_value = editor.text(cx);
 
-            editor.clear(cx);
+            editor.clear(window, cx);
 
             new_variable_value
         });
@@ -1158,24 +1158,24 @@ impl VariableList {
             )
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             set_value_task.await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.build_entries(false, true, cx);
-                this.invalidate(cx);
+                this.invalidate(window, cx);
             })
         })
         .detach_and_log_err(cx);
     }
 
-    pub fn invalidate(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn invalidate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
-            stack_frame_list.invalidate(cx);
+            stack_frame_list.invalidate(window, cx);
         });
     }
 
-    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
         if let Some(entries) = self.entries.get(&stack_frame_id) {
             self.selection = entries.first().cloned();
@@ -1183,7 +1183,7 @@ impl VariableList {
         };
     }
 
-    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
         if let Some(entries) = self.entries.get(&stack_frame_id) {
             self.selection = entries.last().cloned();
@@ -1191,7 +1191,7 @@ impl VariableList {
         };
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selection) = &self.selection {
             let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
             if let Some(entries) = self.entries.get(&stack_frame_id) {
@@ -1201,11 +1201,11 @@ impl VariableList {
                 }
             }
         } else {
-            self.select_first(&SelectFirst, cx);
+            self.select_first(&SelectFirst, window, cx);
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(selection) = &self.selection {
             let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
             if let Some(entries) = self.entries.get(&stack_frame_id) {
@@ -1215,11 +1215,16 @@ impl VariableList {
                 }
             }
         } else {
-            self.select_first(&SelectFirst, cx);
+            self.select_first(&SelectFirst, window, cx);
         }
     }
 
-    fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
+    fn collapse_selected_entry(
+        &mut self,
+        _: &CollapseSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(selection) = &self.selection {
             match selection {
                 VariableListEntry::Scope(scope) => {
@@ -1228,7 +1233,7 @@ impl VariableList {
                     };
 
                     if self.open_entries.binary_search(entry_id).is_err() {
-                        self.select_prev(&SelectPrev, cx);
+                        self.select_prev(&SelectPrev, window, cx);
                     } else {
                         self.toggle_entry(entry_id, cx);
                     }
@@ -1246,7 +1251,7 @@ impl VariableList {
                     };
 
                     if self.open_entries.binary_search(entry_id).is_err() {
-                        self.select_prev(&SelectPrev, cx);
+                        self.select_prev(&SelectPrev, window, cx);
                     } else {
                         self.toggle_variable(
                             scope.variables_reference,
@@ -1261,7 +1266,12 @@ impl VariableList {
         }
     }
 
-    fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
+    fn expand_selected_entry(
+        &mut self,
+        _: &ExpandSelectedEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(selection) = &self.selection {
             match selection {
                 VariableListEntry::Scope(scope) => {
@@ -1270,7 +1280,7 @@ impl VariableList {
                     };
 
                     if self.open_entries.binary_search(entry_id).is_ok() {
-                        self.select_next(&SelectNext, cx);
+                        self.select_next(&SelectNext, window, cx);
                     } else {
                         self.toggle_entry(entry_id, cx);
                     }
@@ -1288,7 +1298,7 @@ impl VariableList {
                     };
 
                     if self.open_entries.binary_search(entry_id).is_ok() {
-                        self.select_next(&SelectNext, cx);
+                        self.select_next(&SelectNext, window, cx);
                     } else {
                         self.toggle_variable(
                             scope.variables_reference,
@@ -1307,7 +1317,7 @@ impl VariableList {
         &self,
         depth: usize,
         state: &SetVariableState,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         div()
             .h_4()
@@ -1328,14 +1338,14 @@ impl VariableList {
         scope_id: u64,
         variable: &Variable,
         depth: usize,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.toggle_variable(scope_id, variable, depth, cx);
     }
 
     #[track_caller]
     #[cfg(any(test, feature = "test-support"))]
-    pub fn assert_visual_entries(&self, expected: Vec<&str>, cx: &ViewContext<Self>) {
+    pub fn assert_visual_entries(&self, expected: Vec<&str>, cx: &Context<Self>) {
         const INDENT: &'static str = "    ";
 
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
@@ -1407,7 +1417,7 @@ impl VariableList {
         depth: usize,
         has_children: bool,
         is_selected: bool,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let scope_id = scope.variables_reference;
         let entry_id = OpenEntry::Variable {
@@ -1444,7 +1454,7 @@ impl VariableList {
             .on_click(cx.listener({
                 let scope = scope.clone();
                 let variable = variable.clone();
-                move |this, _, cx| {
+                move |this, _, _window, cx| {
                     this.selection = Some(VariableListEntry::Variable {
                         depth,
                         has_children,
@@ -1468,18 +1478,21 @@ impl VariableList {
                 .when(has_children, |list_item| {
                     list_item.on_toggle(cx.listener({
                         let variable = variable.clone();
-                        move |this, _, cx| this.toggle_variable(scope_id, &variable, depth, cx)
+                        move |this, _, _window, cx| {
+                            this.toggle_variable(scope_id, &variable, depth, cx)
+                        }
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
                     let scope = scope.clone();
                     let variable = variable.clone();
-                    move |this, event: &MouseDownEvent, cx| {
+                    move |this, event: &MouseDownEvent, window, cx| {
                         this.deploy_variable_context_menu(
                             container_reference,
                             &scope,
                             &variable,
                             event.position,
+                            window,
                             cx,
                         )
                     }
@@ -1500,12 +1513,7 @@ impl VariableList {
             .into_any()
     }
 
-    fn render_scope(
-        &self,
-        scope: &Scope,
-        is_selected: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> AnyElement {
+    fn render_scope(&self, scope: &Scope, is_selected: bool, cx: &mut Context<Self>) -> AnyElement {
         let element_id = scope.variables_reference;
 
         let entry_id = OpenEntry::Scope {
@@ -1537,7 +1545,7 @@ impl VariableList {
             .hover(|style| style.bg(bg_hover_color))
             .on_click(cx.listener({
                 let scope = scope.clone();
-                move |this, _, cx| {
+                move |this, _, _window, cx| {
                     this.selection = Some(VariableListEntry::Scope(scope.clone()));
                     cx.notify();
                 }
@@ -1552,21 +1560,23 @@ impl VariableList {
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .toggle(disclosed)
-                .on_toggle(cx.listener(move |this, _, cx| this.toggle_entry(&entry_id, cx)))
+                .on_toggle(
+                    cx.listener(move |this, _, _window, cx| this.toggle_entry(&entry_id, cx)),
+                )
                 .child(div().text_ui(cx).w_full().child(scope.name.clone())),
             )
             .into_any()
     }
 }
 
-impl FocusableView for VariableList {
-    fn focus_handle(&self, _: &gpui::AppContext) -> gpui::FocusHandle {
+impl Focusable for VariableList {
+    fn focus_handle(&self, _: &App) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
 }
 
 impl Render for VariableList {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("VariableList")
             .id("variable-list")
@@ -1579,9 +1589,11 @@ impl Render for VariableList {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::expand_selected_entry))
             .on_action(cx.listener(Self::collapse_selected_entry))
-            .on_action(cx.listener(|this, _: &editor::actions::Cancel, cx| {
-                this.cancel_set_variable_value(cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &editor::actions::Cancel, _window, cx| {
+                    this.cancel_set_variable_value(cx)
+                }),
+            )
             .child(list(self.list.clone()).gap_1_5().size_full())
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
@@ -1601,7 +1613,7 @@ struct EntryColors {
     marked_active: Hsla,
 }
 
-fn get_entry_color(cx: &ViewContext<VariableList>) -> EntryColors {
+fn get_entry_color(cx: &Context<VariableList>) -> EntryColors {
     let colors = cx.theme().colors();
 
     EntryColors {

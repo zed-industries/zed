@@ -3,7 +3,7 @@ use arrayvec::ArrayString;
 use fs::{Fs, MTime};
 use futures::{stream::StreamExt, TryFutureExt};
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Model, Task};
+use gpui::{App, Entity, Task};
 use heed::{
     types::{SerdeBincode, Str},
     RoTxn,
@@ -79,7 +79,7 @@ struct SummarizeFiles {
 }
 
 pub struct SummaryIndex {
-    worktree: Model<Worktree>,
+    worktree: Entity<Worktree>,
     fs: Arc<dyn Fs>,
     db_connection: heed::Env,
     file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>, // Key: file path. Val: BLAKE3 digest of its contents.
@@ -100,7 +100,7 @@ struct MightNeedSummaryFiles {
 
 impl SummaryIndex {
     pub fn new(
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         file_digest_db: heed::Database<Str, SerdeBincode<FileDigest>>,
@@ -129,7 +129,7 @@ impl SummaryIndex {
     pub fn index_entries_changed_on_disk(
         &self,
         is_auto_available: bool,
-        cx: &AppContext,
+        cx: &App,
     ) -> impl Future<Output = Result<()>> {
         let start = Instant::now();
         let backlogged;
@@ -192,7 +192,7 @@ impl SummaryIndex {
         &mut self,
         updated_entries: UpdatedEntriesSet,
         is_auto_available: bool,
-        cx: &AppContext,
+        cx: &App,
     ) -> impl Future<Output = Result<()>> {
         let start = Instant::now();
         let backlogged;
@@ -249,7 +249,7 @@ impl SummaryIndex {
     fn check_summary_cache(
         &self,
         might_need_summary: channel::Receiver<UnsummarizedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> NeedsSummary {
         let db_connection = self.db_connection.clone();
         let db = self.summary_db;
@@ -286,7 +286,7 @@ impl SummaryIndex {
         }
     }
 
-    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> Backlogged {
+    fn scan_entries(&self, worktree: Snapshot, cx: &App) -> Backlogged {
         let (tx, rx) = channel::bounded(512);
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
@@ -360,7 +360,7 @@ impl SummaryIndex {
         &self,
         worktree: Snapshot,
         updated_entries: UpdatedEntriesSet,
-        cx: &AppContext,
+        cx: &App,
     ) -> Backlogged {
         log::info!("Scanning for updated entries that might need summarization...");
         let (tx, rx) = channel::bounded(512);
@@ -418,7 +418,7 @@ impl SummaryIndex {
         &self,
         paths: channel::Receiver<Vec<(Arc<Path>, Option<MTime>)>>,
         worktree_abs_path: Arc<Path>,
-        cx: &AppContext,
+        cx: &App,
     ) -> MightNeedSummaryFiles {
         let fs = self.fs.clone();
         let (rx, tx) = channel::bounded(2048);
@@ -487,7 +487,7 @@ impl SummaryIndex {
     fn summarize_files(
         &self,
         unsummarized_files: channel::Receiver<UnsummarizedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> SummarizeFiles {
         let (summarized_tx, summarized_rx) = channel::bounded(512);
         let task = cx.spawn(|cx| async move {
@@ -528,11 +528,7 @@ impl SummaryIndex {
         }
     }
 
-    fn summarize_code(
-        code: &str,
-        path: &Path,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<String>> {
+    fn summarize_code(code: &str, path: &Path, cx: &App) -> impl Future<Output = Result<String>> {
         let start = Instant::now();
         let (summary_model_id, use_cache): (LanguageModelId, bool) = (
             "Qwen/Qwen2-7B-Instruct".to_string().into(), // TODO read this from the user's settings.
@@ -603,7 +599,7 @@ impl SummaryIndex {
     fn persist_summaries(
         &self,
         summaries: channel::Receiver<SummarizedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let digest_db = self.file_digest_db;
@@ -643,7 +639,7 @@ impl SummaryIndex {
     pub(crate) fn flush_backlog(
         &self,
         worktree_abs_path: Arc<Path>,
-        cx: &AppContext,
+        cx: &App,
     ) -> impl Future<Output = Result<()>> {
         let start = Instant::now();
         let backlogged = {

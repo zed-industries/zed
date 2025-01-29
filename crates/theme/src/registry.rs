@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, SharedString};
+use gpui::{App, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
 use util::ResultExt;
 
@@ -49,19 +49,19 @@ pub struct ThemeRegistry {
 
 impl ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalThemeRegistry>().0.clone()
     }
 
     /// Returns the global [`ThemeRegistry`].
     ///
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+    pub fn default_global(cx: &mut App) -> Arc<Self> {
         cx.default_global::<GlobalThemeRegistry>().0.clone()
     }
 
     /// Sets the global [`ThemeRegistry`].
-    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
+    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut App) {
         cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 

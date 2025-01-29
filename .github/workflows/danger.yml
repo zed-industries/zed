@@ -11,6 +11,7 @@ on:
 
 jobs:
   danger:
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
 
     steps:

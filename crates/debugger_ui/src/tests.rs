@@ -1,4 +1,4 @@
-use gpui::{Model, TestAppContext, View, WindowHandle};
+use gpui::{Entity, TestAppContext, WindowHandle};
 use project::Project;
 use settings::SettingsStore;
 use terminal_view::terminal_panel::TerminalPanel;
@@ -32,38 +32,39 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
 }
 
 pub async fn init_test_workspace(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     cx: &mut TestAppContext,
 ) -> WindowHandle<Workspace> {
-    let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let workspace_handle =
+        cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-    let debugger_panel = window
-        .update(cx, |_, cx| cx.spawn(DebugPanel::load))
+    let debugger_panel = workspace_handle
+        .update(cx, |_, window, cx| cx.spawn_in(window, DebugPanel::load))
         .unwrap()
         .await
         .expect("Failed to load debug panel");
 
-    let terminal_panel = window
-        .update(cx, |_, cx| cx.spawn(TerminalPanel::load))
+    let terminal_panel = workspace_handle
+        .update(cx, |_, window, cx| cx.spawn_in(window, TerminalPanel::load))
         .unwrap()
         .await
         .expect("Failed to load terminal panel");
 
-    window
-        .update(cx, |workspace, cx| {
-            workspace.add_panel(debugger_panel, cx);
-            workspace.add_panel(terminal_panel, cx);
+    workspace_handle
+        .update(cx, |workspace, window, cx| {
+            workspace.add_panel(debugger_panel, window, cx);
+            workspace.add_panel(terminal_panel, window, cx);
         })
         .unwrap();
-    window
+    workspace_handle
 }
 
 pub fn active_debug_panel_item(
     workspace: WindowHandle<Workspace>,
     cx: &mut TestAppContext,
-) -> View<DebugPanelItem> {
+) -> Entity<DebugPanelItem> {
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))

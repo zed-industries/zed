@@ -60,6 +60,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+snippet_provider.workspace = true
 task.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }

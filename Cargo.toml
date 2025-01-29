@@ -2,10 +2,12 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
+    "crates/zed_predict_tos",
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
+    "crates/assistant_context_editor",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -33,6 +35,7 @@ members = [
     "crates/debugger_ui",
     "crates/db",
     "crates/diagnostics",
+    "crates/deepseek",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -202,10 +205,12 @@ edition = "2021"
 
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
+zed_predict_tos = { path = "crates/zed_predict_tos" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
+assistant_context_editor = { path = "crates/assistant_context_editor" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
@@ -233,6 +238,7 @@ dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
 debugger_ui = { path = "crates/debugger_ui" }
 debugger_tools = { path = "crates/debugger_tools" }
+deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -388,7 +394,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
 cocoa-foundation = "0.2.0"
-convert_case = "0.6.0"
+convert_case = "0.7.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
 ctor = "0.2.6"
@@ -404,7 +410,8 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.19", default-features = false }
+# TODO: get back to regular versions when https://github.com/rust-lang/git2-rs/pull/1120 is released
+git2 = { git = "https://github.com/rust-lang/git2-rs", rev = "a3b90cb3756c1bb63e2317bf9cfa57838178de5c", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
@@ -493,6 +500,7 @@ strum = { version = "0.26.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
+take-until = "0.2.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.6.0"
@@ -548,7 +556,7 @@ wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 zstd = "0.11"
-metal = "0.30"
+metal = "0.31"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

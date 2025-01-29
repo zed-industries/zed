@@ -9,7 +9,7 @@ const OVERFLOWING_TEXT: &str = "Lorem ipsum dolor sit amet, consectetur adipisci
 pub struct ListItemStory;
 
 impl Render for ListItemStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .bg(cx.theme().colors().background)
             .child(Story::title_for::<ListItem>())
@@ -85,18 +85,16 @@ impl Render for ListItemStory {
                     )),
             )
             .child(Story::label("With `on_click`"))
-            .child(
-                ListItem::new("with_on_click")
-                    .child("Click me")
-                    .on_click(|_event, _cx| {
-                        println!("Clicked!");
-                    }),
-            )
+            .child(ListItem::new("with_on_click").child("Click me").on_click(
+                |_event, _window, _cx| {
+                    println!("Clicked!");
+                },
+            ))
             .child(Story::label("With `on_secondary_mouse_down`"))
             .child(
                 ListItem::new("with_on_secondary_mouse_down")
                     .child("Right click me")
-                    .on_secondary_mouse_down(|_event, _cx| {
+                    .on_secondary_mouse_down(|_event, _window, _cx| {
                         println!("Right mouse down!");
                     }),
             )

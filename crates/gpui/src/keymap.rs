@@ -67,7 +67,8 @@ impl Keymap {
         self.bindings.iter()
     }
 
-    /// Iterate over all bindings for the given action, in the order they were added.
+    /// Iterate over all bindings for the given action, in the order they were added. For display,
+    /// the last binding should take precedence.
     pub fn bindings_for_action<'a>(
         &'a self,
         action: &'a dyn Action,

@@ -7,7 +7,7 @@ use dap::{
 use dap::{Scope, Variable};
 use debugger_ui::{debugger_panel::DebugPanel, variable_list::VariableContainer};
 use editor::Editor;
-use gpui::{TestAppContext, View, VisualTestContext};
+use gpui::{Entity, TestAppContext, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
 use std::sync::Arc;
@@ -35,14 +35,16 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     });
 }
 
-pub async fn add_debugger_panel(workspace: &View<Workspace>, cx: &mut VisualTestContext) {
+async fn add_debugger_panel(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
     let debugger_panel = workspace
-        .update(cx, |_, cx| cx.spawn(DebugPanel::load))
+        .update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, DebugPanel::load)
+        })
         .await
         .unwrap();
 
-    workspace.update(cx, |workspace, cx| {
-        workspace.add_panel(debugger_panel, cx);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_panel(debugger_panel, window, cx);
     });
 }
 
@@ -86,6 +88,8 @@ async fn test_debug_panel_item_opens_on_remote(
 
     add_debugger_panel(&workspace_a, cx_a).await;
     add_debugger_panel(&workspace_b, cx_b).await;
+
+    cx_b.run_until_parked();
 
     let task = project_a.update(cx_a, |project, cx| {
         project.dap_store().update(cx, |store, cx| {
@@ -199,6 +203,8 @@ async fn test_active_debug_panel_item_set_on_join_project(
 
     add_debugger_panel(&workspace_a, cx_a).await;
 
+    cx_a.run_until_parked();
+
     let task = project_a.update(cx_a, |project, cx| {
         project.dap_store().update(cx, |store, cx| {
             store.start_debug_session(
@@ -255,8 +261,11 @@ async fn test_active_debug_panel_item_set_on_join_project(
     cx_a.run_until_parked();
 
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     add_debugger_panel(&workspace_b, cx_b).await;
+
+    cx_b.run_until_parked();
 
     active_call_b
         .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
@@ -974,24 +983,24 @@ async fn test_updated_breakpoints_send_to_dap(
 
     // Client B opens an editor.
     let editor_b = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path(project_path.clone(), None, true, cx)
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(project_path.clone(), None, true, window, cx)
         })
         .await
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
 
-    editor_b.update(cx_b, |editor, cx| {
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
     // Client A opens an editor.
     let editor_a = workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace.open_path(project_path.clone(), None, true, cx)
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(project_path.clone(), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1020,10 +1029,10 @@ async fn test_updated_breakpoints_send_to_dap(
         .await;
 
     // remove the breakpoint that client B added
-    editor_a.update(cx_a, |editor, cx| {
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
     cx_a.run_until_parked();
@@ -1075,10 +1084,10 @@ async fn test_updated_breakpoints_send_to_dap(
         .await;
 
     // Add our own breakpoint now
-    editor_a.update(cx_a, |editor, cx| {
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
-        editor.move_up(&editor::actions::MoveUp, cx);
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx);
+    editor_a.update_in(cx_a, |editor, window, cx| {
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
+        editor.move_up(&editor::actions::MoveUp, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
     cx_a.run_until_parked();
@@ -1326,7 +1335,11 @@ async fn test_module_list(
         .unwrap();
 
     let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
+
     add_debugger_panel(&workspace_c, cx_c).await;
+
+    cx_c.run_until_parked();
+
     cx_c.run_until_parked();
 
     workspace_c.update(cx_c, |workspace, cx| {
@@ -1812,6 +1825,8 @@ async fn test_variable_list(
 
     let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
     add_debugger_panel(&workspace_c, cx_c).await;
+
+    cx_c.run_until_parked();
     cx_c.run_until_parked();
 
     let last_join_remote_item = workspace_c.update(cx_c, |workspace, cx| {
@@ -1912,19 +1927,20 @@ async fn test_ignore_breakpoints(
     add_debugger_panel(&workspace_b, cx_b).await;
 
     let local_editor = workspace_a
-        .update(cx_a, |workspace, cx| {
-            workspace.open_path(project_path.clone(), None, true, cx)
+        .update_in(cx_a, |workspace, window, cx| {
+            workspace.open_path(project_path.clone(), None, true, window, cx)
         })
         .await
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
 
-    local_editor.update(cx_a, |editor, cx| {
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx); // Line 2
-        editor.move_down(&editor::actions::MoveDown, cx);
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx); // Line 3
+    local_editor.update_in(cx_a, |editor, window, cx| {
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx); // Line 2
+        editor.move_down(&editor::actions::MoveDown, window, cx);
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
+        // Line 3
     });
 
     cx_a.run_until_parked();
@@ -2139,8 +2155,8 @@ async fn test_ignore_breakpoints(
         .await;
 
     let remote_editor = workspace_b
-        .update(cx_b, |workspace, cx| {
-            workspace.open_path(project_path.clone(), None, true, cx)
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(project_path.clone(), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2149,8 +2165,9 @@ async fn test_ignore_breakpoints(
 
     called_set_breakpoints.store(false, std::sync::atomic::Ordering::SeqCst);
 
-    remote_editor.update(cx_b, |editor, cx| {
-        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, cx); // Line 1
+    remote_editor.update_in(cx_b, |editor, window, cx| {
+        // Line 1
+        editor.toggle_breakpoint(&editor::actions::ToggleBreakpoint, window, cx);
     });
 
     cx_a.run_until_parked();
@@ -2223,7 +2240,10 @@ async fn test_ignore_breakpoints(
         .unwrap();
 
     let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
+
     add_debugger_panel(&workspace_c, cx_c).await;
+
+    cx_c.run_until_parked();
 
     let last_join_remote_item = workspace_c.update(cx_c, |workspace, cx| {
         let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();

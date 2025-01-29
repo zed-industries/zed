@@ -2,8 +2,8 @@ use std::cmp;
 
 use crate::InlineCompletion;
 use gpui::{
-    point, prelude::*, quad, size, AnyElement, AppContext, Bounds, Corners, Edges, HighlightStyle,
-    Hsla, StyledText, TextLayout, TextStyle,
+    point, prelude::*, quad, size, AnyElement, App, Bounds, Corners, Edges, HighlightStyle, Hsla,
+    StyledText, TextLayout, TextStyle,
 };
 use language::OffsetRangeExt;
 use settings::Settings;
@@ -17,7 +17,7 @@ pub struct CompletionDiffElement {
 }
 
 impl CompletionDiffElement {
-    pub fn new(completion: &InlineCompletion, cx: &AppContext) -> Self {
+    pub fn new(completion: &InlineCompletion, cx: &App) -> Self {
         let mut diff = completion
             .snapshot
             .text_for_range(completion.excerpt_range.clone())
@@ -108,9 +108,10 @@ impl Element for CompletionDiffElement {
     fn request_layout(
         &mut self,
         _id: Option<&gpui::GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        (self.element.request_layout(cx), ())
+        (self.element.request_layout(window, cx), ())
     }
 
     fn prepaint(
@@ -118,9 +119,10 @@ impl Element for CompletionDiffElement {
         _id: Option<&gpui::GlobalElementId>,
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self::PrepaintState {
-        self.element.prepaint(cx);
+        self.element.prepaint(window, cx);
     }
 
     fn paint(
@@ -129,7 +131,8 @@ impl Element for CompletionDiffElement {
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
         if let Some(position) = self.text_layout.position_for_index(self.cursor_offset) {
             let bounds = self.text_layout.bounds();
@@ -138,7 +141,7 @@ impl Element for CompletionDiffElement {
                 .text_layout
                 .line_layout_for_index(self.cursor_offset)
                 .map_or(bounds.size.width, |layout| layout.width());
-            cx.paint_quad(quad(
+            window.paint_quad(quad(
                 Bounds::new(
                     point(bounds.origin.x, position.y),
                     size(cmp::max(bounds.size.width, line_width), line_height),
@@ -148,8 +151,8 @@ impl Element for CompletionDiffElement {
                 Edges::default(),
                 Hsla::transparent_black(),
             ));
-            self.element.paint(cx);
-            cx.paint_quad(quad(
+            self.element.paint(window, cx);
+            window.paint_quad(quad(
                 Bounds::new(position, size(px(2.), line_height)),
                 Corners::default(),
                 cx.theme().players().local().cursor,

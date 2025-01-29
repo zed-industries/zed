@@ -106,7 +106,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
 
     // assert we have output from before the thread stopped
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -151,7 +151,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
 
     // assert we have output from before and after the thread stopped
     workspace
-        .update(cx, |workspace, cx| {
+        .update(cx, |workspace, _window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
             let active_debug_panel_item = debug_panel
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
@@ -740,13 +740,15 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
 
     cx.run_until_parked();
 
-    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
-        debug_panel_item.console().update(cx, |console, cx| {
-            console.query_bar().update(cx, |query_bar, cx| {
-                query_bar.set_text(format!("$variable1 = {}", NEW_VALUE), cx);
-            });
+    active_debug_panel_item(workspace, cx).update_in(cx, |debug_panel_item, window, cx| {
+        debug_panel_item.console().update(cx, |console, item_cx| {
+            console
+                .query_bar()
+                .update(item_cx, |query_bar, console_cx| {
+                    query_bar.set_text(format!("$variable1 = {}", NEW_VALUE), window, console_cx);
+                });
 
-            console.evaluate(&menu::Confirm, cx);
+            console.evaluate(&menu::Confirm, window, item_cx);
         });
     });
 

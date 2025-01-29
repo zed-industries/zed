@@ -8,7 +8,7 @@ use editor::{
     Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
 };
 use fuzzy::StringMatchCandidate;
-use gpui::{Model, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView};
+use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
 use menu::Confirm;
 use project::{dap_store::DapStore, Completion};
@@ -27,26 +27,27 @@ pub struct OutputGroup {
 
 pub struct Console {
     groups: Vec<OutputGroup>,
-    console: View<Editor>,
-    query_bar: View<Editor>,
-    dap_store: Model<DapStore>,
+    console: Entity<Editor>,
+    query_bar: Entity<Editor>,
+    dap_store: Entity<DapStore>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
-    variable_list: View<VariableList>,
-    stack_frame_list: View<StackFrameList>,
+    variable_list: Entity<VariableList>,
+    stack_frame_list: Entity<StackFrameList>,
 }
 
 impl Console {
     pub fn new(
-        stack_frame_list: &View<StackFrameList>,
+        stack_frame_list: &Entity<StackFrameList>,
         client_id: &DebugAdapterClientId,
-        variable_list: View<VariableList>,
-        dap_store: Model<DapStore>,
-        cx: &mut ViewContext<Self>,
+        variable_list: Entity<VariableList>,
+        dap_store: Entity<DapStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let console = cx.new_view(|cx| {
-            let mut editor = Editor::multi_line(cx);
-            editor.move_to_end(&editor::actions::MoveToEnd, cx);
+        let console = cx.new(|cx| {
+            let mut editor = Editor::multi_line(window, cx);
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
             editor.set_show_gutter(true, cx);
             editor.set_show_runnables(false, cx);
@@ -58,13 +59,13 @@ impl Console {
             editor.set_use_autoclose(false);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_show_inline_completions(Some(false), cx);
+            editor.set_show_inline_completions(Some(false), window, cx);
             editor
         });
 
-        let this = cx.view().downgrade();
-        let query_bar = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
+        let this = cx.weak_entity();
+        let query_bar = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Evaluate an expression", cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
@@ -91,20 +92,20 @@ impl Console {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn editor(&self) -> &View<Editor> {
+    pub fn editor(&self) -> &Entity<Editor> {
         &self.console
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn query_bar(&self) -> &View<Editor> {
+    pub fn query_bar(&self) -> &Entity<Editor> {
         &self.query_bar
     }
 
     fn handle_stack_frame_list_events(
         &mut self,
-        _: View<StackFrameList>,
+        _: Entity<StackFrameList>,
         event: &StackFrameListEvent,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged => cx.notify(),
@@ -112,7 +113,7 @@ impl Console {
         }
     }
 
-    pub fn add_message(&mut self, event: OutputEvent, cx: &mut ViewContext<Self>) {
+    pub fn add_message(&mut self, event: OutputEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.console.update(cx, |console, cx| {
             let output = event.output.trim_end().to_string();
 
@@ -136,8 +137,8 @@ impl Console {
             };
 
             console.set_read_only(false);
-            console.move_to_end(&editor::actions::MoveToEnd, cx);
-            console.insert(format!("{}{}\n", indent, output).as_str(), cx);
+            console.move_to_end(&editor::actions::MoveToEnd, window, cx);
+            console.insert(format!("{}{}\n", indent, output).as_str(), window, cx);
             console.set_read_only(true);
 
             let end = snapshot.anchor_before(snapshot.max_point());
@@ -178,7 +179,7 @@ impl Console {
                         console.insert_creases(creases.clone(), cx);
 
                         if group.collapsed {
-                            console.fold_creases(creases, false, cx);
+                            console.fold_creases(creases, false, window, cx);
                         }
                     }
                 }
@@ -195,7 +196,7 @@ impl Console {
             FoldPlaceholder {
                 render: Arc::new({
                     let placeholder = placeholder.clone();
-                    move |_id, _range, _cx| {
+                    move |_id, _range, _window, _cx| {
                         ButtonLike::new("output-group-placeholder")
                             .style(ButtonStyle::Transparent)
                             .layer(ElevationIndex::ElevatedSurface)
@@ -205,21 +206,21 @@ impl Console {
                 }),
                 ..Default::default()
             },
-            move |row, is_folded, fold, _cx| {
+            move |row, is_folded, fold, _window, _cx| {
                 Disclosure::new(("output-group", row.0 as u64), !is_folded)
                     .toggle_state(is_folded)
-                    .on_click(move |_event, cx| fold(!is_folded, cx))
+                    .on_click(move |_event, window, cx| fold(!is_folded, window, cx))
                     .into_any_element()
             },
-            move |_id, _range, _cx| gpui::Empty.into_any_element(),
+            move |_id, _range, _window, _cx| gpui::Empty.into_any_element(),
         )
     }
 
-    pub fn evaluate(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+    pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
 
-            editor.clear(cx);
+            editor.clear(window, cx);
 
             expression
         });
@@ -235,33 +236,37 @@ impl Console {
             )
         });
 
-        cx.spawn(|this, mut cx| async move {
-            let response = evaluate_task.await?;
+        let weak_console = cx.weak_entity();
 
-            this.update(&mut cx, |console, cx| {
-                console.add_message(
-                    OutputEvent {
-                        category: None,
-                        output: response.result,
-                        group: None,
-                        variables_reference: Some(response.variables_reference),
-                        source: None,
-                        line: None,
-                        column: None,
-                        data: None,
-                    },
-                    cx,
-                );
+        window
+            .spawn(cx, |mut cx| async move {
+                let response = evaluate_task.await?;
 
-                console.variable_list.update(cx, |variable_list, cx| {
-                    variable_list.invalidate(cx);
+                weak_console.update_in(&mut cx, |console, window, cx| {
+                    console.add_message(
+                        OutputEvent {
+                            category: None,
+                            output: response.result,
+                            group: None,
+                            variables_reference: Some(response.variables_reference),
+                            source: None,
+                            line: None,
+                            column: None,
+                            data: None,
+                        },
+                        window,
+                        cx,
+                    );
+
+                    console.variable_list.update(cx, |variable_list, cx| {
+                        variable_list.invalidate(window, cx);
+                    })
                 })
             })
-        })
-        .detach_and_log_err(cx);
+            .detach_and_log_err(cx);
     }
 
-    fn render_console(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
@@ -288,7 +293,7 @@ impl Console {
         )
     }
 
-    fn render_query_bar(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
@@ -318,7 +323,7 @@ impl Console {
 }
 
 impl Render for Console {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
@@ -333,15 +338,16 @@ impl Render for Console {
     }
 }
 
-struct ConsoleQueryBarCompletionProvider(WeakView<Console>);
+struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,
-        cx: &mut ViewContext<Editor>,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
         let Some(console) = self.0.upgrade() else {
             return Task::ready(Ok(Vec::new()));
@@ -364,32 +370,32 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 
     fn resolve_completions(
         &self,
-        _buffer: Model<Buffer>,
+        _buffer: Entity<Buffer>,
         _completion_indices: Vec<usize>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut ViewContext<Editor>,
+        _cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<bool>> {
         Task::ready(Ok(false))
     }
 
     fn apply_additional_edits_for_completion(
         &self,
-        _buffer: Model<Buffer>,
+        _buffer: Entity<Buffer>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
         _completion_index: usize,
         _push_to_history: bool,
-        _cx: &mut ViewContext<Editor>,
+        _cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
 
     fn is_completion_trigger(
         &self,
-        _buffer: &Model<Buffer>,
+        _buffer: &Entity<Buffer>,
         _position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        _cx: &mut ViewContext<Editor>,
+        _cx: &mut Context<Editor>,
     ) -> bool {
         true
     }
@@ -398,10 +404,10 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
 impl ConsoleQueryBarCompletionProvider {
     fn variable_list_completions(
         &self,
-        console: &View<Console>,
-        buffer: &Model<Buffer>,
+        console: &Entity<Console>,
+        buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
         let (variables, string_matches) = console.update(cx, |console, cx| {
             let mut variables = HashMap::new();
@@ -474,10 +480,10 @@ impl ConsoleQueryBarCompletionProvider {
 
     fn client_completions(
         &self,
-        console: &View<Console>,
-        buffer: &Model<Buffer>,
+        console: &Entity<Console>,
+        buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut Context<Editor>,
     ) -> gpui::Task<gpui::Result<Vec<project::Completion>>> {
         let text = buffer.read(cx).text();
         let start_position = buffer.read(cx).anchor_before(0);

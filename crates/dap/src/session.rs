@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::ModelContext;
+use gpui::Context;
 use std::sync::Arc;
 use task::DebugAdapterConfig;
 
@@ -39,17 +39,13 @@ impl LocalDebugSession {
     pub fn update_configuration(
         &mut self,
         f: impl FnOnce(&mut DebugAdapterConfig),
-        cx: &mut ModelContext<DebugSession>,
+        cx: &mut Context<DebugSession>,
     ) {
         f(&mut self.configuration);
         cx.notify();
     }
 
-    pub fn add_client(
-        &mut self,
-        client: Arc<DebugAdapterClient>,
-        cx: &mut ModelContext<DebugSession>,
-    ) {
+    pub fn add_client(&mut self, client: Arc<DebugAdapterClient>, cx: &mut Context<DebugSession>) {
         self.clients.insert(client.id(), client);
         cx.notify();
     }
@@ -57,7 +53,7 @@ impl LocalDebugSession {
     pub fn remove_client(
         &mut self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<DebugSession>,
+        cx: &mut Context<DebugSession>,
     ) -> Option<Arc<DebugAdapterClient>> {
         let client = self.clients.remove(client_id);
         cx.notify();
@@ -149,11 +145,12 @@ impl DebugSession {
         }
     }
 
-    pub fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut ModelContext<Self>) {
+    pub fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut Context<Self>) {
         match self {
             DebugSession::Local(local) => local.ignore_breakpoints = ignore,
             DebugSession::Remote(remote) => remote.ignore_breakpoints = ignore,
         }
+
         cx.notify();
     }
 }

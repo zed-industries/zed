@@ -4,12 +4,12 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext};
+use gpui::{App, AsyncApp};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::{lsp_store::language_server_settings, ContextProviderWithTasks};
+use project::{lsp_store::language_server_settings, ContextProviderWithTasks, Fs};
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -74,7 +74,7 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
+    fn get_workspace_config(language_names: Vec<String>, cx: &mut App) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
@@ -86,6 +86,7 @@ impl JsonLspAdapter {
         );
         let tasks_schema = task::TaskTemplates::generate_json_schema();
         let debug_schema = task::DebugTaskFile::generate_json_schema();
+        let snippets_schema = snippet_provider::format::VSSnippetsFile::generate_json_schema();
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
@@ -129,11 +130,22 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [
+                            schema_file_match(
+                                paths::snippets_dir()
+                                    .join("*.json")
+                                    .as_path()
+                            )
+                        ],
+                        "schema": snippets_schema,
+                    },
+                    {
+                        "fileMatch": [
                             schema_file_match(paths::debug_tasks_file()),
                             paths::local_debug_file_relative_path()
                         ],
                         "schema": debug_schema,
-                    }
+
+                    },
                 ]
             }
         })
@@ -215,6 +227,7 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -224,9 +237,10 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = cx.update(|cx| {
             self.workspace_config
