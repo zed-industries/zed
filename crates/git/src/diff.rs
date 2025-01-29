@@ -74,17 +74,20 @@ impl BufferDiff {
         }
     }
 
-    pub fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+    pub fn build(diff_base: Option<&str>, buffer: &text::BufferSnapshot) -> Self {
         let mut tree = SumTree::new(buffer);
 
-        let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(diff_base, &buffer_text);
+        if let Some(diff_base) = diff_base {
+            let buffer_text = buffer.as_rope().to_string();
+            let patch = Self::diff(diff_base, &buffer_text);
 
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
-                tree.push(hunk, buffer);
+            if let Some(patch) = patch {
+                let mut divergence = 0;
+                for hunk_index in 0..patch.num_hunks() {
+                    let hunk =
+                        Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
+                    tree.push(hunk, buffer);
+                }
             }
         }
 
@@ -193,7 +196,7 @@ impl BufferDiff {
     }
 
     pub fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        *self = Self::build(&diff_base.to_string(), buffer);
+        *self = Self::build(Some(&diff_base.to_string()), buffer);
     }
 
     #[cfg(test)]
