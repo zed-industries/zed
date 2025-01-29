@@ -2424,7 +2424,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
             assert_eq!(config.language_name(), "Markdown".into());
 
             let language = snapshot.language_at(point).unwrap();
-            assert_eq!(language.name().0.as_ref(), "Markdown");
+            assert_eq!(language.name().as_ref(), "Markdown");
         }
 
         buffer
