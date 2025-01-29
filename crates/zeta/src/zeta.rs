@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use std::{
     borrow::Cow,
-    cmp,
+    cmp, env,
     fmt::Write,
     future::Future,
     mem,
@@ -213,7 +213,7 @@ impl Zeta {
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
-            sampling_options: Self::load_sampling_options(),
+            sampling_options: Self::load_sampling_options(cx),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -880,7 +880,17 @@ and then another
         });
     }
 
-    fn load_sampling_options() -> SamplingWorktreeOptions {
+    fn load_sampling_options(cx: &mut Context<Self>) -> SamplingWorktreeOptions {
+        db::write_and_log(cx, move || async move {
+            if env::var("ZED_PREDICT_CLEAR_SAMPLING_PREFERENCES").is_ok() {
+                KEY_VALUE_STORE
+                    .delete_kvp(ZED_PREDICT_SAMPLING_USER_CHOICES_KEY.into())
+                    .await
+            } else {
+                Ok(())
+            }
+        });
+
         let default = || SamplingWorktreeOptions {
             dont_ask_again: false,
             worktrees: HashMap::default(),
