@@ -690,8 +690,6 @@ impl From<CrossPlatformPath> for Arc<Path> {
 
 impl CrossPlatformPath {
     pub fn from_db_string(path: String) -> Self {
-        #[cfg(target_os = "windows")]
-        let path = path.replace("/", "\\");
         let path = PathBuf::from(path);
         Self {
             path: path

@@ -78,10 +78,8 @@ impl Database {
                     worktree::ActiveModel {
                         id: ActiveValue::set(worktree.id as i64),
                         project_id: ActiveValue::set(project.id),
-                        // TODO:
-                        // The unwrap here should be safe, right?
                         abs_path: ActiveValue::set(
-                            worktree.abs_path.as_ref().unwrap().path.clone(),
+                            worktree.abs_path.clone().unwrap_or_default().to_db_string(),
                         ),
                         root_name: ActiveValue::set(worktree.root_name.clone()),
                         visible: ActiveValue::set(worktree.visible),
@@ -192,9 +190,9 @@ impl Database {
             worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
                 id: ActiveValue::set(worktree.id as i64),
                 project_id: ActiveValue::set(project_id),
-                // TODO:
-                // The unwrap here should be safe, right?
-                abs_path: ActiveValue::set(worktree.abs_path.as_ref().unwrap().path.clone()),
+                abs_path: ActiveValue::set(
+                    worktree.abs_path.clone().unwrap_or_default().to_db_string(),
+                ),
                 root_name: ActiveValue::set(worktree.root_name.clone()),
                 visible: ActiveValue::set(worktree.visible),
                 scan_id: ActiveValue::set(0),
@@ -261,9 +259,9 @@ impl Database {
                 } else {
                     ActiveValue::default()
                 },
-                // TODO:
-                // The unwrap here should be safe, right?
-                abs_path: ActiveValue::set(update.abs_path.as_ref().unwrap().path.clone()),
+                abs_path: ActiveValue::set(
+                    update.abs_path.clone().unwrap_or_default().to_db_string(),
+                ),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -277,14 +275,17 @@ impl Database {
                         worktree_id: ActiveValue::set(worktree_id),
                         id: ActiveValue::set(entry.id as i64),
                         is_dir: ActiveValue::set(entry.is_dir),
-                        // TODO:
-                        // The unwrap here should be safe, right?
-                        path: ActiveValue::set(entry.path.clone().unwrap().path),
+                        path: ActiveValue::set(
+                            entry.path.clone().unwrap_or_default().to_db_string(),
+                        ),
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
                         canonical_path: ActiveValue::set(
-                            entry.canonical_path.clone().map(|path| path.path),
+                            entry
+                                .canonical_path
+                                .as_ref()
+                                .map(|path| path.to_db_string()),
                         ),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         git_status: ActiveValue::set(None),
@@ -711,7 +712,8 @@ impl Database {
                     db_worktree.id as u64,
                     Worktree {
                         id: db_worktree.id as u64,
-                        abs_path: db_worktree.abs_path,
+                        abs_path: proto::CrossPlatformPath::from_db_string(db_worktree.abs_path)
+                            .path,
                         root_name: db_worktree.root_name,
                         visible: db_worktree.visible,
                         entries: Default::default(),
@@ -741,9 +743,7 @@ impl Database {
                     worktree.entries.push(proto::Entry {
                         id: db_entry.id as u64,
                         is_dir: db_entry.is_dir,
-                        path: Some(proto::CrossPlatformPath {
-                            path: db_entry.path,
-                        }),
+                        path: Some(proto::CrossPlatformPath::from_db_string(db_entry.path)),
                         inode: db_entry.inode as u64,
                         mtime: Some(proto::Timestamp {
                             seconds: db_entry.mtime_seconds as u64,
@@ -751,7 +751,7 @@ impl Database {
                         }),
                         canonical_path: db_entry
                             .canonical_path
-                            .map(|path| proto::CrossPlatformPath { path }),
+                            .map(|path| proto::CrossPlatformPath::from_db_string(path)),
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
                         // This is only used in the summarization backlog, so if it's None,

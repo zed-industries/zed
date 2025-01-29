@@ -609,7 +609,7 @@ impl Database {
         for db_worktree in db_worktrees {
             let mut worktree = RejoinedWorktree {
                 id: db_worktree.id as u64,
-                abs_path: db_worktree.abs_path,
+                abs_path: proto::CrossPlatformPath::from_db_string(db_worktree.abs_path).path,
                 root_name: db_worktree.root_name,
                 visible: db_worktree.visible,
                 updated_entries: Default::default(),
@@ -653,9 +653,7 @@ impl Database {
                         worktree.updated_entries.push(proto::Entry {
                             id: db_entry.id as u64,
                             is_dir: db_entry.is_dir,
-                            path: Some(proto::CrossPlatformPath {
-                                path: db_entry.path,
-                            }),
+                            path: Some(proto::CrossPlatformPath::from(db_entry.path)),
                             inode: db_entry.inode as u64,
                             mtime: Some(proto::Timestamp {
                                 seconds: db_entry.mtime_seconds as u64,
@@ -663,7 +661,7 @@ impl Database {
                             }),
                             canonical_path: db_entry
                                 .canonical_path
-                                .map(|path| proto::CrossPlatformPath { path }),
+                                .map(|path| proto::CrossPlatformPath::from_db_string(path)),
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
                             // This is only used in the summarization backlog, so if it's None,
