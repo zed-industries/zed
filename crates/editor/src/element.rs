@@ -3799,8 +3799,13 @@ impl EditorElement {
                         - scroll_pixel_position.y;
                     let x = text_hitbox.bounds.right() - px(100.);
 
-                    let mut element =
-                        diff_hunk_controls(multi_buffer_range.clone(), line_height, &editor, cx);
+                    let mut element = diff_hunk_controls(
+                        display_row_range.start.0,
+                        multi_buffer_range.clone(),
+                        line_height,
+                        &editor,
+                        cx,
+                    );
                     element.prepaint_as_root(
                         gpui::Point::new(x, y),
                         size(px(100.0), line_height).into(),
@@ -8494,6 +8499,7 @@ mod tests {
 }
 
 fn diff_hunk_controls(
+    row: u32,
     hunk_range: Range<Anchor>,
     line_height: Pixels,
     editor: &Entity<Editor>,
@@ -8511,7 +8517,7 @@ fn diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .child(
-            IconButton::new("next-hunk", IconName::ArrowDown)
+            IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
                 .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 // .disabled(!has_multiple_hunks)
@@ -8534,7 +8540,7 @@ fn diff_hunk_controls(
                 }),
         )
         .child(
-            IconButton::new("prev-hunk", IconName::ArrowUp)
+            IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
                 .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 // .disabled(!has_multiple_hunks)
