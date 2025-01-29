@@ -1,6 +1,7 @@
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use crate::{Project, ProjectPath};
 use anyhow::anyhow;
+use client::Client;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use git::{
@@ -15,9 +16,10 @@ use settings::WorktreeId;
 use std::sync::Arc;
 use text::Rope;
 use util::maybe;
-use worktree::{RepositoryEntry, StatusEntry};
+use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
+    client: Option<Arc<Client>>,
     repositories: Vec<RepositoryHandle>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
@@ -30,9 +32,19 @@ pub struct RepositoryHandle {
     git_state: WeakEntity<GitState>,
     worktree_id: WorktreeId,
     repository_entry: RepositoryEntry,
-    git_repo: Option<Arc<dyn GitRepository>>,
+    git_repo: Option<GitRepo>,
     commit_message: Entity<Buffer>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
+}
+
+#[derive(Clone)]
+enum GitRepo {
+    Local(Arc<dyn GitRepository>),
+    Remote {
+        client: Arc<Client>,
+        worktree_id: WorktreeId,
+        work_directory_id: ProjectEntryId,
+    },
 }
 
 impl PartialEq<Self> for RepositoryHandle {
@@ -52,10 +64,10 @@ impl PartialEq<RepositoryEntry> for RepositoryHandle {
 }
 
 enum Message {
-    StageAndCommit(Arc<dyn GitRepository>, Rope, Vec<RepoPath>),
-    Commit(Arc<dyn GitRepository>, Rope),
-    Stage(Arc<dyn GitRepository>, Vec<RepoPath>),
-    Unstage(Arc<dyn GitRepository>, Vec<RepoPath>),
+    StageAndCommit(GitRepo, Rope, Vec<RepoPath>),
+    Commit(GitRepo, Rope),
+    Stage(GitRepo, Vec<RepoPath>),
+    Unstage(GitRepo, Vec<RepoPath>),
 }
 
 pub enum Event {
@@ -68,6 +80,7 @@ impl GitState {
     pub fn new(
         worktree_store: &Entity<WorktreeStore>,
         languages: Arc<LanguageRegistry>,
+        client: Option<Arc<Client>>,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let (update_sender, mut update_receiver) =
@@ -79,13 +92,53 @@ impl GitState {
                     .spawn(async move {
                         match msg {
                             Message::StageAndCommit(repo, message, paths) => {
-                                repo.stage_paths(&paths)?;
-                                repo.commit(&message.to_string())?;
+                                match repo {
+                                    GitRepo::Local(repo) => {
+                                        repo.stage_paths(&paths)?;
+                                        repo.commit(&message.to_string())?;
+                                    }
+                                    GitRepo::Remote {
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => todo!("TODO kb"),
+                                }
+
                                 Ok(())
                             }
-                            Message::Stage(repo, paths) => repo.stage_paths(&paths),
-                            Message::Unstage(repo, paths) => repo.unstage_paths(&paths),
-                            Message::Commit(repo, message) => repo.commit(&message.to_string()),
+                            Message::Stage(repo, paths) => {
+                                match repo {
+                                    GitRepo::Local(repo) => repo.stage_paths(&paths)?,
+                                    GitRepo::Remote {
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => todo!("TODO kb"),
+                                }
+                                Ok(())
+                            }
+                            Message::Unstage(repo, paths) => {
+                                match repo {
+                                    GitRepo::Local(repo) => repo.unstage_paths(&paths)?,
+                                    GitRepo::Remote {
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => todo!("TODO kb"),
+                                }
+                                Ok(())
+                            }
+                            Message::Commit(repo, message) => {
+                                match repo {
+                                    GitRepo::Local(repo) => repo.commit(&message.to_string())?,
+                                    GitRepo::Remote {
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => todo!("TODO kb"),
+                                }
+                                Ok(())
+                            }
                         }
                     })
                     .await;
@@ -100,6 +153,7 @@ impl GitState {
 
         GitState {
             languages,
+            client,
             repositories: Vec::new(),
             active_index: None,
             update_sender,
@@ -123,6 +177,7 @@ impl GitState {
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
         let this = cx.weak_entity();
+        let client = self.client.clone();
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
@@ -132,7 +187,16 @@ impl GitState {
                         let git_repo = worktree
                             .as_local()
                             .and_then(|local_worktree| local_worktree.get_local_repo(repo))
-                            .map(|local_repo| local_repo.repo().clone());
+                            .map(|local_repo| local_repo.repo().clone())
+                            .map(GitRepo::Local)
+                            .or_else(|| {
+                                let client = client.clone()?;
+                                Some(GitRepo::Remote {
+                                    client,
+                                    worktree_id: worktree.id(),
+                                    work_directory_id: repo.work_directory_id(),
+                                })
+                            });
                         let existing = self
                             .repositories
                             .iter()

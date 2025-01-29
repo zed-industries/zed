@@ -694,7 +694,7 @@ impl Project {
             });
 
             let git_state =
-                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, cx)));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -814,8 +814,9 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state =
-                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+            let git_state = Some(cx.new(|cx| {
+                GitState::new(&worktree_store, languages.clone(), Some(client.clone()), cx)
+            }));
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -1013,7 +1014,10 @@ impl Project {
         })?;
 
         let git_state =
-            Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx))).transpose()?;
+            Some(cx.new(|cx| {
+                GitState::new(&worktree_store, languages.clone(), Some(client.clone()), cx)
+            }))
+            .transpose()?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
