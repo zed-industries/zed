@@ -5,7 +5,7 @@ use theme::all_theme_colors;
 use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
     Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, Divider, ElevationIndex, Facepile,
+    Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
     IconDecoration, Indicator, Switch, Table, TintColor, Tooltip,
 };
 
