@@ -53,6 +53,18 @@ const BYTES_PER_TOKEN_GUESS: usize = 3;
 /// for the model to specify insertions.
 const BUFFER_EXCERPT_BYTE_LIMIT: usize = (2048 * 2 / 3) * BYTES_PER_TOKEN_GUESS;
 
+/// Note that this is not the limit for the overall prompt, just for the inputs to the template
+/// instantiated in `crates/collab/src/llm.rs`.
+const TOTAL_BYTE_LIMIT: usize = BUFFER_EXCERPT_BYTE_LIMIT * 2;
+
+/// Maximum number of events to include in the prompt.
+const MAX_EVENT_COUNT: usize = 16;
+
+/// Maximum number of string bytes in a single event. Arbitrarily choosing this to be 4x the size of
+/// equally splitting up the the remaining bytes after the largest possible buffer excerpt.
+const PER_EVENT_BYTE_LIMIT: usize =
+    (TOTAL_BYTE_LIMIT - BUFFER_EXCERPT_BYTE_LIMIT) / MAX_EVENT_COUNT * 4;
+
 actions!(edit_prediction, [ClearHistory]);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -235,8 +247,6 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
-        const MAX_EVENT_COUNT: usize = 16;
-
         if let Some(Event::BufferChange {
             new_snapshot: last_new_snapshot,
             timestamp: last_timestamp,
@@ -338,7 +348,8 @@ impl Zeta {
                         let (input_excerpt, excerpt_range) =
                             prompt_for_excerpt(&snapshot, cursor_point, cursor_offset)?;
 
-                        let input_events = prompt_for_events(events.iter());
+                        let chars_remaining = TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.len());
+                        let input_events = prompt_for_events(events.iter(), chars_remaining);
 
                         // Note that input_outline is not currently used in prompt generation and so
                         // is not counted towards TOTAL_BYTE_LIMIT.
@@ -1085,14 +1096,26 @@ fn prompt_for_excerpt(
     anyhow::Ok((builder.to_string(), editable_range))
 }
 
-fn prompt_for_events<'a>(events: impl Iterator<Item = &'a Event>) -> String {
+fn prompt_for_events<'a>(
+    events: impl Iterator<Item = &'a Event>,
+    mut bytes_remaining: usize,
+) -> String {
     let mut result = String::new();
     for event in events {
         if !result.is_empty() {
             result.push('\n');
             result.push('\n');
         }
-        result.push_str(&event.to_prompt());
+        let event_string = event.to_prompt();
+        let len = event_string.len();
+        if len > PER_EVENT_BYTE_LIMIT {
+            continue;
+        }
+        if len > bytes_remaining {
+            break;
+        }
+        bytes_remaining -= len;
+        result.push_str(&event_string);
     }
     result
 }
