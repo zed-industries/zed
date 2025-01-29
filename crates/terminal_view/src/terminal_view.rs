@@ -1094,7 +1094,6 @@ impl Render for TerminalView {
         let focused = self.focus_handle.is_focused(cx);
 
         div()
-            .occlude()
             .id("terminal-view")
             .size_full()
             .relative()
