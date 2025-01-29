@@ -8,7 +8,7 @@ use fs::Fs;
 use gpui::{Entity, Subscription, WeakEntity};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
-use ui::{prelude::*, ButtonLike};
+use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -102,11 +102,11 @@ impl Render for ZedPredictBanner {
             return div();
         }
 
+        let border_color = cx.theme().colors().editor_foreground.opacity(0.3);
         let banner = h_flex()
-            .h_5()
             .rounded_md()
             .border_1()
-            .border_color(cx.theme().colors().editor_foreground.opacity(0.3))
+            .border_color(border_color)
             .child(
                 ButtonLike::new("try-zed-predict")
                     .child(
@@ -147,14 +147,20 @@ impl Render for ZedPredictBanner {
                     }),
             )
             .child(
-                div()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().editor_foreground.opacity(0.1))
-                    .child(
-                        IconButton::new("close", IconName::Close)
-                            .icon_size(IconSize::Indicator)
-                            .on_click(cx.listener(|this, _, _window, cx| this.dismiss(cx))),
-                    ),
+                div().border_l_1().border_color(border_color).child(
+                    IconButton::new("close", IconName::Close)
+                        .icon_size(IconSize::Indicator)
+                        .on_click(cx.listener(|this, _, _window, cx| this.dismiss(cx)))
+                        .tooltip(|window, cx| {
+                            Tooltip::with_meta(
+                                "Close Announcement Banner",
+                                None,
+                                "It won't show again for this feature",
+                                window,
+                                cx,
+                            )
+                        }),
+                ),
             );
 
         div().pr_1().child(banner)
