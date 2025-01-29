@@ -336,14 +336,44 @@ impl EditorElement {
         register_action(editor, window, Editor::go_to_prev_diagnostic);
         register_action(editor, window, Editor::go_to_next_hunk);
         register_action(editor, window, Editor::go_to_prev_hunk);
-        register_action(editor, window, |editor, a, window, cx| {
+        register_action(editor, window, |editor, action, window, cx| {
             editor
-                .go_to_definition(a, window, cx)
+                .go_to_definition(action, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(editor, window, |editor, a, window, cx| {
+        register_action(editor, window, |editor, action, window, cx| {
             editor
-                .go_to_definition_split(a, window, cx)
+                .go_to_definition_split(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_declaration(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_declaration_split(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_implementation(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_implementation_split(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_type_definition(action, window, cx)
+                .detach_and_log_err(cx);
+        });
+        register_action(editor, window, |editor, action, window, cx| {
+            editor
+                .go_to_type_definition_split(action, window, cx)
                 .detach_and_log_err(cx);
         });
         register_action(editor, window, Editor::open_url);
@@ -3892,8 +3922,13 @@ impl EditorElement {
                         - scroll_pixel_position.y;
                     let x = text_hitbox.bounds.right() - px(100.);
 
-                    let mut element =
-                        diff_hunk_controls(multi_buffer_range.clone(), line_height, &editor, cx);
+                    let mut element = diff_hunk_controls(
+                        display_row_range.start.0,
+                        multi_buffer_range.clone(),
+                        line_height,
+                        &editor,
+                        cx,
+                    );
                     element.prepaint_as_root(
                         gpui::Point::new(x, y),
                         size(px(100.0), line_height).into(),
@@ -8635,6 +8670,7 @@ mod tests {
 }
 
 fn diff_hunk_controls(
+    row: u32,
     hunk_range: Range<Anchor>,
     line_height: Pixels,
     editor: &Entity<Editor>,
@@ -8652,7 +8688,7 @@ fn diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .child(
-            IconButton::new("next-hunk", IconName::ArrowDown)
+            IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
                 .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 // .disabled(!has_multiple_hunks)
@@ -8675,7 +8711,7 @@ fn diff_hunk_controls(
                 }),
         )
         .child(
-            IconButton::new("prev-hunk", IconName::ArrowUp)
+            IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
                 .shape(IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 // .disabled(!has_multiple_hunks)
