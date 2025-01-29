@@ -1,7 +1,7 @@
 use anyhow::Context as _;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{App, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter};
+use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter};
 use lsp::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
@@ -323,7 +323,7 @@ impl SettingsObserver {
     async fn handle_update_worktree_settings(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktreeSettings>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<()> {
         let kind = match envelope.payload.kind {
             Some(kind) => proto::LocalSettingsKind::from_i32(kind)

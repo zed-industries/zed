@@ -3,8 +3,7 @@ use client::{Client, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use db::RELEASE_CHANNEL;
 use gpui::{
-    actions, App, AppContext as _, AsyncAppContext, Context, Entity, Global, SemanticVersion, Task,
-    Window,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -303,7 +302,7 @@ impl AutoUpdater {
         arch: &str,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
@@ -347,7 +346,7 @@ impl AutoUpdater {
         arch: &str,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Option<(String, String)>> {
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
@@ -380,7 +379,7 @@ impl AutoUpdater {
         arch: &str,
         version: Option<SemanticVersion>,
         release_channel: Option<ReleaseChannel>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<JsonRelease> {
         let client = this.read_with(cx, |this, _| this.http_client.clone())?;
 
@@ -429,12 +428,12 @@ impl AutoUpdater {
         os: &str,
         arch: &str,
         release_channel: Option<ReleaseChannel>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<JsonRelease> {
         Self::get_release(this, asset, os, arch, None, release_channel, cx).await
     }
 
-    async fn update(this: Entity<Self>, mut cx: AsyncAppContext) -> Result<()> {
+    async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
         let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
             cx.notify();
@@ -544,7 +543,7 @@ async fn download_remote_server_binary(
     target_path: &PathBuf,
     release: JsonRelease,
     client: Arc<HttpClientWithUrl>,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Result<()> {
     let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
     let mut temp_file = File::create(&temp).await?;
@@ -564,7 +563,7 @@ async fn download_remote_server_binary(
     Ok(())
 }
 
-fn build_remote_server_update_request_body(cx: &AsyncAppContext) -> Result<UpdateRequestBody> {
+fn build_remote_server_update_request_body(cx: &AsyncApp) -> Result<UpdateRequestBody> {
     let (installation_id, release_channel, telemetry_enabled, is_staff) = cx.update(|cx| {
         let telemetry = Client::global(cx).telemetry().clone();
         let is_staff = telemetry.is_staff();
@@ -594,7 +593,7 @@ async fn download_release(
     target_path: &Path,
     release: JsonRelease,
     client: Arc<HttpClientWithUrl>,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
@@ -632,7 +631,7 @@ async fn download_release(
 async fn install_release_linux(
     temp_dir: &tempfile::TempDir,
     downloaded_tar_gz: PathBuf,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Result<PathBuf> {
     let channel = cx.update(|cx| ReleaseChannel::global(cx).dev_name())?;
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
@@ -699,7 +698,7 @@ async fn install_release_linux(
 async fn install_release_macos(
     temp_dir: &tempfile::TempDir,
     downloaded_dmg: PathBuf,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Result<PathBuf> {
     let running_app_path = cx.update(|cx| cx.app_path())??;
     let running_app_filename = running_app_path

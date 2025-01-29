@@ -10,8 +10,7 @@ use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
-    actions, App, AppContext as _, AsyncAppContext, Context, Entity, EntityId, Global,
-    Subscription, Task,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
 };
 use http_client::{HttpClient, Method};
 use language::{
@@ -601,7 +600,7 @@ and then another
         input_events: String,
         input_excerpt: String,
         request_sent_at: Instant,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Task<Result<InlineCompletion>> {
         let snapshot = snapshot.clone();
         cx.spawn(|cx| async move {

@@ -2424,7 +2424,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
             assert_eq!(config.language_name(), "Markdown".into());
 
             let language = snapshot.language_at(point).unwrap();
-            assert_eq!(language.name().0.as_ref(), "Markdown");
+            assert_eq!(language.name().as_ref(), "Markdown");
         }
 
         buffer
@@ -2805,7 +2805,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
             );
             buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
             let network = network.clone();
-            cx.subscribe(&cx.model(), move |buffer, _, event, _| {
+            cx.subscribe(&cx.entity(), move |buffer, _, event, _| {
                 if let BufferEvent::Operation {
                     operation,
                     is_local: true,
@@ -2936,7 +2936,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                     );
                     new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
                     let network = network.clone();
-                    cx.subscribe(&cx.model(), move |buffer, _, event, _| {
+                    cx.subscribe(&cx.entity(), move |buffer, _, event, _| {
                         if let BufferEvent::Operation {
                             operation,
                             is_local: true,

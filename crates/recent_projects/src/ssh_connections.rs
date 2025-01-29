@@ -7,8 +7,8 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncAppContext, DismissEvent,
-    Entity, EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
+    percentage, Animation, AnimationExt, AnyWindowHandle, App, AsyncApp, DismissEvent, Entity,
+    EventEmitter, Focusable, FontFeatures, ParentElement as _, PromptLevel, Render,
     SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, WeakEntity,
 };
 
@@ -425,11 +425,7 @@ pub struct SshClientDelegate {
 }
 
 impl remote::SshClientDelegate for SshClientDelegate {
-    fn ask_password(
-        &self,
-        prompt: String,
-        cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<String>> {
+    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
         let (tx, rx) = oneshot::channel();
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
@@ -446,7 +442,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
         rx
     }
 
-    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         self.update_status(status, cx)
     }
 
@@ -455,7 +451,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
         platform: SshPlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<anyhow::Result<PathBuf>> {
         cx.spawn(|mut cx| async move {
             let binary_path = AutoUpdater::download_remote_server_release(
@@ -486,7 +482,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
         platform: SshPlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Option<(String, String)>>> {
         cx.spawn(|mut cx| async move {
             AutoUpdater::get_remote_server_release_url(
@@ -502,7 +498,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
 }
 
 impl SshClientDelegate {
-    fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
+    fn update_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         self.window
             .update(cx, |_, _, cx| {
                 self.ui.update(cx, |modal, cx| {
@@ -547,7 +543,7 @@ pub async fn open_ssh_project(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let window = if let Some(window) = open_options.replace_window {
         window

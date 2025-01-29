@@ -2,7 +2,9 @@ use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
-use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
+};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, App, AsyncWindowContext,
@@ -91,17 +93,16 @@ impl Render for InlineCompletionButton {
                         IconButton::new("copilot-error", icon)
                             .icon_size(IconSize::Small)
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                if let Some(workspace) =
-                                    window.window_handle().downcast::<Workspace>()
-                                {
-                                    workspace
-                                        .update(cx, |workspace, _, cx| {
-                                            workspace.show_toast(
-                                                Toast::new(
-                                                    NotificationId::unique::<CopilotErrorToast>(),
-                                                    format!("Copilot can't be started: {}", e),
-                                                )
-                                                .on_click("Reinstall Copilot", |_, cx| {
+                                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.show_toast(
+                                            Toast::new(
+                                                NotificationId::unique::<CopilotErrorToast>(),
+                                                format!("Copilot can't be started: {}", e),
+                                            )
+                                            .on_click(
+                                                "Reinstall Copilot",
+                                                |_, cx| {
                                                     if let Some(copilot) = Copilot::global(cx) {
                                                         copilot
                                                             .update(cx, |copilot, cx| {
@@ -109,11 +110,11 @@ impl Render for InlineCompletionButton {
                                                             })
                                                             .detach();
                                                     }
-                                                }),
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
+                                                },
+                                            ),
+                                            cx,
+                                        );
+                                    });
                                 }
                             }))
                             .tooltip(|window, cx| {
@@ -121,7 +122,7 @@ impl Render for InlineCompletionButton {
                             }),
                     );
                 }
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
 
                 div().child(
                     PopoverMenu::new("copilot")
@@ -173,7 +174,7 @@ impl Render for InlineCompletionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
                 let fs = self.fs.clone();
 
                 return div().child(
@@ -268,7 +269,7 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict).when(
                     !self.popover_menu_handle.is_deployed(),
                     |button| {
@@ -398,19 +399,17 @@ impl InlineCompletionButton {
                 ),
                 None,
                 move |window, cx| {
-                    if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
-                        if let Ok(workspace) = workspace.root_model(cx) {
-                            let workspace = workspace.downgrade();
-                            window
-                                .spawn(cx, |cx| {
-                                    configure_disabled_globs(
-                                        workspace,
-                                        path_enabled.then_some(path.clone()),
-                                        cx,
-                                    )
-                                })
-                                .detach_and_log_err(cx);
-                        }
+                    if let Some(workspace) = window.root().flatten() {
+                        let workspace = workspace.downgrade();
+                        window
+                            .spawn(cx, |cx| {
+                                configure_disabled_globs(
+                                    workspace,
+                                    path_enabled.then_some(path.clone()),
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
                     }
                 },
             );
@@ -466,19 +465,22 @@ impl InlineCompletionButton {
     ) -> Entity<ContextMenu> {
         let workspace = self.workspace.clone();
         ContextMenu::build(window, cx, |menu, _window, cx| {
-            self.build_language_settings_menu(menu, cx)
-                .separator()
-                .entry(
-                    "Rate Completions",
-                    Some(RateCompletions.boxed_clone()),
-                    move |window, cx| {
-                        workspace
-                            .update(cx, |workspace, cx| {
-                                RateCompletionModal::toggle(workspace, window, cx)
-                            })
-                            .ok();
-                    },
-                )
+            self.build_language_settings_menu(menu, cx).when(
+                cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
+                |this| {
+                    this.separator().entry(
+                        "Rate Completions",
+                        Some(RateCompletions.boxed_clone()),
+                        move |window, cx| {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    RateCompletionModal::toggle(workspace, window, cx)
+                                })
+                                .ok();
+                        },
+                    )
+                },
+            )
         })
     }
 

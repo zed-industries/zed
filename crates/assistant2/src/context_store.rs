@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
-use gpui::{App, AsyncAppContext, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use rope::Rope;
@@ -447,7 +447,7 @@ fn collect_buffer_info_and_text(
     path: Arc<Path>,
     buffer_model: Entity<Buffer>,
     buffer: &Buffer,
-    cx: AsyncAppContext,
+    cx: AsyncApp,
 ) -> (BufferInfo, Task<SharedString>) {
     let buffer_info = BufferInfo {
         id: buffer.remote_id(),

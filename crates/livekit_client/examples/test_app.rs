@@ -6,7 +6,7 @@
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AppContext as _, AsyncAppContext, Bounds, Context, Entity, InteractiveElement,
+    px, rgb, size, AppContext as _, AsyncApp, Bounds, Context, Entity, InteractiveElement,
     KeyBinding, Menu, MenuItem, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
     StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds, WindowHandle,
     WindowOptions,
@@ -127,7 +127,7 @@ impl LivekitWindow {
         url: &str,
         token: &str,
         bounds: Bounds<Pixels>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> WindowHandle<Self> {
         let (room, mut events) = Room::connect(url, token, RoomOptions::default())
             .await

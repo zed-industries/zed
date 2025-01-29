@@ -32,11 +32,11 @@ use futures::{
 };
 use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
-    transparent_black, Action, AnyView, AnyWeakView, App, AsyncAppContext, AsyncWindowContext,
-    Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
-    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions,
+    transparent_black, Action, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds,
+    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
+    Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions,
 };
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -365,7 +365,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
-    notifications::init(cx);
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -941,7 +940,7 @@ impl Workspace {
         })
         .detach();
 
-        let weak_handle = cx.model().downgrade();
+        let weak_handle = cx.entity().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = cx.new(|cx| {
@@ -1216,7 +1215,7 @@ impl Workspace {
             }
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |_, window, cx| {
-                    window.replace_root_model(cx, |window, cx| {
+                    window.replace_root(cx, |window, cx| {
                         Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
@@ -1305,6 +1304,18 @@ impl Workspace {
         &self.right_dock
     }
 
+    pub fn all_docks(&self) -> [&Entity<Dock>; 3] {
+        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+    }
+
+    pub fn dock_at_position(&self, position: DockPosition) -> &Entity<Dock> {
+        match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        }
+    }
+
     pub fn is_edited(&self) -> bool {
         self.window_edited
     }
@@ -1319,11 +1330,8 @@ impl Workspace {
         cx.on_focus_in(&focus_handle, window, Self::handle_panel_focused)
             .detach();
 
-        let dock = match panel.position(window, cx) {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
+        let dock_position = panel.position(window, cx);
+        let dock = self.dock_at_position(dock_position);
 
         dock.update(cx, |dock, cx| {
             dock.add_panel(panel, self.weak_self.clone(), window, cx)
@@ -1797,7 +1805,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let docks = self.all_docks();
         let active_dock = docks
             .into_iter()
             .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
@@ -2397,12 +2405,7 @@ impl Workspace {
     }
 
     pub fn is_dock_at_position_open(&self, position: DockPosition, cx: &mut Context<Self>) -> bool {
-        let dock = match position {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
-        dock.read(cx).is_open()
+        self.dock_at_position(position).read(cx).is_open()
     }
 
     pub fn toggle_dock(
@@ -2411,11 +2414,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let dock = match dock_side {
-            DockPosition::Left => &self.left_dock,
-            DockPosition::Bottom => &self.bottom_dock,
-            DockPosition::Right => &self.right_dock,
-        };
+        let dock = self.dock_at_position(dock_side);
         let mut focus_center = false;
         let mut reveal_dock = false;
         dock.update(cx, |dock, cx| {
@@ -2457,9 +2456,7 @@ impl Workspace {
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
-
-        for dock in docks {
+        for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
@@ -2495,7 +2492,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut panel = None;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_proto_id(panel_id) {
                 panel = dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, window, cx);
@@ -2523,7 +2520,7 @@ impl Workspace {
     ) -> Option<Arc<dyn PanelHandle>> {
         let mut result_panel = None;
         let mut serialize = false;
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 let mut focus_center = false;
                 let panel = dock.update(cx, |dock, cx| {
@@ -2562,7 +2559,7 @@ impl Workspace {
 
     /// Open the panel of the given type
     pub fn open_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+        for dock in self.all_docks() {
             if let Some(panel_index) = dock.read(cx).panel_index_for_type::<T>() {
                 dock.update(cx, |dock, cx| {
                     dock.activate_panel(panel_index, window, cx);
@@ -2573,7 +2570,7 @@ impl Workspace {
     }
 
     pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
-        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+        self.all_docks()
             .iter()
             .find_map(|dock| dock.read(cx).panel::<T>())
     }
@@ -2593,7 +2590,7 @@ impl Workspace {
 
         // If another dock is zoomed, hide it.
         let mut focus_center = false;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             dock.update(cx, |dock, cx| {
                 if Some(dock.position()) != dock_to_reveal {
                     if let Some(panel) = dock.active_panel() {
@@ -3546,7 +3543,7 @@ impl Workspace {
     }
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(pane) = dock
                     .read(cx)
@@ -4139,7 +4136,7 @@ impl Workspace {
     ) -> (Option<Box<dyn ItemHandle>>, Option<proto::PanelId>) {
         let mut active_item = None;
         let mut panel_id = None;
-        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+        for dock in self.all_docks() {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
                     if let Some(pane) = panel.pane(cx) {
@@ -4964,7 +4961,7 @@ impl Workspace {
     }
 
     pub fn for_window(window: &mut Window, _: &mut App) -> Option<Entity<Workspace>> {
-        window.root_model().flatten()
+        window.root().flatten()
     }
 
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
@@ -5162,7 +5159,7 @@ enum ActivateInDirectionTarget {
     Dock(Entity<Dock>),
 }
 
-fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
+fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncApp) {
     const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml";
 
     workspace
@@ -5267,7 +5264,7 @@ impl Render for Workspace {
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .child({
-                                    let this = cx.model().clone();
+                                    let this = cx.entity().clone();
                                     canvas(
                                         move |bounds, window, cx| {
                                             this.update(cx, |this, cx| {
@@ -5479,8 +5476,8 @@ impl WorkspaceStore {
         Self {
             workspaces: Default::default(),
             _subscriptions: vec![
-                client.add_request_handler(cx.weak_model(), Self::handle_follow),
-                client.add_message_handler(cx.weak_model(), Self::handle_update_followers),
+                client.add_request_handler(cx.weak_entity(), Self::handle_follow),
+                client.add_message_handler(cx.weak_entity(), Self::handle_update_followers),
             ],
             client,
         }
@@ -5506,7 +5503,7 @@ impl WorkspaceStore {
     pub async fn handle_follow(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Follow>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::FollowResponse> {
         this.update(&mut cx, |this, cx| {
             let follower = Follower {
@@ -5536,7 +5533,7 @@ impl WorkspaceStore {
     async fn handle_update_followers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateFollowers>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let leader_id = envelope.original_sender_id()?;
         let update = envelope.payload;
@@ -5609,36 +5606,6 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub fn activate_workspace_for_project(
-    cx: &mut App,
-    predicate: impl Fn(&Project, &App) -> bool + Send + 'static,
-) -> Option<WindowHandle<Workspace>> {
-    for window in cx.windows() {
-        let Some(workspace) = window.downcast::<Workspace>() else {
-            continue;
-        };
-
-        let predicate = workspace
-            .update(cx, |workspace, window, cx| {
-                let project = workspace.project.read(cx);
-                if predicate(project, cx) {
-                    window.activate_window();
-                    true
-                } else {
-                    false
-                }
-            })
-            .log_err()
-            .unwrap_or(false);
-
-        if predicate {
-            return Some(workspace);
-        }
-    }
-
-    None
-}
-
 pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
@@ -5659,7 +5626,7 @@ async fn join_channel_internal(
     app_state: &Arc<AppState>,
     requesting_window: Option<WindowHandle<Workspace>>,
     active_call: &Entity<ActiveCall>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<bool> {
     let (should_prompt, open_room) = active_call.update(cx, |active_call, cx| {
         let Some(room) = active_call.room().map(|room| room.read(cx)) else {
@@ -5879,7 +5846,7 @@ pub fn join_channel(
 
 pub async fn get_any_active_workspace(
     app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> anyhow::Result<WindowHandle<Workspace>> {
     // find an existing workspace to focus and show call controls
     let active_window = activate_any_workspace_window(&mut cx);
@@ -5890,7 +5857,7 @@ pub async fn get_any_active_workspace(
     activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
-fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandle<Workspace>> {
+fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Workspace>> {
     cx.update(|cx| {
         if let Some(workspace_window) = cx
             .active_window()
@@ -5976,6 +5943,19 @@ pub fn open_paths(
                 .all(|file| !file.is_dir)
             {
                 cx.update(|cx| {
+                    if let Some(window) = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                    {
+                        if let Ok(workspace) = window.read(cx) {
+                            let project = workspace.project().read(cx);
+                            if project.is_local() && !project.is_via_collab() {
+                                existing = Some(window);
+                                open_visible = OpenVisible::None;
+                                return;
+                            }
+                        }
+                    }
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);
@@ -6148,7 +6128,7 @@ pub fn open_ssh_project(
         }
 
         cx.update_window(window.into(), |_, window, cx| {
-            window.replace_root_model(cx, |window, cx| {
+            window.replace_root(cx, |window, cx| {
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
 
@@ -6187,7 +6167,7 @@ pub fn open_ssh_project(
 fn serialize_ssh_project(
     connection_options: SshConnectionOptions,
     paths: Vec<PathBuf>,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Task<
     Result<(
         SerializedSshProject,
@@ -6757,7 +6737,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.new_window_model(|_window, cx| {
+        let item2 = cx.new_window_entity(|_window, cx| {
             let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item

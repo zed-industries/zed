@@ -12,7 +12,7 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnyView, App, AsyncAppContext, AsyncWindowContext, Context, Corner, Entity,
+    actions, Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity,
     EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
     Render, Styled, Task, WeakEntity, Window,
 };
@@ -903,7 +903,7 @@ pub fn new_terminal_pane(
     cx: &mut Context<TerminalPanel>,
 ) -> Entity<Pane> {
     let is_local = project.read(cx).is_local();
-    let terminal_panel = cx.model().clone();
+    let terminal_panel = cx.entity().clone();
     let pane = cx.new(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -923,7 +923,7 @@ pub fn new_terminal_pane(
         let split_closure_terminal_panel = terminal_panel.downgrade();
         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let is_current_pane = tab.pane == cx.model();
+                let is_current_pane = tab.pane == cx.entity();
                 let Some(can_drag_away) = split_closure_terminal_panel
                     .update(cx, |terminal_panel, _| {
                         let current_panes = terminal_panel.center.panes();
@@ -963,7 +963,7 @@ pub fn new_terminal_pane(
                 return ControlFlow::Break(());
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.model().clone();
+                let this_pane = cx.entity().clone();
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
@@ -1066,7 +1066,7 @@ pub fn new_terminal_pane(
 
 async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, Entity<Pane>, Entity<TerminalView>)>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) {
     let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
         terminal

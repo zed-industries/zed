@@ -929,22 +929,18 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
-                    let (sanitized_match, sanitized_word) = if file_path.starts_with('[')
-                        && file_path.ends_with(']')
-                        // this is to avoid sanitizing the match '[]' to an empty string,
-                        // which would be considered a valid navigation target
-                        && file_path.len() > 2
-                    {
-                        (
-                            Match::new(
-                                word_match.start().add(term, Boundary::Cursor, 1),
-                                word_match.end().sub(term, Boundary::Cursor, 1),
-                            ),
-                            file_path[1..file_path.len() - 1].to_owned(),
-                        )
-                    } else {
-                        (word_match, file_path)
-                    };
+                    let (sanitized_match, sanitized_word) =
+                        if is_path_surrounded_by_common_symbols(&file_path) {
+                            (
+                                Match::new(
+                                    word_match.start().add(term, Boundary::Cursor, 1),
+                                    word_match.end().sub(term, Boundary::Cursor, 1),
+                                ),
+                                file_path[1..file_path.len() - 1].to_owned(),
+                            )
+                        } else {
+                            (word_match, file_path)
+                        };
 
                     Some((sanitized_word, false, sanitized_match))
                 } else {
@@ -1791,6 +1787,14 @@ impl Terminal {
             }
         }
     }
+}
+
+fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
+    // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
+    path.len() > 2
+        // The rest of the brackets and various quotes cannot be matched by the [`WORD_REGEX`] hence not checked for.
+        && (path.starts_with('[') && path.ends_with(']')
+            || path.starts_with('(') && path.ends_with(')'))
 }
 
 const TASK_DELIMITER: &str = "⏵ ";

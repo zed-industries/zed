@@ -218,7 +218,7 @@ impl TerminalView {
         }
     }
 
-    pub fn model(&self) -> &Entity<Terminal> {
+    pub fn entity(&self) -> &Entity<Terminal> {
         &self.terminal
     }
 
@@ -1125,7 +1125,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal_handle = self.terminal.clone();
-        let terminal_view_handle = cx.model().clone();
+        let terminal_view_handle = cx.entity().clone();
 
         let focused = self.focus_handle.is_focused(window);
 
@@ -1771,7 +1771,7 @@ mod tests {
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
             .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root_model(cx)
+            .root(cx)
             .unwrap();
 
         (project, workspace)

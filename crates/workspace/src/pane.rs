@@ -304,6 +304,7 @@ pub struct Pane {
             &mut Context<Pane>,
         ) -> (Option<AnyElement>, Option<AnyElement>),
     >,
+    show_tab_bar_buttons: bool,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
@@ -396,7 +397,7 @@ impl Pane {
             cx.subscribe(&project, Self::project_events),
         ];
 
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         Self {
             alternate_file_items: (None, None),
             focus_handle,
@@ -509,6 +510,7 @@ impl Pane {
                     .into();
                 (None, right_children)
             }),
+            show_tab_bar_buttons: TabBarSettings::get_global(cx).show_tab_bar_buttons,
             display_nav_history_buttons: Some(
                 TabBarSettings::get_global(cx).show_nav_history_buttons,
             ),
@@ -659,9 +661,13 @@ impl Pane {
     }
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
+        let tab_bar_settings = TabBarSettings::get_global(cx);
+
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
-            *display_nav_history_buttons = TabBarSettings::get_global(cx).show_nav_history_buttons;
+            *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
         }
+        self.show_tab_bar_buttons = tab_bar_settings.show_tab_bar_buttons;
+
         if !PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = None;
         }
@@ -756,7 +762,7 @@ impl Pane {
 
     fn navigate_backward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
-            let pane = cx.model().downgrade();
+            let pane = cx.entity().downgrade();
             window.defer(cx, move |window, cx| {
                 workspace.update(cx, |workspace, cx| {
                     workspace.go_back(pane, window, cx).detach_and_log_err(cx)
@@ -767,7 +773,7 @@ impl Pane {
 
     fn navigate_forward(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(workspace) = self.workspace.upgrade() {
-            let pane = cx.model().downgrade();
+            let pane = cx.entity().downgrade();
             window.defer(cx, move |window, cx| {
                 workspace.update(cx, |workspace, cx| {
                     workspace
@@ -1992,7 +1998,7 @@ impl Pane {
 
     fn update_status_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        let pane = cx.model().clone();
+        let pane = cx.entity().clone();
 
         window.defer(cx, move |window, cx| {
             let Ok(status_bar) = workspace.update(cx, |workspace, _| workspace.status_bar.clone())
@@ -2044,7 +2050,7 @@ impl Pane {
 
     fn pin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
-            let pane = cx.model().clone();
+            let pane = cx.entity().clone();
             let destination_index = self.pinned_tab_count.min(ix);
             self.pinned_tab_count += 1;
             let id = self.item_for_index(ix)?.item_id();
@@ -2067,7 +2073,7 @@ impl Pane {
 
     fn unpin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
-            let pane = cx.model().clone();
+            let pane = cx.entity().clone();
             self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
             let destination_index = self.pinned_tab_count;
 
@@ -2214,7 +2220,7 @@ impl Pane {
             .on_drag(
                 DraggedTab {
                     item: item.boxed_clone(),
-                    pane: cx.model().clone(),
+                    pane: cx.entity().clone(),
                     detail,
                     is_active,
                     ix,
@@ -2328,7 +2334,7 @@ impl Pane {
         };
 
         let is_pinned = self.is_tab_pinned(ix);
-        let pane = cx.model().downgrade();
+        let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
         right_click_menu(ix).trigger(tab).menu(move |window, cx| {
             let pane = pane.clone();
@@ -2534,7 +2540,7 @@ impl Pane {
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
             .on_click({
-                let model = cx.model().clone();
+                let model = cx.entity().clone();
                 move |_, window, cx| model.update(cx, |pane, cx| pane.navigate_backward(window, cx))
             })
             .disabled(!self.can_navigate_backward())
@@ -2548,7 +2554,7 @@ impl Pane {
         let navigate_forward = IconButton::new("navigate_forward", IconName::ArrowRight)
             .icon_size(IconSize::Small)
             .on_click({
-                let model = cx.model().clone();
+                let model = cx.entity().clone();
                 move |_, window, cx| model.update(cx, |pane, cx| pane.navigate_forward(window, cx))
             })
             .disabled(!self.can_navigate_forward())
@@ -2581,12 +2587,15 @@ impl Pane {
                 },
             )
             .map(|tab_bar| {
-                let render_tab_buttons = self.render_tab_bar_buttons.clone();
-                let (left_children, right_children) = render_tab_buttons(self, window, cx);
-
-                tab_bar
-                    .start_children(left_children)
-                    .end_children(right_children)
+                if self.show_tab_bar_buttons {
+                    let render_tab_buttons = self.render_tab_bar_buttons.clone();
+                    let (left_children, right_children) = render_tab_buttons(self, window, cx);
+                    tab_bar
+                        .start_children(left_children)
+                        .end_children(right_children)
+                } else {
+                    tab_bar
+                }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
                 h_flex()
@@ -2732,7 +2741,7 @@ impl Pane {
                 return;
             }
         }
-        let mut to_pane = cx.model().clone();
+        let mut to_pane = cx.entity().clone();
         let split_direction = self.drag_split_direction;
         let item_id = dragged_tab.item.item_id();
         if let Some(preview_item_id) = self.preview_item_id {
@@ -2821,7 +2830,7 @@ impl Pane {
                 return;
             }
         }
-        let mut to_pane = cx.model().clone();
+        let mut to_pane = cx.entity().clone();
         let split_direction = self.drag_split_direction;
         let project_entry_id = *project_entry_id;
         self.workspace
@@ -2895,7 +2904,7 @@ impl Pane {
                 return;
             }
         }
-        let mut to_pane = cx.model().clone();
+        let mut to_pane = cx.entity().clone();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
         let is_remote = self
@@ -3246,7 +3255,7 @@ impl Render for Pane {
                 MouseButton::Navigate(NavigationDirection::Back),
                 cx.listener(|pane, _, window, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.model().downgrade();
+                        let pane = cx.entity().downgrade();
                         window.defer(cx, move |window, cx| {
                             workspace.update(cx, |workspace, cx| {
                                 workspace.go_back(pane, window, cx).detach_and_log_err(cx)
@@ -3259,7 +3268,7 @@ impl Render for Pane {
                 MouseButton::Navigate(NavigationDirection::Forward),
                 cx.listener(|pane, _, window, cx| {
                     if let Some(workspace) = pane.workspace.upgrade() {
-                        let pane = cx.model().downgrade();
+                        let pane = cx.entity().downgrade();
                         window.defer(cx, move |window, cx| {
                             workspace.update(cx, |workspace, cx| {
                                 workspace

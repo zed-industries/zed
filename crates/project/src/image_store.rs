@@ -203,7 +203,7 @@ pub struct ImageStore {
 
 impl ImageStore {
     pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
-        let this = cx.weak_model();
+        let this = cx.weak_entity();
         Self {
             state: Box::new(cx.new(|cx| {
                 let subscription = cx.subscribe(
@@ -394,7 +394,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 reload_task: None,
             })?;
 
-            let image_id = cx.read_model(&model, |model, _| model.id)?;
+            let image_id = cx.read_entity(&model, |model, _| model.id)?;
 
             this.update(&mut cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {

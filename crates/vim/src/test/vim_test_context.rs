@@ -22,6 +22,7 @@ impl VimTestContext {
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
             project_panel::init(Assets, cx);
+            git_ui::init(cx);
             crate::init(cx);
             search::init(cx);
         });
@@ -94,7 +95,7 @@ impl VimTestContext {
         Self { cx }
     }
 
-    pub fn update_model<F, T, R>(&mut self, model: Entity<T>, update: F) -> R
+    pub fn update_entity<F, T, R>(&mut self, model: Entity<T>, update: F) -> R
     where
         T: 'static,
         F: FnOnce(&mut T, &mut Window, &mut Context<T>) -> R + 'static,

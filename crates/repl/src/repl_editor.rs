@@ -454,7 +454,7 @@ fn markdown_code_blocks(buffer: &BufferSnapshot, range: Range<Point>) -> Vec<Ran
 }
 
 fn language_supported(language: &Arc<Language>) -> bool {
-    match language.name().0.as_ref() {
+    match language.name().as_ref() {
         "TypeScript" | "Python" => true,
         _ => false,
     }

@@ -79,11 +79,11 @@ use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, Action, AnyElement, App,
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, ElementId, Entity, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
-    FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, MouseButton, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task,
-    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    ViewInputHandler, WeakEntity, WeakFocusHandle, Window,
+    DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
+    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -1159,7 +1159,7 @@ impl Editor {
     ) -> Self {
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let editor = cx.model().downgrade();
+        let editor = cx.entity().downgrade();
         let fold_placeholder = FoldPlaceholder {
             constrain_width: true,
             render: Arc::new(move |fold_id, fold_range, _, cx| {
@@ -7042,7 +7042,7 @@ impl Editor {
             let mut should_rewrap = is_vim_mode == IsVimMode::Yes;
 
             if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
-                match language_scope.language_name().0.as_ref() {
+                match language_scope.language_name().as_ref() {
                     "Markdown" | "Plain Text" => {
                         should_rewrap = true;
                     }
@@ -13381,6 +13381,9 @@ impl Editor {
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
+            multi_buffer::Event::DiffHunksToggled => {
+                self.tasks_update_task = Some(self.refresh_runnables(window, cx));
+            }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, window, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
@@ -15339,7 +15342,7 @@ impl Render for Editor {
         };
 
         EditorElement::new(
-            &cx.model(),
+            &cx.entity(),
             EditorStyle {
                 background,
                 local_player: cx.theme().players().local(),
@@ -15355,7 +15358,7 @@ impl Render for Editor {
     }
 }
 
-impl ViewInputHandler for Editor {
+impl EntityInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,

@@ -110,7 +110,7 @@ impl NotificationPanel {
             })
             .detach();
 
-            let model = cx.model().downgrade();
+            let model = cx.entity().downgrade();
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, window, cx| {
                     model
@@ -323,7 +323,7 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let model = cx.model().clone();
+                                                let model = cx.entity().clone();
                                                 move |_, _, cx| {
                                                     model.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -336,7 +336,7 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let model = cx.model().clone();
+                                                let model = cx.entity().clone();
                                                 move |_, _, cx| {
                                                     model.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -570,7 +570,7 @@ impl NotificationPanel {
 
                 workspace.dismiss_notification(&id, cx);
                 workspace.show_notification(id, cx, |cx| {
-                    let workspace = cx.model().downgrade();
+                    let workspace = cx.entity().downgrade();
                     cx.new(|_| NotificationToast {
                         notification_id,
                         actor,

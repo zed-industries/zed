@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
-use gpui::{App, AsyncAppContext, Task, WeakEntity, Window};
+use gpui::{App, AsyncApp, Task, WeakEntity, Window};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -77,7 +77,7 @@ impl SlashCommand for AutoCommand {
 
         let cx: &mut App = cx;
 
-        cx.spawn(|cx: gpui::AsyncAppContext| async move {
+        cx.spawn(|cx: gpui::AsyncApp| async move {
             let task = project_index.read_with(&cx, |project_index, cx| {
                 project_index.flush_summary_backlogs(cx)
             })?;
@@ -189,7 +189,7 @@ struct CommandToRun {
 async fn commands_for_summaries(
     summaries: &[FileSummary],
     original_prompt: &str,
-    cx: &AsyncAppContext,
+    cx: &AsyncApp,
 ) -> Result<Vec<CommandToRun>> {
     if summaries.is_empty() {
         log::warn!("Inferring no context because there were no summaries available.");

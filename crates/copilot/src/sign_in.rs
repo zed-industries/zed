@@ -18,16 +18,12 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
         return;
     };
     let status = copilot.read(cx).status();
-    let Some(workspace) = window.window_handle().downcast::<Workspace>() else {
+    let Some(workspace) = window.root::<Workspace>().flatten() else {
         return;
     };
     match status {
         Status::Starting { task } => {
-            let Some(workspace) = window.window_handle().downcast::<Workspace>() else {
-                return;
-            };
-
-            let Ok(workspace) = workspace.update(cx, |workspace, _window, cx| {
+            workspace.update(cx, |workspace, cx| {
                 workspace.show_toast(
                     Toast::new(
                         NotificationId::unique::<CopilotStartingToast>(),
@@ -35,11 +31,9 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
                     ),
                     cx,
                 );
-                workspace.weak_handle()
-            }) else {
-                return;
-            };
+            });
 
+            let workspace = workspace.downgrade();
             cx.spawn(|mut cx| async move {
                 task.await;
                 if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
@@ -69,13 +63,11 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut App) {
         }
         _ => {
             copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
-            workspace
-                .update(cx, |this, window, cx| {
-                    this.toggle_modal(window, cx, |_, cx| {
-                        CopilotCodeVerification::new(&copilot, cx)
-                    });
-                })
-                .ok();
+            workspace.update(cx, |this, cx| {
+                this.toggle_modal(window, cx, |_, cx| {
+                    CopilotCodeVerification::new(&copilot, cx)
+                });
+            });
         }
     }
 }

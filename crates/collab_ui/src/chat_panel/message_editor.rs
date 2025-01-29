@@ -5,7 +5,7 @@ use collections::HashSet;
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AsyncAppContext, AsyncWindowContext, Context, Entity, Focusable, FontStyle, FontWeight,
+    AsyncApp, AsyncWindowContext, Context, Entity, Focusable, FontStyle, FontWeight,
     HighlightStyle, IntoElement, Render, Task, TextStyle, WeakEntity, Window,
 };
 use language::{
@@ -101,7 +101,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let this = cx.model().downgrade();
+        let this = cx.entity().downgrade();
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
@@ -285,7 +285,7 @@ impl MessageEditor {
     }
 
     async fn resolve_completions_for_candidates(
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
         query: &str,
         candidates: &[StringMatchCandidate],
         range: Range<Anchor>,

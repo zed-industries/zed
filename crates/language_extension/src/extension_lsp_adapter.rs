@@ -10,7 +10,7 @@ use collections::HashMap;
 use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use fs::Fs;
 use futures::{Future, FutureExt};
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use language::{
     CodeLabel, HighlightId, Language, LanguageName, LanguageServerBinaryStatus,
     LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
@@ -119,7 +119,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncAppContext,
+        _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
             let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
@@ -251,7 +251,7 @@ impl LspAdapter for ExtensionLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        _cx: &mut AsyncAppContext,
+        _cx: &mut AsyncApp,
     ) -> Result<Value> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
         let json_options: Option<String> = self

@@ -145,7 +145,7 @@ impl ProjectPicker {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
                             .update_in(&mut cx, |workspace, window, cx| {
-                                let weak = cx.model().downgrade();
+                                let weak = cx.entity().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(window, cx, weak)
                                 });
@@ -326,14 +326,14 @@ impl RemoteServerProjects {
         _: &mut Context<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &OpenRemote, window, cx| {
-            let handle = cx.model().downgrade();
+            let handle = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| Self::new(window, cx, handle))
         });
     }
 
     pub fn open(workspace: Entity<Workspace>, window: &mut Window, cx: &mut App) {
         workspace.update(cx, |workspace, cx| {
-            let handle = cx.model().downgrade();
+            let handle = cx.entity().downgrade();
             workspace.toggle_modal(window, cx, |window, cx| Self::new(window, cx, handle))
         })
     }
@@ -523,7 +523,7 @@ impl RemoteServerProjects {
                     let Some(Some(session)) = session else {
                         workspace
                             .update_in(&mut cx, |workspace, window, cx| {
-                                let weak = cx.model().downgrade();
+                                let weak = cx.entity().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(window, cx, weak)
                                 });
@@ -535,7 +535,7 @@ impl RemoteServerProjects {
                     workspace
                         .update_in(&mut cx, |workspace, window, cx| {
                             let app_state = workspace.app_state().clone();
-                            let weak = cx.model().downgrade();
+                            let weak = cx.entity().downgrade();
                             let project = project::Project::ssh(
                                 session,
                                 app_state.client.clone(),
@@ -1152,7 +1152,7 @@ impl RemoteServerProjects {
                                     let connection_string = connection_string.clone();
                                     move |_, _: &menu::Confirm, window, cx| {
                                         remove_ssh_server(
-                                            cx.model().clone(),
+                                            cx.entity().clone(),
                                             server_index,
                                             connection_string.clone(),
                                             window,
@@ -1172,7 +1172,7 @@ impl RemoteServerProjects {
                                         .child(Label::new("Remove Server").color(Color::Error))
                                         .on_click(cx.listener(move |_, _, window, cx| {
                                             remove_ssh_server(
-                                                cx.model().clone(),
+                                                cx.entity().clone(),
                                                 server_index,
                                                 connection_string.clone(),
                                                 window,
@@ -1280,7 +1280,7 @@ impl RemoteServerProjects {
                 state = new_state.clone();
             }
         }
-        let scroll_state = state.scrollbar.parent_model(&cx.model());
+        let scroll_state = state.scrollbar.parent_model(&cx.entity());
         let connect_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)

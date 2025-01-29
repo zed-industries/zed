@@ -291,7 +291,7 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(window, cx);
-        let vim = cx.model().clone();
+        let vim = cx.entity().clone();
 
         let searched = pane.update(cx, |pane, cx| {
             self.search.direction = direction;
@@ -425,7 +425,7 @@ impl Vim {
                 result.notify_err(workspace, cx);
             })
         }
-        let vim = cx.model().clone();
+        let vim = cx.entity().clone();
         pane.update(cx, |pane, cx| {
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return;
@@ -573,6 +573,7 @@ mod test {
     };
     use editor::EditorSettings;
     use editor::{display_map::DisplayRow, DisplayPoint};
+
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
@@ -669,7 +670,7 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        cx.update_model(search_bar, |bar, _window, cx| {
+        cx.update_entity(search_bar, |bar, _window, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 

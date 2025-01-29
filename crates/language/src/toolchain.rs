@@ -8,7 +8,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::{AsyncAppContext, SharedString};
+use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
 
 use crate::LanguageName;
@@ -53,7 +53,7 @@ pub trait LanguageToolchainStore {
         self: Arc<Self>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Toolchain>;
 }
 
