@@ -2,60 +2,60 @@
 {"SetOption":{"value":"columns=12"}}
 {"Put":{"state":"tˇwelve char twelve char\ntwelve char\n"}}
 {"Key":"j"}
-{"Get":{"state":"twelve char twelve char\ntˇwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char twelve char\ntˇwelve char\n","mode":"normal"}}
 {"Key":"k"}
-{"Get":{"state":"tˇwelve char twelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"tˇwelve char twelve char\ntwelve char\n","mode":"normal"}}
 {"Key":"g"}
 {"Key":"j"}
-{"Get":{"state":"twelve char tˇwelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char tˇwelve char\ntwelve char\n","mode":"normal"}}
 {"Key":"g"}
 {"Key":"j"}
-{"Get":{"state":"twelve char twelve char\ntˇwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char twelve char\ntˇwelve char\n","mode":"normal"}}
 {"Key":"g"}
 {"Key":"k"}
-{"Get":{"state":"twelve char tˇwelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char tˇwelve char\ntwelve char\n","mode":"normal"}}
 {"Key":"g"}
 {"Key":"^"}
-{"Get":{"state":"twelve char ˇtwelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char ˇtwelve char\ntwelve char\n","mode":"normal"}}
 {"Key":"^"}
-{"Get":{"state":"ˇtwelve char twelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"ˇtwelve char twelve char\ntwelve char\n","mode":"normal"}}
 {"Key":"g"}
 {"Key":"$"}
-{"Get":{"state":"twelve charˇ twelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve charˇ twelve char\ntwelve char\n","mode":"normal"}}
 {"Key":"$"}
-{"Get":{"state":"twelve char twelve chaˇr\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char twelve chaˇr\ntwelve char\n","mode":"normal"}}
 {"Put":{"state":"tˇwelve char twelve char\ntwelve char\n"}}
 {"Key":"enter"}
-{"Get":{"state":"twelve char twelve char\nˇtwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char twelve char\nˇtwelve char\n","mode":"normal"}}
 {"Put":{"state":"twelve char\ntˇwelve char twelve char\ntwelve char\n"}}
 {"Key":"o"}
 {"Key":"o"}
 {"Key":"escape"}
-{"Get":{"state":"twelve char\ntwelve char twelve char\nˇo\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char\ntwelve char twelve char\nˇo\ntwelve char\n","mode":"normal"}}
 {"Put":{"state":"twelve char\ntˇwelve char twelve char\ntwelve char\n"}}
 {"Key":"shift-a"}
 {"Key":"a"}
 {"Key":"escape"}
-{"Get":{"state":"twelve char\ntwelve char twelve charˇa\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char\ntwelve char twelve charˇa\ntwelve char\n","mode":"normal"}}
 {"Key":"shift-i"}
 {"Key":"i"}
 {"Key":"escape"}
-{"Get":{"state":"twelve char\nˇitwelve char twelve chara\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char\nˇitwelve char twelve chara\ntwelve char\n","mode":"normal"}}
 {"Key":"shift-d"}
-{"Get":{"state":"twelve char\nˇ\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char\nˇ\ntwelve char\n","mode":"normal"}}
 {"Put":{"state":"twelve char\ntwelve char tˇwelve char\ntwelve char\n"}}
 {"Key":"shift-o"}
 {"Key":"o"}
 {"Key":"escape"}
-{"Get":{"state":"twelve char\nˇo\ntwelve char twelve char\ntwelve char\n","mode":"Normal"}}
+{"Get":{"state":"twelve char\nˇo\ntwelve char twelve char\ntwelve char\n","mode":"normal"}}
 {"Put":{"state":"fourteen chaˇr\nfourteen char\n"}}
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"fourteenˇ \nfourteen char\n","mode":"Normal"}}
+{"Get":{"state":"fourteenˇ \nfourteen char\n","mode":"normal"}}
 {"Key":"j"}
 {"Key":"shift-f"}
 {"Key":"e"}
 {"Key":"f"}
 {"Key":"r"}
-{"Get":{"state":"fourteen \nfourteen chaˇr\n","mode":"Normal"}}
+{"Get":{"state":"fourteen \nfourteen chaˇr\n","mode":"normal"}}
