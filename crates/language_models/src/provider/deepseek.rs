@@ -466,7 +466,7 @@ impl ConfigurationView {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            ..Default::default()
         };
         EditorElement::new(
             &self.api_key_editor,
