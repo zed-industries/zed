@@ -22,7 +22,7 @@ const fn zed_repo_url() -> &'static str {
 }
 
 fn request_feature_url() -> String {
-    "https://github.com/zed-industries/zed/issues/new?template=0_feature_request.yml".to_string()
+    "https://github.com/zed-industries/zed/discussions/new/choose".to_string()
 }
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {

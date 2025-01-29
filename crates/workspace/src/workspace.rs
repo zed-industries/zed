@@ -365,7 +365,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
-    notifications::init(cx);
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
