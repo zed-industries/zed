@@ -197,6 +197,8 @@ impl GitState {
                                                 project_id: project_id.0,
                                                 worktree_id: worktree_id.to_proto(),
                                                 work_directory_id: work_directory_id.to_proto(),
+                                                // TODO implement collaborative commit message buffer instead and use it
+                                                // If it works, remove `commit_with_message` method.
                                                 message: message.to_string(),
                                             })
                                             .await
