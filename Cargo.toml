@@ -375,9 +375,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"

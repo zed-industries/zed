@@ -316,7 +316,10 @@ impl LocalToolchainStore {
 
             cx.background_executor()
                 .spawn(async move {
-                    let language = registry.language_for_name(&language_name.0).await.ok()?;
+                    let language = registry
+                        .language_for_name(language_name.as_ref())
+                        .await
+                        .ok()?;
                     let toolchains = language.toolchain_lister()?;
                     Some(toolchains.list(root.to_path_buf(), project_env).await)
                 })

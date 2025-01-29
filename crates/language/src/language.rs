@@ -256,7 +256,7 @@ impl CachedLspAdapter {
 
     pub fn language_id(&self, language_name: &LanguageName) -> String {
         self.language_ids
-            .get(language_name.0.as_ref())
+            .get(language_name.as_ref())
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
@@ -1462,7 +1462,7 @@ impl Language {
         self.config
             .code_fence_block_name
             .clone()
-            .unwrap_or_else(|| self.config.name.0.to_lowercase().into())
+            .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {

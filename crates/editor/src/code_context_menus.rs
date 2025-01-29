@@ -728,13 +728,13 @@ impl CompletionsMenu {
             }
             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::Loaded { text }) => {
                 match text {
-                    InlineCompletionText::Edit(highlighted_edits) => div()
+                    InlineCompletionText::Edit { text, highlights } => div()
                         .mx_1()
                         .rounded_md()
                         .bg(cx.theme().colors().editor_background)
                         .child(
-                            gpui::StyledText::new(highlighted_edits.text.clone())
-                                .with_highlights(&style.text, highlighted_edits.highlights.clone()),
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
                         ),
                     InlineCompletionText::Move(text) => div().child(text.clone()),
                 }

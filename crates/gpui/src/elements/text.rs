@@ -2,7 +2,8 @@ use crate::{
     register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, App, Bounds,
     DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
     LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
+    TextOverflow, TextRun, TextStyle, TooltipId, WhiteSpace, Window, WrappedLine,
+    WrappedLineLayout,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -255,8 +256,6 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
-const ELLIPSIS: &str = "…";
-
 impl TextLayout {
     fn lock(&self) -> MutexGuard<Option<TextLayoutInner>> {
         self.0.lock()
@@ -294,19 +293,22 @@ impl TextLayout {
                     None
                 };
 
-                let (truncate_width, ellipsis) = if let Some(truncate) = text_style.truncate {
-                    let width = known_dimensions.width.or(match available_space.width {
-                        crate::AvailableSpace::Definite(x) => Some(x),
-                        _ => None,
-                    });
+                let (truncate_width, ellipsis) =
+                    if let Some(text_overflow) = text_style.text_overflow {
+                        let width = known_dimensions.width.or(match available_space.width {
+                            crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
+                                Some(max_lines) => Some(x * max_lines),
+                                None => Some(x),
+                            },
+                            _ => None,
+                        });
 
-                    match truncate {
-                        Truncate::Truncate => (width, None),
-                        Truncate::Ellipsis => (width, Some(ELLIPSIS)),
-                    }
-                } else {
-                    (None, None)
-                };
+                        match text_overflow {
+                            TextOverflow::Ellipsis(s) => (width, Some(s)),
+                        }
+                    } else {
+                        (None, None)
+                    };
 
                 if let Some(text_layout) = element_state.0.lock().as_ref() {
                     if text_layout.size.is_some()
@@ -326,7 +328,11 @@ impl TextLayout {
                 let Some(lines) = window
                     .text_system()
                     .shape_text(
-                        text, font_size, &runs, wrap_width, // Wrap if we know the width.
+                        text,
+                        font_size,
+                        &runs,
+                        wrap_width,            // Wrap if we know the width.
+                        text_style.line_clamp, // Limit the number of lines if line_clamp is set.
                     )
                     .log_err()
                 else {
