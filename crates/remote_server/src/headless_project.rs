@@ -164,6 +164,7 @@ impl HeadlessProject {
 
         let client: AnyProtoClient = session.clone().into();
 
+        // local_machine -> ssh handlers
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
@@ -187,6 +188,10 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
+        // TODO kb how to get a git repo here?
+        // client.add_model_request_handler(Self::handle_stage);
+        // client.add_model_request_handler(Self::handle_unstage);
+        // client.add_model_request_handler(Self::handle_commit);
 
         client.add_request_handler(
             extensions.clone().downgrade(),

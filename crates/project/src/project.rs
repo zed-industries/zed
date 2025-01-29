@@ -886,6 +886,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
             };
 
+            // ssh -> local machine handlers
             let ssh = ssh.read(cx);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
@@ -900,9 +901,6 @@ impl Project {
             ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_model_message_handler(Self::handle_hide_toast);
             ssh_proto.add_model_request_handler(Self::handle_update_buffer_from_ssh);
-            ssh_proto.add_model_request_handler(Self::handle_stage);
-            ssh_proto.add_model_request_handler(Self::handle_unstage);
-            ssh_proto.add_model_request_handler(Self::handle_commit);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
