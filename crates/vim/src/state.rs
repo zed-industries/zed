@@ -60,6 +60,7 @@ impl Default for Mode {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Operator {
     Change,
     Delete,

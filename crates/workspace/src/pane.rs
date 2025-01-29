@@ -72,7 +72,7 @@ impl DraggedSelection {
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
@@ -96,13 +96,11 @@ pub enum SaveIntent {
 pub struct ActivateItem(pub usize);
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseInactiveItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -110,7 +108,6 @@ pub struct CloseInactiveItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -118,28 +115,24 @@ pub struct CloseAllItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "camelCase")]
 pub struct RevealInProjectPanel {
     #[serde(skip)]
     pub entry_id: Option<u64>,

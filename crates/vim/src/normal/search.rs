@@ -16,7 +16,6 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToNext {
     #[serde(default = "default_true")]
     case_sensitive: bool,
@@ -27,7 +26,6 @@ pub(crate) struct MoveToNext {
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct MoveToPrev {
     #[serde(default = "default_true")]
     case_sensitive: bool,

@@ -8,14 +8,12 @@ use std::ops::Range;
 use crate::{state::Mode, Vim};
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
 struct Increment {
     #[serde(default)]
     step: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
 struct Decrement {
     #[serde(default)]
     step: bool,

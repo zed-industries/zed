@@ -190,25 +190,21 @@ pub struct MoveItemToPaneInDirection {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
