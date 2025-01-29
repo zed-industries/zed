@@ -346,9 +346,9 @@ impl BufferChangeSetState {
         let language = self.language.clone();
         let language_registry = self.language_registry.clone();
 
-        match diff_bases_change {
-            None => {
-                self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            match diff_bases_change {
+                None => {
                     if let Some(unstaged_changes) = unstaged_changes {
                         let index = unstaged_changes
                             .read_with(&cx, |change_set, _| change_set.base_text_string())?;
@@ -378,23 +378,18 @@ impl BufferChangeSetState {
                             uncommitted_changes.diff_to_buffer = uncommitted_diff;
                         })?;
                     }
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, _| {
-                            for tx in this.diff_updated_futures.drain(..) {
-                                tx.send(()).ok();
-                            }
-                        })?;
-                    }
-
-                    Ok(())
-                }));
-            }
-            Some(DiffBasesChange::SetBoth(base_text)) => {
-                let snapshot = base_text.as_deref().map(|text| {
-                    language::Buffer::build_snapshot(text.into(), language, language_registry, cx)
-                });
-                self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+                }
+                Some(DiffBasesChange::SetBoth(base_text)) => {
+                    let snapshot = cx.update(|cx| {
+                        base_text.as_deref().map(|text| {
+                            language::Buffer::build_snapshot(
+                                text.into(),
+                                language,
+                                language_registry,
+                                cx,
+                            )
+                        })
+                    })?;
                     let snapshot = cx.background_executor().spawn(OptionFuture::from(snapshot));
                     let diff = cx.background_executor().spawn({
                         let buffer = buffer.clone();
@@ -403,37 +398,34 @@ impl BufferChangeSetState {
                     let (snapshot, diff) = futures::join!(snapshot, diff);
 
                     if let Some(unstaged_changes) = unstaged_changes {
-                        unstaged_changes.update(&mut cx, |unstaged_changes, _| {
+                        unstaged_changes.update(&mut cx, |unstaged_changes, cx| {
                             unstaged_changes.base_text = snapshot.clone();
                             unstaged_changes.diff_to_buffer = diff.clone();
+                            cx.notify();
                         })?;
                     }
 
                     if let Some(uncommitted_changes) = uncommitted_changes {
-                        uncommitted_changes.update(&mut cx, |uncommitted_changes, _| {
+                        uncommitted_changes.update(&mut cx, |uncommitted_changes, cx| {
                             uncommitted_changes.base_text = snapshot.clone();
                             uncommitted_changes.diff_to_buffer = diff;
                             uncommitted_changes.staged_text = snapshot;
                             uncommitted_changes.staged_diff = Some(BufferDiff::new(&buffer));
+                            cx.notify();
                         })?;
                     }
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, _| {
-                            for tx in this.diff_updated_futures.drain(..) {
-                                tx.send(()).ok();
-                            }
-                        })?;
-                    }
-
-                    Ok(())
-                }));
-            }
-            Some(DiffBasesChange::SetIndex(index_text)) => {
-                let index_snapshot = index_text.as_deref().map(|text| {
-                    language::Buffer::build_snapshot(text.into(), language, language_registry, cx)
-                });
-                self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+                }
+                Some(DiffBasesChange::SetIndex(index_text)) => {
+                    let index_snapshot = cx.update(|cx| {
+                        index_text.as_deref().map(|text| {
+                            language::Buffer::build_snapshot(
+                                text.into(),
+                                language,
+                                language_registry,
+                                cx,
+                            )
+                        })
+                    })?;
                     let index_snapshot = cx
                         .background_executor()
                         .spawn(OptionFuture::from(index_snapshot));
@@ -444,9 +436,10 @@ impl BufferChangeSetState {
                         futures::join!(index_snapshot, unstaged_diff);
 
                     if let Some(unstaged_changes) = unstaged_changes {
-                        unstaged_changes.update(&mut cx, |unstaged_changes, _| {
+                        unstaged_changes.update(&mut cx, |unstaged_changes, cx| {
                             unstaged_changes.base_text = index_snapshot.clone();
                             unstaged_changes.diff_to_buffer = unstaged_diff.clone();
+                            cx.notify();
                         })?;
                     }
 
@@ -464,28 +457,24 @@ impl BufferChangeSetState {
                         } else {
                             None
                         };
-                        uncommitted_changes.update(&mut cx, |uncommitted_changes, _| {
+                        uncommitted_changes.update(&mut cx, |uncommitted_changes, cx| {
                             uncommitted_changes.staged_text = index_snapshot;
                             uncommitted_changes.staged_diff = staged_diff;
+                            cx.notify();
                         })?;
                     }
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, _| {
-                            for tx in this.diff_updated_futures.drain(..) {
-                                tx.send(()).ok();
-                            }
-                        })?;
-                    }
-
-                    Ok(())
-                }));
-            }
-            Some(DiffBasesChange::SetHead(head_text)) => {
-                let head_snapshot = head_text.as_deref().map(|text| {
-                    language::Buffer::build_snapshot(text.into(), language, language_registry, cx)
-                });
-                self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+                }
+                Some(DiffBasesChange::SetHead(head_text)) => {
+                    let head_snapshot = cx.update(|cx| {
+                        head_text.as_deref().map(|text| {
+                            language::Buffer::build_snapshot(
+                                text.into(),
+                                language,
+                                language_registry,
+                                cx,
+                            )
+                        })
+                    })?;
                     let head_snapshot = cx
                         .background_executor()
                         .spawn(OptionFuture::from(head_snapshot));
@@ -510,43 +499,35 @@ impl BufferChangeSetState {
                         } else {
                             None
                         };
-                        uncommitted_changes.update(&mut cx, |uncommitted_changes, _| {
+                        uncommitted_changes.update(&mut cx, |uncommitted_changes, cx| {
                             uncommitted_changes.staged_text = index_snapshot;
                             uncommitted_changes.staged_diff = staged_diff;
                             uncommitted_changes.base_text = head_snapshot;
                             uncommitted_changes.diff_to_buffer = uncommitted_diff;
+                            cx.notify();
                         })?;
                     }
-
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, _| {
-                            for tx in this.diff_updated_futures.drain(..) {
-                                tx.send(()).ok();
-                            }
-                        })?;
-                    }
-
-                    Ok(())
-                }));
-            }
-            Some(DiffBasesChange::SetEach { index, head }) => {
-                let index_snapshot = index.as_deref().map(|index_text| {
-                    language::Buffer::build_snapshot(
-                        index_text.into(),
-                        language.clone(),
-                        language_registry.clone(),
-                        cx,
-                    )
-                });
-                let head_snapshot = head.as_deref().map(|head_text| {
-                    language::Buffer::build_snapshot(
-                        head_text.into(),
-                        language,
-                        language_registry,
-                        cx,
-                    )
-                });
-                self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+                }
+                Some(DiffBasesChange::SetEach { index, head }) => {
+                    let (index_snapshot, head_snapshot) = cx.update(|cx| {
+                        let index_snapshot = index.as_deref().map(|index_text| {
+                            language::Buffer::build_snapshot(
+                                index_text.into(),
+                                language.clone(),
+                                language_registry.clone(),
+                                cx,
+                            )
+                        });
+                        let head_snapshot = head.as_deref().map(|head_text| {
+                            language::Buffer::build_snapshot(
+                                head_text.into(),
+                                language,
+                                language_registry,
+                                cx,
+                            )
+                        });
+                        (index_snapshot, head_snapshot)
+                    })?;
                     let index_snapshot = cx
                         .background_executor()
                         .spawn(OptionFuture::from(index_snapshot));
@@ -565,9 +546,10 @@ impl BufferChangeSetState {
                             })
                             .await;
 
-                        unstaged_changes.update(&mut cx, |unstaged_changes, _| {
+                        unstaged_changes.update(&mut cx, |unstaged_changes, cx| {
                             unstaged_changes.base_text = index_snapshot.clone();
                             unstaged_changes.diff_to_buffer = unstaged_diff;
+                            cx.notify();
                         })?;
                     }
 
@@ -588,26 +570,27 @@ impl BufferChangeSetState {
                             })
                             .await;
 
-                        uncommitted_changes.update(&mut cx, |uncommitted_changes, _| {
+                        uncommitted_changes.update(&mut cx, |uncommitted_changes, cx| {
                             uncommitted_changes.base_text = head_snapshot;
                             uncommitted_changes.diff_to_buffer = uncommitted_diff;
                             uncommitted_changes.staged_text = index_snapshot;
                             uncommitted_changes.staged_diff = staged_diff;
+                            cx.notify();
                         })?;
                     }
+                }
+            };
 
-                    if let Some(this) = this.upgrade() {
-                        this.update(&mut cx, |this, _| {
-                            for tx in this.diff_updated_futures.drain(..) {
-                                tx.send(()).ok();
-                            }
-                        })?;
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, _| {
+                    for tx in this.diff_updated_futures.drain(..) {
+                        tx.send(()).ok();
                     }
-
-                    Ok(())
-                }));
+                })?;
             }
-        };
+
+            Ok(())
+        }));
 
         rx
     }
