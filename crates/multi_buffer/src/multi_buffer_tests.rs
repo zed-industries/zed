@@ -1225,8 +1225,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -1469,8 +1468,7 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -1575,10 +1573,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
     let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
-    let change_set_1 =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_1.to_string(), &buffer_1, cx));
-    let change_set_2 =
-        cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_2.to_string(), &buffer_2, cx));
+    let change_set_1 = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_1, &buffer_1, cx));
+    let change_set_2 = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_2, &buffer_2, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {

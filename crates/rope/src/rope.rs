@@ -450,6 +450,10 @@ impl Rope {
         self.clip_point(Point::new(row, u32::MAX), Bias::Left)
             .column
     }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        self.chunks.ptr_eq(&other.chunks)
+    }
 }
 
 impl<'a> From<&'a str> for Rope {

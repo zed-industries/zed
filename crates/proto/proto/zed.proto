@@ -2062,8 +2062,8 @@ message OpenUncommittedChanges {
 
 message OpenUncommittedChangesResponse {
     enum Mode {
-        INDEX_MATCHES_HEAD = 1;
-        INDEX_AND_HEAD = 2;
+        INDEX_MATCHES_HEAD = 0;
+        INDEX_AND_HEAD = 1;
     }
     optional string staged_text = 1;
     optional string committed_text = 2;
