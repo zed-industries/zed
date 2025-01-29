@@ -751,7 +751,7 @@ impl Database {
                         }),
                         canonical_path: db_entry
                             .canonical_path
-                            .map(|path| proto::CrossPlatformPath::from_db_string(path)),
+                            .map(proto::CrossPlatformPath::from_db_string),
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
                         // This is only used in the summarization backlog, so if it's None,
