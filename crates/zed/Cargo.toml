@@ -59,6 +59,7 @@ git_ui.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
 gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
+gpui_tokio.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true

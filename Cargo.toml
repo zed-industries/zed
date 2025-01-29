@@ -31,8 +31,8 @@ members = [
     "crates/context_server_settings",
     "crates/copilot",
     "crates/db",
-    "crates/diagnostics",
     "crates/deepseek",
+    "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -51,10 +51,12 @@ members = [
     "crates/fuzzy",
     "crates/git",
     "crates/git_hosting_providers",
+    "crates/git_ui",
     "crates/go_to_line",
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
+    "crates/gpui_tokio",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/image_viewer",
@@ -103,6 +105,7 @@ members = [
     "crates/remote_server",
     "crates/repl",
     "crates/reqwest_client",
+    "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -141,7 +144,6 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
-    "crates/reqwest_client",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -151,8 +153,8 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_predict_tos",
     "crates/zeta",
-    "crates/git_ui",
 
     #
     # Extensions
@@ -253,6 +255,7 @@ gpui = { path = "crates/gpui", default-features = false, features = [
     "http_client",
 ] }
 gpui_macros = { path = "crates/gpui_macros" }
+gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
@@ -378,6 +381,7 @@ bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
 blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
