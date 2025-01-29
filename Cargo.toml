@@ -449,7 +449,7 @@ prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
-rand = "0.8.5"
+rand = "0.9.0"
 rayon = "1.8"
 regex = "1.5"
 repair_json = "0.1.0"
