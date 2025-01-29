@@ -866,8 +866,8 @@ and then another
         self.persist_predict_sampling_preferences(cx);
     }
 
-    fn set_sampling_preference_dont_ask_again(&mut self, cx: &mut Context<Self>) {
-        self.sampling_preferences.dont_ask_again = true;
+    fn set_sampling_preference_never_ask_again(&mut self, cx: &mut Context<Self>) {
+        self.sampling_preferences.never_ask_again = true;
         self.persist_predict_sampling_preferences(cx);
     }
 
@@ -894,7 +894,7 @@ and then another
         });
 
         let default = || PredictSamplingPreferences {
-            dont_ask_again: false,
+            never_ask_again: false,
             worktrees: HashMap::default(),
         };
 
@@ -914,9 +914,8 @@ and then another
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PredictSamplingPreferences {
-    /// Set when a user clicks on "Don't ask again", can never be unset.
-    /// TODO: let's this be unset in the Zed Predict status bar menu.
-    dont_ask_again: bool,
+    /// Set when a user clicks on "Never Ask Again", can never be unset.
+    never_ask_again: bool,
     /// Tell if edit predictions can be sampled in a specific project.
     worktrees: HashMap<WorktreeId, bool>,
 }
@@ -1292,7 +1291,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         let worktree_id = file.worktree_id(cx);
         let zeta = self.zeta.read(cx);
 
-        if zeta.sampling_preferences.dont_ask_again
+        if zeta.sampling_preferences.never_ask_again
             || zeta
                 .sampling_preferences
                 .worktrees
@@ -1344,7 +1343,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
                                     zeta.update(cx, |zeta, cx| {
-                                        zeta.set_sampling_preference_dont_ask_again(cx);
+                                        zeta.set_sampling_preference_never_ask_again(cx);
                                     });
                                 }
                             })
