@@ -4,7 +4,7 @@ use crate::{
     LanguageModelProviderState, LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, App, AsyncAppContext, Entity, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -164,7 +164,7 @@ impl LanguageModel for FakeLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs.lock().push((request, tx));
@@ -182,7 +182,7 @@ impl LanguageModel for FakeLanguageModel {
         name: String,
         description: String,
         schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let (tx, rx) = mpsc::unbounded();
         let tool_call = ToolUseRequest {

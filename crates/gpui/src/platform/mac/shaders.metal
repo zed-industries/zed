@@ -26,7 +26,7 @@ float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
 float radians(float degrees);
-float4 gradient_color(Background background, float2 position, Bounds_ScaledPixels bounds,
+float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
   float4 solid_color, float4 color0, float4 color1);
 
 struct GradientColor {
@@ -34,7 +34,7 @@ struct GradientColor {
   float4 color0;
   float4 color1;
 };
-GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
+GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
 
 struct QuadVertexOutput {
   uint quad_id [[flat]];
@@ -71,7 +71,7 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
-  GradientColor gradient = prepare_gradient_color(
+  GradientColor gradient = prepare_fill_color(
     quad.background.tag,
     quad.background.color_space,
     quad.background.solid,
@@ -96,7 +96,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float2 half_size = float2(quad.bounds.size.width, quad.bounds.size.height) / 2.;
   float2 center = float2(quad.bounds.origin.x, quad.bounds.origin.y) + half_size;
   float2 center_to_point = input.position.xy - center;
-  float4 color = gradient_color(quad.background, input.position.xy, quad.bounds,
+  float4 color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
 
   // Fast path when the quad is not rounded and doesn't have any border.
@@ -491,7 +491,7 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
   float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
 
-  GradientColor gradient = prepare_gradient_color(
+  GradientColor gradient = prepare_fill_color(
     sprite.color.tag,
     sprite.color.color_space,
     sprite.color.solid,
@@ -520,7 +520,7 @@ fragment float4 path_sprite_fragment(
   float mask = 1. - abs(1. - fmod(sample.r, 2.));
   PathSprite sprite = sprites[input.sprite_id];
   Background background = sprite.color;
-  float4 color = gradient_color(background, input.position.xy, sprite.bounds,
+  float4 color = fill_color(background, input.position.xy, sprite.bounds,
     input.solid_color, input.color0, input.color1);
   color.a *= mask;
   return color;
@@ -794,10 +794,10 @@ float4 over(float4 below, float4 above) {
   return result;
 }
 
-GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid,
+GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
                                      Hsla color0, Hsla color1) {
   GradientColor out;
-  if (tag == 0) {
+  if (tag == 0 || tag == 2) {
     out.solid = hsla_to_rgba(solid);
   } else if (tag == 1) {
     out.color0 = hsla_to_rgba(color0);
@@ -815,7 +815,13 @@ GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid,
   return out;
 }
 
-float4 gradient_color(Background background,
+float2x2 rotate2d(float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return float2x2(c, -s, s, c);
+}
+
+float4 fill_color(Background background,
                       float2 position,
                       Bounds_ScaledPixels bounds,
                       float4 solid_color, float4 color0, float4 color1) {
@@ -842,7 +848,7 @@ float4 gradient_color(Background background,
       float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
       float2 center_to_point = position - center;
       float t = dot(center_to_point, direction) / length(direction);
-      // Check the direct to determine the use x or y
+      // Check the direction to determine whether to use x or y
       if (abs(direction.x) > abs(direction.y)) {
           t = (t + half_size.x) / bounds.size.width;
       } else {
@@ -866,6 +872,24 @@ float4 gradient_color(Background background,
         }
       }
       break;
+    }
+    case 2: {
+        // This pattern is full of magic numbers to make it line up perfectly
+        // when vertically stacked. Make sure you know what you are doing
+        // if you change this!
+
+        float base_pattern_size = bounds.size.height / 5;
+        float width = base_pattern_size * 0.5;
+        float slash_spacing = .89;
+        float radians = M_PI_F / 4.0;
+        float2x2 rotation = rotate2d(radians);
+        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
+        float2 rotated_point = rotation * relative_position;
+        float pattern = fmod(rotated_point.x / slash_spacing, base_pattern_size * 2.0);
+        float distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
+        color = solid_color;
+        color.a *= saturate(0.5 - distance);
+        break;
     }
   }
 

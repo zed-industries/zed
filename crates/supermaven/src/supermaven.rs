@@ -9,7 +9,7 @@ use client::{proto, Client};
 use collections::BTreeMap;
 
 use futures::{channel::mpsc, io::BufReader, AsyncBufReadExt, StreamExt};
-use gpui::{actions, App, AsyncAppContext, Context, Entity, EntityId, Global, Task, WeakEntity};
+use gpui::{actions, App, AsyncApp, Context, Entity, EntityId, Global, Task, WeakEntity};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };
@@ -342,7 +342,7 @@ impl SupermavenAgent {
     async fn handle_incoming_messages(
         this: WeakEntity<Supermaven>,
         stdout: ChildStdout,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         const MESSAGE_PREFIX: &str = "SM-MESSAGE ";
 

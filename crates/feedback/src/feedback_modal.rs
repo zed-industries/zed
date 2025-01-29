@@ -132,7 +132,7 @@ impl ModalView for FeedbackModal {
 
 impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
-        let _handle = cx.model().downgrade();
+        let _handle = cx.entity().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, window, cx| {
             workspace
                 .with_local_workspace(window, cx, |workspace, window, cx| {

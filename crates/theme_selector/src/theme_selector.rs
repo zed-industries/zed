@@ -33,7 +33,7 @@ pub fn toggle(
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {
         let delegate = ThemeSelectorDelegate::new(
-            cx.model().downgrade(),
+            cx.entity().downgrade(),
             fs,
             toggle.themes_filter.as_ref(),
             cx,

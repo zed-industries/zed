@@ -240,7 +240,7 @@ impl Dock {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let focus_handle = cx.focus_handle();
-        let workspace = cx.model().clone();
+        let workspace = cx.entity().clone();
         let dock = cx.new(|cx| {
             let focus_subscription =
                 cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {

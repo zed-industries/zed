@@ -90,6 +90,14 @@ impl LineLayout {
             }
         }
 
+        if self.len == 1 {
+            if x > self.width / 2. {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+
         self.len
     }
 

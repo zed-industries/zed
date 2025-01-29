@@ -27,7 +27,7 @@ use unindent::Unindent as _;
 use util::{
     assert_set_eq,
     paths::{replace_path_separator, PathMatcher},
-    test::temp_tree,
+    test::TempTree,
     TryFutureExt as _,
 };
 
@@ -67,7 +67,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         "root": {
             "apple": "",
             "banana": {
@@ -106,7 +106,7 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         ".editorconfig": r#"
         root = true
         [*.rs]
@@ -3187,7 +3187,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
-    let dir = temp_tree(json!({
+    let dir = TempTree::new(json!({
         "a": {
             "file1": "",
             "file2": "",

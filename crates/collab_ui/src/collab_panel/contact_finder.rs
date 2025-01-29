@@ -16,7 +16,7 @@ pub struct ContactFinder {
 impl ContactFinder {
     pub fn new(user_store: Entity<UserStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let delegate = ContactFinderDelegate {
-            parent: cx.model().downgrade(),
+            parent: cx.entity().downgrade(),
             user_store,
             potential_contacts: Arc::from([]),
             selected_index: 0,

@@ -5,8 +5,8 @@ use editor::{
     actions::Tab, scroll::Autoscroll, Anchor, Editor, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use gpui::{
-    div, prelude::*, AnyWindowHandle, App, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Render, SharedString, Styled, Subscription,
+    div, prelude::*, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    SharedString, Styled, Subscription,
 };
 use language::Buffer;
 use settings::Settings;
@@ -42,7 +42,7 @@ enum GoToLineRowHighlights {}
 
 impl GoToLine {
     fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
                 let Some(editor_handle) = handle.upgrade() else {
@@ -94,7 +94,7 @@ impl GoToLine {
 
         let line_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            let editor_handle = cx.model().downgrade();
+            let editor_handle = cx.entity().downgrade();
             editor
                 .register_action::<Tab>({
                     move |_, window, cx| {
@@ -133,19 +133,15 @@ impl GoToLine {
         }
     }
 
-    fn release(&mut self, window: AnyWindowHandle, cx: &mut App) {
-        window
-            .update(cx, |_, window, cx| {
-                let scroll_position = self.prev_scroll_position.take();
-                self.active_editor.update(cx, |editor, cx| {
-                    editor.clear_row_highlights::<GoToLineRowHighlights>();
-                    if let Some(scroll_position) = scroll_position {
-                        editor.set_scroll_position(scroll_position, window, cx);
-                    }
-                    cx.notify();
-                })
-            })
-            .ok();
+    fn release(&mut self, window: &mut Window, cx: &mut App) {
+        let scroll_position = self.prev_scroll_position.take();
+        self.active_editor.update(cx, |editor, cx| {
+            editor.clear_row_highlights::<GoToLineRowHighlights>();
+            if let Some(scroll_position) = scroll_position {
+                editor.set_scroll_position(scroll_position, window, cx);
+            }
+            cx.notify();
+        })
     }
 
     fn on_line_editor_event(

@@ -11,9 +11,7 @@ mod worktree_index;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{
-    App, AppContext as _, AsyncAppContext, BorrowAppContext, Context, Entity, Global, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, Global, WeakEntity};
 use language::LineEnding;
 use project::{Project, Worktree};
 use std::{
@@ -41,7 +39,7 @@ impl SemanticDb {
     pub async fn new(
         db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let db_connection = cx
             .background_executor()
@@ -85,7 +83,7 @@ impl SemanticDb {
     pub async fn load_results(
         mut results: Vec<SearchResult>,
         fs: &Arc<dyn Fs>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Result<Vec<LoadedSearchResult>> {
         let mut max_scores_by_path = HashMap::<_, (f32, usize)>::default();
         for result in &results {

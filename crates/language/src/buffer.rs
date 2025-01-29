@@ -928,7 +928,7 @@ impl Buffer {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> impl Future<Output = BufferSnapshot> {
-        let entity_id = cx.reserve_model::<Self>().entity_id();
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
@@ -972,7 +972,7 @@ impl Buffer {
     }
 
     pub fn branch(&mut self, cx: &mut Context<Self>) -> Entity<Self> {
-        let this = cx.model();
+        let this = cx.entity();
         cx.new(|cx| {
             let mut branch = Self {
                 branch_state: Some(BufferBranchState {

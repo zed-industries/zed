@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, App, AsyncAppContext, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::LanguageModelCompletionEvent;
 use language_model::{
@@ -295,7 +295,7 @@ impl LanguageModel for LmStudioLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = self.to_lmstudio_request(request);
 
@@ -362,7 +362,7 @@ impl LanguageModel for LmStudioLanguageModel {
         _tool_name: String,
         _tool_description: String,
         _schema: serde_json::Value,
-        _cx: &AsyncAppContext,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         async move { Ok(futures::stream::empty().boxed()) }.boxed()
     }

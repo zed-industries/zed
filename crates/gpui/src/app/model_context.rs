@@ -1,5 +1,5 @@
 use crate::{
-    AnyView, AnyWindowHandle, App, AppContext, AsyncAppContext, DispatchPhase, Effect, EntityId,
+    AnyView, AnyWindowHandle, App, AppContext, AsyncApp, DispatchPhase, Effect, EntityId,
     EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation,
     SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
@@ -35,14 +35,14 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 
     /// Returns a handle to the model belonging to this context.
-    pub fn model(&self) -> Entity<T> {
-        self.weak_model()
+    pub fn entity(&self) -> Entity<T> {
+        self.weak_entity()
             .upgrade()
             .expect("The entity must be alive if we have a model context")
     }
 
     /// Returns a weak handle to the model belonging to this context.
-    pub fn weak_model(&self) -> WeakEntity<T> {
+    pub fn weak_entity(&self) -> WeakEntity<T> {
         self.model_state.clone()
     }
 
@@ -57,7 +57,7 @@ impl<'a, T: 'static> Context<'a, T> {
         T: 'static,
         W: 'static,
     {
-        let this = self.weak_model();
+        let this = self.weak_entity();
         self.app.observe_internal(entity, move |e, cx| {
             if let Some(this) = this.upgrade() {
                 this.update(cx, |this, cx| on_notify(this, e, cx));
@@ -79,7 +79,7 @@ impl<'a, T: 'static> Context<'a, T> {
         T2: 'static + EventEmitter<Evt>,
         Evt: 'static,
     {
-        let this = self.weak_model();
+        let this = self.weak_entity();
         self.app.subscribe_internal(entity, move |e, event, cx| {
             if let Some(this) = this.upgrade() {
                 this.update(cx, |this, cx| on_event(this, e, event, cx));
@@ -117,7 +117,7 @@ impl<'a, T: 'static> Context<'a, T> {
         T2: 'static,
     {
         let entity_id = entity.entity_id();
-        let this = self.weak_model();
+        let this = self.weak_entity();
         let (subscription, activate) = self.app.release_listeners.insert(
             entity_id,
             Box::new(move |entity, cx| {
@@ -139,7 +139,7 @@ impl<'a, T: 'static> Context<'a, T> {
     where
         T: 'static,
     {
-        let handle = self.weak_model();
+        let handle = self.weak_entity();
         let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| handle.update(cx, |view, cx| f(view, cx)).is_ok()),
@@ -158,7 +158,7 @@ impl<'a, T: 'static> Context<'a, T> {
         Fut: 'static + Future<Output = ()>,
         T: 'static,
     {
-        let handle = self.weak_model();
+        let handle = self.weak_entity();
         let (subscription, activate) = self.app.quit_observers.insert(
             (),
             Box::new(move |cx| {
@@ -183,13 +183,13 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Spawn the future returned by the given function.
     /// The function is provided a weak handle to the model owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncAppContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> Task<R>
     where
         T: 'static,
         Fut: Future<Output = R> + 'static,
         R: 'static,
     {
-        let this = self.weak_model();
+        let this = self.weak_entity();
         self.app.spawn(|cx| f(this, cx))
     }
 
@@ -202,7 +202,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &self,
         f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
-        let view = self.model().downgrade();
+        let view = self.entity().downgrade();
         move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
@@ -221,7 +221,7 @@ impl<'a, T: 'static> Context<'a, T> {
     ) where
         T: 'static,
     {
-        let view = self.model();
+        let view = self.entity();
         window.on_next_frame(move |window, cx| view.update(cx, |view, cx| f(view, window, cx)));
     }
 
@@ -232,7 +232,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &Window,
         f: impl FnOnce(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) {
-        let view = self.model();
+        let view = self.entity();
         window.defer(self, move |window, cx| {
             view.update(cx, |view, cx| f(view, window, cx))
         });
@@ -252,7 +252,7 @@ impl<'a, T: 'static> Context<'a, T> {
         let observed_id = observed.entity_id();
         let observed = observed.downgrade();
         let window_handle = window.handle;
-        let observer = self.weak_model();
+        let observer = self.weak_entity();
         self.new_observer(
             observed_id,
             Box::new(move |cx| {
@@ -290,7 +290,7 @@ impl<'a, T: 'static> Context<'a, T> {
     {
         let emitter = emitter.downgrade();
         let window_handle = window.handle;
-        let subscriber = self.weak_model();
+        let subscriber = self.weak_entity();
         self.new_subscription(
             emitter.entity_id(),
             (
@@ -323,46 +323,32 @@ impl<'a, T: 'static> Context<'a, T> {
     pub fn on_release_in(
         &mut self,
         window: &Window,
-        on_release: impl FnOnce(&mut T, AnyWindowHandle, &mut App) + 'static,
+        on_release: impl FnOnce(&mut T, &mut Window, &mut App) + 'static,
     ) -> Subscription {
-        let window_handle = window.handle;
-        let (subscription, activate) = self.release_listeners.insert(
-            self.entity_id(),
-            Box::new(move |this, cx| {
-                let this = this.downcast_mut().expect("invalid entity type");
-                on_release(this, window_handle, cx)
-            }),
-        );
-        activate();
-        subscription
+        let entity = self.entity();
+        self.app.observe_release_in(&entity, window, on_release)
     }
 
     /// Register a callback to be invoked when the given Model or View is released.
-    pub fn observe_release_in<V2>(
+    pub fn observe_release_in<T2>(
         &self,
-        observed: &Entity<V2>,
+        observed: &Entity<T2>,
         window: &Window,
-        mut on_release: impl FnMut(&mut T, &mut V2, &mut Window, &mut Context<'_, T>) + 'static,
+        mut on_release: impl FnMut(&mut T, &mut T2, &mut Window, &mut Context<'_, T>) + 'static,
     ) -> Subscription
     where
         T: 'static,
-        V2: 'static,
+        T2: 'static,
     {
-        let observer = self.weak_model();
-        let window_handle = window.handle;
-        let (subscription, activate) = self.release_listeners.insert(
-            observed.entity_id(),
-            Box::new(move |observed, cx| {
-                let observed = observed
-                    .downcast_mut()
-                    .expect("invalid observed entity type");
-                let _ = window_handle.update(cx, |_, window, cx| {
-                    observer.update(cx, |this, cx| on_release(this, observed, window, cx))
-                });
-            }),
-        );
-        activate();
-        subscription
+        let observer = self.weak_entity();
+        self.app
+            .observe_release_in(observed, window, move |observed, window, cx| {
+                observer
+                    .update(cx, |observer, cx| {
+                        on_release(observer, observed, window, cx)
+                    })
+                    .ok();
+            })
     }
 
     /// Register a callback to be invoked when the window is resized.
@@ -371,7 +357,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let (subscription, activate) = window.bounds_observers.insert(
             (),
             Box::new(move |window, cx| {
@@ -389,7 +375,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let (subscription, activate) = window.activation_observers.insert(
             (),
             Box::new(move |window, cx| {
@@ -407,7 +393,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let (subscription, activate) = window.appearance_observers.insert(
             (),
             Box::new(move |window, cx| {
@@ -435,7 +421,7 @@ impl<'a, T: 'static> Context<'a, T> {
             subscription
         }
 
-        let view = self.weak_model();
+        let view = self.weak_entity();
         inner(
             &mut self.keystroke_observers,
             Box::new(move |event, window, cx| {
@@ -455,7 +441,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let (subscription, activate) = window.pending_input_observers.insert(
             (),
             Box::new(move |window, cx| {
@@ -475,7 +461,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let focus_id = handle.id;
         let (subscription, activate) =
             window.new_focus_listener(Box::new(move |event, window, cx| {
@@ -501,7 +487,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let focus_id = handle.id;
         let (subscription, activate) =
             window.new_focus_listener(Box::new(move |event, window, cx| {
@@ -524,7 +510,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let focus_id = handle.id;
         let (subscription, activate) =
             window.new_focus_listener(Box::new(move |event, window, cx| {
@@ -550,7 +536,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut listener: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let (subscription, activate) = window.focus_lost_listeners.insert(
             (),
             Box::new(move |window, cx| {
@@ -570,7 +556,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         mut listener: impl FnMut(&mut T, FocusOutEvent, &mut Window, &mut Context<T>) + 'static,
     ) -> Subscription {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let focus_id = handle.id;
         let (subscription, activate) =
             window.new_focus_listener(Box::new(move |event, window, cx| {
@@ -606,7 +592,7 @@ impl<'a, T: 'static> Context<'a, T> {
         R: 'static,
         Fut: Future<Output = R> + 'static,
     {
-        let view = self.weak_model();
+        let view = self.weak_entity();
         window.spawn(self, |mut cx| f(view, cx))
     }
 
@@ -617,7 +603,7 @@ impl<'a, T: 'static> Context<'a, T> {
         mut f: impl FnMut(&mut T, &mut Window, &mut Context<'_, T>) + 'static,
     ) -> Subscription {
         let window_handle = window.handle;
-        let view = self.weak_model();
+        let view = self.weak_entity();
         let (subscription, activate) = self.global_observers.insert(
             TypeId::of::<G>(),
             Box::new(move |cx| {
@@ -639,7 +625,7 @@ impl<'a, T: 'static> Context<'a, T> {
         window: &mut Window,
         listener: impl Fn(&mut T, &dyn Any, DispatchPhase, &mut Window, &mut Context<T>) + 'static,
     ) {
-        let handle = self.weak_model();
+        let handle = self.weak_entity();
         window.on_action(action_type, move |action, phase, window, cx| {
             handle
                 .update(cx, |view, cx| {
@@ -654,7 +640,7 @@ impl<'a, T: 'static> Context<'a, T> {
     where
         T: Focusable,
     {
-        let view = self.model();
+        let view = self.entity();
         window.defer(self, move |window, cx| {
             view.read(cx).focus_handle(cx).focus(window)
         })
@@ -683,27 +669,27 @@ impl<'a, T> AppContext for Context<'a, T> {
         self.app.new(build_model)
     }
 
-    fn reserve_model<U: 'static>(&mut self) -> Reservation<U> {
-        self.app.reserve_model()
+    fn reserve_entity<U: 'static>(&mut self) -> Reservation<U> {
+        self.app.reserve_entity()
     }
 
-    fn insert_model<U: 'static>(
+    fn insert_entity<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
         build_model: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Self::Result<Entity<U>> {
-        self.app.insert_model(reservation, build_model)
+        self.app.insert_entity(reservation, build_model)
     }
 
-    fn update_model<U: 'static, R>(
+    fn update_entity<U: 'static, R>(
         &mut self,
         handle: &Entity<U>,
         update: impl FnOnce(&mut U, &mut Context<'_, U>) -> R,
     ) -> R {
-        self.app.update_model(handle, update)
+        self.app.update_entity(handle, update)
     }
 
-    fn read_model<U, R>(
+    fn read_entity<U, R>(
         &self,
         handle: &Entity<U>,
         read: impl FnOnce(&U, &App) -> R,
@@ -711,7 +697,7 @@ impl<'a, T> AppContext for Context<'a, T> {
     where
         U: 'static,
     {
-        self.app.read_model(handle, read)
+        self.app.read_entity(handle, read)
     }
 
     fn update_window<R, F>(&mut self, window: AnyWindowHandle, update: F) -> Result<R>

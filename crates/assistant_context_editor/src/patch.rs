@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use editor::ProposedChangesEditor;
 use futures::{future, TryFutureExt as _};
-use gpui::{App, AsyncAppContext, Entity, SharedString};
+use gpui::{App, AsyncApp, Entity, SharedString};
 use language::{AutoindentMode, Buffer, BufferSnapshot};
 use project::{Project, ProjectPath};
 use std::{cmp, ops::Range, path::Path, sync::Arc};
@@ -229,7 +229,7 @@ impl AssistantEdit {
     pub async fn resolve(
         &self,
         project: Entity<Project>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<(Entity<Buffer>, ResolvedEdit)> {
         let path = self.path.clone();
         let kind = self.kind.clone();
@@ -421,11 +421,7 @@ impl AssistantEditKind {
 }
 
 impl AssistantPatch {
-    pub async fn resolve(
-        &self,
-        project: Entity<Project>,
-        cx: &mut AsyncAppContext,
-    ) -> ResolvedPatch {
+    pub async fn resolve(&self, project: Entity<Project>, cx: &mut AsyncApp) -> ResolvedPatch {
         let mut resolve_tasks = Vec::new();
         for (ix, edit) in self.edits.iter().enumerate() {
             if let Ok(edit) = edit.as_ref() {

@@ -349,7 +349,7 @@ mod tests {
         buffer1.update(cx, |this, cx| {
             this.set_language(Some(typescript_language), cx)
         });
-        let editor1 = cx.new_window_model(|window, cx| {
+        let editor1 = cx.new_window_entity(|window, cx| {
             Editor::for_buffer(buffer1, Some(project.clone()), window, cx)
         });
         let buffer2 = workspace
@@ -362,7 +362,7 @@ mod tests {
             .unwrap();
         buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
         let editor2 = cx
-            .new_window_model(|window, cx| Editor::for_buffer(buffer2, Some(project), window, cx));
+            .new_window_entity(|window, cx| Editor::for_buffer(buffer2, Some(project), window, cx));
 
         let first_context = workspace
             .update_in(cx, |workspace, window, cx| {

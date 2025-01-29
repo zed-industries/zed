@@ -27,7 +27,7 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Global, Task,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task,
     WeakEntity,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
@@ -556,7 +556,7 @@ impl ExtensionStore {
     async fn upgrade_extensions(
         this: WeakEntity<Self>,
         extensions: Vec<ExtensionMetadata>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         for extension in extensions {
             let task = this.update(cx, |this, cx| {
@@ -1516,7 +1516,7 @@ impl ExtensionStore {
     async fn sync_extensions_over_ssh(
         this: &WeakEntity<Self>,
         client: WeakEntity<SshRemoteClient>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
             this.extension_index
@@ -1581,10 +1581,7 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub async fn update_ssh_clients(
-        this: &WeakEntity<Self>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
+    pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
             this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
             this.ssh_clients.values().cloned().collect::<Vec<_>>()

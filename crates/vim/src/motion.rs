@@ -1675,6 +1675,7 @@ pub(crate) fn next_subword_end(
         if need_backtrack {
             *new_point.column_mut() -= 1;
         }
+        let new_point = map.clip_point(new_point, Bias::Left);
         if point == new_point {
             break;
         }

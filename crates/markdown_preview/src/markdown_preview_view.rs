@@ -144,7 +144,7 @@ impl MarkdownPreviewView {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let view = cx.model().downgrade();
+            let view = cx.entity().downgrade();
 
             let list_state = ListState::new(
                 0,

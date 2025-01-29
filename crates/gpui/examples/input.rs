@@ -3,10 +3,10 @@ use std::ops::Range;
 use gpui::{
     actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative, rgb, rgba, size,
     white, yellow, App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId,
-    ElementInputHandler, Entity, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
-    LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, ViewInputHandler,
-    Window, WindowBounds, WindowOptions,
+    ElementInputHandler, Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId,
+    KeyBinding, Keystroke, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection,
+    UnderlineStyle, Window, WindowBounds, WindowOptions,
 };
 use unicode_segmentation::*;
 
@@ -257,7 +257,7 @@ impl TextInput {
     }
 }
 
-impl ViewInputHandler for TextInput {
+impl EntityInputHandler for TextInput {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -572,7 +572,7 @@ impl Render for TextInput {
                     .p(px(4.))
                     .bg(white())
                     .child(TextElement {
-                        input: cx.model().clone(),
+                        input: cx.entity().clone(),
                     }),
             )
     }
@@ -697,7 +697,7 @@ fn main() {
                 },
             )
             .unwrap();
-        let view = window.root_model(cx).unwrap();
+        let view = window.root(cx).unwrap();
         cx.observe_keystrokes(move |ev, _, cx| {
             view.update(cx, |view, cx| {
                 view.recent_keystrokes.push(ev.keystroke.clone());

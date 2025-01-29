@@ -96,7 +96,7 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let toolchain_selector = cx.model().downgrade();
+        let toolchain_selector = cx.entity().downgrade();
         let picker = cx.new(|cx| {
             let delegate = ToolchainSelectorDelegate::new(
                 active_toolchain,

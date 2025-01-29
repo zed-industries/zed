@@ -107,7 +107,7 @@ impl CommandPalette {
             .collect();
 
         let delegate =
-            CommandPaletteDelegate::new(cx.model().downgrade(), commands, previous_focus_handle);
+            CommandPaletteDelegate::new(cx.entity().downgrade(), commands, previous_focus_handle);
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
@@ -516,7 +516,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let editor = cx.new_window_model(|window, cx| {
+        let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text("abc", window, cx);
             editor
@@ -587,7 +587,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let editor = cx.new_window_model(|window, cx| {
+        let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text("abc", window, cx);
             editor

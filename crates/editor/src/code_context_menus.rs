@@ -495,7 +495,7 @@ impl CompletionsMenu {
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
-            cx.model().clone(),
+            cx.entity().clone(),
             "completions",
             self.entries.borrow().len(),
             move |_editor, range, _window, cx| {
@@ -871,8 +871,9 @@ impl CompletionsMenu {
         };
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
         self.selected_item = new_selection;
-        self.scroll_handle
-            .scroll_to_item(new_selection, ScrollStrategy::Top);
+        // Scroll to 0 even if the LSP completion is the only one selected. This keeps the display
+        // consistent when y_flipped.
+        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
     }
 }
 
@@ -1090,7 +1091,7 @@ impl CodeActionsMenu {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
         let list = uniform_list(
-            cx.model().clone(),
+            cx.entity().clone(),
             "code_actions_menu",
             self.actions.len(),
             move |_this, range, _, cx| {

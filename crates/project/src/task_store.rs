@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AsyncAppContext, Context, Entity, EventEmitter, Task, WeakEntity};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     ContextProvider as _, LanguageToolchainStore, Location,
@@ -58,7 +58,7 @@ impl TaskStore {
     async fn handle_task_context_for_location(
         store: Entity<Self>,
         envelope: TypedEnvelope<proto::TaskContextForLocation>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<proto::TaskContext> {
         let location = envelope
             .payload

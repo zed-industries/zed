@@ -23,10 +23,9 @@ use feature_flags::FeatureFlagAppExt;
 use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, Action, App, AppContext as _, AsyncAppContext, Context, DismissEvent,
-    Element, Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions,
-    PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind,
-    WindowOptions,
+    actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
+    Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
+    ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -40,12 +39,12 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, update_settings_file, KeymapFile,
-    KeymapFileLoadResult, Settings, SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
+    InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
@@ -144,7 +143,7 @@ pub fn initialize_workspace(
             return;
         };
 
-        let workspace_handle = cx.model().clone();
+        let workspace_handle = cx.entity().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
         cx.subscribe_in(&workspace_handle, window, {
@@ -215,7 +214,7 @@ pub fn initialize_workspace(
 
         auto_update_ui::notify_of_any_new_update(window, cx);
 
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             handle
                 .update(cx, |workspace, cx| {
@@ -441,12 +440,14 @@ fn initialize_panels(
         };
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+            log::info!("[assistant2-debug] initializing Assistant2");
             let assistant2_panel = assistant2::AssistantPanel::load(
                 workspace_handle.clone(),
                 prompt_builder,
                 cx.clone(),
             )
             .await?;
+            log::info!("[assistant2-debug] finished initializing Assistant2");
 
             (None, Some(assistant2_panel))
         } else {
@@ -462,6 +463,7 @@ fn initialize_panels(
 
         workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
+                log::info!("[assistant2-debug] adding Assistant2 panel");
                 workspace.add_panel(assistant2_panel, window, cx);
             }
 
@@ -1198,8 +1200,7 @@ fn show_keymap_file_json_error(
                     cx.emit(DismissEvent);
                 })
         })
-    })
-    .log_err();
+    });
 }
 
 fn show_keymap_file_load_error(
@@ -1219,10 +1220,10 @@ fn show_keymap_file_load_error(
     });
 
     cx.spawn(move |cx| async move {
-        let parsed_markdown = Rc::new(parsed_markdown.await);
+        let parsed_markdown = Arc::new(parsed_markdown.await);
         cx.update(|cx| {
             show_app_notification(notification_id, cx, move |cx| {
-                let workspace_handle = cx.model().downgrade();
+                let workspace_handle = cx.entity().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
                 cx.new(move |_cx| {
                     MessageNotification::new_from_builder(move |window, cx| {
@@ -1243,7 +1244,6 @@ fn show_keymap_file_load_error(
                     })
                 })
             })
-            .log_err();
         })
         .ok();
     })
@@ -1271,6 +1271,33 @@ pub fn load_default_keymap(cx: &mut App) {
 
     if let Some(asset_path) = base_keymap.asset_path() {
         cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+    }
+}
+
+pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+
+    match error {
+        Some(error) => {
+            if let Some(InvalidSettingsError::LocalSettings { .. }) =
+                error.downcast_ref::<InvalidSettingsError>()
+            {
+                // Local settings errors are displayed by the projects
+                return;
+            }
+            show_app_notification(id, cx, move |cx| {
+                cx.new(|_cx| {
+                    MessageNotification::new(format!("Invalid user settings file\n{error}"))
+                        .with_click_message("Open settings file")
+                        .on_click(|window, cx| {
+                            window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        })
+                })
+            });
+        }
+        None => dismiss_app_notification(&id, cx),
     }
 }
 
@@ -1534,7 +1561,7 @@ fn open_settings_file(
     .detach_and_log_err(cx);
 }
 
-async fn register_zed_scheme(cx: &AsyncAppContext) -> anyhow::Result<()> {
+async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
     cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
         .await
 }
@@ -2575,7 +2602,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            opened_workspace.root_model(cx).unwrap().entity_id(),
+            opened_workspace.root(cx).unwrap().entity_id(),
             workspace.entity_id(),
             "Excluded files in subfolders of a workspace root should be opened in the workspace"
         );

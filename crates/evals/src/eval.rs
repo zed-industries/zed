@@ -6,7 +6,7 @@ use clock::RealSystemClock;
 use collections::BTreeMap;
 use feature_flags::FeatureFlagAppExt as _;
 use git::GitHostingProviderRegistry;
-use gpui::{AppContext as _, AsyncAppContext, BackgroundExecutor, Entity};
+use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Entity};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -252,7 +252,7 @@ struct Counts {
 async fn run_evaluation(
     only_repo: Option<String>,
     executor: &BackgroundExecutor,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let mut http_client = None;
     cx.update(|cx| {
@@ -409,7 +409,7 @@ async fn run_eval_project(
     project: Entity<Project>,
     embedding_provider: Arc<dyn EmbeddingProvider>,
     fs: Arc<dyn Fs>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<(), anyhow::Error> {
     let mut semantic_index = SemanticDb::new(repo_db_path, embedding_provider, cx).await?;
 
@@ -546,7 +546,7 @@ async fn run_eval_project(
 
 async fn wait_for_indexing_complete(
     project_index: &Entity<ProjectIndex>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
     timeout: Option<Duration>,
 ) {
     let (tx, rx) = bounded(1);
