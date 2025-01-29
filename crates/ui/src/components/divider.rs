@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use gpui::{pattern_horizontal_dash, pattern_vertical_dash, Background, Hsla, IntoElement};
 
 use crate::prelude::*;
@@ -12,12 +11,15 @@ enum DividerDirection {
 /// The color of a [`Divider`].
 #[derive(Default)]
 pub enum DividerColor {
-    Border,
+    /// The default border color.
     #[default]
+    Border,
+    /// Usually a de-emphasized border color.
     BorderVariant,
 }
 
 impl DividerColor {
+    /// Returns the divider's HSLA color.
     pub fn hsla(self, cx: &mut App) -> Hsla {
         match self {
             DividerColor::Border => cx.theme().colors().border,
@@ -26,6 +28,9 @@ impl DividerColor {
     }
 }
 
+/// A component that can be used to separate sections of content.
+///
+/// Can be rendered horizontally or vertically.
 #[derive(IntoElement)]
 pub struct Divider {
     direction: DividerDirection,
@@ -60,6 +65,7 @@ impl RenderOnce for Divider {
 }
 
 impl Divider {
+    /// Creates a solid horizontal divider.
     pub fn horizontal() -> Self {
         Self {
             direction: DividerDirection::Horizontal,
@@ -69,6 +75,7 @@ impl Divider {
         }
     }
 
+    /// Creates a solid vertical divider.
     pub fn vertical() -> Self {
         Self {
             direction: DividerDirection::Vertical,
@@ -78,6 +85,7 @@ impl Divider {
         }
     }
 
+    /// Creates a dashed horizontal divider.
     pub fn horizontal_dashed() -> Self {
         Self {
             direction: DividerDirection::Horizontal,
@@ -87,6 +95,7 @@ impl Divider {
         }
     }
 
+    /// Creates a dashed vertical divider.
     pub fn vertical_dashed() -> Self {
         Self {
             direction: DividerDirection::Vertical,
@@ -96,11 +105,13 @@ impl Divider {
         }
     }
 
+    /// Pads the divider with a margin.
     pub fn inset(mut self) -> Self {
         self.inset = true;
         self
     }
 
+    /// Sets the color of the divider.
     pub fn color(mut self, color: DividerColor) -> Self {
         self.color = color;
         self

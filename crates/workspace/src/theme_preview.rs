@@ -410,7 +410,6 @@ impl ThemePreview {
             .child(IconDecoration::render_component_previews(window, cx))
             .child(Indicator::render_component_previews(window, cx))
             .child(Switch::render_component_previews(window, cx))
-            .child(Divider::render_component_previews(window, cx))
             .child(Table::render_component_previews(window, cx))
     }
 
