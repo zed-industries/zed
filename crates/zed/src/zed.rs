@@ -39,12 +39,12 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, update_settings_file, KeymapFile,
-    KeymapFileLoadResult, Settings, SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
+    InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
@@ -1220,7 +1220,7 @@ fn show_keymap_file_load_error(
     });
 
     cx.spawn(move |cx| async move {
-        let parsed_markdown = Rc::new(parsed_markdown.await);
+        let parsed_markdown = Arc::new(parsed_markdown.await);
         cx.update(|cx| {
             show_app_notification(notification_id, cx, move |cx| {
                 let workspace_handle = cx.entity().downgrade();
@@ -1271,6 +1271,33 @@ pub fn load_default_keymap(cx: &mut App) {
 
     if let Some(asset_path) = base_keymap.asset_path() {
         cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+    }
+}
+
+pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
+    struct SettingsParseErrorNotification;
+    let id = NotificationId::unique::<SettingsParseErrorNotification>();
+
+    match error {
+        Some(error) => {
+            if let Some(InvalidSettingsError::LocalSettings { .. }) =
+                error.downcast_ref::<InvalidSettingsError>()
+            {
+                // Local settings errors are displayed by the projects
+                return;
+            }
+            show_app_notification(id, cx, move |cx| {
+                cx.new(|_cx| {
+                    MessageNotification::new(format!("Invalid user settings file\n{error}"))
+                        .with_click_message("Open settings file")
+                        .on_click(|window, cx| {
+                            window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        })
+                })
+            });
+        }
+        None => dismiss_app_notification(&id, cx),
     }
 }
 
