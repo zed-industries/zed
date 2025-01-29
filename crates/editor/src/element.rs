@@ -4591,7 +4591,7 @@ impl EditorElement {
                                 .set_is_dragging_scrollbar(axis, false, cx);
 
                             if hitbox.is_hovered(window) {
-                                editor.scroll_manager.show_scrollbar(window, cx);
+                                editor.scroll_manager.show_scrollbars(window, cx);
                             }
                         }
                         mouse_position = event.position;
@@ -4639,20 +4639,20 @@ impl EditorElement {
                             if event_position < thumb_bounds.origin.along(axis)
                                 || thumb_bounds.bottom_right().along(axis) < event_position
                             {
-                                let center_row =
+                                let center_position =
                                     ((event_position - hitbox.origin.along(axis)) / text_unit_size)
                                         .round() as u32;
-                                let top_row = center_row.saturating_sub(
+                                let top_position = center_position.saturating_sub(
                                     (visible_range.end - visible_range.start) as u32 / 2,
                                 );
 
                                 let position = editor
                                     .scroll_position(cx)
-                                    .apply_along(axis, |_| top_row as f32);
+                                    .apply_along(axis, |_| top_position as f32);
 
                                 editor.set_scroll_position(position, window, cx);
                             } else {
-                                editor.scroll_manager.show_scrollbar(window, cx);
+                                editor.scroll_manager.show_scrollbars(window, cx);
                             }
 
                             cx.stop_propagation();

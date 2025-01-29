@@ -1444,7 +1444,7 @@ impl Editor {
         this._subscriptions.extend(project_subscriptions);
 
         this.end_selection(window, cx);
-        this.scroll_manager.show_scrollbar(window, cx);
+        this.scroll_manager.show_scrollbars(window, cx);
 
         if mode == EditorMode::Full {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();

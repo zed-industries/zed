@@ -314,7 +314,7 @@ impl ScrollManager {
         }
         self.anchor = anchor;
         cx.emit(EditorEvent::ScrollPositionChanged { local, autoscroll });
-        self.show_scrollbar(window, cx);
+        self.show_scrollbars(window, cx);
         self.autoscroll_request.take();
         if let Some(workspace_id) = workspace_id {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
@@ -336,7 +336,7 @@ impl ScrollManager {
         cx.notify();
     }
 
-    pub fn show_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+    pub fn show_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
         if !self.show_scrollbars {
             self.show_scrollbars = true;
             cx.notify();
