@@ -549,19 +549,14 @@ impl<'de> Deserialize<'de> for Hsla {
 }
 
 /// The orientation of a background.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
 pub enum BackgroundOrientation {
     /// The background is oriented horizontally.
+    #[default]
     Horizontal = 0,
     /// The background is oriented vertically.
     Vertical = 1,
-}
-
-impl Default for BackgroundOrientation {
-    fn default() -> Self {
-        BackgroundOrientation::Horizontal
-    }
 }
 
 impl Display for BackgroundOrientation {
