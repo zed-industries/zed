@@ -508,7 +508,7 @@ pub mod simple_message_notification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             v_flex()
                 .p_3()
-                .gap_2()
+                .gap_3()
                 .elevation_3(cx)
                 .child(
                     h_flex()

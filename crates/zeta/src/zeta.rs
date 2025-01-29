@@ -1303,14 +1303,14 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         struct ZetaDataCollectionNotification;
         let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
-        const DATA_COLLECTION_INFO: &str = "https://zed.dev/terms-of-service";
+        const DATA_COLLECTION_INFO: &str = "https://zed.dev/terms-of-service"; // TODO: Replace for a link that's dedicated to Edit Predictions data collection
 
         self.workspace
             .update(cx, |workspace, cx| {
                 workspace.show_notification(notification_id, cx, |cx| {
                     let zeta = self.zeta.clone();
                     cx.new(move |_cx| {
-                        MessageNotification::new("To allow Zed to suggest better predictions, turn on data collection. You can turn off at any time via the status bar menu.")
+                        MessageNotification::new("To allow Zed to suggest better edits, turn on data collection. You can turn off at any time via the status bar menu.")
                             .with_title("Per-Project Data Collection Program")
                             .show_close_button(false)
                             .with_click_message("Turn On")
