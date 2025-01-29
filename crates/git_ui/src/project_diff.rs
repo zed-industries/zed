@@ -1,17 +1,22 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    sync::mpsc,
+};
 
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent};
+use futures::StreamExt;
 use gpui::{
-    actions, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    Subscription, Task, WeakEntity,
+    actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Buffer, BufferId, Capability};
+use language::{Anchor, Buffer, Capability};
 use multi_buffer::MultiBuffer;
-use project::{git::GitState, Project, ProjectPath};
+use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
+use util::ResultExt as _;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
     ItemNavHistory, ToolbarItemLocation, Workspace,
@@ -19,20 +24,23 @@ use workspace::{
 
 actions!(project_diff, [Deploy]);
 
-enum ShownBuffer {
-    Loading(Task<Result<Entity<Buffer>>>),
-    Loaded(Entity<Buffer>),
-}
-
 pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
-    buffers_to_show: HashMap<ProjectPath, ShownBuffer>,
+    buffers_to_show: HashMap<ProjectPath, Entity<Buffer>>, // tbd.
     editor: Entity<Editor>,
     project: Entity<Project>,
+    git_state: Entity<GitState>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
+    worker: Task<Result<()>>,
+    update_needed: postage::watch::Sender<()>,
 
     git_state_subscription: Subscription,
+}
+
+struct DiffBuffer {
+    buffer: Entity<Buffer>,
+    change_set: Entity<BufferChangeSet>,
 }
 
 impl ProjectDiff {
@@ -85,49 +93,132 @@ impl ProjectDiff {
         let git_state_subscription = cx.subscribe_in(
             &git_state,
             window,
-            move |this, git_state, event, window, cx| match event {
+            move |this, _git_state, event, _window, _cx| match event {
                 project::git::Event::RepositoriesUpdated => {
-                    this.update(git_state, window, cx);
+                    *this.update_needed.borrow_mut() = ();
                 }
             },
         );
 
+        let (mut send, recv) = postage::watch::channel::<()>();
+        let worker = window.spawn(cx, {
+            let this = cx.weak_entity();
+            |cx| Self::worker(this, recv, cx)
+        });
+        // Kick off the worker
+        *send.borrow_mut() = ();
+
         Self {
             project,
+            git_state: git_state.clone(),
             workspace,
             focus_handle,
             buffers_to_show: HashMap::default(),
             editor,
             multibuffer,
+            update_needed: send,
+            worker,
             git_state_subscription,
         }
     }
 
-    pub fn update(
-        &mut self,
-        git_state: &Entity<GitState>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(repo) = git_state.read(cx).active_repository() else {
+    fn buffers_to_load(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
+        let Some(repo) = self.git_state.read(cx).active_repository() else {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
             });
-            return;
+            return vec![];
         };
-        let mut buffers_to_remove = self.buffers_to_show.keys().cloned().collect::<HashSet<_>>();
+
+        let mut loaded_buffers = self
+            .multibuffer
+            .read(cx)
+            .all_buffers()
+            .iter()
+            .filter_map(|buffer| {
+                let file = buffer.read(cx).file()?;
+                let project_path = ProjectPath {
+                    worktree_id: file.worktree_id(cx),
+                    path: file.path().clone(),
+                };
+
+                Some((project_path, buffer.clone()))
+            })
+            .collect::<HashMap<_, _>>();
+
+        let mut result = vec![];
         for entry in repo.status() {
-            dbg!(&entry);
+            if !entry.status.has_changes() {
+                continue;
+            }
             let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
                 continue;
             };
-            let buffer = self
+
+            loaded_buffers.remove(&project_path);
+            let load_buffer = self
                 .project
-                .update(cx, |project, cx| project.open_path(project_path, cx));
+                .update(cx, |project, cx| project.open_buffer(project_path, cx));
+
+            let project = self.project.clone();
+            result.push(cx.spawn(|_, mut cx| async move {
+                let buffer = load_buffer.await?;
+                let changes = project
+                    .update(&mut cx, |project, cx| {
+                        project.open_unstaged_changes(buffer.clone(), cx)
+                    })?
+                    .await?;
+
+                Ok(DiffBuffer {
+                    buffer,
+                    change_set: changes,
+                })
+            }));
         }
-        for project_path in buffers_to_remove {
-            self.buffers_to_show.remove(&project_path);
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            for (_, buffer) in loaded_buffers {
+                multibuffer.remove_excerpts_for_buffer(&buffer, cx);
+            }
+        });
+        result
+    }
+
+    fn register_buffer(&mut self, diff_buffer: DiffBuffer, cx: &mut App) {
+        let buffer = diff_buffer.buffer;
+        let change_set = diff_buffer.change_set;
+
+        let snapshot = buffer.read(cx).snapshot();
+        let diff_hunk_ranges = change_set
+            .read(cx)
+            .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+            .map(|diff_hunk| diff_hunk.buffer_range)
+            .collect::<Vec<_>>();
+
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_buffer(
+                buffer,
+                diff_hunk_ranges,
+                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                cx,
+            );
+        })
+    }
+
+    pub async fn worker(
+        this: WeakEntity<Self>,
+        mut recv: postage::watch::Receiver<()>,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        while let Some(_) = recv.next().await {
+            let buffers_to_load = this.update(&mut cx, |this, cx| this.buffers_to_load(cx))?;
+            for buffer_to_load in buffers_to_load {
+                if let Some(buffer) = buffer_to_load.await.log_err() {
+                    this.update(&mut cx, |this, cx| this.register_buffer(buffer, cx))?;
+                }
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -300,6 +391,6 @@ impl Render for ProjectDiff {
             .items_center()
             .justify_center()
             .size_full()
-            .child(Label::new("No changes in the workspace"))
+            .child(self.editor.clone())
     }
 }

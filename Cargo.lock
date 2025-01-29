@@ -5263,6 +5263,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "picker",
+ "postage",
  "project",
  "schemars",
  "serde",

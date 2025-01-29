@@ -35,6 +35,7 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Range, RangeBounds, Sub},
+    path::{Path, PathBuf},
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -65,6 +66,8 @@ pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
+    // only used by consumers using `set_excerpts_for_buffer`
+    buffers_by_path: BTreeMap<Arc<Path>, Vec<ExcerptId>>,
     diff_bases: HashMap<BufferId, ChangeSetState>,
     all_diff_hunks_expanded: bool,
     subscriptions: Topic,
@@ -1388,6 +1391,70 @@ impl MultiBuffer {
         anchor_ranges
     }
 
+    pub fn set_excerpts_for_buffer(
+        &mut self,
+        buffer: Entity<Buffer>,
+        ranges: Vec<Range<text::Anchor>>,
+        context_line_count: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let path = buffer_snapshot
+            .resolve_file_path(cx, true)
+            // sort untitled files first in buffer-id order
+            .unwrap_or_else(|| PathBuf::from(format!("\x00/{}", buffer_snapshot.remote_id())));
+        let key: Arc<Path> = Arc::from(path);
+        let (insert_after, excerpt_ids) = if let Some(existing) = self.buffers_by_path.get(&key) {
+            (*existing.last().unwrap(), existing.clone())
+        } else {
+            (
+                self.buffers_by_path
+                    .range(..key)
+                    .next_back()
+                    .map(|(_, value)| *value.last().unwrap())
+                    .unwrap_or(ExcerptId::min()),
+                Vec::default(),
+            )
+        };
+
+        let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
+
+        let new_iter = new.iter().peekable();
+        let existing_iter = excerpt_ids.into_iter().peekable();
+
+        let mut to_remove = Vec::new();
+        let mut to_insert = Vec::new();
+
+        let excerpts_cursor = self.snapshot(cx).excerpts.cursor::<Option<ExcerptId>>(&());
+        excerpts_cursor.next(&());
+
+        loop {
+            match (new_iter.peek(), existing_iter.peek()) {
+                (None, None) => break,
+                (None, Some(_)) => {
+                    to_remove.push(existing_iter.next().unwrap());
+                }
+                (Some(_), None) => to_insert.push(new_iter.next().unwrap()),
+                (Some(new), Some(existing)) => {
+                    excerpts_cursor.seek_forward(&Some(*existing), Bias::Right, &());
+                    let existing = excerpts_cursor.item().unwrap();
+
+                    let existing_start =
+
+                    if existing.range.context.start < new.context.start {
+                    } else if existing.range.context.start < new.context.end {
+                    } else {
+                    }
+
+                    todo!()
+                }
+            }
+        }
+
+        self.remove_excerpts_for_buffer(&buffer, cx);
+        self.push_excerpts(buffer, excerpt_ranges, cx);
+    }
+
     pub fn push_multiple_excerpts_with_context_lines(
         &self,
         buffers_with_ranges: Vec<(Entity<Buffer>, Vec<Range<text::Anchor>>)>,
@@ -1676,6 +1743,11 @@ impl MultiBuffer {
         }
 
         excerpts
+    }
+
+    pub fn remove_excerpts_for_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let excerpts = self.excerpts_for_buffer(buffer, cx);
+        self.remove_excerpts(excerpts.iter().map(|(excerpt_id, _)| *excerpt_id), cx)
     }
 
     pub fn excerpt_ranges_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Vec<Range<Point>> {
