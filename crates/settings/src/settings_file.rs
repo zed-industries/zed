@@ -80,14 +80,12 @@ pub fn handle_settings_file_changes(
     });
     cx.spawn(move |cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
-            let result = cx.update(|cx| {
-                SettingsStore::update_global(cx, |store, cx| {
-                    let result = store.set_user_settings(&user_settings_content, cx);
-                    if let Err(err) = &result {
-                        log::error!("Failed to load user settings: {err}");
-                    }
-                    settings_changed(result.err(), cx);
-                });
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                let result = store.set_user_settings(&user_settings_content, cx);
+                if let Err(err) = &result {
+                    log::error!("Failed to load user settings: {err}");
+                }
+                settings_changed(result.err(), cx);
                 cx.refresh_windows();
             });
             if result.is_err() {
