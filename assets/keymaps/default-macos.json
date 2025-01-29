@@ -132,8 +132,7 @@
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
       "ctrl-f12": "editor::GoToDeclaration",
-      "alt-ctrl-f12": "editor::GoToDeclarationSplit",
-      "alt-enter": "editor::OpenSelectionsInMultibuffer"
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit"
     }
   },
   {
@@ -151,7 +150,8 @@
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",
-      "cmd-alt-e": "editor::SelectEnclosingSymbol"
+      "cmd-alt-e": "editor::SelectEnclosingSymbol",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
