@@ -305,7 +305,7 @@ impl Zeta {
         position: language::Anchor,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
-    ) -> Task<Result<InlineCompletion>>
+    ) -> Task<Result<Option<InlineCompletion>>>
     where
         F: FnOnce(Arc<Client>, LlmApiToken, PredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
@@ -523,7 +523,7 @@ and then another
         position: language::Anchor,
         response: PredictEditsResponse,
         cx: &mut Context<Self>,
-    ) -> Task<Result<InlineCompletion>> {
+    ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
         self.request_completion_impl(buffer, position, cx, |_, _, _| ready(Ok(response)))
@@ -534,7 +534,7 @@ and then another
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Task<Result<InlineCompletion>> {
+    ) -> Task<Result<Option<InlineCompletion>>> {
         self.request_completion_impl(buffer, position, cx, Self::perform_predict_edits)
     }
 
@@ -601,7 +601,7 @@ and then another
         input_excerpt: String,
         request_sent_at: Instant,
         cx: &AsyncApp,
-    ) -> Task<Result<InlineCompletion>> {
+    ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = snapshot.clone();
         cx.spawn(|cx| async move {
             let output_excerpt: Arc<str> = output_excerpt.into();
@@ -617,22 +617,22 @@ and then another
                 .await?
                 .into();
 
-            let (edits, snapshot, edit_preview) = buffer.read_with(&cx, {
+            let Some((edits, snapshot, edit_preview)) = buffer.read_with(&cx, {
                 let edits = edits.clone();
                 |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
                     let edits: Arc<[(Range<Anchor>, String)]> =
-                        interpolate(&snapshot, &new_snapshot, edits)
-                            .context("Interpolated edits are empty")?
-                            .into();
-
-                    anyhow::Ok((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                        interpolate(&snapshot, &new_snapshot, edits)?.into();
+                    Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
                 }
-            })??;
+            })?
+            else {
+                return anyhow::Ok(None);
+            };
 
             let edit_preview = edit_preview.await;
 
-            Ok(InlineCompletion {
+            Ok(Some(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
@@ -646,7 +646,7 @@ and then another
                 output_excerpt,
                 request_sent_at,
                 response_received_at: Instant::now(),
-            })
+            }))
         })
     }
 
@@ -1128,12 +1128,17 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             let completion = match completion_request {
                 Ok(completion_request) => {
                     let completion_request = completion_request.await;
-                    completion_request.map(|completion| CurrentInlineCompletion {
-                        buffer_id: buffer.entity_id(),
-                        completion,
+                    completion_request.map(|c| {
+                        c.map(|completion| CurrentInlineCompletion {
+                            buffer_id: buffer.entity_id(),
+                            completion,
+                        })
                     })
                 }
                 Err(error) => Err(error),
+            };
+            let Some(new_completion) = completion.log_err().flatten() else {
+                return;
             };
 
             this.update(&mut cx, |this, cx| {
@@ -1143,22 +1148,19 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     this.pending_completions.clear();
                 }
 
-                if let Some(new_completion) = completion.context("zeta prediction failed").log_err()
-                {
-                    if let Some(old_completion) = this.current_completion.as_ref() {
-                        let snapshot = buffer.read(cx).snapshot();
-                        if new_completion.should_replace_completion(&old_completion, &snapshot) {
-                            this.zeta.update(cx, |zeta, cx| {
-                                zeta.completion_shown(&new_completion.completion, cx);
-                            });
-                            this.current_completion = Some(new_completion);
-                        }
-                    } else {
+                if let Some(old_completion) = this.current_completion.as_ref() {
+                    let snapshot = buffer.read(cx).snapshot();
+                    if new_completion.should_replace_completion(&old_completion, &snapshot) {
                         this.zeta.update(cx, |zeta, cx| {
                             zeta.completion_shown(&new_completion.completion, cx);
                         });
                         this.current_completion = Some(new_completion);
                     }
+                } else {
+                    this.zeta.update(cx, |zeta, cx| {
+                        zeta.completion_shown(&new_completion.completion, cx);
+                    });
+                    this.current_completion = Some(new_completion);
                 }
 
                 cx.notify();
@@ -1442,7 +1444,7 @@ mod tests {
             proto::GetLlmTokenResponse { token: "".into() },
         );
 
-        let completion = completion_task.await.unwrap();
+        let completion = completion_task.await.unwrap().unwrap();
         buffer.update(cx, |buffer, cx| {
             buffer.edit(completion.edits.iter().cloned(), None, cx)
         });
