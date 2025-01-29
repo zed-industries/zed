@@ -604,6 +604,10 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
+        client.add_model_request_handler(Self::handle_stage);
+        client.add_model_request_handler(Self::handle_unstage);
+        client.add_model_request_handler(Self::handle_commit);
+
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
@@ -887,6 +891,9 @@ impl Project {
             ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_model_message_handler(Self::handle_hide_toast);
             ssh_proto.add_model_request_handler(Self::handle_update_buffer_from_ssh);
+            ssh_proto.add_model_request_handler(Self::handle_stage);
+            ssh_proto.add_model_request_handler(Self::handle_unstage);
+            ssh_proto.add_model_request_handler(Self::handle_commit);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -3946,6 +3953,30 @@ impl Project {
         let peer_id = envelope.original_sender_id()?;
 
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    async fn handle_stage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Stage>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        todo!("TODO kb")
+    }
+
+    async fn handle_unstage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Unstage>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        todo!("TODO kb")
+    }
+
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        todo!("TODO kb")
     }
 
     fn respond_to_open_buffer_request(
