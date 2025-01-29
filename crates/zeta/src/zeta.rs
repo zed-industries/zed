@@ -2,11 +2,12 @@ mod completion_diff_element;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
+use db::kvp::KEY_VALUE_STORE;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
-use client::{Client, ProjectId, UserStore};
+use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
@@ -20,6 +21,7 @@ use language::{
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use std::{
     borrow::Cow,
@@ -45,8 +47,7 @@ const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-const KVP_ZETA_DATA_COLLECTION_WORKTREE_OPTIONS_KEY: &str =
-    "zed_predict_data_collection_worktree_options";
+const ZED_PREDICT_SAMPLING_USER_CHOICES_KEY: &'static str = "zed-predict-sampling-user-choices";
 
 actions!(zeta, [ClearHistory]);
 
@@ -176,7 +177,7 @@ pub struct Zeta {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
-    data_collection_options: DataCollectionWorktreeOptions,
+    sampling_options: SamplingWorktreeOptions,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     tos_accepted: bool, // Terms of service accepted
@@ -206,18 +207,13 @@ impl Zeta {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
-        // let data_collection_options = load_data_collection_options(cx);
-
         Self {
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
-            data_collection_options: DataCollectionWorktreeOptions {
-                do_not_ask_again: false,
-                worktree_choices: HashMap::default(),
-            },
+            sampling_options: Self::load_sampling_options(),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -310,11 +306,8 @@ impl Zeta {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            language::BufferEvent::Edited => {
-                self.report_changes_for_buffer(&buffer, cx);
-            }
-            _ => {}
+        if let language::BufferEvent::Edited = event {
+            self.report_changes_for_buffer(&buffer, cx);
         }
     }
 
@@ -342,6 +335,8 @@ impl Zeta {
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
+        // TODO: send this to collab
+        let _can_sample = self.sampling_options.can_sample_worktree_of(&snapshot, cx);
 
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
@@ -859,56 +854,68 @@ and then another
         new_snapshot
     }
 
-    fn set_worktree_data_collection_choice(
+    fn update_sampling_options_project_choice(
         &mut self,
         worktree_id: WorktreeId,
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        self.data_collection_options
-            .worktree_choices
-            .insert(worktree_id, enabled);
-        // self.persist_data_collection();
+        self.sampling_options.worktrees.insert(worktree_id, enabled);
+        self.persist_sampling_options(cx);
     }
 
-    fn set_data_collection_do_not_ask_again(&mut self, cx: &mut Context<Self>) {
-        self.data_collection_options.do_not_ask_again = true;
-        // self.persist_data_collection();
+    fn set_data_collection_dont_ask_again(&mut self, cx: &mut Context<Self>) {
+        self.sampling_options.dont_ask_again = true;
+        self.persist_sampling_options(cx);
     }
 
-    // fn persist_data_collection(&self) {
-    //     let thing = &self.data_collection_options;
+    fn persist_sampling_options(&self, cx: &mut Context<Self>) {
+        let Ok(options) = serde_json::to_string(&self.sampling_options) else {
+            log::error!("serializing sampling options to JSON failed");
+            return;
+        };
 
-    //     let todoo = todo!("convert thing to json");
+        db::write_and_log(cx, move || {
+            KEY_VALUE_STORE.write_kvp(ZED_PREDICT_SAMPLING_USER_CHOICES_KEY.into(), options)
+        });
+    }
 
-    //     db::write_and_log(cx, move || async move {
-    //         KEY_VALUE_STORE
-    //             .write_kvp(KVP_ZETA_DATA_COLLECTION_PROJECT_OPTIONS_KEY, todoo)
-    //             .log_err();
-    //     });
-    // }
+    fn load_sampling_options() -> SamplingWorktreeOptions {
+        let default = || SamplingWorktreeOptions {
+            dont_ask_again: false,
+            worktrees: HashMap::default(),
+        };
+
+        let Some(options) = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_SAMPLING_USER_CHOICES_KEY)
+            .log_err()
+            .flatten()
+        else {
+            return default();
+        };
+
+        serde_json::from_str(&options)
+            .log_err()
+            .unwrap_or_else(default)
+    }
 }
 
-// fn load_data_collection_options(cx: &mut Context<'_, Zeta>) -> DataCollectionWorktreeOptions {
-//     let default = || DataCollectionWorktreeOptions {
-//         do_not_ask_again: false,
-//         worktree_choices: HashMap::default(),
-//     };
+/// Store user choices for data sampling.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct SamplingWorktreeOptions {
+    /// Set when a user clicks on "Don't ask again", can never be unset.
+    /// TODO: let's this be unset in the Zed Predict status bar menu.
+    dont_ask_again: bool,
+    /// Answer for each project.
+    worktrees: HashMap<WorktreeId, bool>,
+}
 
-//     let read_options = KEY_VALUE_STORE
-//         .read_kvp(
-//             KVP_ZETA_DATA_COLLECTION_PROJECT_OPTIONS_KEY,
-//             "JSON_GOES_HERE",
-//         )
-//         .log_err()
-//         .flatten();
-
-//     todo!("convert read_options from json")
-// }
-
-struct DataCollectionWorktreeOptions {
-    do_not_ask_again: bool,
-    worktree_choices: HashMap<WorktreeId, bool>,
+impl SamplingWorktreeOptions {
+    fn can_sample_worktree_of(&self, snapshot: &BufferSnapshot, cx: &mut Context<Zeta>) -> bool {
+        snapshot
+            .file()
+            .is_some_and(|file| self.worktrees.contains_key(&file.worktree_id(cx)))
+    }
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -1272,20 +1279,15 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         };
 
         let worktree_id = file.worktree_id(cx);
-
         let zeta = self.zeta.read(cx);
 
-        if zeta.data_collection_options.do_not_ask_again
-            || zeta
-                .data_collection_options
-                .worktree_choices
-                .contains_key(&worktree_id)
+        if zeta.sampling_options.dont_ask_again
+            || zeta.sampling_options.worktrees.contains_key(&worktree_id)
         {
             return;
         }
 
         struct ZetaDataCollectionNotification;
-
         let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
 
         self.workspace
@@ -1300,7 +1302,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
                                     zeta.update(cx, |zeta, cx| {
-                                        zeta.set_worktree_data_collection_choice(
+                                        zeta.update_sampling_options_project_choice(
                                             worktree_id,
                                             true,
                                             cx,
@@ -1313,7 +1315,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
                                     zeta.update(cx, |zeta, cx| {
-                                        zeta.set_worktree_data_collection_choice(
+                                        zeta.update_sampling_options_project_choice(
                                             worktree_id,
                                             false,
                                             cx,
@@ -1326,7 +1328,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
                                     zeta.update(cx, |zeta, cx| {
-                                        zeta.set_data_collection_do_not_ask_again(cx);
+                                        zeta.set_data_collection_dont_ask_again(cx);
                                     });
                                 }
                             })
