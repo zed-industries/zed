@@ -14393,16 +14393,8 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let change_set = cx.new(|cx| {
-                let mut change_set = BufferChangeSet::new(&buffer, cx);
-                change_set.recalculate_diff_sync(
-                    base_text.into(),
-                    buffer.read(cx).text_snapshot(),
-                    true,
-                    cx,
-                );
-                change_set
-            });
+            let change_set =
+                cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
 
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_change_set(change_set, cx);

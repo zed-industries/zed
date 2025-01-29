@@ -2490,6 +2490,15 @@ impl BufferChangeSet {
             diff_to_buffer,
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn recalculate_diff_sync(&mut self, snapshot: text::BufferSnapshot) {
+        let base_text = self
+            .base_text
+            .as_ref()
+            .expect("Diff recalculation launched without base text");
+        self.diff_to_buffer = git::diff::BufferDiff::build(&base_text.text(), &snapshot);
+    }
 }
 
 impl OpenBuffer {

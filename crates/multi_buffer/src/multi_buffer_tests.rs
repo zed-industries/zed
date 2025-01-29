@@ -358,12 +358,7 @@ fn test_diff_boundary_anchors(cx: &mut App) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let snapshot = buffer.read(cx).snapshot();
-    let change_set = cx.new(|cx| {
-        let mut change_set = BufferChangeSet::new(&buffer, cx);
-        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
-        change_set
-    });
+    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_change_set(change_set, cx)
@@ -407,12 +402,7 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| {
-        let mut change_set = BufferChangeSet::new(&buffer, cx);
-        let snapshot = buffer.read(cx).snapshot();
-        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
-        change_set
-    });
+    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
@@ -505,12 +495,7 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| {
-        let mut change_set = BufferChangeSet::new(&buffer, cx);
-        let snapshot = buffer.read(cx).snapshot();
-        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
-        change_set
-    });
+    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(&base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
@@ -587,12 +572,7 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
 
     multibuffer.update(cx, |multibuffer, cx| multibuffer.undo(cx));
     change_set.update(cx, |change_set, cx| {
-        change_set.recalculate_diff_sync(
-            base_text.into(),
-            buffer.read(cx).text_snapshot(),
-            true,
-            cx,
-        );
+        change_set.recalculate_diff_sync(buffer.read(cx).text_snapshot());
     });
     assert_new_snapshot(
         &multibuffer,
@@ -1415,8 +1395,8 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_line_indents(&snapshot);
 
     // Recalculate the diff, changing the first diff hunk.
-    let _ = change_set.update(cx, |change_set, cx| {
-        change_set.recalculate_diff(buffer.read(cx).text_snapshot(), cx)
+    change_set.update(cx, |change_set, cx| {
+        change_set.recalculate_diff_sync(buffer.read(cx).text_snapshot());
     });
     cx.run_until_parked();
     assert_new_snapshot(
@@ -2185,12 +2165,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
-                                change_set.recalculate_diff_sync(
-                                    change_set.base_text.clone().unwrap().text(),
-                                    snapshot.text,
-                                    false,
-                                    cx,
-                                )
+                                change_set.recalculate_diff_sync(snapshot.text);
                             });
                     }
                     reference.diffs_updated(cx);
@@ -2205,11 +2180,8 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
 
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                     let snapshot = buffer.read(cx).snapshot();
-                    let change_set = cx.new(|cx| {
-                        let mut change_set = BufferChangeSet::new(&buffer, cx);
-                        change_set.recalculate_diff_sync(base_text, snapshot.text, true, cx);
-                        change_set
-                    });
+                    let change_set =
+                        cx.new(|cx| BufferChangeSet::new_with_base_text(&base_text, &buffer, cx));
 
                     reference.add_change_set(change_set.clone(), cx);
                     multibuffer.update(cx, |multibuffer, cx| {
