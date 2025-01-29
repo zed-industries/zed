@@ -34,7 +34,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use text::BufferId;
+use text::{BufferId, Rope};
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
 
@@ -88,7 +88,7 @@ struct BufferChangeSetState {
 }
 
 impl BufferChangeSetState {
-    fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<BufferStore>) {
+    fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         let buffer_id = buffer.read(cx).remote_id();
         let unstaged_changes = self.unstaged_changes.as_ref().and_then(|set| set.upgrade());
         let uncommitted_changes = self
@@ -145,22 +145,17 @@ impl BufferChangeSetState {
                 ))
                 .await;
 
-            this.update(&mut cx, |buffer_store, cx| {
-                let Some(OpenBuffer::Complete {
-                    change_set_state, ..
-                }) = buffer_store.opened_buffers.get_mut(&buffer_id)
-                else {
-                    return None;
-                };
-
+            this.update(&mut cx, |this, cx| {
                 for snapshot in snapshots_with_change_set_kinds {
                     if let Some((snapshot, kinds)) = snapshot {
                         for kind in kinds {
-                            let change_set = match kind {
-                                ChangeSetKind::Unstaged => &change_set_state.unstaged_changes,
-                                ChangeSetKind::Uncommitted => &change_set_state.uncommitted_changes,
+                            let change_set = {
+                                let change_set = match kind {
+                                    ChangeSetKind::Unstaged => &this.unstaged_changes,
+                                    ChangeSetKind::Uncommitted => &this.uncommitted_changes,
+                                };
+                                change_set.as_ref().and_then(|set| set.upgrade())?
                             };
-                            let change_set = change_set.as_ref().and_then(|set| set.upgrade())?;
                             change_set.update(cx, |change_set, _| {
                                 change_set.base_text = Some(snapshot.clone());
                             });
@@ -179,7 +174,7 @@ impl BufferChangeSetState {
         buffer: text::BufferSnapshot,
         index_text: Option<String>,
         head_text: Option<String>,
-        cx: &mut Context<BufferStore>,
+        cx: &mut Context<Self>,
     ) -> proto::UpdateDiffBases {
         todo!()
     }
@@ -188,7 +183,7 @@ impl BufferChangeSetState {
         &mut self,
         buffer: Entity<Buffer>,
         message: proto::UpdateDiffBases,
-        cx: &mut Context<BufferStore>,
+        cx: &mut Context<Self>,
     ) {
         todo!()
     }
@@ -198,21 +193,12 @@ impl BufferChangeSetState {
         buffer: Entity<Buffer>,
         kind: ChangeSetKind,
         text: Option<String>,
-        cx: &mut Context<BufferStore>,
+        cx: &mut Context<Self>,
     ) -> Entity<BufferChangeSet> {
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_subscription.get_or_insert_with(|| {
             cx.subscribe(&buffer, |this, buffer, event, cx| match event {
-                BufferEvent::LanguageChanged => {
-                    let Some(OpenBuffer::Complete {
-                        change_set_state, ..
-                    }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
-                    else {
-                        return;
-                    };
-
-                    change_set_state.buffer_language_changed(buffer, cx);
-                }
+                BufferEvent::LanguageChanged => this.buffer_language_changed(buffer, cx),
                 _ => {}
             })
         });
@@ -238,7 +224,7 @@ impl BufferChangeSetState {
     fn recalculate_diffs(
         &mut self,
         buffer: Entity<Buffer>,
-        cx: &mut Context<BufferStore>,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         // let (tx, rx) = oneshot::channel();
         // self.diff_updated_futures.push(tx);
@@ -313,7 +299,7 @@ struct LocalBufferStore {
 enum OpenBuffer {
     Complete {
         buffer: WeakEntity<Buffer>,
-        change_set_state: BufferChangeSetState,
+        change_set_state: Entity<BufferChangeSetState>,
     },
     Operations(Vec<Operation>),
 }
@@ -744,41 +730,43 @@ impl LocalBufferStore {
 
         let mut change_set_state_updates = Vec::new();
         for buffer in this.opened_buffers.values() {
-            if let OpenBuffer::Complete {
+            let OpenBuffer::Complete {
                 buffer,
                 change_set_state,
             } = buffer
+            else {
+                continue;
+            };
+            let Some(buffer) = buffer.upgrade() else {
+                continue;
+            };
+            let buffer = buffer.read(cx);
+            let Some(file) = File::from_dyn(buffer.file()) else {
+                continue;
+            };
+            if file.worktree != worktree_handle {
+                continue;
+            }
+            let change_set_state = change_set_state.read(cx);
+            if changed_repos
+                .iter()
+                .any(|(work_dir, _)| file.path.starts_with(work_dir))
             {
-                let Some(buffer) = buffer.upgrade() else {
-                    continue;
-                };
-                let buffer = buffer.read(cx);
-                let Some(file) = File::from_dyn(buffer.file()) else {
-                    continue;
-                };
-                if file.worktree != worktree_handle {
-                    continue;
-                }
-                if changed_repos
-                    .iter()
-                    .any(|(work_dir, _)| file.path.starts_with(work_dir))
-                {
-                    let snapshot = buffer.text_snapshot();
-                    change_set_state_updates.push((
-                        snapshot.clone(),
-                        file.path.clone(),
-                        change_set_state
-                            .unstaged_changes
-                            .as_ref()
-                            .and_then(|set| set.upgrade())
-                            .is_some(),
-                        change_set_state
-                            .uncommitted_changes
-                            .as_ref()
-                            .and_then(|set| set.upgrade())
-                            .is_some(),
-                    ))
-                }
+                let snapshot = buffer.text_snapshot();
+                change_set_state_updates.push((
+                    snapshot.clone(),
+                    file.path.clone(),
+                    change_set_state
+                        .unstaged_changes
+                        .as_ref()
+                        .and_then(|set| set.upgrade())
+                        .is_some(),
+                    change_set_state
+                        .uncommitted_changes
+                        .as_ref()
+                        .and_then(|set| set.upgrade())
+                        .is_some(),
+                ))
             }
         }
 
@@ -824,12 +812,14 @@ impl LocalBufferStore {
                         continue;
                     };
 
-                    let mut message = change_set_state.base_texts_updated(
-                        buffer_snapshot,
-                        staged_text,
-                        committed_text,
-                        cx,
-                    );
+                    let mut message = change_set_state.update(cx, |change_set_state, cx| {
+                        change_set_state.base_texts_updated(
+                            buffer_snapshot,
+                            staged_text,
+                            committed_text,
+                            cx,
+                        )
+                    });
 
                     if let Some((client, project_id)) = &this.downstream_client.clone() {
                         message.project_id = *project_id;
@@ -1264,7 +1254,7 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferChangeSet>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(change_set) = self.get_unstaged_changes(buffer_id) {
+        if let Some(change_set) = self.get_unstaged_changes(buffer_id, cx) {
             return Task::ready(Ok(change_set));
         }
 
@@ -1340,7 +1330,10 @@ impl BufferStore {
                 change_set_state, ..
             }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
             {
-                Ok(change_set_state.add_change_set(buffer, kind, base_text, cx))
+                let change_set = change_set_state.update(cx, |change_set_state, cx| {
+                    change_set_state.add_change_set(buffer, kind, base_text, cx)
+                });
+                Ok(change_set)
             } else {
                 Err(anyhow!("buffer was closed"))
             }
@@ -1550,7 +1543,7 @@ impl BufferStore {
         let is_remote = buffer.read(cx).replica_id() != 0;
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer.downgrade(),
-            change_set_state: BufferChangeSetState::default(),
+            change_set_state: cx.new(|_| BufferChangeSetState::default()),
         };
 
         let handle = cx.entity().downgrade();
@@ -1631,12 +1624,20 @@ impl BufferStore {
         })
     }
 
-    pub fn get_unstaged_changes(&self, buffer_id: BufferId) -> Option<Entity<BufferChangeSet>> {
+    pub fn get_unstaged_changes(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<Entity<BufferChangeSet>> {
         if let OpenBuffer::Complete {
             change_set_state, ..
         } = self.opened_buffers.get(&buffer_id)?
         {
-            change_set_state.unstaged_changes.as_ref()?.upgrade()
+            change_set_state
+                .read(cx)
+                .unstaged_changes
+                .as_ref()?
+                .upgrade()
         } else {
             None
         }
@@ -1760,7 +1761,9 @@ impl BufferStore {
                 change_set_state, ..
             }) = self.opened_buffers.get_mut(&buffer.read(cx).remote_id())
             {
-                futures.push(change_set_state.recalculate_diffs(buffer, cx));
+                futures.push(change_set_state.update(cx, |change_set_state, cx| {
+                    change_set_state.recalculate_diffs(buffer, cx)
+                }));
             }
         }
         async move {
@@ -2231,7 +2234,9 @@ impl BufferStore {
             }) = this.opened_buffers.get_mut(&buffer_id)
             {
                 if let Some(buffer) = buffer.upgrade() {
-                    change_set_state.handle_base_texts_updated(buffer, request.payload, cx);
+                    change_set_state.update(cx, |change_set_state, cx| {
+                        change_set_state.handle_base_texts_updated(buffer, request.payload, cx);
+                    })
                 }
             }
         })
@@ -2463,6 +2468,15 @@ impl BufferChangeSet {
     ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
         self.diff_to_buffer
             .hunks_intersecting_range_rev(range, buffer_snapshot)
+    }
+
+    pub fn set_base_text(
+        &mut self,
+        base_text: Rope,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        todo!()
     }
 
     #[cfg(any(test, feature = "test-support"))]
