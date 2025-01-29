@@ -797,7 +797,7 @@ float4 over(float4 below, float4 above) {
 GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
                                      Hsla color0, Hsla color1) {
   GradientColor out;
-  if (tag == 0 || tag == 2) {
+  if (tag == 0 || tag == 2 || tag == 3) {
     out.solid = hsla_to_rgba(solid);
   } else if (tag == 1) {
     out.color0 = hsla_to_rgba(color0);
@@ -874,13 +874,10 @@ float4 fill_color(Background background,
       break;
     }
     case 2: {
-        // This pattern is full of magic numbers to make it line up perfectly
-        // when vertically stacked. Make sure you know what you are doing
-        // if you change this!
-
+        // Slash pattern
         float base_pattern_size = bounds.size.height / 5;
         float width = base_pattern_size * 0.5;
-        float slash_spacing = .89;
+        float slash_spacing = .89; // exact number to make vertical elements line up
         float radians = M_PI_F / 4.0;
         float2x2 rotation = rotate2d(radians);
         float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
@@ -889,6 +886,22 @@ float4 fill_color(Background background,
         float distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
         color = solid_color;
         color.a *= saturate(0.5 - distance);
+        break;
+    }
+    case 3: {
+        // Dash pattern
+        float dash_width = 8.0;
+        float gap_width = 8.0;
+        float pattern_width = dash_width + gap_width;
+        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
+
+        // Use a dot product to select x or y based on orientation
+        float2 orientation_vector = float2(1.0 - background.orientation, background.orientation);
+        float pattern_position = fmod(dot(relative_position, orientation_vector), pattern_width);
+
+        float distance = pattern_position - dash_width;
+        color = solid_color;
+        color.a *= step(-distance, 0.0);
         break;
     }
   }

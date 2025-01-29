@@ -1,6 +1,7 @@
 use gpui::{
-    div, linear_color_stop, linear_gradient, pattern_slash, prelude::*, px, rgb, size, App,
-    AppContext, Application, Bounds, Context, Window, WindowBounds, WindowOptions,
+    div, linear_color_stop, linear_gradient, pattern_horizontal_dash, pattern_slash,
+    pattern_vertical_dash, prelude::*, px, rgb, size, App, AppContext, Application, Bounds,
+    Context, Window, WindowBounds, WindowOptions,
 };
 
 struct PatternExample;
@@ -19,6 +20,58 @@ impl Render for PatternExample {
             .text_xl()
             .text_color(rgb(0x000000))
             .child("Pattern Example")
+            .child(
+                div()
+                    .flex()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .w(px(160.0))
+                                    .h(px(1.0))
+                                    .bg(pattern_horizontal_dash(gpui::red())),
+                            )
+                            .child(
+                                div()
+                                    .w(px(160.0))
+                                    .h(px(4.0))
+                                    .bg(pattern_horizontal_dash(gpui::red())),
+                            )
+                            .child(
+                                div()
+                                    .w(px(160.0))
+                                    .h(px(8.0))
+                                    .bg(pattern_horizontal_dash(gpui::red())),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .w(px(1.0))
+                                    .h(px(160.0))
+                                    .bg(pattern_vertical_dash(gpui::blue())),
+                            )
+                            .child(
+                                div()
+                                    .w(px(4.0))
+                                    .h(px(160.0))
+                                    .bg(pattern_vertical_dash(gpui::blue())),
+                            )
+                            .child(
+                                div()
+                                    .w(px(8.0))
+                                    .h(px(160.0))
+                                    .bg(pattern_vertical_dash(gpui::blue())),
+                            ),
+                    ),
+            )
             .child(
                 div()
                     .flex()

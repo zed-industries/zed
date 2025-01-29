@@ -548,12 +548,33 @@ impl<'de> Deserialize<'de> for Hsla {
     }
 }
 
+/// The orientation of a background.
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub enum BackgroundOrientation {
+    /// The background is oriented horizontally.
+    #[default]
+    Horizontal = 0,
+    /// The background is oriented vertically.
+    Vertical = 1,
+}
+
+impl Display for BackgroundOrientation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            BackgroundOrientation::Horizontal => write!(f, "Horizontal"),
+            BackgroundOrientation::Vertical => write!(f, "Vertical"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub(crate) enum BackgroundTag {
     Solid = 0,
     LinearGradient = 1,
     PatternSlash = 2,
+    PatternDash = 3,
 }
 
 /// A color space for color interpolation.
@@ -589,6 +610,7 @@ pub struct Background {
     pub(crate) solid: Hsla,
     pub(crate) angle: f32,
     pub(crate) colors: [LinearColorStop; 2],
+    pub(crate) orientation: BackgroundOrientation,
     /// Padding for alignment for repr(C) layout.
     pad: u32,
 }
@@ -602,6 +624,7 @@ impl Default for Background {
             color_space: ColorSpace::default(),
             angle: 0.0,
             colors: [LinearColorStop::default(), LinearColorStop::default()],
+            orientation: BackgroundOrientation::default(),
             pad: 0,
         }
     }
@@ -612,6 +635,26 @@ pub fn pattern_slash(color: Hsla) -> Background {
     Background {
         tag: BackgroundTag::PatternSlash,
         solid: color,
+        ..Default::default()
+    }
+}
+
+/// Creates a dash pattern background
+pub fn pattern_horizontal_dash(color: Hsla) -> Background {
+    Background {
+        tag: BackgroundTag::PatternDash,
+        orientation: BackgroundOrientation::Horizontal,
+        solid: color,
+        ..Default::default()
+    }
+}
+
+/// Creates a vertical dash pattern background
+pub fn pattern_vertical_dash(color: Hsla) -> Background {
+    Background {
+        tag: BackgroundTag::PatternDash,
+        solid: color,
+        orientation: BackgroundOrientation::Vertical,
         ..Default::default()
     }
 }
@@ -694,6 +737,7 @@ impl Background {
             BackgroundTag::Solid => self.solid.is_transparent(),
             BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
+            BackgroundTag::PatternDash => self.solid.is_transparent(),
         }
     }
 }
