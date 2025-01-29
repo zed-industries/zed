@@ -5,8 +5,6 @@
 
 use std::env;
 
-use naga::valid::{Capabilities, ValidationFlags, Validator};
-
 fn main() {
     let target = env::var("CARGO_CFG_TARGET_OS");
     println!("cargo::rustc-check-cfg=cfg(gles)");

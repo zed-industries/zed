@@ -11,7 +11,7 @@ license = "Apache-2.0"
 workspace = true
 
 [features]
-default = ["http_client", "font-kit", "wayland", "x11", "macos-blade"]
+default = ["http_client", "font-kit", "wayland", "x11"]
 test-support = [
     "backtrace",
     "collections/test-support",
