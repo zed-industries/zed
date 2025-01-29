@@ -2759,7 +2759,7 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
                     .into_iter()
                     .map(|(range, text)| {
                         (
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                            buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
                             text.to_string(),
                         )
                     })

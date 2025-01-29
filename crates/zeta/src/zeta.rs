@@ -103,23 +103,21 @@ fn interpolate(
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
 
-    let mut user_edits = new_snapshot
-        .edits_since::<usize>(&old_snapshot.version)
-        .peekable();
-    for (model_old_range, model_new_text) in current_edits.iter() {
-        let model_offset_range = model_old_range.to_offset(old_snapshot);
-        while let Some(next_user_edit) = user_edits.peek() {
-            if next_user_edit.old.end < model_offset_range.start {
-                user_edits.next();
+    let mut model_edits = current_edits.into_iter().peekable();
+    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        while let Some((model_old_range, _)) = model_edits.peek() {
+            let model_old_range = model_old_range.to_offset(old_snapshot);
+            if model_old_range.end < user_edit.old.start {
+                let (model_old_range, model_new_text) = model_edits.next().unwrap();
+                edits.push((model_old_range.clone(), model_new_text.clone()));
             } else {
                 break;
             }
         }
 
-        if let Some(user_edit) = user_edits.peek() {
-            if user_edit.old.start > model_offset_range.end {
-                edits.push((model_old_range.clone(), model_new_text.clone()));
-            } else if user_edit.old == model_offset_range {
+        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
+            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            if user_edit.old == model_old_offset_range {
                 let user_new_text = new_snapshot
                     .text_for_range(user_edit.new.clone())
                     .collect::<String>();
@@ -127,21 +125,27 @@ fn interpolate(
                 if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
                     if !model_suffix.is_empty() {
                         edits.push((
-                            new_snapshot.anchor_after(user_edit.new.end)
-                                ..new_snapshot.anchor_before(user_edit.new.end),
-                            model_suffix.into(),
+                            old_snapshot.anchor_before(user_edit.old.end)
+                                ..old_snapshot.anchor_after(user_edit.old.end),
+                            model_suffix.to_string(),
                         ));
                     }
 
-                    user_edits.next();
-                } else {
-                    return None;
+                    model_edits.next();
+                    continue;
                 }
-            } else {
-                return None;
             }
-        } else {
+        }
+
+        return None;
+    }
+
+    for (model_old_range, model_new_text) in model_edits {
+        let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+        if model_old_offset_range.is_empty() {
             edits.push((model_old_range.clone(), model_new_text.clone()));
+        } else {
+            return None;
         }
     }
 
@@ -766,7 +770,7 @@ and then another
 
                 let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
                 (
-                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end),
+                    snapshot.anchor_before(old_range.start)..snapshot.anchor_after(old_range.end),
                     new_text,
                 )
             })
@@ -1227,6 +1231,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let buffer = buffer.read(cx);
         let Some(edits) = completion.interpolate(&buffer.snapshot()) else {
+            println!("Discrading completion");
             self.current_completion.take();
             return None;
         };
