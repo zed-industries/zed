@@ -18,7 +18,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{Action, App, AppContext as _, Application, AsyncApp, DismissEvent, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
@@ -33,9 +33,7 @@ use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
-use settings::{
-    handle_settings_file_changes, watch_config_file, InvalidSettingsError, Settings, SettingsStore,
-};
+use settings::{handle_settings_file_changes, watch_config_file, Settings, SettingsStore};
 use simplelog::ConfigBuilder;
 use std::{
     env,
@@ -50,17 +48,12 @@ use time::UtcOffset;
 use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
-use workspace::{
-    notifications::{simple_message_notification::MessageNotification, NotificationId},
-    AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore,
-};
+use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
-    handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
-    OpenRequest,
+    handle_keymap_file_changes, handle_settings_changed, initialize_workspace,
+    inline_completion_registry, open_paths_with_positions, OpenListener, OpenRequest,
 };
-
-use crate::zed::inline_completion_registry;
 
 #[cfg(unix)]
 use util::{load_login_shell_environment, load_shell_from_passwd};
@@ -612,44 +605,6 @@ fn main() {
         })
         .detach();
     });
-}
-
-fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
-    struct SettingsParseErrorNotification;
-    let id = NotificationId::unique::<SettingsParseErrorNotification>();
-
-    for workspace in workspace::local_workspace_windows(cx) {
-        workspace
-            .update(cx, |workspace, _, cx| {
-                match error.as_ref() {
-                    Some(error) => {
-                        if let Some(InvalidSettingsError::LocalSettings { .. }) =
-                            error.downcast_ref::<InvalidSettingsError>()
-                        {
-                            // Local settings will be displayed by the projects
-                        } else {
-                            workspace.show_notification(id.clone(), cx, |cx| {
-                                cx.new(|_cx| {
-                                    MessageNotification::new(format!(
-                                        "Invalid user settings file\n{error}"
-                                    ))
-                                    .with_click_message("Open settings file")
-                                    .on_click(|window, cx| {
-                                        window.dispatch_action(
-                                            zed_actions::OpenSettings.boxed_clone(),
-                                            cx,
-                                        );
-                                        cx.emit(DismissEvent);
-                                    })
-                                })
-                            });
-                        }
-                    }
-                    None => workspace.dismiss_notification(&id, cx),
-                }
-            })
-            .log_err();
-    }
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
