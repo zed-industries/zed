@@ -1210,14 +1210,17 @@ mod tests {
     fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
         let completion = InlineCompletion {
-            edits: to_completion_edits(
-                [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                &buffer,
-                cx,
-            )
-            .into(),
+            edits: cx
+                .read(|cx| {
+                    to_completion_edits(
+                        [(2..5, "REM".to_string()), (9..11, "".to_string())],
+                        &buffer,
+                        cx,
+                    )
+                })
+                .into(),
             path: Path::new("").into(),
-            snapshot: buffer.read(cx).snapshot(),
+            snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             id: InlineCompletionId::new(),
             excerpt_range: 0..0,
             cursor_offset: 0,
@@ -1230,86 +1233,105 @@ mod tests {
         };
 
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.undo(cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(4..4, "M".to_string()), (8..10, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(9..11, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(4..4, "M".to_string()), (8..10, "".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
         assert_eq!(
-            from_completion_edits(
-                &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
-                &buffer,
-                cx
-            ),
+            cx.read(|cx| {
+                from_completion_edits(
+                    &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx,
+                )
+            }),
             vec![(4..4, "M".to_string())]
         );
 
         buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
-        assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
+        assert_eq!(
+            cx.read(|cx| completion.interpolate(&buffer.read(cx).snapshot())),
+            None
+        );
     }
 
     #[gpui::test]
