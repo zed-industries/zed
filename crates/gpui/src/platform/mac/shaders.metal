@@ -797,7 +797,7 @@ float4 over(float4 below, float4 above) {
 GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
                                      Hsla color0, Hsla color1) {
   GradientColor out;
-  if (tag == 0 || tag == 2) {
+  if (tag == 0 || tag == 2 || tag == 3) {
     out.solid = hsla_to_rgba(solid);
   } else if (tag == 1) {
     out.color0 = hsla_to_rgba(color0);
@@ -889,6 +889,24 @@ float4 fill_color(Background background,
         float distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
         color = solid_color;
         color.a *= saturate(0.5 - distance);
+        break;
+    }
+    case 3: {
+        float dash_width = 6.0;
+        float gap_width = 6.0;
+        float pattern_width = dash_width + gap_width;
+        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
+        float pattern_position;
+
+        if (background.orientation == 0) { // Horizontal
+            pattern_position = fmod(relative_position.x, pattern_width);
+        } else { // Vertical
+            pattern_position = fmod(relative_position.y, pattern_width);
+        }
+
+        float distance = pattern_position - dash_width;
+        color = solid_color;
+        color.a *= step(distance, 0.0);
         break;
     }
   }

@@ -583,6 +583,7 @@ impl Style {
                         .map(|stop| stop.color)
                         .unwrap_or_default(),
                     BackgroundTag::PatternSlash => color.solid,
+                    BackgroundTag::PatternDash => color.solid,
                 },
                 None => Hsla::default(),
             };
