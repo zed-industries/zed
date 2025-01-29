@@ -152,7 +152,7 @@ impl Render for ZedPredictModal {
             }))
             .child(
                 div()
-                    .p_1()
+                    .p_1p5()
                     .absolute()
                     .top_0()
                     .left_0()
@@ -162,8 +162,9 @@ impl Render for ZedPredictModal {
                         svg()
                             .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(420.))
-                            .h(px(128.)),
+                            .w(px(416.))
+                            .h(px(128.))
+                            .overflow_hidden(),
                     ),
             )
             .child(
