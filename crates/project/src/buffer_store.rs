@@ -91,6 +91,7 @@ struct BufferChangeSetState {
     buffer_subscription: Option<Subscription>,
 }
 
+#[derive(Clone, Debug)]
 enum DiffBasesChange {
     SetIndex(Option<String>),
     SetHead(Option<String>),
@@ -238,11 +239,27 @@ impl BufferChangeSetState {
     fn base_texts_updated(
         &mut self,
         buffer: text::BufferSnapshot,
-        index_text: Option<String>,
-        head_text: Option<String>,
+        diff_bases_change: DiffBasesChange,
         cx: &mut Context<Self>,
     ) -> proto::UpdateDiffBases {
-        todo!()
+        use proto::update_diff_bases::Mode;
+
+        let buffer_id = buffer.remote_id().to_proto();
+        // FIXME maybe can avoid this clone using Arc<str> or ropes
+        self.recalculate_diffs(buffer, Some(diff_bases_change.clone()), cx);
+        let (staged_text, committed_text, mode) = match diff_bases_change {
+            DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
+            DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
+            DiffBasesChange::SetEach { index, head } => (index, head, Mode::IndexAndHead),
+            DiffBasesChange::SetBoth(text) => (text, None, Mode::IndexMatchesHead),
+        };
+        proto::UpdateDiffBases {
+            project_id: 0, // (filled in by caller)
+            buffer_id,
+            staged_text,
+            committed_text,
+            mode: mode as i32,
+        }
     }
 
     fn unstaged_changes(&self) -> Option<Entity<BufferChangeSet>> {
@@ -257,7 +274,7 @@ impl BufferChangeSetState {
 
     fn handle_base_texts_updated(
         &mut self,
-        buffer: Entity<Buffer>,
+        buffer: text::BufferSnapshot,
         message: proto::UpdateDiffBases,
         cx: &mut Context<Self>,
     ) {
@@ -307,6 +324,7 @@ impl BufferChangeSetState {
         *weak_change_set = Some(change_set.downgrade());
 
         // FIXME what about adding a change set where we already have a different change set for the same buffer?
+        let buffer = buffer.read(cx).text_snapshot();
         self.recalculate_diffs(
             buffer,
             Some(match kind {
@@ -320,7 +338,7 @@ impl BufferChangeSetState {
 
     fn recalculate_diffs(
         &mut self,
-        buffer: Entity<Buffer>,
+        buffer: text::BufferSnapshot,
         diff_bases_change: Option<DiffBasesChange>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
@@ -351,7 +369,6 @@ impl BufferChangeSetState {
         } else {
             None
         };
-        let buffer = buffer.read(cx).text_snapshot();
         let unstaged_changes = self.unstaged_changes();
         let uncommitted_changes = self.uncommitted_changes();
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
@@ -926,7 +943,7 @@ impl LocalBufferStore {
         cx.spawn(move |this, mut cx| async move {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
-            let diff_bases_by_buffer = cx
+            let diff_bases_changes_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
                     change_set_state_updates
@@ -945,7 +962,25 @@ impl LocalBufferStore {
                                 } else {
                                     None
                                 };
-                                Some((buffer_snapshot, staged_text, committed_text))
+                                let diff_bases_change =
+                                    match (needs_staged_text, needs_committed_text) {
+                                        (true, true) => Some(if staged_text == committed_text {
+                                            DiffBasesChange::SetBoth(staged_text)
+                                        } else {
+                                            DiffBasesChange::SetEach {
+                                                index: staged_text,
+                                                head: committed_text,
+                                            }
+                                        }),
+                                        (true, false) => {
+                                            Some(DiffBasesChange::SetIndex(staged_text))
+                                        }
+                                        (false, true) => {
+                                            Some(DiffBasesChange::SetHead(committed_text))
+                                        }
+                                        (false, false) => None,
+                                    };
+                                Some((buffer_snapshot, diff_bases_change))
                             },
                         )
                         .collect::<Vec<_>>()
@@ -953,21 +988,19 @@ impl LocalBufferStore {
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (buffer_snapshot, staged_text, committed_text) in diff_bases_by_buffer {
+                for (buffer_snapshot, diff_bases_change) in diff_bases_changes_by_buffer {
                     let Some(OpenBuffer::Complete {
                         change_set_state, ..
                     }) = this.opened_buffers.get_mut(&buffer_snapshot.remote_id())
                     else {
                         continue;
                     };
+                    let Some(diff_bases_change) = diff_bases_change else {
+                        continue;
+                    };
 
                     let mut message = change_set_state.update(cx, |change_set_state, cx| {
-                        change_set_state.base_texts_updated(
-                            buffer_snapshot,
-                            staged_text,
-                            committed_text,
-                            cx,
-                        )
+                        change_set_state.base_texts_updated(buffer_snapshot, diff_bases_change, cx)
                     });
 
                     if let Some((client, project_id)) = &this.downstream_client.clone() {
@@ -1910,6 +1943,7 @@ impl BufferStore {
                 change_set_state, ..
             }) = self.opened_buffers.get_mut(&buffer.read(cx).remote_id())
             {
+                let buffer = buffer.read(cx).text_snapshot();
                 futures.push(change_set_state.update(cx, |change_set_state, cx| {
                     change_set_state.recalculate_diffs(buffer, None, cx)
                 }));
@@ -2383,6 +2417,7 @@ impl BufferStore {
             }) = this.opened_buffers.get_mut(&buffer_id)
             {
                 if let Some(buffer) = buffer.upgrade() {
+                    let buffer = buffer.read(cx).text_snapshot();
                     change_set_state.update(cx, |change_set_state, cx| {
                         change_set_state.handle_base_texts_updated(buffer, request.payload, cx);
                     })
