@@ -9,10 +9,13 @@ use bedrock::bedrock_client::types::{
 use bedrock::bedrock_client::Config;
 use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
 use collections::BTreeMap;
+use gpui_tokio::Tokio;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle, View, WhiteSpace};
+use gpui::{
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+};
 use http_client::HttpClient;
 use language_model::{LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role, StopReason};
 
@@ -22,6 +25,7 @@ use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::Arc;
+use smol::Async;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
@@ -64,11 +68,11 @@ pub struct State {
 
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
-    state: gpui::Model<State>,
+    state: gpui::Entity<State>,
 }
 
 impl State {
-    fn reset_credentials(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let delete_aa_id = cx.delete_credentials(
             &AllLanguageModelSettings::get_global(cx).bedrock.access_key_id
         );
@@ -97,7 +101,7 @@ impl State {
         access_key_id: String,
         secret_key: String,
         region: String,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let write_aa_id = cx.write_credentials(
             ZED_BEDROCK_AAID, // TODO: GET THIS REVIEWED, MAKE SURE IT DOESN'T BREAK STUFF LONG TERM
@@ -132,7 +136,7 @@ impl State {
         self.aa_id.is_some() && self.sk.is_some()
     }
 
-    fn authenticate(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         // just hit the sdk-bedrock list models to check if the credentials are valid
         if self.is_authenticated() {
             Task::ready(Ok(()))
@@ -180,8 +184,8 @@ impl State {
 
 impl BedrockLanguageModelProvider {
     // This has to succeed
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
-        let state = cx.new_model(|cx| State {
+    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let state = cx.new(|cx| State {
             aa_id: None,
             sk: None,
             region: Some(String::from("us-east-1")),
@@ -209,7 +213,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
-    fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
         for model in bedrock::Model::iter() {
@@ -250,29 +254,28 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             .collect()
     }
 
-    fn is_authenticated(&self, cx: &AppContext) -> bool {
+    fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated()
     }
 
-    fn authenticate(&self, cx: &mut AppContext) -> Task<Result<()>> {
+    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|cx| ConfigurationView::new(self.state.clone(), cx))
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
-    fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.reset_credentials(cx))
+    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+        self.state.update(cx, |state, cx| state.reset_credentials(cx))
     }
 }
 
 impl LanguageModelProviderState for BedrockLanguageModelProvider {
     type ObservableEntity = State;
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<gpui::Entity<Self::ObservableEntity>> {
         Some(self.state.clone())
     }
 }
@@ -282,7 +285,7 @@ struct BedrockModel {
     id: LanguageModelId,
     model: Model,
     http_client: AwsHttpClient,
-    state: gpui::Model<State>,
+    state: gpui::Entity<State>,
     request_limiter: RateLimiter,
 }
 
@@ -290,9 +293,9 @@ impl BedrockModel {
     fn stream_completion(
         &self,
         request: bedrock::Request,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String, BedrockError>>>> {
-        let Ok((aa_id, sk, region)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
             let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
             (state.aa_id.clone(), state.sk.clone(), state.region.clone())
         }) else {
@@ -318,10 +321,11 @@ impl BedrockModel {
                 .build(),
         );
 
-        cx.foreground_executor().spawn(async move {
+        Tokio::spawn(cx.app,async move {
             let request = bedrock::stream_completion(runtime_client, request);
             request.await.context("Failed to stream completion")
         }).boxed()
+
     }
 }
 
@@ -357,7 +361,7 @@ impl LanguageModel for BedrockModel {
     fn count_tokens(
         &self,
         request: LanguageModelRequest,
-        cx: &AppContext,
+        cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         get_bedrock_tokens(request, cx)
     }
@@ -365,7 +369,7 @@ impl LanguageModel for BedrockModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = request.into_bedrock(
             self.model.id().into(),
@@ -387,7 +391,7 @@ impl LanguageModel for BedrockModel {
         name: String,
         description: String,
         schema: Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         todo!()
     }
@@ -401,7 +405,7 @@ impl LanguageModel for BedrockModel {
 // https://docs.rs/aws-sdk-bedrockruntime/latest/aws_sdk_bedrockruntime/operation/converse/struct.ConverseOutput.html#method.output
 pub fn get_bedrock_tokens(
     request: LanguageModelRequest,
-    cx: &AppContext,
+    cx: &App,
 ) -> BoxFuture<'static, Result<usize>> {
     cx.background_executor()
         .spawn(async move {
@@ -455,7 +459,7 @@ pub fn get_bedrock_tokens(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item=Result<String, BedrockError>>>>,
-    // cx: &AsyncAppContext,
+    // cx: &AsyncApp,
 ) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct State {
         events: Pin<Box<dyn Send + Stream<Item=Result<String, BedrockError>>>>,
@@ -476,10 +480,10 @@ pub fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
-    access_key_id_editor: View<Editor>,
-    secret_access_key_editor: View<Editor>,
-    region_editor: View<Editor>,
-    state: gpui::Model<State>,
+    access_key_id_editor: Entity<Editor>,
+    secret_access_key_editor: Entity<Editor>,
+    region_editor: Entity<Editor>,
+    state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
 
@@ -487,7 +491,7 @@ impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
     const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
-    fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -512,18 +516,18 @@ impl ConfigurationView {
         }));
 
         Self {
-            access_key_id_editor: cx.new_view(|cx| {
-                let mut editor = Editor::single_line(cx);
+            access_key_id_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
-            secret_access_key_editor: cx.new_view(|cx| {
-                let mut editor = Editor::single_line(cx);
+            secret_access_key_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
-            region_editor: cx.new_view(|cx| {
-                let mut editor = Editor::single_line(cx);
+            region_editor: cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
                 editor
             }),
@@ -532,7 +536,7 @@ impl ConfigurationView {
         }
     }
 
-    fn save_credentials(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn save_credentials(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let access_key_id = self.access_key_id_editor.read(cx).text(cx).to_string();
         let secret_access_key = self.secret_access_key_editor.read(cx).text(cx).to_string();
         let region = self.region_editor.read(cx).text(cx).to_string();
@@ -548,13 +552,13 @@ impl ConfigurationView {
             .detach_and_log_err(cx);
     }
 
-    fn reset_credentials(&mut self, cx: &mut ViewContext<Self>) {
+    fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.access_key_id_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
         self.secret_access_key_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
         self.region_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn(|_, mut cx| async move {
@@ -565,7 +569,7 @@ impl ConfigurationView {
             .detach_and_log_err(cx);
     }
 
-    fn make_text_style(&self, cx: &ViewContext<Self>) -> TextStyle {
+    fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
         let settings = ThemeSettings::get_global(cx);
         TextStyle {
             color: cx.theme().colors().text,
@@ -580,11 +584,12 @@ impl ConfigurationView {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            text_overflow: None,
+            line_clamp: None,
         }
     }
 
-    fn render_aa_id_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_aa_id_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
         EditorElement::new(
@@ -598,7 +603,7 @@ impl ConfigurationView {
         )
     }
 
-    fn render_sk_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_sk_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
         EditorElement::new(
@@ -612,7 +617,7 @@ impl ConfigurationView {
         )
     }
 
-    fn render_region_editor(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_region_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let text_style = self.make_text_style(cx);
 
         EditorElement::new(
@@ -626,13 +631,13 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, cx: &mut ViewContext<Self>) -> bool {
+    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
         const INSTRUCTIONS: [&str; 3] = [
             "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
@@ -654,7 +659,7 @@ impl Render for ConfigurationView {
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .on_click(move |_, cx| cx.open_url(IAM_CONSOLE_URL))
+                        .on_click(move |_, window, cx| cx.open_url(IAM_CONSOLE_URL))
                 )
                 )
                 .child(Label::new(INSTRUCTIONS[2]))
@@ -693,9 +698,9 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(|cx| Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_AAID}, {ZED_BEDROCK_SK}, and {ZED_BEDROCK_REGION} environment variables."), cx))
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_AAID}, {ZED_BEDROCK_SK}, and {ZED_BEDROCK_REGION} environment variables.")))
                         })
-                        .on_click(cx.listener(|this, _, cx| this.reset_credentials(cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )
                 .into_any()
         }

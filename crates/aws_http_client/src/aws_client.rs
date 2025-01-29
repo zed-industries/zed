@@ -8,6 +8,7 @@ use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use http_client::{HttpClient, Request};
 use crate::utils::{convert_to_async_body, convert_to_sdk_body};
+use gpui_tokio::Tokio;
 
 struct AwsHttpConnector {
     client: Arc<dyn HttpClient>
@@ -37,7 +38,7 @@ impl AwsConnector for AwsHttpConnector {
             let response = fut_resp
                 .await
                 .map_err(|e| ConnectorError::other(e.into(), None))?
-                .map(|b| async { convert_to_sdk_body(b).await });
+                .map(|b| convert_to_sdk_body(b));
             match HttpResponse::try_from(response) {
                 Ok(response) => Ok(response),
                 Err(err) => Err(ConnectorError::other(err.into(), None)),

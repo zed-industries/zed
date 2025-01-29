@@ -11,14 +11,12 @@ pub fn convert_to_sdk_body(body: AsyncBody) -> SdkBody {
         }
         Inner::AsyncReader(mut reader) => {
             // how do we get a background runtime here?
-            let response: Vec<u8> = tokio::task::block_in_place(move || {
-                tokio::runtime::Handle::current().block_on(async move {
-                    let mut buffer = Vec::new();
-                    let _ = reader.read_to_end(&mut buffer).await;
-                    buffer
-                })
-            });
-            SdkBody::from(response)
+            todo!()
+            // let mut buffer = Vec::new();
+            // let _ = reader.read_to_end(&mut buffer).await;
+            // buffer
+            //
+            // SdkBody::from(response)
         }
     }
 }

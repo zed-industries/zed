@@ -3,7 +3,7 @@ name = "aws_http_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 
 [features]
 default = []
@@ -22,7 +22,7 @@ http_client.workspace = true
 schemars = { workspace = true, optional = true }
 strum.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+gpui_tokio.workspace = true
 util.workspace = true
 aws-smithy-types.workspace = true
 aws-smithy-runtime-api.workspace = true

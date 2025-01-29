@@ -3,7 +3,7 @@ name = "bedrock"
 version = "0.1.0"
 edition = "2021"
 publish = false
-license = "AGPL-3.0-or-later"
+license = "GPL-3.0-or-later"
 
 [features]
 default = []
@@ -23,12 +23,10 @@ schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 strum.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 util.workspace = true
 aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"]}
 aws-config = {workspace = true, features = ["behavior-version-latest"]}
-
-[dev-dependencies]
-tokio.workspace = true

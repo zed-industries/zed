@@ -7,6 +7,7 @@ use std::pin::Pin;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
+pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
 use aws_sdk_bedrockruntime::types::{ContentBlockDelta};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;

@@ -5,7 +5,7 @@ use base64::write::EncoderWriter;
 use gpui::{point, size, App, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
-use bedrock::BedrockMessage;
+use bedrock::{BedrockInnerContent, BedrockMessage};
 use ui::{px, SharedString};
 use util::ResultExt;
 
@@ -427,13 +427,13 @@ impl LanguageModelRequest {
 
             match message.role {
                 Role::User | Role::Assistant => {
-                    let bedrock_message_content: Vec<ContentBlock> = message
+                    let bedrock_message_content: Vec<BedrockInnerContent> = message
                         .content
                         .into_iter()
                         .filter_map(|content| match content {
                             MessageContent::Text(text) => {
                                 if !text.is_empty() {
-                                    Some(ContentBlock::Text(text))
+                                    Some(BedrockInnerContent::Text(text))
                                 } else {
                                     None
                                 }
