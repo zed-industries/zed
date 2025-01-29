@@ -38,7 +38,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use text::{BufferId, Rope};
+use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
 
@@ -127,21 +127,6 @@ impl DiffBasesChange {
 
     fn update_head(&self) -> bool {
         !matches!(self, DiffBasesChange::SetIndex(_))
-    }
-
-    fn to_ropes(&self) -> (Option<Rope>, Option<Rope>) {
-        match self {
-            DiffBasesChange::SetIndex(index) => (index.as_deref().map(Rope::from), None),
-            DiffBasesChange::SetHead(head) => (None, head.as_deref().map(Rope::from)),
-            DiffBasesChange::SetEach { index, head } => (
-                index.as_deref().map(Rope::from),
-                head.as_deref().map(Rope::from),
-            ),
-            DiffBasesChange::SetBoth(text) => {
-                let rope = text.as_deref().map(Rope::from);
-                (rope.clone(), rope)
-            }
-        }
     }
 
     fn into_strings(self) -> (Option<String>, Option<String>) {
@@ -355,36 +340,81 @@ impl BufferChangeSetState {
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         self.diff_updated_futures.push(tx);
-        let (index_rope, head_rope) = diff_bases_change
-            .as_ref()
-            .map_or((None, None), |change| change.to_ropes());
-        let index_snapshot = if let Some(index_rope) = index_rope {
-            let snapshot = language::Buffer::build_snapshot(
-                index_rope,
-                self.language.clone(),
-                self.language_registry.clone(),
-                cx,
-            );
-            Some(cx.background_executor().spawn(snapshot))
-        } else {
-            None
+
+        let snapshots = match diff_bases_change.as_ref() {
+            None => None,
+            Some(DiffBasesChange::SetBoth(string)) => {
+                let snapshot = string.as_deref().map(|string| {
+                    language::Buffer::build_snapshot(
+                        string.into(),
+                        self.language.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                });
+                Some(cx.background_executor().spawn(async move {
+                    let snapshot = OptionFuture::from(snapshot).await;
+                    (snapshot.clone(), snapshot)
+                }))
+            }
+            Some(DiffBasesChange::SetIndex(string)) => {
+                let snapshot = string.as_deref().map(|string| {
+                    language::Buffer::build_snapshot(
+                        string.into(),
+                        self.language.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                });
+                Some(
+                    cx.background_executor()
+                        .spawn(async move { (OptionFuture::from(snapshot).await, None) }),
+                )
+            }
+            Some(DiffBasesChange::SetHead(string)) => {
+                let snapshot = string.as_deref().map(|string| {
+                    language::Buffer::build_snapshot(
+                        string.into(),
+                        self.language.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                });
+                Some(
+                    cx.background_executor()
+                        .spawn(async move { (None, OptionFuture::from(snapshot).await) }),
+                )
+            }
+            Some(DiffBasesChange::SetEach { index, head }) => {
+                let index_snapshot = index.as_deref().map(|index_text| {
+                    language::Buffer::build_snapshot(
+                        index_text.into(),
+                        self.language.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                });
+                let head_snapshot = head.as_deref().map(|head_text| {
+                    language::Buffer::build_snapshot(
+                        head_text.into(),
+                        self.language.clone(),
+                        self.language_registry.clone(),
+                        cx,
+                    )
+                });
+                Some(cx.background_executor().spawn(async move {
+                    let index_snapshot = OptionFuture::from(index_snapshot);
+                    let head_snapshot = OptionFuture::from(head_snapshot);
+                    futures::join!(index_snapshot, head_snapshot)
+                }))
+            }
         };
-        let head_snapshot = if let Some(head_rope) = head_rope {
-            let snapshot = language::Buffer::build_snapshot(
-                head_rope,
-                self.language.clone(),
-                self.language_registry.clone(),
-                cx,
-            );
-            Some(cx.background_executor().spawn(snapshot))
-        } else {
-            None
-        };
+
         let unstaged_changes = self.unstaged_changes();
         let uncommitted_changes = self.uncommitted_changes();
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-            let index_snapshot = OptionFuture::from(index_snapshot).await;
-            let head_snapshot = OptionFuture::from(head_snapshot).await;
+            let (index_snapshot, head_snapshot) =
+                OptionFuture::from(snapshots).await.unwrap_or((None, None));
 
             let update_index = diff_bases_change
                 .as_ref()
