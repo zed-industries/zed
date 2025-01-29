@@ -193,7 +193,7 @@ impl GitState {
 impl RepositoryHandle {
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
-            let path = self.unrelativize(&"".into())?;
+            let path = self.repo_path_to_project_path(&"".into())?;
             Some(
                 project
                     .absolute_path(&path, cx)?
@@ -228,7 +228,7 @@ impl RepositoryHandle {
         self.repository_entry.status()
     }
 
-    pub fn unrelativize(&self, path: &RepoPath) -> Option<ProjectPath> {
+    pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
         let path = self.repository_entry.unrelativize(path)?;
         Some((self.worktree_id, path).into())
     }

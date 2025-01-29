@@ -1,11 +1,13 @@
 use std::any::{Any, TypeId};
 
+use anyhow::Result;
+use collections::{HashMap, HashSet};
 use editor::{Editor, EditorEvent};
 use gpui::{
     actions, AnyElement, AnyView, App, Entity, EventEmitter, FocusHandle, Focusable, Render,
     Subscription, Task, WeakEntity,
 };
-use language::Capability;
+use language::{Buffer, BufferId, Capability};
 use multi_buffer::MultiBuffer;
 use project::{git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
@@ -17,8 +19,14 @@ use workspace::{
 
 actions!(project_diff, [Deploy]);
 
+enum ShownBuffer {
+    Loading(Task<Result<Entity<Buffer>>>),
+    Loaded(Entity<Buffer>),
+}
+
 pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
+    buffers_to_show: HashMap<ProjectPath, ShownBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -88,6 +96,7 @@ impl ProjectDiff {
             project,
             workspace,
             focus_handle,
+            buffers_to_show: HashMap::default(),
             editor,
             multibuffer,
             git_state_subscription,
@@ -106,27 +115,19 @@ impl ProjectDiff {
             });
             return;
         };
+        let mut buffers_to_remove = self.buffers_to_show.keys().cloned().collect::<HashSet<_>>();
         for entry in repo.status() {
-            match entry.status {
-                Status::Untracked => {
-                    self.multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.insert_text(entry.path, cx);
-                    });
-                }
-                Status::Modified => {
-                    self.multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.insert_text(entry.path, cx);
-                    });
-                }
-                Status::Deleted => {
-                    self.multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.insert_text(entry.path, cx);
-                    });
-                }
-            }
+            dbg!(&entry);
+            let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
+                continue;
+            };
+            let buffer = self
+                .project
+                .update(cx, |project, cx| project.open_path(project_path, cx));
         }
-        self.editor
-            .update(cx, |editor, cx| editor.update(window, cx));
+        for project_path in buffers_to_remove {
+            self.buffers_to_show.remove(&project_path);
+        }
     }
 }
 
@@ -233,7 +234,7 @@ impl Item for ProjectDiff {
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> Task<Result<()>> {
         self.editor.save(format, project, window, cx)
     }
 
@@ -243,7 +244,7 @@ impl Item for ProjectDiff {
         _: ProjectPath,
         _window: &mut Window,
         _: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> Task<Result<()>> {
         unreachable!()
     }
 
@@ -252,7 +253,7 @@ impl Item for ProjectDiff {
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    ) -> Task<Result<()>> {
         self.editor.reload(project, window, cx)
     }
 
