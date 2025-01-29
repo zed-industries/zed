@@ -590,6 +590,7 @@ pub struct Runnable {
 
 #[derive(Clone)]
 pub struct EditPreview {
+    old_snapshot: text::BufferSnapshot,
     applied_edits_snapshot: text::BufferSnapshot,
     syntax_snapshot: SyntaxSnapshot,
 }
@@ -615,18 +616,19 @@ impl EditPreview {
         let mut text = String::new();
         let mut highlights = Vec::new();
 
-        println!("Text:\n{}", current_snapshot.text());
-
         let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
 
         let status_colors = cx.theme().status();
 
         for (range, edit_text) in edits {
-            let range_in_preview_snapshot = range.to_offset(&self.applied_edits_snapshot);
-            dbg!(&range_in_preview_snapshot);
+            let edit_new_end_in_preview_snapshot = range
+                .end
+                .bias_right(&self.old_snapshot)
+                .to_offset(&self.applied_edits_snapshot);
+            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+
             let unchanged_range_in_preview_snapshot =
-                offset_in_preview_snapshot..range_in_preview_snapshot.start;
-            dbg!(&unchanged_range_in_preview_snapshot);
+                offset_in_preview_snapshot..edit_start_in_preview_snapshot;
             if !unchanged_range_in_preview_snapshot.is_empty() {
                 Self::highlight_text(
                     unchanged_range_in_preview_snapshot.clone(),
@@ -657,8 +659,7 @@ impl EditPreview {
 
             if !edit_text.is_empty() {
                 Self::highlight_text(
-                    range_in_preview_snapshot.start
-                        ..range_in_preview_snapshot.start + edit_text.len(),
+                    edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
                     &mut text,
                     &mut highlights,
                     Some(HighlightStyle {
@@ -671,7 +672,7 @@ impl EditPreview {
                 );
             }
 
-            offset_in_preview_snapshot = range_in_preview_snapshot.end;
+            offset_in_preview_snapshot = edit_new_end_in_preview_snapshot;
         }
 
         Self::highlight_text(
@@ -746,8 +747,14 @@ impl EditPreview {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
-        let start = first.start.to_point(&self.applied_edits_snapshot);
-        let end = last.end.to_point(&self.applied_edits_snapshot);
+        let start = first
+            .start
+            .bias_left(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+        let end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
 
         // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
         let range = Point::new(start.row, 0)
@@ -1017,6 +1024,7 @@ impl Buffer {
         let registry = self.language_registry();
         let language = self.language().cloned();
 
+        let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_executor().spawn(async move {
@@ -1030,6 +1038,7 @@ impl Buffer {
                 }
             }
             EditPreview {
+                old_snapshot,
                 applied_edits_snapshot: branch_buffer.snapshot(),
                 syntax_snapshot,
             }

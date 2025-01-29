@@ -124,11 +124,8 @@ fn interpolate(
 
                 if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
                     if !model_suffix.is_empty() {
-                        edits.push((
-                            old_snapshot.anchor_before(user_edit.old.end)
-                                ..old_snapshot.anchor_after(user_edit.old.end),
-                            model_suffix.to_string(),
-                        ));
+                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
+                        edits.push((anchor..anchor, model_suffix.to_string()));
                     }
 
                     model_edits.next();
@@ -140,14 +137,7 @@ fn interpolate(
         return None;
     }
 
-    for (model_old_range, model_new_text) in model_edits {
-        let model_old_offset_range = model_old_range.to_offset(old_snapshot);
-        if model_old_offset_range.is_empty() {
-            edits.push((model_old_range.clone(), model_new_text.clone()));
-        } else {
-            return None;
-        }
-    }
+    edits.extend(model_edits.cloned());
 
     if edits.is_empty() {
         None
@@ -769,10 +759,13 @@ and then another
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
                 let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
-                (
-                    snapshot.anchor_before(old_range.start)..snapshot.anchor_after(old_range.end),
-                    new_text,
-                )
+                let range = if old_range.is_empty() {
+                    let anchor = snapshot.anchor_after(old_range.start);
+                    anchor..anchor
+                } else {
+                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end)
+                };
+                (range, new_text)
             })
             .collect()
     }
@@ -1231,7 +1224,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let buffer = buffer.read(cx);
         let Some(edits) = completion.interpolate(&buffer.snapshot()) else {
-            println!("Discrading completion");
             self.current_completion.take();
             return None;
         };
