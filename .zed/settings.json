@@ -39,6 +39,7 @@
     }
   },
   "file_types": {
+    "C": ["metal"],
     "Dockerfile": ["Dockerfile*[!dockerignore]"],
     "Git Ignore": ["dockerignore"]
   },
