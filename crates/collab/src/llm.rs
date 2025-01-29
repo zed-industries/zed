@@ -447,7 +447,8 @@ async fn predict_edits(
         ));
     }
 
-    let sample_input_output = claims.is_staff && rand::random::<f32>() < 0.1;
+    let can_sample = claims.is_staff || params.can_sample;
+    let should_sample = can_sample && rand::random_bool(0.10); // 10%
 
     let api_url = state
         .config
@@ -541,7 +542,7 @@ async fn predict_edits(
                 let output = choice.text.clone();
 
                 async move {
-                    let properties = if sample_input_output {
+                    let properties = if should_sample {
                         json!({
                             "model": model.to_string(),
                             "headers": response.headers,

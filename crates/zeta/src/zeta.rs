@@ -335,8 +335,7 @@ impl Zeta {
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
-        // TODO: send this to collab
-        let _can_sample = self.sampling_options.can_sample_worktree_of(&snapshot, cx);
+        let can_sample = self.sampling_options.can_sample_worktree_of(&snapshot, cx);
 
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
@@ -370,6 +369,7 @@ impl Zeta {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
+                can_sample,
             };
 
             let response = perform_predict_edits(client, llm_token, body).await?;
