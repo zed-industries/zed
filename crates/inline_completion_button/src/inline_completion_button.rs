@@ -375,7 +375,7 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
-        menu = menu.header("Suggest Edit Predictions For:");
+        menu = menu.header("Predict Edits For:");
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
@@ -434,7 +434,7 @@ impl InlineCompletionButton {
             menu = menu
                 .separator()
                 .entry(
-                    "Summon Prediction at Cursor",
+                    "Predict Edit at Cursor",
                     Some(Box::new(ShowInlineCompletion)),
                     {
                         let editor_focus_handle = editor_focus_handle.clone();
