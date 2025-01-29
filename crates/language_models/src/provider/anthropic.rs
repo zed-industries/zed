@@ -689,7 +689,7 @@ impl Render for ConfigurationView {
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
@@ -703,6 +703,8 @@ impl Render for ConfigurationView {
                         .px_2()
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .rounded_md()
                         .child(self.render_api_key_editor(cx)),
                 )
