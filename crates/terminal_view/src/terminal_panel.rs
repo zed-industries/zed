@@ -1009,7 +1009,7 @@ pub fn new_terminal_pane(
                     .filter_map(|project_path| project.absolute_path(&project_path, cx))
                     .collect::<Vec<_>>();
                 if !paths_to_add.is_empty() {
-                    add_paths_to_terminal(pane, &paths_to_add, window, cx);
+                    add_paths_to_terminal(pane, &paths_to_add, cx);
                 }
             } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
                 if let Some(entry_path) = project
