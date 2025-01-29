@@ -88,13 +88,13 @@ impl PathBuilder {
     /// Move the current point to the given point.
     #[inline]
     pub fn move_to(&mut self, to: Point<Pixels>) {
-        _ = self.raw.move_to(to.into());
+        self.raw.move_to(to.into());
     }
 
     /// Draw a straight line from the current point to the given point.
     #[inline]
     pub fn line_to(&mut self, to: Point<Pixels>) {
-        _ = self.raw.line_to(to.into());
+        self.raw.line_to(to.into());
     }
 
     /// Draw a curve from the current point to the given point, using the given control point.
