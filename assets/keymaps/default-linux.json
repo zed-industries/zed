@@ -510,6 +510,13 @@
     }
   },
   {
+    "context": "Editor && inline_completion && showing_completions",
+    "bindings": {
+      // Currently, changing this binding breaks the preview behavior
+      "alt-enter": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
     "context": "Editor && showing_code_actions",
     "bindings": {
       "enter": "editor::ConfirmCodeAction"

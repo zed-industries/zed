@@ -1492,7 +1492,7 @@ impl Editor {
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
-                key_context.add("showing_completions")
+                key_context.add("showing_completions");
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -5485,8 +5485,12 @@ impl Editor {
                                 .border_l_1()
                                 .border_color(cx.theme().colors().border_variant)
                                 .px_2()
-                                // TODO az
-                                .child("⌥")
+                                .child(
+                                    #[cfg(not(target_os = "macos"))]
+                                    "alt",
+                                    #[cfg(target_os = "macos")]
+                                    Icon::new(IconName::Option),
+                                )
                                 .child("Preview"),
                         ),
                 )
