@@ -223,7 +223,7 @@ impl Render for BufferSearchBar {
 
         let search_line = h_flex()
             .gap_2()
-            .when(!supported_options.next_prev, |el| {
+            .when(supported_options.find_in_results, |el| {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
             .child(
@@ -331,7 +331,7 @@ impl Render for BufferSearchBar {
                             }),
                         )
                     })
-                    .when(supported_options.next_prev, |el| {
+                    .when(!supported_options.find_in_results, |el| {
                         el.child(
                             IconButton::new("select-all", ui::IconName::SelectAll)
                                 .on_click(|_, window, cx| {
@@ -384,7 +384,7 @@ impl Render for BufferSearchBar {
                             ))
                         })
                     })
-                    .when(!supported_options.next_prev, |el| {
+                    .when(supported_options.find_in_results, |el| {
                         el.child(
                             IconButton::new(SharedString::from("Close"), IconName::Close)
                                 .shape(IconButtonShape::Square)
@@ -484,7 +484,7 @@ impl Render for BufferSearchBar {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
             .child(h_flex().relative().child(search_line.w_full()).when(
-                !narrow_mode && supported_options.next_prev,
+                !narrow_mode && !supported_options.find_in_results,
                 |div| {
                     div.child(
                         h_flex().absolute().right_0().child(
@@ -542,7 +542,7 @@ impl ToolbarItemView for BufferSearchBar {
                     }),
                 ));
 
-            let is_project_search = !searchable_item_handle.supported_options(cx).next_prev;
+            let is_project_search = searchable_item_handle.supported_options(cx).find_in_results;
             self.active_searchable_item = Some(searchable_item_handle);
             drop(self.update_matches(true, window, cx));
             if !self.dismissed {
@@ -595,25 +595,25 @@ impl BufferSearchBar {
             }
         }));
         registrar.register_handler(WithResults(|this, action: &SelectNextMatch, window, cx| {
-            if this.supported_options(cx).next_prev {
-                this.select_next_match(action, window, cx);
-            } else {
+            if this.supported_options(cx).find_in_results {
                 cx.propagate();
+            } else {
+                this.select_next_match(action, window, cx);
             }
         }));
         registrar.register_handler(WithResults(|this, action: &SelectPrevMatch, window, cx| {
-            if this.supported_options(cx).next_prev {
-                this.select_prev_match(action, window, cx);
-            } else {
+            if this.supported_options(cx).find_in_results {
                 cx.propagate();
+            } else {
+                this.select_prev_match(action, window, cx);
             }
         }));
         registrar.register_handler(WithResults(
             |this, action: &SelectAllMatches, window, cx| {
-                if this.supported_options(cx).next_prev {
-                    this.select_all_matches(action, window, cx);
-                } else {
+                if this.supported_options(cx).find_in_results {
                     cx.propagate();
+                } else {
+                    this.select_all_matches(action, window, cx);
                 }
             },
         ));

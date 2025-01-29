@@ -1334,7 +1334,7 @@ impl SearchableItem for Editor {
                 regex: true,
                 replacement: false,
                 selection: false,
-                next_prev: false,
+                find_in_results: true,
             }
         } else {
             SearchOptions {
@@ -1343,7 +1343,7 @@ impl SearchableItem for Editor {
                 regex: true,
                 replacement: true,
                 selection: true,
-                next_prev: true,
+                find_in_results: false,
             }
         }
     }

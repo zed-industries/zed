@@ -1487,7 +1487,7 @@ impl SearchableItem for TerminalView {
             regex: true,
             replacement: false,
             selection: false,
-            next_prev: true,
+            find_in_results: false,
         }
     }
 

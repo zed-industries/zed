@@ -1153,7 +1153,7 @@ impl SearchableItem for LspLogView {
             case: true,
             word: true,
             regex: true,
-            next_prev: true,
+            find_in_results: false,
             // LSP log is read-only.
             replacement: false,
             selection: false,
