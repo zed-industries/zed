@@ -3558,16 +3558,28 @@ impl EditorElement {
                     .child(styled_text)
                     .into_any();
 
+                let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
+                    .extend(Edges {
+                        right: -Self::SCROLLBAR_WIDTH,
+                        ..Default::default()
+                    });
+
+                let x_after_longest =
+                    text_bounds.origin.x + longest_line_width + PADDING_X - scroll_pixel_position.x;
+
                 let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let is_fully_visible =
-                    editor_width >= longest_line_width + PADDING_X + element_bounds.width;
+
+                // Fully visible if it can be displayed within the window (allow overlapping other
+                // panes). However, this is only allowed if the popover starts within text_bounds.
+                let is_fully_visible = x_after_longest < text_bounds.right()
+                    && x_after_longest + element_bounds.width < viewport_bounds.right();
 
                 let origin = if is_fully_visible {
-                    text_bounds.origin
-                        + point(
-                            longest_line_width + PADDING_X - scroll_pixel_position.x,
-                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
-                        )
+                    point(
+                        x_after_longest,
+                        text_bounds.origin.y + edit_start.row().as_f32() * line_height
+                            - scroll_pixel_position.y,
+                    )
                 } else {
                     // Avoid overlapping both the edited rows and the user's cursor.
                     let target_above = DisplayRow(
@@ -3607,8 +3619,10 @@ impl EditorElement {
                         )
                 };
 
-                element.prepaint_as_root(origin, element_bounds.into(), window, cx);
-                Some(element)
+                window.defer_draw(element, origin, 1);
+
+                // Do not return an element, since it will already be drawn due to defer_draw.
+                None
             }
         }
     }
