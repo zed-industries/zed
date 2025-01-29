@@ -81,8 +81,8 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
-    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    Modifiers, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
+    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
     UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
@@ -3899,18 +3899,14 @@ impl Editor {
                         let mut menu = menu.unwrap();
                         menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
 
+                        *editor.context_menu.borrow_mut() =
+                            Some(CodeContextMenu::Completions(menu));
+
                         if editor.show_inline_completions_in_menu(cx) {
-                            /* todo!
-                            if let Some(hint) = editor.inline_completion_menu_hint(window, cx) {
-                                menu.show_inline_completion_hint(hint);
-                            }
-                            */
+                            editor.update_visible_inline_completion(window, cx);
                         } else {
                             editor.discard_inline_completion(false, cx);
                         }
-
-                        *editor.context_menu.borrow_mut() =
-                            Some(CodeContextMenu::Completions(menu));
 
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
@@ -4995,9 +4991,36 @@ impl Editor {
         Some(active_inline_completion.completion)
     }
 
+    fn update_inline_completion_preview(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_active_inline_completion() || !self.show_inline_completions_in_menu(cx) {
+            return;
+        }
+
+        let mut menu_borrow = self.context_menu.borrow_mut();
+
+        let Some(CodeContextMenu::Completions(completions_menu)) = menu_borrow.as_mut() else {
+            return;
+        };
+
+        if completions_menu.is_empty()
+            || completions_menu.previewing_inline_completion == modifiers.alt
+        {
+            return;
+        }
+
+        completions_menu.set_previewing_inline_completion(modifiers.alt);
+        drop(menu_borrow);
+        self.update_visible_inline_completion(window, cx);
+    }
+
     fn update_visible_inline_completion(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let selection = self.selections.newest_anchor();
@@ -5006,7 +5029,8 @@ impl Editor {
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
-        let completions_menu_has_precedence = !self.show_inline_completions_in_menu(cx)
+        let show_in_menu = self.show_inline_completions_in_menu(cx);
+        let completions_menu_has_precedence = !show_in_menu
             && (self.context_menu.borrow().is_some()
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
         if completions_menu_has_precedence
@@ -5064,41 +5088,40 @@ impl Editor {
             invalidation_row_range = edit_start_row..cursor_row;
             InlineCompletion::Move(first_edit_start)
         } else {
-            if edits
-                .iter()
-                .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
-            {
-                let mut inlays = Vec::new();
-                for (range, new_text) in &edits {
-                    let inlay = Inlay::inline_completion(
-                        post_inc(&mut self.next_inlay_id),
-                        range.start,
-                        new_text.as_str(),
-                    );
-                    inlay_ids.push(inlay.id);
-                    inlays.push(inlay);
-                }
+            if !show_in_menu || !self.has_active_completions_menu() {
+                if edits
+                    .iter()
+                    .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
+                {
+                    let mut inlays = Vec::new();
+                    for (range, new_text) in &edits {
+                        let inlay = Inlay::inline_completion(
+                            post_inc(&mut self.next_inlay_id),
+                            range.start,
+                            new_text.as_str(),
+                        );
+                        inlay_ids.push(inlay.id);
+                        inlays.push(inlay);
+                    }
 
-                self.splice_inlays(vec![], inlays, cx);
-            } else {
-                let background_color = cx.theme().status().deleted_background;
-                self.highlight_text::<InlineCompletionHighlight>(
-                    edits.iter().map(|(range, _)| range.clone()).collect(),
-                    HighlightStyle {
-                        background_color: Some(background_color),
-                        ..Default::default()
-                    },
-                    cx,
-                );
+                    self.splice_inlays(vec![], inlays, cx);
+                } else {
+                    let background_color = cx.theme().status().deleted_background;
+                    self.highlight_text::<InlineCompletionHighlight>(
+                        edits.iter().map(|(range, _)| range.clone()).collect(),
+                        HighlightStyle {
+                            background_color: Some(background_color),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                }
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
-                if provider.show_tab_accept_marker()
-                    && first_edit_start_point.row == last_edit_end_point.row
-                    && !edits.iter().any(|(_, edit)| edit.contains('\n'))
-                {
+                if provider.show_tab_accept_marker() {
                     EditDisplayMode::TabAccept
                 } else {
                     EditDisplayMode::Inline
@@ -5415,14 +5438,65 @@ impl Editor {
         y_flipped: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<AnyElement> {
-        self.context_menu.borrow().as_ref().and_then(|menu| {
-            if menu.visible() {
-                Some(menu.render(style, max_height_in_lines, y_flipped, window, cx))
+    ) -> Option<(Pixels, AnyElement)> {
+        let menu = self.context_menu.borrow();
+        let menu = menu.as_ref()?;
+        if !menu.visible() {
+            return None;
+        };
+
+        let menu = menu.render(style, max_height_in_lines, y_flipped, window, cx);
+
+        if self.has_active_completions_menu() && self.show_inline_completions_in_menu(cx) {
+            let zeta_popover_height = rems_from_px(32.);
+            let zeta_and_menu_gap = rems_from_px(4.);
+
+            let y_offset = if y_flipped {
+                px(0.)
             } else {
-                None
-            }
-        })
+                (zeta_popover_height + zeta_and_menu_gap).to_pixels(window.rem_size())
+            };
+
+            let container = v_flex()
+                .gap(zeta_and_menu_gap)
+                .when(y_flipped, |parent| parent.flex_col_reverse())
+                .child(
+                    h_flex()
+                        .h(zeta_popover_height)
+                        .flex_1()
+                        .gap_3()
+                        .elevation_2(cx)
+                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .px_2()
+                                .gap_2()
+                                .child(Icon::new(IconName::ZedPredict))
+                                .child(if self.has_active_inline_completion() {
+                                    "TODO: show code"
+                                } else {
+                                    "None"
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .border_l_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .px_2()
+                                // TODO az
+                                .child("⌥")
+                                .child("Preview"),
+                        ),
+                )
+                .child(menu)
+                .into_any();
+
+            Some((y_offset, container))
+        } else {
+            Some((px(0.), menu))
+        }
     }
 
     fn render_context_menu_aside(
@@ -5453,7 +5527,7 @@ impl Editor {
         cx.notify();
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
-        if context_menu.is_some() && !self.show_inline_completions_in_menu(cx) {
+        if context_menu.is_some() {
             self.update_visible_inline_completion(window, cx);
         }
         context_menu

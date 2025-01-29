@@ -498,6 +498,8 @@ impl EditorElement {
             return;
         }
 
+        editor.update_inline_completion_preview(&event.modifiers, window, cx);
+
         editor.update_hovered_link(
             position_map.point_for_position(text_hitbox.bounds, mouse_position),
             &position_map.snapshot,
@@ -3204,56 +3206,9 @@ impl EditorElement {
 
         let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
 
-        let mut completions_menu_y_offset = px(0.);
-
         // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
-        let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
-            editor
-                .render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
-                .map(|menu| {
-                    if editor.has_active_completions_menu()
-                        && editor.show_inline_completions_in_menu(cx)
-                    {
-                        let zeta_popover_height = rems_from_px(32.);
-                        let zeta_and_menu_gap = rems_from_px(4.);
-
-                        completions_menu_y_offset =
-                            (zeta_popover_height + zeta_and_menu_gap).to_pixels(window.rem_size());
-
-                        v_flex()
-                            .gap(zeta_and_menu_gap)
-                            .when(y_flipped, |parent| parent.flex_col_reverse())
-                            .child(
-                                h_flex()
-                                    .h(zeta_popover_height)
-                                    .flex_1()
-                                    .gap_3()
-                                    .elevation_2(cx)
-                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                                    .child(
-                                        h_flex()
-                                            .w_full()
-                                            .px_2()
-                                            .gap_2()
-                                            .child(Icon::new(IconName::ZedPredict))
-                                            .child("Edit Prediction"),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .border_l_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .px_2()
-                                            .child("⌥")
-                                            .child("Preview"),
-                                    ),
-                            )
-                            .child(menu)
-                            .into_any()
-                    } else {
-                        menu
-                    }
-                })
+        let Some((menu_y_offset, mut menu_element)) = self.editor.update(cx, |editor, cx| {
+            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
         }) else {
             return;
         };
@@ -3273,21 +3228,10 @@ impl EditorElement {
         };
         window.defer_draw(menu_element, menu_position, 1);
 
-        // Layout documentation aside (aligned with completions menu)
+        // Layout documentation aside (aligned with completions menu, not necessarily the top)
 
-        let menu_size = size(
-            menu_size.width,
-            menu_size.height - completions_menu_y_offset,
-        );
-        let menu_position = point(
-            menu_position.x,
-            menu_position.y
-                + if y_flipped {
-                    px(0.)
-                } else {
-                    completions_menu_y_offset
-                },
-        );
+        let menu_size = size(menu_size.width, menu_size.height - menu_y_offset);
+        let menu_position = point(menu_position.x, menu_position.y + menu_y_offset);
 
         let menu_bounds = Bounds::new(menu_position, menu_size);
         let max_menu_size = size(menu_size.width, unconstrained_max_height);
@@ -3302,6 +3246,7 @@ impl EditorElement {
         } else {
             Bounds::new(target_position, max_menu_size)
         };
+
         self.layout_context_menu_aside(
             text_hitbox,
             y_flipped,
