@@ -9,7 +9,11 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
-use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
+use futures::{
+    channel::oneshot,
+    future::{OptionFuture, Shared},
+    Future, FutureExt as _, StreamExt,
+};
 use git::{blame::Blame, repository::RepoPath};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
@@ -87,9 +91,71 @@ struct BufferChangeSetState {
     buffer_subscription: Option<Subscription>,
 }
 
+enum DiffBasesChange {
+    SetIndex(Option<String>),
+    SetHead(Option<String>),
+    SetEach {
+        index: Option<String>,
+        head: Option<String>,
+    },
+    SetBoth(Option<String>),
+}
+
+impl DiffBasesChange {
+    fn index(&self) -> Option<&str> {
+        match self {
+            DiffBasesChange::SetIndex(index) => index.as_deref(),
+            DiffBasesChange::SetEach { index, .. } => index.as_deref(),
+            DiffBasesChange::SetBoth(index) => index.as_deref(),
+            DiffBasesChange::SetHead(_) => None,
+        }
+    }
+
+    fn head(&self) -> Option<&str> {
+        match self {
+            DiffBasesChange::SetHead(head) => head.as_deref(),
+            DiffBasesChange::SetEach { head, .. } => head.as_deref(),
+            DiffBasesChange::SetBoth(head) => head.as_deref(),
+            DiffBasesChange::SetIndex(_) => None,
+        }
+    }
+
+    fn update_index(&self) -> bool {
+        !matches!(self, DiffBasesChange::SetHead(_))
+    }
+
+    fn update_head(&self) -> bool {
+        !matches!(self, DiffBasesChange::SetIndex(_))
+    }
+
+    fn to_ropes(&self) -> (Option<Rope>, Option<Rope>) {
+        match self {
+            DiffBasesChange::SetIndex(index) => (index.as_deref().map(Rope::from), None),
+            DiffBasesChange::SetHead(head) => (None, head.as_deref().map(Rope::from)),
+            DiffBasesChange::SetEach { index, head } => (
+                index.as_deref().map(Rope::from),
+                head.as_deref().map(Rope::from),
+            ),
+            DiffBasesChange::SetBoth(text) => {
+                let rope = text.as_deref().map(Rope::from);
+                (rope.clone(), rope)
+            }
+        }
+    }
+
+    fn into_strings(self) -> (Option<String>, Option<String>) {
+        match self {
+            DiffBasesChange::SetIndex(index) => (index, None),
+            DiffBasesChange::SetHead(head) => (None, head),
+            DiffBasesChange::SetEach { index, head } => (index, head),
+            DiffBasesChange::SetBoth(text) => (text.clone(), text),
+        }
+    }
+}
+
 impl BufferChangeSetState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        let buffer_id = buffer.read(cx).remote_id();
+        // FIXME port this to recalculate_diffs
         let unstaged_changes = self.unstaged_changes.as_ref().and_then(|set| set.upgrade());
         let uncommitted_changes = self
             .uncommitted_changes
@@ -179,13 +245,39 @@ impl BufferChangeSetState {
         todo!()
     }
 
+    fn unstaged_changes(&self) -> Option<Entity<BufferChangeSet>> {
+        self.unstaged_changes.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn uncommitted_changes(&self) -> Option<Entity<BufferChangeSet>> {
+        self.uncommitted_changes
+            .as_ref()
+            .and_then(|set| set.upgrade())
+    }
+
     fn handle_base_texts_updated(
         &mut self,
         buffer: Entity<Buffer>,
         message: proto::UpdateDiffBases,
         cx: &mut Context<Self>,
     ) {
-        todo!()
+        use proto::update_diff_bases::Mode;
+
+        let Some(mode) = Mode::from_i32(message.mode) else {
+            return;
+        };
+
+        let diff_bases_change = match mode {
+            Mode::HeadOnly => DiffBasesChange::SetHead(message.committed_text),
+            Mode::IndexOnly => DiffBasesChange::SetIndex(message.staged_text),
+            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.staged_text),
+            Mode::IndexAndHead => DiffBasesChange::SetEach {
+                index: message.staged_text,
+                head: message.committed_text,
+            },
+        };
+
+        self.recalculate_diffs(buffer, Some(diff_bases_change), cx);
     }
 
     fn add_change_set(
@@ -207,64 +299,121 @@ impl BufferChangeSetState {
             ChangeSetKind::Uncommitted => &mut self.uncommitted_changes,
         };
 
-        // parse the text
-        // compute the diff
-        // assign the base text and diff to the change set
-
         let change_set = cx.new(|cx| BufferChangeSet {
             buffer_id,
-            base_text: todo!(),
-            diff_to_buffer: todo!(),
+            base_text: None,
+            diff_to_buffer: git::diff::BufferDiff::new(&buffer.read(cx).text_snapshot()),
         });
-
         *weak_change_set = Some(change_set.downgrade());
+
+        // FIXME what about adding a change set where we already have a different change set for the same buffer?
+        self.recalculate_diffs(
+            buffer,
+            Some(match kind {
+                ChangeSetKind::Unstaged => DiffBasesChange::SetIndex(text),
+                ChangeSetKind::Uncommitted => DiffBasesChange::SetHead(text),
+            }),
+            cx,
+        );
         change_set
     }
 
     fn recalculate_diffs(
         &mut self,
         buffer: Entity<Buffer>,
+        diff_bases_change: Option<DiffBasesChange>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
-        // let (tx, rx) = oneshot::channel();
-        // self.diff_updated_futures.push(tx);
-        // self.recalculate_diff_task = cx.spawn(|this, mut cx| async move {
-        //     let new_base_text = if base_text_changed {
-        //         let base_text_rope: Rope = base_text.as_str().into();
-        //         let snapshot = this.update(&mut cx, |_, cx| {
-        //             language::Buffer::build_snapshot(
-        //                 base_text_rope,
-        //                 language.clone(),
-        //                 language_registry.clone(),
-        //                 cx,
-        //             )
-        //         })?;
-        //         Some(cx.background_executor().spawn(snapshot).await)
-        //     } else {
-        //         None
-        //     };
-        //     let diff = cx
-        //         .background_executor()
-        //         .spawn({
-        //             let buffer_snapshot = buffer_snapshot.clone();
-        //             async move { git::diff::BufferDiff::build(&base_text, &buffer_snapshot) }
-        //         })
-        //         .await;
-        //     this.update(&mut cx, |this, cx| {
-        //         if let Some(new_base_text) = new_base_text {
-        //             this.base_text = Some(new_base_text)
-        //         }
-        //         this.diff_to_buffer = diff;
-        //         this.recalculate_diff_task = Task::ready(Ok(()));
-        //         for tx in this.diff_updated_futures.drain(..) {
-        //             tx.send(()).ok();
-        //         }
-        //         cx.notify();
-        //     })?;
-        //     Ok(())
-        // });
-        // rx
-        todo!()
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+        let (index_rope, head_rope) = diff_bases_change
+            .as_ref()
+            .map_or((None, None), |change| change.to_ropes());
+        let index_snapshot = if let Some(index_rope) = index_rope {
+            let snapshot = language::Buffer::build_snapshot(
+                index_rope,
+                self.language.clone(),
+                self.language_registry.clone(),
+                cx,
+            );
+            Some(cx.background_executor().spawn(snapshot))
+        } else {
+            None
+        };
+        let head_snapshot = if let Some(head_rope) = head_rope {
+            let snapshot = language::Buffer::build_snapshot(
+                head_rope,
+                self.language.clone(),
+                self.language_registry.clone(),
+                cx,
+            );
+            Some(cx.background_executor().spawn(snapshot))
+        } else {
+            None
+        };
+        let buffer = buffer.read(cx).text_snapshot();
+        let unstaged_changes = self.unstaged_changes();
+        let uncommitted_changes = self.uncommitted_changes();
+        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            let index_snapshot = OptionFuture::from(index_snapshot).await;
+            let head_snapshot = OptionFuture::from(head_snapshot).await;
+
+            let update_index = diff_bases_change
+                .as_ref()
+                .is_some_and(|change| change.update_index());
+            let update_head = diff_bases_change
+                .as_ref()
+                .is_some_and(|change| change.update_head());
+            let (index, head) =
+                diff_bases_change.map_or((None, None), |change| change.into_strings());
+            let index_diff = if let Some(index) = index {
+                let buffer = buffer.clone();
+                cx.background_executor()
+                    .spawn(async move { git::diff::BufferDiff::build(&index, &buffer) })
+                    .await
+            } else {
+                git::diff::BufferDiff::new(&buffer)
+            };
+
+            let head_diff = if let Some(head) = head {
+                cx.background_executor()
+                    .spawn(async move { git::diff::BufferDiff::build(&head, &buffer) })
+                    .await
+            } else {
+                git::diff::BufferDiff::new(&buffer)
+            };
+
+            if update_index {
+                if let Some(unstaged) = unstaged_changes {
+                    unstaged.update(&mut cx, |unstaged, _| {
+                        unstaged.base_text = index_snapshot;
+                        unstaged.diff_to_buffer = index_diff;
+                    });
+                }
+            }
+
+            if update_head {
+                if let Some(uncommitted) = uncommitted_changes {
+                    uncommitted.update(&mut cx, |uncommitted, _| {
+                        uncommitted.base_text = head_snapshot;
+                        uncommitted.diff_to_buffer = head_diff;
+                    });
+                }
+            }
+
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, _| {
+                    for tx in this.diff_updated_futures.drain(..) {
+                        tx.send(()).ok();
+                    }
+                });
+            }
+
+            //cx.notify();
+            Ok(())
+        }));
+
+        rx
     }
 }
 
@@ -1762,7 +1911,7 @@ impl BufferStore {
             }) = self.opened_buffers.get_mut(&buffer.read(cx).remote_id())
             {
                 futures.push(change_set_state.update(cx, |change_set_state, cx| {
-                    change_set_state.recalculate_diffs(buffer, cx)
+                    change_set_state.recalculate_diffs(buffer, None, cx)
                 }));
             }
         }
