@@ -5451,7 +5451,7 @@ impl Render for Workspace {
     }
 }
 
-fn resize_bottom_dock(
+pub fn resize_bottom_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
     window: &mut Window,
@@ -5463,7 +5463,7 @@ fn resize_bottom_dock(
     });
 }
 
-fn resize_right_dock(
+pub fn resize_right_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
     window: &mut Window,
@@ -5475,7 +5475,7 @@ fn resize_right_dock(
     });
 }
 
-fn resize_left_dock(
+pub fn resize_left_dock(
     new_size: Pixels,
     workspace: &mut Workspace,
     window: &mut Window,
