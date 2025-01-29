@@ -19,6 +19,7 @@ use ui::{Context, SharedString};
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Mode {
     Normal,
     Insert,
