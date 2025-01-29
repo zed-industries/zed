@@ -71,15 +71,6 @@ struct SharedBuffer {
     lsp_handle: Option<OpenLspBufferHandle>,
 }
 
-// lazily loading the {committed,staged} text from a local repository
-// vs. request diff base/s from collab
-// vs. pushing changed diff bases
-//        staged diff
-// HEAD <---> index <-> buffer
-//
-// saving duplicative work when computing the "unified diff" (all hunks, marked staged vs. not)
-//   - especially when HEAD == index for a path
-
 #[derive(Default)]
 struct BufferChangeSetState {
     unstaged_changes: Option<WeakEntity<BufferChangeSet>>,
@@ -102,149 +93,10 @@ enum DiffBasesChange {
     SetBoth(Option<String>),
 }
 
-impl DiffBasesChange {
-    //fn index(&self) -> Option<&str> {
-    //    match self {
-    //        DiffBasesChange::SetIndex(index) => index.as_deref(),
-    //        DiffBasesChange::SetEach { index, .. } => index.as_deref(),
-    //        DiffBasesChange::SetBoth(index) => index.as_deref(),
-    //        DiffBasesChange::SetHead(_) => None,
-    //    }
-    //}
-
-    //fn head(&self) -> Option<&str> {
-    //    match self {
-    //        DiffBasesChange::SetHead(head) => head.as_deref(),
-    //        DiffBasesChange::SetEach { head, .. } => head.as_deref(),
-    //        DiffBasesChange::SetBoth(head) => head.as_deref(),
-    //        DiffBasesChange::SetIndex(_) => None,
-    //    }
-    //}
-
-    //fn update_index(&self) -> bool {
-    //    !matches!(self, DiffBasesChange::SetHead(_))
-    //}
-
-    //fn update_head(&self) -> bool {
-    //    !matches!(self, DiffBasesChange::SetIndex(_))
-    //}
-
-    //fn into_strings(self) -> (Option<String>, Option<String>) {
-    //    match self {
-    //        DiffBasesChange::SetIndex(index) => (index, None),
-    //        DiffBasesChange::SetHead(head) => (None, head),
-    //        DiffBasesChange::SetEach { index, head } => (index, head),
-    //        DiffBasesChange::SetBoth(text) => (text.clone(), text),
-    //    }
-    //}
-}
-
 impl BufferChangeSetState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        // FIXME port this to recalculate_diffs
-        let unstaged_changes = self.unstaged_changes.as_ref().and_then(|set| set.upgrade());
-        let uncommitted_changes = self
-            .uncommitted_changes
-            .as_ref()
-            .and_then(|set| set.upgrade());
-        if unstaged_changes.is_none() && uncommitted_changes.is_none() {
-            return;
-        }
         self.language = buffer.read(cx).language().cloned();
-
-        let mut ropes_with_change_set_kinds = Vec::new();
-        if let Some(unstaged_changes) = unstaged_changes {
-            if let Some(base_text) = unstaged_changes.read(cx).base_text.as_ref() {
-                ropes_with_change_set_kinds
-                    .push((base_text.as_rope().clone(), vec![ChangeSetKind::Unstaged]));
-            }
-        }
-        if let Some(uncommitted_changes) = uncommitted_changes {
-            if let Some(base_text) = uncommitted_changes.read(cx).base_text.as_ref() {
-                let base_text = base_text.as_rope().clone();
-                if let Some((rope, kinds)) = ropes_with_change_set_kinds.first_mut() {
-                    // NOTE: need to make sure clones of the same buffer are used when we care about making this true
-                    if rope.ptr_eq(&base_text) {
-                        kinds.push(ChangeSetKind::Uncommitted);
-                    }
-                } else {
-                    ropes_with_change_set_kinds.push((base_text, vec![ChangeSetKind::Uncommitted]));
-                }
-            }
-        }
-
-        let language = self.language.clone();
-        let language_registry = self.language_registry.clone();
-        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-            let snapshots_with_change_set_kinds = cx
-                .background_executor()
-                .spawn(futures::future::join_all(
-                    ropes_with_change_set_kinds
-                        .into_iter()
-                        .map(|(rope, kinds)| {
-                            let snapshot = cx
-                                .update(|cx| {
-                                    language::Buffer::build_snapshot(
-                                        rope,
-                                        language.clone(),
-                                        language_registry.clone(),
-                                        cx,
-                                    )
-                                })
-                                .ok();
-                            async move { Some((snapshot?.await, kinds)) }
-                        }),
-                ))
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                for snapshot in snapshots_with_change_set_kinds {
-                    if let Some((snapshot, kinds)) = snapshot {
-                        for kind in kinds {
-                            let change_set = {
-                                let change_set = match kind {
-                                    ChangeSetKind::Unstaged => &this.unstaged_changes,
-                                    ChangeSetKind::Uncommitted => &this.uncommitted_changes,
-                                };
-                                change_set.as_ref().and_then(|set| set.upgrade())?
-                            };
-                            change_set.update(cx, |change_set, _| {
-                                change_set.base_text = Some(snapshot.clone());
-                            });
-                        }
-                    }
-                }
-
-                Some(())
-            })?;
-            Ok(())
-        }));
-    }
-
-    fn base_texts_updated(
-        &mut self,
-        buffer: text::BufferSnapshot,
-        diff_bases_change: DiffBasesChange,
-        cx: &mut Context<Self>,
-    ) -> proto::UpdateDiffBases {
-        use proto::update_diff_bases::Mode;
-
-        let buffer_id = buffer.remote_id().to_proto();
-        // FIXME maybe can avoid this clone using Arc<str> or ropes
-        let _ = self.recalculate_diffs(buffer, Some(diff_bases_change.clone()), cx);
-        let (staged_text, committed_text, mode) = match diff_bases_change {
-            DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
-            DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
-            DiffBasesChange::SetEach { index, head } => (index, head, Mode::IndexAndHead),
-            DiffBasesChange::SetBoth(text) => (text, None, Mode::IndexMatchesHead),
-        };
-        proto::UpdateDiffBases {
-            project_id: 0, // (filled in by caller)
-            buffer_id,
-            staged_text,
-            committed_text,
-            mode: mode as i32,
-        }
+        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), None, cx);
     }
 
     fn unstaged_changes(&self) -> Option<Entity<BufferChangeSet>> {
@@ -1213,14 +1065,40 @@ impl LocalBufferStore {
                         continue;
                     };
 
-                    let mut message = change_set_state.update(cx, |change_set_state, cx| {
-                        change_set_state.base_texts_updated(buffer_snapshot, diff_bases_change, cx)
-                    });
+                    change_set_state.update(cx, |change_set_state, cx| {
+                        use proto::update_diff_bases::Mode;
 
-                    if let Some((client, project_id)) = &this.downstream_client.clone() {
-                        message.project_id = *project_id;
-                        client.send(message).log_err();
-                    }
+                        if let Some((client, project_id)) = &this.downstream_client.clone() {
+                            let buffer_id = buffer_snapshot.remote_id().to_proto();
+                            let (staged_text, committed_text, mode) = match diff_bases_change
+                                .clone()
+                            {
+                                DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
+                                DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
+                                DiffBasesChange::SetEach { index, head } => {
+                                    (index, head, Mode::IndexAndHead)
+                                }
+                                DiffBasesChange::SetBoth(text) => {
+                                    (text, None, Mode::IndexMatchesHead)
+                                }
+                            };
+                            let message = proto::UpdateDiffBases {
+                                project_id: *project_id,
+                                buffer_id,
+                                staged_text,
+                                committed_text,
+                                mode: mode as i32,
+                            };
+
+                            client.send(message).log_err();
+                        }
+
+                        let _ = change_set_state.recalculate_diffs(
+                            buffer_snapshot,
+                            Some(diff_bases_change),
+                            cx,
+                        );
+                    });
                 }
             })
         })
