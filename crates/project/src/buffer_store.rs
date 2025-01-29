@@ -169,7 +169,7 @@ impl BufferChangeSetState {
                 }
 
                 Some(())
-            });
+            })?;
             Ok(())
         }));
     }
@@ -1314,7 +1314,7 @@ impl BufferStore {
         );
     }
 
-    pub async fn open_change_set_internal(
+    async fn open_change_set_internal(
         this: WeakEntity<Self>,
         kind: ChangeSetKind,
         base_text: Result<Option<String>>,

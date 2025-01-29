@@ -2160,7 +2160,7 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                         let _ = multibuffer
                             .change_set_for(snapshot.remote_id())
                             .unwrap()
-                            .update(cx, |change_set, cx| {
+                            .update(cx, |change_set, _| {
                                 log::info!(
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
@@ -2179,7 +2179,6 @@ fn test_random_multibuffer(cx: &mut App, mut rng: StdRng) {
                         .collect::<String>();
 
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
-                    let snapshot = buffer.read(cx).snapshot();
                     let change_set =
                         cx.new(|cx| BufferChangeSet::new_with_base_text(&base_text, &buffer, cx));
 
