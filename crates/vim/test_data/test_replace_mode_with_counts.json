@@ -3,7 +3,7 @@
 {"Key":"shift-r"}
 {"Key":"-"}
 {"Key":"escape"}
-{"Get":{"state":"--ˇ-lo\n","mode":"Normal"}}
+{"Get":{"state":"--ˇ-lo\n","mode":"normal"}}
 {"Put":{"state":"ˇhello\n"}}
 {"Key":"3"}
 {"Key":"shift-r"}
@@ -11,4 +11,4 @@
 {"Key":"b"}
 {"Key":"c"}
 {"Key":"escape"}
-{"Get":{"state":"abcabcabˇc\n","mode":"Normal"}}
+{"Get":{"state":"abcabcabˇc\n","mode":"normal"}}

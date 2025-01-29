@@ -10,7 +10,7 @@
 {"Key":"5"}
 {"Key":"d"}
 {"Key":"j"}
-{"Get":{"state":"ˇ","mode":"Normal"}}
+{"Get":{"state":"ˇ","mode":"normal"}}
 {"Put":{"state":"fn boop() {\n  ˇbarp()\n  bazp()\n}\n"}}
 {"Key":"shift-v"}
 {"Key":"j"}
@@ -20,4 +20,4 @@
 {"Key":"escape"}
 {"Key":"shift-g"}
 {"Key":"shift-v"}
-{"Get":{"state":"fn boop() {\n  barp()\n  bazp()\n}\nˇ","mode":"VisualLine"}}
+{"Get":{"state":"fn boop() {\n  barp()\n  bazp()\n}\nˇ","mode":"visual_line"}}

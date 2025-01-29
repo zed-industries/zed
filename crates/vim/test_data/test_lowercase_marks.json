@@ -4,12 +4,12 @@
 {"Key":"l"}
 {"Key":"'"}
 {"Key":"a"}
-{"Get":{"state":"line one\nˇline two\nline three","mode":"Normal"}}
+{"Get":{"state":"line one\nˇline two\nline three","mode":"normal"}}
 {"Key":"`"}
 {"Key":"a"}
-{"Get":{"state":"line one\nline ˇtwo\nline three","mode":"Normal"}}
+{"Get":{"state":"line one\nline ˇtwo\nline three","mode":"normal"}}
 {"Key":"^"}
 {"Key":"d"}
 {"Key":"`"}
 {"Key":"a"}
-{"Get":{"state":"line one\nˇtwo\nline three","mode":"Normal"}}
+{"Get":{"state":"line one\nˇtwo\nline three","mode":"normal"}}

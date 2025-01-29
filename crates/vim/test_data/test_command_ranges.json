@@ -5,7 +5,7 @@
 {"Key":"4"}
 {"Key":"d"}
 {"Key":"enter"}
-{"Get":{"state":"1\nˇ4\n3\n2\n1","mode":"Normal"}}
+{"Get":{"state":"1\nˇ4\n3\n2\n1","mode":"normal"}}
 {"Key":":"}
 {"Key":"2"}
 {"Key":","}
@@ -15,7 +15,7 @@
 {"Key":"r"}
 {"Key":"t"}
 {"Key":"enter"}
-{"Get":{"state":"1\nˇ2\n3\n4\n1","mode":"Normal"}}
+{"Get":{"state":"1\nˇ2\n3\n4\n1","mode":"normal"}}
 {"Key":":"}
 {"Key":"2"}
 {"Key":","}
@@ -25,4 +25,4 @@
 {"Key":"i"}
 {"Key":"n"}
 {"Key":"enter"}
-{"Get":{"state":"1\nˇ2 3 4\n1","mode":"Normal"}}
+{"Get":{"state":"1\nˇ2 3 4\n1","mode":"normal"}}

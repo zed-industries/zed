@@ -6,9 +6,9 @@
 {"Key":"l"}
 {"Key":"d"}
 {"Key":"escape"}
-{"Get":{"state":"hello\nworlˇd","mode":"Normal"}}
+{"Get":{"state":"hello\nworlˇd","mode":"normal"}}
 {"Key":"."}
-{"Get":{"state":"hello\nworld\nworlˇd","mode":"Normal"}}
+{"Get":{"state":"hello\nworld\nworlˇd","mode":"normal"}}
 {"Key":"^"}
 {"Key":"d"}
 {"Key":"f"}
@@ -16,7 +16,7 @@
 {"Key":"g"}
 {"Key":"g"}
 {"Key":"."}
-{"Get":{"state":"ˇ\nworld\nrld","mode":"Normal"}}
+{"Get":{"state":"ˇ\nworld\nrld","mode":"normal"}}
 {"Key":"j"}
 {"Key":"y"}
 {"Key":"y"}
@@ -25,7 +25,7 @@
 {"Key":"y"}
 {"Key":"y"}
 {"Key":"."}
-{"Get":{"state":"\nworld\nworld\nrld\nˇrld","mode":"Normal"}}
+{"Get":{"state":"\nworld\nworld\nrld\nˇrld","mode":"normal"}}
 {"Put":{"state":"ˇthe quick brown fox"}}
 {"Key":"2"}
 {"Key":"~"}
@@ -35,4 +35,4 @@
 {"Key":"."}
 {"Put":{"state":"THE QUIˇck brown fox"}}
 {"Key":"."}
-{"Get":{"state":"THE QUICK ˇbrown fox","mode":"Normal"}}
+{"Get":{"state":"THE QUICK ˇbrown fox","mode":"normal"}}

@@ -3,26 +3,26 @@
 {"Key":"b"}
 {"Key":"b"}
 {"Key":"enter"}
-{"Get":{"state":"aaˇ aa aa aa aa","mode":"Normal"}}
+{"Get":{"state":"aaˇ aa aa aa aa","mode":"normal"}}
 {"Key":"c"}
 {"Key":"g"}
 {"Key":"n"}
 {"Key":"x"}
 {"Key":"escape"}
-{"Get":{"state":"aaˇaa aa aa aa","mode":"Normal"}}
+{"Get":{"state":"aaˇaa aa aa aa","mode":"normal"}}
 {"Key":"."}
-{"Get":{"state":"aaˇa aa aa aa","mode":"Normal"}}
+{"Get":{"state":"aaˇa aa aa aa","mode":"normal"}}
 {"Put":{"state":"aaˇ bb aa aa aa"}}
 {"Key":"/"}
 {"Key":"b"}
 {"Key":"b"}
 {"Key":"enter"}
-{"Get":{"state":"aa ˇbb aa aa aa","mode":"Normal"}}
+{"Get":{"state":"aa ˇbb aa aa aa","mode":"normal"}}
 {"Key":"c"}
 {"Key":"g"}
 {"Key":"n"}
 {"Key":"x"}
 {"Key":"escape"}
-{"Get":{"state":"aa ˇx aa aa aa","mode":"Normal"}}
+{"Get":{"state":"aa ˇx aa aa aa","mode":"normal"}}
 {"Key":"."}
-{"Get":{"state":"aa ˇx aa aa aa","mode":"Normal"}}
+{"Get":{"state":"aa ˇx aa aa aa","mode":"normal"}}

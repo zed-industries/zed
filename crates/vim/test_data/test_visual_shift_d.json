@@ -2,9 +2,9 @@
 {"Key":"v"}
 {"Key":"down"}
 {"Key":"shift-d"}
-{"Get":{"state":"the ˇlazy dog\n","mode":"Normal"}}
+{"Get":{"state":"the ˇlazy dog\n","mode":"normal"}}
 {"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog\n"}}
 {"Key":"ctrl-v"}
 {"Key":"down"}
 {"Key":"shift-d"}
-{"Get":{"state":"Theˇ \nfox \nthe lazy dog\n","mode":"Normal"}}
+{"Get":{"state":"Theˇ \nfox \nthe lazy dog\n","mode":"normal"}}

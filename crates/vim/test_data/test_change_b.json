@@ -1,24 +1,24 @@
 {"Put":{"state":"Teˇst Test"}}
 {"Key":"c"}
 {"Key":"b"}
-{"Get":{"state":"ˇst Test","mode":"Insert"}}
+{"Get":{"state":"ˇst Test","mode":"insert"}}
 {"Put":{"state":"Test ˇtest"}}
 {"Key":"c"}
 {"Key":"b"}
-{"Get":{"state":"ˇtest","mode":"Insert"}}
+{"Get":{"state":"ˇtest","mode":"insert"}}
 {"Put":{"state":"Test1 test2 ˇtest3"}}
 {"Key":"c"}
 {"Key":"b"}
-{"Get":{"state":"Test1 ˇtest3","mode":"Insert"}}
+{"Get":{"state":"Test1 ˇtest3","mode":"insert"}}
 {"Put":{"state":"Test test\nˇtest"}}
 {"Key":"c"}
 {"Key":"b"}
-{"Get":{"state":"Test ˇ\ntest","mode":"Insert"}}
+{"Get":{"state":"Test ˇ\ntest","mode":"insert"}}
 {"Put":{"state":"Test test\nˇ\ntest"}}
 {"Key":"c"}
 {"Key":"b"}
-{"Get":{"state":"Test ˇ\n\ntest","mode":"Insert"}}
+{"Get":{"state":"Test ˇ\n\ntest","mode":"insert"}}
 {"Put":{"state":"Test test-test ˇtest"}}
 {"Key":"c"}
 {"Key":"shift-b"}
-{"Get":{"state":"Test ˇtest","mode":"Insert"}}
+{"Get":{"state":"Test ˇtest","mode":"insert"}}

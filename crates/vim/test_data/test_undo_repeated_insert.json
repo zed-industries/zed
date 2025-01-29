@@ -3,6 +3,6 @@
 {"Key":"a"}
 {"Key":"."}
 {"Key":"escape"}
-{"Get":{"state":"hello..ˇ.","mode":"Normal"}}
+{"Get":{"state":"hello..ˇ.","mode":"normal"}}
 {"Key":"u"}
-{"Get":{"state":"hellˇo","mode":"Normal"}}
+{"Get":{"state":"hellˇo","mode":"normal"}}

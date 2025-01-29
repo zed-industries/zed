@@ -20,10 +20,10 @@
 {"Key":"j"}
 {"Key":"'"}
 {"Key":"^"}
-{"Get":{"state":"Line one\nLine two\nLine three\nˇStraight thing four\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine three\nˇStraight thing four\nLine five\n","mode":"normal"}}
 {"Key":"`"}
 {"Key":"^"}
-{"Get":{"state":"Line one\nLine two\nLine three\nStraight thingˇ four\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine three\nStraight thingˇ four\nLine five\n","mode":"normal"}}
 {"Key":"k"}
 {"Key":"a"}
 {"Key":"!"}
@@ -32,4 +32,4 @@
 {"Key":"g"}
 {"Key":"i"}
 {"Key":"?"}
-{"Get":{"state":"Line one\nLine two\nLine three!?ˇ\nStraight thing four\nLine five\n","mode":"Insert"}}
+{"Get":{"state":"Line one\nLine two\nLine three!?ˇ\nStraight thing four\nLine five\n","mode":"insert"}}

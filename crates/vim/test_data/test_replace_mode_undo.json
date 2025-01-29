@@ -6,7 +6,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"ˇThe quick brown fox jumps over the lazy dog.","mode":"Replace"}}
+{"Get":{"state":"ˇThe quick brown fox jumps over the lazy dog.","mode":"replace"}}
 {"Put":{"state":"ˇThe quick brown fox jumps over the lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -15,7 +15,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"ˇThe quick brown fox jumps over the lazy dog.","mode":"Replace"}}
+{"Get":{"state":"ˇThe quick brown fox jumps over the lazy dog.","mode":"replace"}}
 {"Put":{"state":"ˇThe quick brown fox jumps over the lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -28,7 +28,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"ˇThe quick brown fox jumps over the lazy dog.","mode":"Replace"}}
+{"Get":{"state":"ˇThe quick brown fox jumps over the lazy dog.","mode":"replace"}}
 {"Put":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -37,7 +37,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
+{"Get":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog.","mode":"replace"}}
 {"Put":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -46,7 +46,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
+{"Get":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog.","mode":"replace"}}
 {"Put":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -59,7 +59,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
+{"Get":{"state":"The quick browˇn\nfox jumps over\nthe lazy dog.","mode":"replace"}}
 {"Put":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -68,7 +68,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
+{"Get":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog.","mode":"replace"}}
 {"Put":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -77,7 +77,7 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
+{"Get":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog.","mode":"replace"}}
 {"Put":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog."}}
 {"Key":"shift-r"}
 {"Key":"O"}
@@ -90,4 +90,4 @@
 {"Key":"backspace"}
 {"Key":"backspace"}
 {"Key":"backspace"}
-{"Get":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog.","mode":"Replace"}}
+{"Get":{"state":"The quick brown\nˇ\nfox jumps over\nthe lazy dog.","mode":"replace"}}

@@ -7,7 +7,7 @@
 {"Key":"/"}
 {"Key":"d"}
 {"Key":"enter"}
-{"Get":{"state":"a\nd\nˇd\nc","mode":"Normal"}}
+{"Get":{"state":"a\nd\nˇd\nc","mode":"normal"}}
 {"Key":":"}
 {"Key":"%"}
 {"Key":"s"}
@@ -19,7 +19,7 @@
 {"Key":"\\"}
 {"Key":"0"}
 {"Key":"enter"}
-{"Get":{"state":"aa\ndd\ndd\nˇcc","mode":"Normal"}}
+{"Get":{"state":"aa\ndd\ndd\nˇcc","mode":"normal"}}
 {"Key":"k"}
 {"Key":":"}
 {"Key":"s"}

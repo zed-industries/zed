@@ -4,7 +4,7 @@
 {"Key":"d"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"ˇ world.","mode":"Insert"}}
+{"Get":{"state":"ˇ world.","mode":"insert"}}
 {"Key":"ctrl-o"}
 {"Key":"p"}
-{"Get":{"state":" helloˇworld.","mode":"Insert"}}
+{"Get":{"state":" helloˇworld.","mode":"insert"}}

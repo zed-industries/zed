@@ -2,19 +2,19 @@
 {"Key":"c"}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"ˇ\njumps over\nthe lazy","mode":"Insert"}}
+{"Get":{"state":"ˇ\njumps over\nthe lazy","mode":"insert"}}
 {"Put":{"state":"The quick\nbrown fox\njumps over\nthe lˇazy"}}
 {"Key":"c"}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Get":{"state":"ˇ","mode":"insert"}}
 {"Put":{"state":"The qˇuick\nbrown fox\njumps over\nthe lazy"}}
 {"Key":"c"}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"Insert"}}
+{"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"insert"}}
 {"Put":{"state":"ˇ\nbrown fox\njumps over\nthe lazy"}}
 {"Key":"c"}
 {"Key":"g"}
 {"Key":"g"}
-{"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"Insert"}}
+{"Get":{"state":"ˇ\nbrown fox\njumps over\nthe lazy","mode":"insert"}}

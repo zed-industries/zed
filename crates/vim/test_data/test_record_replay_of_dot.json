@@ -5,10 +5,10 @@
 {"Key":"w"}
 {"Key":"."}
 {"Key":"q"}
-{"Get":{"state":"ˇoello world","mode":"Normal"}}
+{"Get":{"state":"ˇoello world","mode":"normal"}}
 {"Key":"d"}
 {"Key":"l"}
-{"Get":{"state":"ˇello world","mode":"Normal"}}
+{"Get":{"state":"ˇello world","mode":"normal"}}
 {"Key":"@"}
 {"Key":"w"}
-{"Get":{"state":"ˇllo world","mode":"Normal"}}
+{"Get":{"state":"ˇllo world","mode":"normal"}}

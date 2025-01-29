@@ -1,6 +1,6 @@
 {"Put":{"state":"ˇ0\n"}}
 {"Key":"ctrl-x"}
-{"Get":{"state":"-ˇ1\n","mode":"Normal"}}
+{"Get":{"state":"-ˇ1\n","mode":"normal"}}
 {"Key":"2"}
 {"Key":"ctrl-a"}
 {"Get":{"state":"ˇ1\n","mode":"Normal"}}

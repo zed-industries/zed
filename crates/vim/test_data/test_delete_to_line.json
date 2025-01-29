@@ -2,14 +2,14 @@
 {"Key":"d"}
 {"Key":"3"}
 {"Key":"shift-g"}
-{"Get":{"state":"The quick\nthe lˇazy","mode":"Normal"}}
+{"Get":{"state":"The quick\nthe lˇazy","mode":"normal"}}
 {"Put":{"state":"The quick\nbrown fox\njumps over\nthe lˇazy"}}
 {"Key":"d"}
 {"Key":"3"}
 {"Key":"shift-g"}
-{"Get":{"state":"The quick\nbrownˇ fox","mode":"Normal"}}
+{"Get":{"state":"The quick\nbrownˇ fox","mode":"normal"}}
 {"Put":{"state":"The quick\nbrown fox\njumps over\nˇ"}}
 {"Key":"d"}
 {"Key":"2"}
 {"Key":"shift-g"}
-{"Get":{"state":"ˇThe quick","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick","mode":"normal"}}

@@ -1,15 +1,15 @@
 {"Put":{"state":"ˇThe quick\nbrown fox jumps"}}
 {"Key":"k"}
-{"Get":{"state":"ˇThe quick\nbrown fox jumps","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\nbrown fox jumps","mode":"normal"}}
 {"Put":{"state":"The qˇuick\nbrown fox jumps"}}
 {"Key":"k"}
-{"Get":{"state":"The qˇuick\nbrown fox jumps","mode":"Normal"}}
+{"Get":{"state":"The qˇuick\nbrown fox jumps","mode":"normal"}}
 {"Put":{"state":"The quick\nˇbrown fox jumps"}}
 {"Key":"k"}
-{"Get":{"state":"ˇThe quick\nbrown fox jumps","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\nbrown fox jumps","mode":"normal"}}
 {"Put":{"state":"The quick\nbrown fˇox jumps"}}
 {"Key":"k"}
-{"Get":{"state":"The quiˇck\nbrown fox jumps","mode":"Normal"}}
+{"Get":{"state":"The quiˇck\nbrown fox jumps","mode":"normal"}}
 {"Put":{"state":"The quick\nbrown fox jumˇps"}}
 {"Key":"k"}
-{"Get":{"state":"The quicˇk\nbrown fox jumps","mode":"Normal"}}
+{"Get":{"state":"The quicˇk\nbrown fox jumps","mode":"normal"}}

@@ -1,6 +1,6 @@
 {"Put":{"state":"The qˇuick"}}
 {"Key":"a"}
-{"Get":{"state":"The quˇick","mode":"Insert"}}
+{"Get":{"state":"The quˇick","mode":"insert"}}
 {"Put":{"state":"The quicˇk"}}
 {"Key":"a"}
-{"Get":{"state":"The quickˇ","mode":"Insert"}}
+{"Get":{"state":"The quickˇ","mode":"insert"}}

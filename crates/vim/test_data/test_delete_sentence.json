@@ -1,22 +1,22 @@
 {"Put":{"state":"Fiˇrst. Second. Third.\nFourth.\n"}}
 {"Key":"d"}
 {"Key":")"}
-{"Get":{"state":"FiˇSecond. Third.\nFourth.\n","mode":"Normal"}}
+{"Get":{"state":"FiˇSecond. Third.\nFourth.\n","mode":"normal"}}
 {"Put":{"state":"First. Secˇond. Third.\nFourth.\n"}}
 {"Key":"d"}
 {"Key":")"}
-{"Get":{"state":"First. SecˇThird.\nFourth.\n","mode":"Normal"}}
+{"Get":{"state":"First. SecˇThird.\nFourth.\n","mode":"normal"}}
 {"Put":{"state":"First. Second. Thirˇd.\nFourth.\n"}}
 {"Key":"d"}
 {"Key":")"}
 {"Key":"d"}
 {"Key":")"}
-{"Get":{"state":"First. Second. Thˇi\n","mode":"Normal"}}
+{"Get":{"state":"First. Second. Thˇi\n","mode":"normal"}}
 {"Put":{"state":"ˇFirst.\nFourth.\n"}}
 {"Key":"d"}
 {"Key":")"}
-{"Get":{"state":"ˇFourth.\n","mode":"Normal"}}
+{"Get":{"state":"ˇFourth.\n","mode":"normal"}}
 {"Put":{"state":"First.\nˇSecond.\nFourth.\n"}}
 {"Key":"d"}
 {"Key":"("}
-{"Get":{"state":"ˇSecond.\nFourth.\n","mode":"Normal"}}
+{"Get":{"state":"ˇSecond.\nFourth.\n","mode":"normal"}}

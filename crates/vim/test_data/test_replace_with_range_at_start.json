@@ -9,8 +9,8 @@
 {"Key":"/"}
 {"Key":"b"}
 {"Key":"enter"}
-{"Get":{"state":"a\nba\nba\nba\nˇba\na\na\n ","mode":"Normal"}}
+{"Get":{"state":"a\nba\nba\nba\nˇba\na\na\n ","mode":"normal"}}
 {"Key":"/"}
 {"Key":"a"}
 {"Key":"enter"}
-{"Get":{"state":"a\nba\nba\nba\nbˇa\na\na\n ","mode":"Normal"}}
+{"Get":{"state":"a\nba\nba\nba\nbˇa\na\na\n ","mode":"normal"}}

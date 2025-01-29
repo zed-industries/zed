@@ -1,12 +1,12 @@
 {"Put":{"state":"ˇTest"}}
 {"Key":"x"}
-{"Get":{"state":"ˇest","mode":"Normal"}}
+{"Get":{"state":"ˇest","mode":"normal"}}
 {"Put":{"state":"Teˇst"}}
 {"Key":"x"}
-{"Get":{"state":"Teˇt","mode":"Normal"}}
+{"Get":{"state":"Teˇt","mode":"normal"}}
 {"Put":{"state":"Tesˇt"}}
 {"Key":"x"}
-{"Get":{"state":"Teˇs","mode":"Normal"}}
+{"Get":{"state":"Teˇs","mode":"normal"}}
 {"Put":{"state":"Tesˇt\ntest"}}
 {"Key":"x"}
-{"Get":{"state":"Teˇs\ntest","mode":"Normal"}}
+{"Get":{"state":"Teˇs\ntest","mode":"normal"}}

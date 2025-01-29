@@ -1,20 +1,20 @@
 {"Put":{"state":"Teˇst Test\n"}}
 {"Key":"d"}
 {"Key":"e"}
-{"Get":{"state":"Teˇ Test\n","mode":"Normal"}}
+{"Get":{"state":"Teˇ Test\n","mode":"normal"}}
 {"Put":{"state":"Tˇest test\n"}}
 {"Key":"d"}
 {"Key":"e"}
-{"Get":{"state":"Tˇ test\n","mode":"Normal"}}
+{"Get":{"state":"Tˇ test\n","mode":"normal"}}
 {"Put":{"state":"Test teˇst\ntest"}}
 {"Key":"d"}
 {"Key":"e"}
-{"Get":{"state":"Test tˇe\ntest","mode":"Normal"}}
+{"Get":{"state":"Test tˇe\ntest","mode":"normal"}}
 {"Put":{"state":"Test tesˇt\ntest"}}
 {"Key":"d"}
 {"Key":"e"}
-{"Get":{"state":"Test teˇs","mode":"Normal"}}
+{"Get":{"state":"Test teˇs","mode":"normal"}}
 {"Put":{"state":"Test teˇst-test test"}}
 {"Key":"d"}
 {"Key":"e"}
-{"Get":{"state":"Test teˇ-test test","mode":"Normal"}}
+{"Get":{"state":"Test teˇ-test test","mode":"normal"}}

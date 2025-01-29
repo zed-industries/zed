@@ -3,9 +3,9 @@
 {"Put":{"state":"ˇhello"}}
 {"Key":"d"}
 {"Key":"l"}
-{"Get":{"state":"ˇello","mode":"Normal"}}
+{"Get":{"state":"ˇello","mode":"normal"}}
 {"ReadRegister":{"name":"\"","value":"h"}}
 {"Key":"y"}
-{"Get":{"state":"ˇlo","mode":"Normal"}}
+{"Get":{"state":"ˇlo","mode":"normal"}}
 {"ReadRegister":{"name":"\"","value":"h"}}
-{"Get":{"state":"ˇlo","mode":"Normal"}}
+{"Get":{"state":"ˇlo","mode":"normal"}}

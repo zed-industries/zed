@@ -1,32 +1,32 @@
 {"Put":{"state":"one\n\ntwo\nthree\nˇ\nfour"}}
 {"Key":"("}
-{"Get":{"state":"one\n\nˇtwo\nthree\n\nfour","mode":"Normal"}}
+{"Get":{"state":"one\n\nˇtwo\nthree\n\nfour","mode":"normal"}}
 {"Put":{"state":"hello.\n\n\nworˇld."}}
 {"Key":"("}
-{"Get":{"state":"hello.\n\n\nˇworld.","mode":"Normal"}}
+{"Get":{"state":"hello.\n\n\nˇworld.","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":"hello.\n\nˇ\nworld.","mode":"Normal"}}
+{"Get":{"state":"hello.\n\nˇ\nworld.","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":"ˇhello.\n\n\nworld.","mode":"Normal"}}
+{"Get":{"state":"ˇhello.\n\n\nworld.","mode":"normal"}}
 {"Put":{"state":"hello. worlˇd."}}
 {"Key":"("}
-{"Get":{"state":"hello. ˇworld.","mode":"Normal"}}
+{"Get":{"state":"hello. ˇworld.","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":"ˇhello. world.","mode":"Normal"}}
+{"Get":{"state":"ˇhello. world.","mode":"normal"}}
 {"Put":{"state":". helˇlo."}}
 {"Key":"("}
-{"Get":{"state":". ˇhello.","mode":"Normal"}}
+{"Get":{"state":". ˇhello.","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":". ˇhello.","mode":"Normal"}}
+{"Get":{"state":". ˇhello.","mode":"normal"}}
 {"Put":{"state":"{\n    hello_world();\nˇ}"}}
 {"Key":"("}
-{"Get":{"state":"ˇ{\n    hello_world();\n}","mode":"Normal"}}
+{"Get":{"state":"ˇ{\n    hello_world();\n}","mode":"normal"}}
 {"Put":{"state":"Hello! World..?\n\n\tHello! World... ˇ"}}
 {"Key":"("}
-{"Get":{"state":"Hello! World..?\n\n\tHello! ˇWorld... ","mode":"Normal"}}
+{"Get":{"state":"Hello! World..?\n\n\tHello! ˇWorld... ","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":"Hello! World..?\n\n\tˇHello! World... ","mode":"Normal"}}
+{"Get":{"state":"Hello! World..?\n\n\tˇHello! World... ","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":"Hello! World..?\nˇ\n\tHello! World... ","mode":"Normal"}}
+{"Get":{"state":"Hello! World..?\nˇ\n\tHello! World... ","mode":"normal"}}
 {"Key":"("}
-{"Get":{"state":"Hello! ˇWorld..?\n\n\tHello! World... ","mode":"Normal"}}
+{"Get":{"state":"Hello! ˇWorld..?\n\n\tHello! World... ","mode":"normal"}}

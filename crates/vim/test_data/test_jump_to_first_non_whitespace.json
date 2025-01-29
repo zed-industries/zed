@@ -1,18 +1,18 @@
 {"Put":{"state":"The qˇuick"}}
 {"Key":"^"}
-{"Get":{"state":"ˇThe quick","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick","mode":"normal"}}
 {"Put":{"state":" The qˇuick"}}
 {"Key":"^"}
-{"Get":{"state":" ˇThe quick","mode":"Normal"}}
+{"Get":{"state":" ˇThe quick","mode":"normal"}}
 {"Put":{"state":"ˇ"}}
 {"Key":"^"}
-{"Get":{"state":"ˇ","mode":"Normal"}}
+{"Get":{"state":"ˇ","mode":"normal"}}
 {"Put":{"state":"The qˇuick\nbrown fox"}}
 {"Key":"^"}
-{"Get":{"state":"ˇThe quick\nbrown fox","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick\nbrown fox","mode":"normal"}}
 {"Put":{"state":"ˇ\nThe quick"}}
 {"Key":"^"}
-{"Get":{"state":"ˇ\nThe quick","mode":"Normal"}}
+{"Get":{"state":"ˇ\nThe quick","mode":"normal"}}
 {"Put":{"state":"   ˇ \nThe quick"}}
 {"Key":"^"}
-{"Get":{"state":"   ˇ \nThe quick","mode":"Normal"}}
+{"Get":{"state":"   ˇ \nThe quick","mode":"normal"}}

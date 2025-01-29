@@ -3,5 +3,5 @@
 {"Key":"i"}
 {"Key":"w"}
 {"Key":"shift-y"}
-{"Get":{"state":"ˇThe quick brown\n","mode":"Normal"}}
+{"Get":{"state":"ˇThe quick brown\n","mode":"normal"}}
 {"ReadRegister":{"name":"\"","value":"The quick brown\n"}}

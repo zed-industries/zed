@@ -1,7 +1,7 @@
 {"Put":{"state":"one\n   two\nthrˇee\n"}}
 {"Key":"-"}
-{"Get":{"state":"one\n   ˇtwo\nthree\n","mode":"Normal"}}
+{"Get":{"state":"one\n   ˇtwo\nthree\n","mode":"normal"}}
 {"Key":"-"}
-{"Get":{"state":"ˇone\n   two\nthree\n","mode":"Normal"}}
+{"Get":{"state":"ˇone\n   two\nthree\n","mode":"normal"}}
 {"Key":"+"}
-{"Get":{"state":"one\n   ˇtwo\nthree\n","mode":"Normal"}}
+{"Get":{"state":"one\n   ˇtwo\nthree\n","mode":"normal"}}

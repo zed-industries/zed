@@ -1,9 +1,9 @@
 {"Put":{"state":"ˇaa\nbb\ncc"}}
 {"Key":"$"}
-{"Get":{"state":"aˇa\nbb\ncc","mode":"Normal"}}
+{"Get":{"state":"aˇa\nbb\ncc","mode":"normal"}}
 {"Key":"2"}
 {"Key":"$"}
-{"Get":{"state":"aa\nbˇb\ncc","mode":"Normal"}}
+{"Get":{"state":"aa\nbˇb\ncc","mode":"normal"}}
 {"Key":"4"}
 {"Key":"$"}
-{"Get":{"state":"aa\nbb\ncˇc","mode":"Normal"}}
+{"Get":{"state":"aa\nbb\ncˇc","mode":"normal"}}

@@ -1,32 +1,32 @@
 {"Put":{"state":"Thˇe quick-brown\n\n\nfox_jumps over\nthe"}}
 {"Key":"e"}
-{"Get":{"state":"The quicˇk-brown\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quicˇk-brown\n\n\nfox_jumps over\nthe","mode":"normal"}}
 {"Key":"e"}
-{"Get":{"state":"The quickˇ-brown\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quickˇ-brown\n\n\nfox_jumps over\nthe","mode":"normal"}}
 {"Key":"e"}
-{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"normal"}}
 {"Key":"e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumpˇs over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumpˇs over\nthe","mode":"normal"}}
 {"Key":"e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumps oveˇr\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps oveˇr\nthe","mode":"normal"}}
 {"Key":"e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"normal"}}
 {"Key":"e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"normal"}}
 {"Put":{"state":"Thˇe quick-brown\n\n\nfox_jumps over\nthe"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"normal"}}
 {"Put":{"state":"The quicˇk-brown\n\n\nfox_jumps over\nthe"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"normal"}}
 {"Put":{"state":"The quickˇ-brown\n\n\nfox_jumps over\nthe"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-browˇn\n\n\nfox_jumps over\nthe","mode":"normal"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumpˇs over\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumpˇs over\nthe","mode":"normal"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumps oveˇr\nthe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps oveˇr\nthe","mode":"normal"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"normal"}}
 {"Key":"shift-e"}
-{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"Normal"}}
+{"Get":{"state":"The quick-brown\n\n\nfox_jumps over\nthˇe","mode":"normal"}}

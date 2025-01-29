@@ -7,4 +7,4 @@
 {"Key":"i"}
 {"Key":"u"}
 {"Key":"escape"}
-{"Get":{"state":"one two\nthree foˇur","mode":"Normal"}}
+{"Get":{"state":"one two\nthree foˇur","mode":"normal"}}

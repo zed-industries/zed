@@ -1,15 +1,15 @@
 {"Put":{"state":"The qˇuick"}}
 {"Key":"shift-i"}
-{"Get":{"state":"ˇThe quick","mode":"Insert"}}
+{"Get":{"state":"ˇThe quick","mode":"insert"}}
 {"Put":{"state":" The qˇuick"}}
 {"Key":"shift-i"}
-{"Get":{"state":" ˇThe quick","mode":"Insert"}}
+{"Get":{"state":" ˇThe quick","mode":"insert"}}
 {"Put":{"state":"ˇ"}}
 {"Key":"shift-i"}
-{"Get":{"state":"ˇ","mode":"Insert"}}
+{"Get":{"state":"ˇ","mode":"insert"}}
 {"Put":{"state":"The qˇuick\nbrown fox"}}
 {"Key":"shift-i"}
-{"Get":{"state":"ˇThe quick\nbrown fox","mode":"Insert"}}
+{"Get":{"state":"ˇThe quick\nbrown fox","mode":"insert"}}
 {"Put":{"state":"ˇ\nThe quick"}}
 {"Key":"shift-i"}
-{"Get":{"state":"ˇ\nThe quick","mode":"Insert"}}
+{"Get":{"state":"ˇ\nThe quick","mode":"insert"}}

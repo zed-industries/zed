@@ -3,15 +3,15 @@
 {"Key":"2"}
 {"Key":"j"}
 {"Key":"y"}
-{"Get":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
+{"Get":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog","mode":"normal"}}
 {"ReadRegister":{"name":"\"","value":"q\nj\nl"}}
 {"Key":"p"}
-{"Get":{"state":"The qˇquick brown\nfox jjumps over\nthe llazy dog","mode":"Normal"}}
+{"Get":{"state":"The qˇquick brown\nfox jjumps over\nthe llazy dog","mode":"normal"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
 {"Key":"shift-p"}
-{"Get":{"state":"The ˇq brown\nfox jjjumps over\nthe lllazy dog","mode":"Normal"}}
+{"Get":{"state":"The ˇq brown\nfox jjjumps over\nthe lllazy dog","mode":"normal"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
@@ -20,14 +20,14 @@
 {"Key":"ctrl-v"}
 {"Key":"j"}
 {"Key":"y"}
-{"Get":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
+{"Get":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog","mode":"normal"}}
 {"ReadRegister":{"name":"\"","value":"q\nj"}}
 {"Key":"l"}
 {"Key":"ctrl-v"}
 {"Key":"2"}
 {"Key":"j"}
 {"Key":"shift-p"}
-{"Get":{"state":"The qˇqick brown\nfox jjmps over\nthe lzy dog","mode":"Normal"}}
+{"Get":{"state":"The qˇqick brown\nfox jjmps over\nthe lzy dog","mode":"normal"}}
 {"Key":"shift-v"}
 {"Key":"p"}
-{"Get":{"state":"ˇq\nj\nfox jjmps over\nthe lzy dog","mode":"Normal"}}
+{"Get":{"state":"ˇq\nj\nfox jjmps over\nthe lzy dog","mode":"normal"}}

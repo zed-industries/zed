@@ -1,15 +1,15 @@
 {"Put":{"state":"The ˇquick brown\nfox jumps over\nthe lazy dog"}}
 {"Key":"shift-v"}
-{"Get":{"state":"The «qˇ»uick brown\nfox jumps over\nthe lazy dog","mode":"VisualLine"}}
+{"Get":{"state":"The «qˇ»uick brown\nfox jumps over\nthe lazy dog","mode":"visual_line"}}
 {"Key":"x"}
-{"Get":{"state":"fox ˇjumps over\nthe lazy dog","mode":"Normal"}}
+{"Get":{"state":"fox ˇjumps over\nthe lazy dog","mode":"normal"}}
 {"Put":{"state":"a\nˇ\nb"}}
 {"Key":"shift-v"}
-{"Get":{"state":"a\n«\nˇ»b","mode":"VisualLine"}}
+{"Get":{"state":"a\n«\nˇ»b","mode":"visual_line"}}
 {"Key":"x"}
-{"Get":{"state":"a\nˇb","mode":"Normal"}}
+{"Get":{"state":"a\nˇb","mode":"normal"}}
 {"Put":{"state":"a\nb\nˇ"}}
 {"Key":"shift-v"}
-{"Get":{"state":"a\nb\nˇ","mode":"VisualLine"}}
+{"Get":{"state":"a\nb\nˇ","mode":"visual_line"}}
 {"Key":"x"}
-{"Get":{"state":"a\nˇb","mode":"Normal"}}
+{"Get":{"state":"a\nˇb","mode":"normal"}}

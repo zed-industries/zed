@@ -1,12 +1,12 @@
 {"Put":{"state":"ˇ one\n two \nthree"}}
 {"Key":"g"}
 {"Key":"_"}
-{"Get":{"state":" onˇe\n two \nthree","mode":"Normal"}}
+{"Get":{"state":" onˇe\n two \nthree","mode":"normal"}}
 {"Put":{"state":"ˇ one \n two \nthree"}}
 {"Key":"g"}
 {"Key":"_"}
-{"Get":{"state":" onˇe \n two \nthree","mode":"Normal"}}
+{"Get":{"state":" onˇe \n two \nthree","mode":"normal"}}
 {"Key":"2"}
 {"Key":"g"}
 {"Key":"_"}
-{"Get":{"state":" one \n twˇo \nthree","mode":"Normal"}}
+{"Get":{"state":" one \n twˇo \nthree","mode":"normal"}}

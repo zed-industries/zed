@@ -7,39 +7,39 @@
 {"Key":"o"}
 {"Key":"escape"}
 {"Key":"u"}
-{"Get":{"state":"hello ˇquoel world","mode":"Normal"}}
+{"Get":{"state":"hello ˇquoel world","mode":"normal"}}
 {"Key":"ctrl-r"}
-{"Get":{"state":"hello ˇco world","mode":"Normal"}}
+{"Get":{"state":"hello ˇco world","mode":"normal"}}
 {"Key":"a"}
 {"Key":"o"}
 {"Key":"right"}
 {"Key":"l"}
 {"Key":"escape"}
-{"Get":{"state":"hello cooˇl world","mode":"Normal"}}
+{"Get":{"state":"hello cooˇl world","mode":"normal"}}
 {"Key":"u"}
-{"Get":{"state":"hello cooˇ world","mode":"Normal"}}
+{"Get":{"state":"hello cooˇ world","mode":"normal"}}
 {"Key":"u"}
-{"Get":{"state":"hello cˇo world","mode":"Normal"}}
+{"Get":{"state":"hello cˇo world","mode":"normal"}}
 {"Key":"u"}
-{"Get":{"state":"hello ˇquoel world","mode":"Normal"}}
+{"Get":{"state":"hello ˇquoel world","mode":"normal"}}
 {"Put":{"state":"hello quˇoel world"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
 {"Key":"~"}
 {"Key":"u"}
-{"Get":{"state":"hello ˇquoel world","mode":"Normal"}}
+{"Get":{"state":"hello ˇquoel world","mode":"normal"}}
 {"Put":{"state":"\nhello quˇoel world\n"}}
 {"Key":"shift-v"}
 {"Key":"s"}
 {"Key":"c"}
 {"Key":"escape"}
 {"Key":"u"}
-{"Get":{"state":"\nˇhello quoel world\n","mode":"Normal"}}
+{"Get":{"state":"\nˇhello quoel world\n","mode":"normal"}}
 {"Put":{"state":"ˇ1\n2\n3"}}
 {"Key":"ctrl-v"}
 {"Key":"shift-g"}
 {"Key":"ctrl-a"}
-{"Get":{"state":"ˇ2\n3\n4","mode":"Normal"}}
+{"Get":{"state":"ˇ2\n3\n4","mode":"normal"}}
 {"Key":"u"}
-{"Get":{"state":"ˇ1\n2\n3","mode":"Normal"}}
+{"Get":{"state":"ˇ1\n2\n3","mode":"normal"}}

@@ -1,18 +1,18 @@
 {"Put":{"state":"ˇ total: 0xff"}}
 {"Key":"ctrl-a"}
-{"Get":{"state":" total: 0x10ˇ0","mode":"Normal"}}
+{"Get":{"state":" total: 0x10ˇ0","mode":"normal"}}
 {"Put":{"state":"ˇ total: 0xff"}}
 {"Key":"ctrl-x"}
-{"Get":{"state":" total: 0xfˇe","mode":"Normal"}}
+{"Get":{"state":" total: 0xfˇe","mode":"normal"}}
 {"Put":{"state":"ˇ total: 0xFF"}}
 {"Key":"ctrl-x"}
-{"Get":{"state":" total: 0xFˇE","mode":"Normal"}}
+{"Get":{"state":" total: 0xFˇE","mode":"normal"}}
 {"Put":{"state":"(ˇ0b10f)"}}
 {"Key":"ctrl-a"}
-{"Get":{"state":"(0b1ˇ1f)","mode":"Normal"}}
+{"Get":{"state":"(0b1ˇ1f)","mode":"normal"}}
 {"Put":{"state":"ˇ-1"}}
 {"Key":"ctrl-a"}
-{"Get":{"state":"ˇ0","mode":"Normal"}}
+{"Get":{"state":"ˇ0","mode":"normal"}}
 {"Put":{"state":"banˇana"}}
 {"Key":"ctrl-a"}
-{"Get":{"state":"banˇana","mode":"Normal"}}
+{"Get":{"state":"banˇana","mode":"normal"}}

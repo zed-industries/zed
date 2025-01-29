@@ -3,11 +3,11 @@
 {"Key":"y"}
 {"Key":"3"}
 {"Key":"p"}
-{"Get":{"state":"one\nˇone\none\none\ntwo\nthree\n","mode":"Normal"}}
+{"Get":{"state":"one\nˇone\none\none\ntwo\nthree\n","mode":"normal"}}
 {"Put":{"state":"one\nˇtwo\nthree\n"}}
 {"Key":"y"}
 {"Key":"$"}
 {"Key":"$"}
 {"Key":"3"}
 {"Key":"p"}
-{"Get":{"state":"one\ntwotwotwotwˇo\nthree\n","mode":"Normal"}}
+{"Get":{"state":"one\ntwotwotwotwˇo\nthree\n","mode":"normal"}}

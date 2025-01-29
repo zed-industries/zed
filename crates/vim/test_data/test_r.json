@@ -1,19 +1,19 @@
 {"Put":{"state":"ˇhello\n"}}
 {"Key":"r"}
 {"Key":"-"}
-{"Get":{"state":"ˇ-ello\n","mode":"Normal"}}
+{"Get":{"state":"ˇ-ello\n","mode":"normal"}}
 {"Put":{"state":"ˇhello\n"}}
 {"Key":"3"}
 {"Key":"r"}
 {"Key":"-"}
-{"Get":{"state":"--ˇ-lo\n","mode":"Normal"}}
+{"Get":{"state":"--ˇ-lo\n","mode":"normal"}}
 {"Put":{"state":"ˇhello\n"}}
 {"Key":"r"}
 {"Key":"-"}
 {"Key":"2"}
 {"Key":"l"}
 {"Key":"."}
-{"Get":{"state":"-eˇ-lo\n","mode":"Normal"}}
+{"Get":{"state":"-eˇ-lo\n","mode":"normal"}}
 {"Put":{"state":"ˇhello world\n"}}
 {"Key":"2"}
 {"Key":"r"}
@@ -21,11 +21,11 @@
 {"Key":"f"}
 {"Key":"w"}
 {"Key":"."}
-{"Get":{"state":"--llo -ˇ-rld\n","mode":"Normal"}}
+{"Get":{"state":"--llo -ˇ-rld\n","mode":"normal"}}
 {"Put":{"state":"ˇhello world\n"}}
 {"Key":"2"}
 {"Key":"0"}
 {"Key":"r"}
 {"Key":"-"}
 {"Key":""}
-{"Get":{"state":"ˇhello world\n","mode":"Normal"}}
+{"Get":{"state":"ˇhello world\n","mode":"normal"}}

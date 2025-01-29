@@ -4,34 +4,34 @@
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"\""}
-{"Get":{"state":"\"«hello worldˇ»\"!","mode":"Visual"}}
+{"Get":{"state":"\"«hello worldˇ»\"!","mode":"visual"}}
 {"Put":{"state":"\"hˇello world\"!"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"\""}
-{"Get":{"state":"\"«hello worldˇ»\"!","mode":"Visual"}}
+{"Get":{"state":"\"«hello worldˇ»\"!","mode":"visual"}}
 {"Put":{"state":"helˇlo \"world\"!"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"\""}
-{"Get":{"state":"hello \"«worldˇ»\"!","mode":"Visual"}}
+{"Get":{"state":"hello \"«worldˇ»\"!","mode":"visual"}}
 {"Put":{"state":"hello \"wˇorld\"!"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"\""}
-{"Get":{"state":"hello \"«worldˇ»\"!","mode":"Visual"}}
+{"Get":{"state":"hello \"«worldˇ»\"!","mode":"visual"}}
 {"Put":{"state":"hello \"wˇorld\"!"}}
 {"Key":"v"}
 {"Key":"a"}
 {"Key":"\""}
-{"Get":{"state":"hello« \"world\"ˇ»!","mode":"Visual"}}
+{"Get":{"state":"hello« \"world\"ˇ»!","mode":"visual"}}
 {"Put":{"state":"hello \"wˇorld\" !"}}
 {"Key":"v"}
 {"Key":"a"}
 {"Key":"\""}
-{"Get":{"state":"hello «\"world\" ˇ»!","mode":"Visual"}}
+{"Get":{"state":"hello «\"world\" ˇ»!","mode":"visual"}}
 {"Put":{"state":"hello \"wˇorld\"•\ngoodbye"}}
 {"Key":"v"}
 {"Key":"a"}
 {"Key":"\""}
-{"Get":{"state":"hello «\"world\" ˇ»\ngoodbye","mode":"Visual"}}
+{"Get":{"state":"hello «\"world\" ˇ»\ngoodbye","mode":"visual"}}

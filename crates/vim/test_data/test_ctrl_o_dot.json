@@ -3,9 +3,9 @@
 {"Key":"i"}
 {"Key":"ctrl-o"}
 {"Key":"."}
-{"Get":{"state":"heˇo world.","mode":"Insert"}}
+{"Get":{"state":"heˇo world.","mode":"insert"}}
 {"Key":"l"}
 {"Key":"l"}
 {"Key":"escape"}
 {"Key":"."}
-{"Get":{"state":"hellˇllo world.","mode":"Normal"}}
+{"Get":{"state":"hellˇllo world.","mode":"normal"}}

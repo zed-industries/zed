@@ -6,16 +6,16 @@
 {"Key":"k"}
 {"Key":"'"}
 {"Key":"<"}
-{"Get":{"state":"Line one\nLine two\nˇLine three\nLine four\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nˇLine three\nLine four\nLine five\n","mode":"normal"}}
 {"Key":"`"}
 {"Key":"<"}
-{"Get":{"state":"Line one\nLine two\nLine ˇthree\nLine four\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine ˇthree\nLine four\nLine five\n","mode":"normal"}}
 {"Key":"'"}
 {"Key":">"}
-{"Get":{"state":"Line one\nLine two\nLine three\nˇLine four\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine three\nˇLine four\nLine five\n","mode":"normal"}}
 {"Key":"`"}
 {"Key":">"}
-{"Get":{"state":"Line one\nLine two\nLine three\nLine ˇfour\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine three\nLine ˇfour\nLine five\n","mode":"normal"}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"w"}
@@ -23,7 +23,7 @@
 {"Key":"escape"}
 {"Key":"`"}
 {"Key":">"}
-{"Get":{"state":"Line one\nLine two\nLine three\nLine fouˇr\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine three\nLine fouˇr\nLine five\n","mode":"normal"}}
 {"Key":"`"}
 {"Key":"<"}
-{"Get":{"state":"Line one\nLine two\nLine three\nLine ˇfour\nLine five\n","mode":"Normal"}}
+{"Get":{"state":"Line one\nLine two\nLine three\nLine ˇfour\nLine five\n","mode":"normal"}}

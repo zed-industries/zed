@@ -1,24 +1,24 @@
 {"Put":{"state":"Teˇst Test"}}
 {"Key":"d"}
 {"Key":"b"}
-{"Get":{"state":"ˇst Test","mode":"Normal"}}
+{"Get":{"state":"ˇst Test","mode":"normal"}}
 {"Put":{"state":"Test ˇtest"}}
 {"Key":"d"}
 {"Key":"b"}
-{"Get":{"state":"ˇtest","mode":"Normal"}}
+{"Get":{"state":"ˇtest","mode":"normal"}}
 {"Put":{"state":"Test1 test2 ˇtest3"}}
 {"Key":"d"}
 {"Key":"b"}
-{"Get":{"state":"Test1 ˇtest3","mode":"Normal"}}
+{"Get":{"state":"Test1 ˇtest3","mode":"normal"}}
 {"Put":{"state":"Test test\nˇtest"}}
 {"Key":"d"}
 {"Key":"b"}
-{"Get":{"state":"Testˇ \ntest","mode":"Normal"}}
+{"Get":{"state":"Testˇ \ntest","mode":"normal"}}
 {"Put":{"state":"Test test\nˇ\ntest"}}
 {"Key":"d"}
 {"Key":"b"}
-{"Get":{"state":"Testˇ \n\ntest","mode":"Normal"}}
+{"Get":{"state":"Testˇ \n\ntest","mode":"normal"}}
 {"Put":{"state":"Test test-test ˇtest"}}
 {"Key":"d"}
 {"Key":"shift-b"}
-{"Get":{"state":"Test ˇtest","mode":"Normal"}}
+{"Get":{"state":"Test ˇtest","mode":"normal"}}

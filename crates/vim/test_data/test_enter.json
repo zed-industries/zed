@@ -1,11 +1,11 @@
 {"Put":{"state":"ˇThe quick brown\nfox jumps"}}
 {"Key":"enter"}
-{"Get":{"state":"The quick brown\nˇfox jumps","mode":"Normal"}}
+{"Get":{"state":"The quick brown\nˇfox jumps","mode":"normal"}}
 {"Put":{"state":"The qˇuick brown\nfox jumps"}}
 {"Key":"enter"}
-{"Get":{"state":"The quick brown\nˇfox jumps","mode":"Normal"}}
+{"Get":{"state":"The quick brown\nˇfox jumps","mode":"normal"}}
 {"Put":{"state":"The quick broˇwn\nfox jumps"}}
 {"Key":"enter"}
-{"Get":{"state":"The quick brown\nˇfox jumps","mode":"Normal"}}
+{"Get":{"state":"The quick brown\nˇfox jumps","mode":"normal"}}
 {"Key":"enter"}
-{"Get":{"state":"The quick brown\nˇfox jumps","mode":"Normal"}}
+{"Get":{"state":"The quick brown\nˇfox jumps","mode":"normal"}}

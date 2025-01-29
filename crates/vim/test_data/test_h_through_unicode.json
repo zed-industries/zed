@@ -1,12 +1,12 @@
 {"Put":{"state":"Testˇ├──┐Test"}}
 {"Key":"h"}
-{"Get":{"state":"Tesˇt├──┐Test","mode":"Normal"}}
+{"Get":{"state":"Tesˇt├──┐Test","mode":"normal"}}
 {"Put":{"state":"Test├ˇ──┐Test"}}
 {"Key":"h"}
-{"Get":{"state":"Testˇ├──┐Test","mode":"Normal"}}
+{"Get":{"state":"Testˇ├──┐Test","mode":"normal"}}
 {"Put":{"state":"Test├──ˇ┐Test"}}
 {"Key":"h"}
-{"Get":{"state":"Test├─ˇ─┐Test","mode":"Normal"}}
+{"Get":{"state":"Test├─ˇ─┐Test","mode":"normal"}}
 {"Put":{"state":"Test├──┐ˇTest"}}
 {"Key":"h"}
-{"Get":{"state":"Test├──ˇ┐Test","mode":"Normal"}}
+{"Get":{"state":"Test├──ˇ┐Test","mode":"normal"}}

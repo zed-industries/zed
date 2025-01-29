@@ -4,25 +4,25 @@
 {"Key":"c"}
 {"Key":"d"}
 {"Key":"enter"}
-{"Get":{"state":"«a.c. abcˇ»d a.c. abcd","mode":"Visual"}}
+{"Get":{"state":"«a.c. abcˇ»d a.c. abcd","mode":"visual"}}
 {"Put":{"state":"a a aˇ a a a"}}
 {"Key":"v"}
 {"Key":"/"}
 {"Key":"a"}
 {"Key":"enter"}
-{"Get":{"state":"a a a« aˇ» a a","mode":"Visual"}}
+{"Get":{"state":"a a a« aˇ» a a","mode":"visual"}}
 {"Key":"/"}
 {"Key":"enter"}
-{"Get":{"state":"a a a« a aˇ» a","mode":"Visual"}}
+{"Get":{"state":"a a a« a aˇ» a","mode":"visual"}}
 {"Key":"?"}
 {"Key":"enter"}
-{"Get":{"state":"a a a« aˇ» a a","mode":"Visual"}}
+{"Get":{"state":"a a a« aˇ» a a","mode":"visual"}}
 {"Key":"?"}
 {"Key":"enter"}
-{"Get":{"state":"a a «ˇa »a a a","mode":"Visual"}}
+{"Get":{"state":"a a «ˇa »a a a","mode":"visual"}}
 {"Key":"/"}
 {"Key":"enter"}
-{"Get":{"state":"a a a« aˇ» a a","mode":"Visual"}}
+{"Get":{"state":"a a a« aˇ» a a","mode":"visual"}}
 {"Key":"/"}
 {"Key":"enter"}
-{"Get":{"state":"a a a« a aˇ» a","mode":"Visual"}}
+{"Get":{"state":"a a a« a aˇ» a","mode":"visual"}}

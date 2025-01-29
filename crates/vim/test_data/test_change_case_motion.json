@@ -2,26 +2,26 @@
 {"Key":"g"}
 {"Key":"shift-u"}
 {"Key":"w"}
-{"Get":{"state":"ˇABC def","mode":"Normal"}}
+{"Get":{"state":"ˇABC def","mode":"normal"}}
 {"Key":"g"}
 {"Key":"u"}
 {"Key":"w"}
-{"Get":{"state":"ˇabc def","mode":"Normal"}}
+{"Get":{"state":"ˇabc def","mode":"normal"}}
 {"Key":"g"}
 {"Key":"~"}
 {"Key":"w"}
-{"Get":{"state":"ˇABC def","mode":"Normal"}}
+{"Get":{"state":"ˇABC def","mode":"normal"}}
 {"Key":"."}
-{"Get":{"state":"ˇabc def","mode":"Normal"}}
+{"Get":{"state":"ˇabc def","mode":"normal"}}
 {"Put":{"state":"abˇc def"}}
 {"Key":"g"}
 {"Key":"~"}
 {"Key":"i"}
 {"Key":"w"}
-{"Get":{"state":"ˇABC def","mode":"Normal"}}
+{"Get":{"state":"ˇABC def","mode":"normal"}}
 {"Key":"."}
-{"Get":{"state":"ˇabc def","mode":"Normal"}}
+{"Get":{"state":"ˇabc def","mode":"normal"}}
 {"Key":"g"}
 {"Key":"shift-u"}
 {"Key":"$"}
-{"Get":{"state":"ˇABC DEF","mode":"Normal"}}
+{"Get":{"state":"ˇABC DEF","mode":"normal"}}

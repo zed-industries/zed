@@ -5,20 +5,20 @@
 {"Key":"escape"}
 {"Key":"g"}
 {"Key":"v"}
-{"Get":{"state":"The «quickˇ» brown","mode":"Visual"}}
+{"Get":{"state":"The «quickˇ» brown","mode":"visual"}}
 {"Key":"o"}
 {"Key":"escape"}
 {"Key":"g"}
 {"Key":"v"}
-{"Get":{"state":"The «ˇquick» brown","mode":"Visual"}}
+{"Get":{"state":"The «ˇquick» brown","mode":"visual"}}
 {"Key":"escape"}
 {"Key":"^"}
 {"Key":"ctrl-v"}
 {"Key":"l"}
-{"Get":{"state":"«Thˇ»e quick brown","mode":"VisualBlock"}}
+{"Get":{"state":"«Thˇ»e quick brown","mode":"visual_block"}}
 {"Key":"g"}
 {"Key":"v"}
-{"Get":{"state":"The «ˇquick» brown","mode":"Visual"}}
+{"Get":{"state":"The «ˇquick» brown","mode":"visual"}}
 {"Key":"g"}
 {"Key":"v"}
-{"Get":{"state":"«Thˇ»e quick brown","mode":"VisualBlock"}}
+{"Get":{"state":"«Thˇ»e quick brown","mode":"visual_block"}}
