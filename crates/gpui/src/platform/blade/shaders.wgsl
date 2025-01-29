@@ -359,6 +359,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             }
         }
         case 2u: {
+            // Slash pattern
             let base_pattern_size = bounds.size.y / 5.0;
             let width = base_pattern_size * 0.5;
             let slash_spacing = 0.89;
@@ -373,6 +374,21 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             let distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
             background_color = sold_color;
             background_color.a *= saturate(0.5 - distance);
+        }
+        case 3u: {
+            // Dash pattern
+            let dash_width = 8.0;
+            let gap_width = 8.0;
+            let pattern_width = dash_width + gap_width;
+            let relative_position = position - bounds.origin;
+
+            // Use a dot product to select x or y based on orientation
+            let orientation_vector = vec2<f32>(1.0 - f32(background.angle != 0.0), f32(background.angle != 0.0));
+            let pattern_position = fmod(dot(relative_position, orientation_vector), pattern_width);
+
+            let distance = pattern_position - dash_width;
+            background_color = sold_color;
+            background_color.a *= step(-distance, 0.0);
         }
     }
 
