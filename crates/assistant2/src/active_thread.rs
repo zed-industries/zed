@@ -56,7 +56,7 @@ impl ActiveThread {
             messages: Vec::new(),
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
-                let this = cx.model().downgrade();
+                let this = cx.entity().downgrade();
                 move |ix, _: &mut Window, cx: &mut App| {
                     this.update(cx, |this, cx| this.render_message(ix, cx))
                         .unwrap()
@@ -298,7 +298,7 @@ impl ActiveThread {
         let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
-                .py_1()
+                .pt_2p5()
                 .px_2p5()
                 .child(
                     v_flex()
@@ -350,7 +350,6 @@ impl Render for ActiveThread {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .pt_1p5()
             .child(list(self.list_state.clone()).flex_grow())
     }
 }

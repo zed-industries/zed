@@ -4,7 +4,7 @@ use futures::{
     future::{BoxFuture, LocalBoxFuture},
     Future, FutureExt as _,
 };
-use gpui::{AnyEntity, AnyWeakEntity, AsyncAppContext, Entity};
+use gpui::{AnyEntity, AnyWeakEntity, AsyncApp, Entity};
 use proto::{
     error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
     RequestMessage, TypedEnvelope,
@@ -64,7 +64,7 @@ pub type ProtoMessageHandler = Arc<
             AnyEntity,
             Box<dyn AnyTypedEnvelope>,
             AnyProtoClient,
-            AsyncAppContext,
+            AsyncApp,
         ) -> LocalBoxFuture<'static, anyhow::Result<()>>,
 >;
 
@@ -111,7 +111,7 @@ impl ProtoMessageHandlerSet {
         this: &parking_lot::Mutex<Self>,
         message: Box<dyn AnyTypedEnvelope>,
         client: AnyProtoClient,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Option<LocalBoxFuture<'static, anyhow::Result<()>>> {
         let payload_type_id = message.payload_type_id();
         let mut this = this.lock();
@@ -211,7 +211,7 @@ impl AnyProtoClient {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
         F: 'static + Future<Output = anyhow::Result<M::Response>>,
     {
         self.0.message_handler_set().lock().add_message_handler(
@@ -243,7 +243,7 @@ impl AnyProtoClient {
     where
         M: EnvelopedMessage + RequestMessage + EntityMessage,
         E: 'static,
-        H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F,
+        H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncApp) -> F,
         F: 'static + Future<Output = anyhow::Result<M::Response>>,
     {
         let message_type_id = TypeId::of::<M>();
@@ -289,7 +289,7 @@ impl AnyProtoClient {
     where
         M: EnvelopedMessage + EntityMessage,
         E: 'static,
-        H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F,
+        H: 'static + Sync + Send + Fn(gpui::Entity<E>, TypedEnvelope<M>, AsyncApp) -> F,
         F: 'static + Future<Output = anyhow::Result<()>>,
     {
         let message_type_id = TypeId::of::<M>();

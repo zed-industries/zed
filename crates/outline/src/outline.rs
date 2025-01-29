@@ -88,7 +88,7 @@ impl Render for OutlineView {
 impl OutlineView {
     fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut Context<Editor>) {
         if editor.mode() == EditorMode::Full {
-            let handle = cx.model().downgrade();
+            let handle = cx.entity().downgrade();
             editor
                 .register_action(move |action, window, cx| {
                     if let Some(editor) = handle.upgrade() {
@@ -105,7 +105,7 @@ impl OutlineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> OutlineView {
-        let delegate = OutlineViewDelegate::new(cx.model().downgrade(), outline, editor, cx);
+        let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window)))
         });

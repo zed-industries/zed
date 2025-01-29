@@ -7,7 +7,7 @@ use std::ops::Range;
 /// This input handler can then be assigned during paint by calling [`WindowContext::handle_input`].
 ///
 /// See [`InputHandler`] for details on how to implement each method.
-pub trait ViewInputHandler: 'static + Sized {
+pub trait EntityInputHandler: 'static + Sized {
     /// See [`InputHandler::text_for_range`] for details
     fn text_for_range(
         &mut self,
@@ -84,7 +84,7 @@ impl<V: 'static> ElementInputHandler<V> {
     }
 }
 
-impl<V: ViewInputHandler> InputHandler for ElementInputHandler<V> {
+impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     fn selected_text_range(
         &mut self,
         ignore_disabled_input: bool,

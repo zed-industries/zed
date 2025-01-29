@@ -23,11 +23,11 @@ use fs::Fs;
 use futures::FutureExt;
 use gpui::{
     actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
-    size, Animation, AnimationExt, AnyElement, AnyView, AnyWindowHandle, App, AsyncWindowContext,
-    ClipboardEntry, ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, WeakEntity,
+    size, Animation, AnimationExt, AnyElement, AnyView, App, AsyncWindowContext, ClipboardEntry,
+    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    Global, InteractiveElement, IntoElement, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    WeakEntity,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
@@ -213,7 +213,7 @@ impl ContextEditor {
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
             context.read(cx).slash_commands().clone(),
-            Some(cx.model().downgrade()),
+            Some(cx.entity().downgrade()),
             Some(workspace.clone()),
         );
 
@@ -551,7 +551,7 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_editor = cx.model().downgrade();
+        let context_editor = cx.entity().downgrade();
 
         match event {
             ContextEvent::MessagesEdited => {
@@ -605,7 +605,7 @@ impl ContextEditor {
                         .map(|tool_use| {
                             let placeholder = FoldPlaceholder {
                                 render: render_fold_icon_button(
-                                    cx.model().downgrade(),
+                                    cx.entity().downgrade(),
                                     IconName::PocketKnife,
                                     tool_use.name.clone().into(),
                                 ),
@@ -789,7 +789,7 @@ impl ContextEditor {
 
                     let placeholder = FoldPlaceholder {
                         render: render_fold_icon_button(
-                            cx.model().downgrade(),
+                            cx.entity().downgrade(),
                             IconName::PocketKnife,
                             format!("Tool Result: {tool_use_id}").into(),
                         ),
@@ -937,7 +937,7 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<ContextEditor>,
     ) {
-        let this = cx.model().downgrade();
+        let this = cx.entity().downgrade();
         let mut editors_to_close = Vec::new();
 
         self.editor.update(cx, |editor, cx| {
@@ -978,21 +978,20 @@ impl ContextEditor {
                     .unwrap();
                 let render_block: RenderBlock = Arc::new({
                     let this = this.clone();
-                    let window_handle = window.window_handle();
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext<'_, '_>| {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
                         let selected = cx.selected;
-                        this.update(&mut **cx, |this, cx| {
+                        this.update_in(cx, |this, window, cx| {
                             this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
                                 block_id,
                                 selected,
-                                window_handle,
+                                window,
                                 cx,
                             )
                         })
@@ -1081,7 +1080,7 @@ impl ContextEditor {
                         start..end,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
-                                cx.model().downgrade(),
+                                cx.entity().downgrade(),
                                 section.icon,
                                 section.label.clone(),
                             ),
@@ -1217,7 +1216,7 @@ impl ContextEditor {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
-        let editor = cx.new_window_model(|window, cx| {
+        let editor = cx.new_window_entity(|window, cx| {
             let editor = ProposedChangesEditor::new(
                 patch.title.clone(),
                 resolved_patch
@@ -1843,7 +1842,7 @@ impl ContextEditor {
                 editor.insert("\n", window, cx);
 
                 let fold_placeholder =
-                    quote_selection_fold_placeholder(crease_title, cx.model().downgrade());
+                    quote_selection_fold_placeholder(crease_title, cx.entity().downgrade());
                 let crease = Crease::inline(
                     anchor_before..anchor_after,
                     fold_placeholder,
@@ -2027,7 +2026,7 @@ impl ContextEditor {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
 
                     let mut buffer_rows_to_fold = BTreeSet::new();
-                    let weak_editor = cx.model().downgrade();
+                    let weak_editor = cx.entity().downgrade();
                     editor.insert_creases(
                         metadata.creases.into_iter().map(|metadata| {
                             let start = buffer.anchor_after(
@@ -2198,15 +2197,12 @@ impl ContextEditor {
         gutter_width: Pixels,
         id: BlockId,
         selected: bool,
-        window_handle: AnyWindowHandle,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let snapshot = window_handle
-            .update(cx, |_, window, cx| {
-                self.editor
-                    .update(cx, |editor, cx| editor.snapshot(window, cx))
-            })
-            .ok()?;
+        let snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
         let excerpt_id = *excerpt_id;
         let anchor = snapshot
@@ -2509,7 +2505,7 @@ impl ContextEditor {
     fn render_inject_context_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
-            cx.model().downgrade(),
+            cx.entity().downgrade(),
             Button::new("trigger", "Add Context")
                 .icon(IconName::Plus)
                 .icon_size(IconSize::Small)
@@ -3699,7 +3695,7 @@ pub fn make_lsp_adapter_delegate(
             Ok(Some(LocalLspAdapterDelegate::new(
                 project.languages().clone(),
                 project.environment(),
-                cx.weak_model(),
+                cx.weak_entity(),
                 &worktree,
                 http_client,
                 project.fs().clone(),

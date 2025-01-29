@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{prelude::*, App, AsyncAppContext, Global};
+use gpui::{prelude::*, App, AsyncApp, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
@@ -268,7 +268,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let Some(this) = cx.update(|cx| Self::global(cx)).ok().flatten() else {
             return Err(anyhow!("Copilot chat is not enabled"));

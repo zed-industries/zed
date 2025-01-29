@@ -219,7 +219,7 @@ impl Markdown {
 impl Render for Markdown {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         MarkdownElement::new(
-            cx.model().clone(),
+            cx.entity().clone(),
             self.style.clone(),
             self.language_registry.clone(),
             self.fallback_code_block_language.clone(),

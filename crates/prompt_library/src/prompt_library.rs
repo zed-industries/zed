@@ -81,49 +81,62 @@ pub fn open_prompt_library(
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
-    let existing_window = cx
-        .windows()
-        .into_iter()
-        .find_map(|window| window.downcast::<PromptLibrary>());
-    if let Some(existing_window) = existing_window {
-        existing_window
-            .update(cx, |_, window, _| window.activate_window())
-            .ok();
-        Task::ready(Ok(existing_window))
-    } else {
-        let store = PromptStore::global(cx);
-        cx.spawn(|cx| async move {
-            let store = store.await?;
-            cx.update(|cx| {
-                let app_id = ReleaseChannel::global(cx).app_id();
-                let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
-                cx.open_window(
-                    WindowOptions {
-                        titlebar: Some(TitlebarOptions {
-                            title: Some("Prompt Library".into()),
-                            appears_transparent: cfg!(target_os = "macos"),
-                            traffic_light_position: Some(point(px(9.0), px(9.0))),
-                        }),
-                        app_id: Some(app_id.to_owned()),
-                        window_bounds: Some(WindowBounds::Windowed(bounds)),
-                        ..Default::default()
-                    },
-                    |window, cx| {
-                        cx.new(|cx| {
-                            PromptLibrary::new(
-                                store,
-                                language_registry,
-                                inline_assist_delegate,
-                                make_completion_provider,
-                                window,
-                                cx,
-                            )
-                        })
-                    },
-                )
-            })?
-        })
-    }
+    let store = PromptStore::global(cx);
+    cx.spawn(|cx| async move {
+        // We query windows in spawn so that all windows have been returned to GPUI
+        let existing_window = cx
+            .update(|cx| {
+                let existing_window = cx
+                    .windows()
+                    .into_iter()
+                    .find_map(|window| window.downcast::<PromptLibrary>());
+                if let Some(existing_window) = existing_window {
+                    existing_window
+                        .update(cx, |_, window, _| window.activate_window())
+                        .ok();
+
+                    Some(existing_window)
+                } else {
+                    None
+                }
+            })
+            .ok()
+            .flatten();
+
+        if let Some(existing_window) = existing_window {
+            return Ok(existing_window);
+        }
+
+        let store = store.await?;
+        cx.update(|cx| {
+            let app_id = ReleaseChannel::global(cx).app_id();
+            let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Prompt Library".into()),
+                        appears_transparent: cfg!(target_os = "macos"),
+                        traffic_light_position: Some(point(px(9.0), px(9.0))),
+                    }),
+                    app_id: Some(app_id.to_owned()),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    ..Default::default()
+                },
+                |window, cx| {
+                    cx.new(|cx| {
+                        PromptLibrary::new(
+                            store,
+                            language_registry,
+                            inline_assist_delegate,
+                            make_completion_provider,
+                            window,
+                            cx,
+                        )
+                    })
+                },
+            )
+        })?
+    })
 }
 
 pub struct PromptLibrary {

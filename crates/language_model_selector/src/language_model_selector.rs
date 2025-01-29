@@ -33,7 +33,7 @@ impl LanguageModelSelector {
 
         let all_models = Self::all_models(cx);
         let delegate = LanguageModelPickerDelegate {
-            language_model_selector: cx.model().downgrade(),
+            language_model_selector: cx.entity().downgrade(),
             on_model_changed: on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,
@@ -146,8 +146,12 @@ impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(language_model_selector.clone()))
             .trigger(self.trigger)
-            .attach(gpui::Corner::BottomLeft)
+            .anchor(gpui::Corner::BottomRight)
             .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
     }
 }
 
@@ -193,6 +197,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let all_models = self.all_models.clone();
+        let current_index = self.selected_index;
 
         let llm_registry = LanguageModelRegistry::global(cx);
 
@@ -239,17 +244,26 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
             this.update_in(&mut cx, |this, window, cx| {
                 this.delegate.filtered_models = filtered_models;
-                this.delegate.set_selected_index(0, window, cx);
+                // Preserve selection focus
+                let new_index = if current_index >= this.delegate.filtered_models.len() {
+                    0
+                } else {
+                    current_index
+                };
+                this.delegate.set_selected_index(new_index, window, cx);
                 cx.notify();
             })
             .ok();
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
+
+            let current_index = self.selected_index;
+            self.set_selected_index(current_index, window, cx);
 
             cx.emit(DismissEvent);
         }

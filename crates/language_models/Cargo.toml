@@ -29,6 +29,7 @@ menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 lmstudio = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+deepseek = { workspace = true, features = ["schemars"] }
 project.workspace = true
 proto.workspace = true
 schemars.workspace = true

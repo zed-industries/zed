@@ -13,6 +13,7 @@ use crate::provider::{
     anthropic::AnthropicSettings,
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
+    deepseek::DeepSeekSettings,
     google::GoogleSettings,
     lmstudio::LmStudioSettings,
     ollama::OllamaSettings,
@@ -61,6 +62,7 @@ pub struct AllLanguageModelSettings {
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
     pub lmstudio: LmStudioSettings,
+    pub deepseek: DeepSeekSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -72,6 +74,7 @@ pub struct AllLanguageModelSettingsContent {
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
 }
 
@@ -160,6 +163,12 @@ pub struct OllamaSettingsContent {
 pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct DeepseekSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::deepseek::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -297,6 +306,18 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.lmstudio.available_models,
                 lmstudio.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // DeepSeek
+            let deepseek = value.deepseek.clone();
+
+            merge(
+                &mut settings.deepseek.api_url,
+                value.deepseek.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.deepseek.available_models,
+                deepseek.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             // OpenAI

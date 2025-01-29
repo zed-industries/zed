@@ -283,7 +283,7 @@ impl ProjectDiagnosticsEditor {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
-            let workspace_handle = cx.model().downgrade();
+            let workspace_handle = cx.entity().downgrade();
 
             let include_warnings = match cx.try_global::<IncludeWarnings>() {
                 Some(include_warnings) => include_warnings.0,

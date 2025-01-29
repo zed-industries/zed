@@ -3,7 +3,7 @@ use collections::{btree_map, hash_map, BTreeMap, HashMap};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
-use gpui::{App, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
@@ -88,7 +88,7 @@ pub trait Settings: 'static + Send + Sync {
     }
 
     #[track_caller]
-    fn try_read_global<R>(cx: &AsyncAppContext, f: impl FnOnce(&Self) -> R) -> Option<R>
+    fn try_read_global<R>(cx: &AsyncApp, f: impl FnOnce(&Self) -> R) -> Option<R>
     where
         Self: Sized,
     {
@@ -178,9 +178,8 @@ pub struct SettingsStore {
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
     )>,
     _setting_file_updates: Task<()>,
-    setting_file_updates_tx: mpsc::UnboundedSender<
-        Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
-    >,
+    setting_file_updates_tx:
+        mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
 }
 
 #[derive(Clone)]
@@ -406,7 +405,7 @@ impl SettingsStore {
         update: impl 'static + Send + FnOnce(&mut T::FileContent, &App),
     ) {
         self.setting_file_updates_tx
-            .unbounded_send(Box::new(move |cx: AsyncAppContext| {
+            .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
                     let old_text = Self::load_settings(&fs).await?;
                     let new_text = cx.read_global(|store: &SettingsStore, cx| {

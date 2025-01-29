@@ -189,6 +189,12 @@ pub fn themes_dir() -> &'static PathBuf {
     THEMES_DIR.get_or_init(|| config_dir().join("themes"))
 }
 
+/// Returns the path to the snippets directory.
+pub fn snippets_dir() -> &'static PathBuf {
+    static SNIPPETS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
+}
+
 /// Returns the path to the contexts directory.
 ///
 /// This is where the saved contexts from the Assistant are stored.

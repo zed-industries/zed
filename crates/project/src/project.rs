@@ -48,8 +48,8 @@ use ::git::{
     status::FileStatus,
 };
 use gpui::{
-    AnyEntity, App, AppContext as _, AsyncAppContext, BorrowAppContext, Context, Entity,
-    EventEmitter, Hsla, SharedString, Task, WeakEntity, Window,
+    AnyEntity, App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter,
+    Hsla, SharedString, Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -281,6 +281,7 @@ pub enum Event {
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
+    ExpandedAllForEntry(WorktreeId, ProjectEntryId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -813,6 +814,9 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let git_state =
+                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
@@ -825,7 +829,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
-                git_state: None,
+                git_state,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -869,7 +873,7 @@ impl Project {
             };
 
             let ssh = ssh.read(cx);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.model());
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
@@ -898,7 +902,7 @@ impl Project {
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let project =
             Self::in_room(remote_id, client, user_store, languages, fs, cx.clone()).await?;
@@ -916,7 +920,7 @@ impl Project {
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         client.authenticate_and_connect(true, &cx).await?;
 
@@ -958,7 +962,7 @@ impl Project {
         user_store: Entity<UserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
@@ -1007,6 +1011,9 @@ impl Project {
         let settings_observer = cx.new(|cx| {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
+
+        let git_state =
+            Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx))).transpose()?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -1058,7 +1065,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                git_state: None,
+                git_state,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1156,7 +1163,7 @@ impl Project {
     #[cfg(any(test, feature = "test-support"))]
     pub async fn example(
         root_paths: impl IntoIterator<Item = &Path>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Entity<Project> {
         use clock::FakeSystemClock;
 
@@ -1577,6 +1584,25 @@ impl Project {
         worktree.update(cx, |worktree, cx| worktree.expand_entry(entry_id, cx))
     }
 
+    pub fn expand_all_for_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree_for_id(worktree_id, cx)?;
+        let task = worktree.update(cx, |worktree, cx| {
+            worktree.expand_all_for_entry(entry_id, cx)
+        });
+        Some(cx.spawn(|this, mut cx| async move {
+            task.ok_or_else(|| anyhow!("no task"))?.await?;
+            this.update(&mut cx, |_, cx| {
+                cx.emit(Event::ExpandedAllForEntry(worktree_id, entry_id));
+            })?;
+            Ok(())
+        }))
+    }
+
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
             return Err(anyhow!("project was already shared"));
@@ -1585,7 +1611,7 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&cx.model(), &mut cx.to_async()),
+                .set_model(&cx.entity(), &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.worktree_store, &mut cx.to_async()),
@@ -2018,7 +2044,7 @@ impl Project {
     async fn send_buffer_ordered_messages(
         this: WeakEntity<Self>,
         rx: UnboundedReceiver<BufferOrderedMessage>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         const MAX_BATCH_SIZE: usize = 128;
 
@@ -2028,7 +2054,7 @@ impl Project {
             operations_by_buffer_id: &mut HashMap<BufferId, Vec<proto::Operation>>,
             needs_resync_with_host: &mut bool,
             is_local: bool,
-            cx: &mut AsyncAppContext,
+            cx: &mut AsyncApp,
         ) -> Result<()> {
             for (buffer_id, operations) in operations_by_buffer_id.drain() {
                 let request = this.update(cx, |this, _| {
@@ -2427,7 +2453,7 @@ impl Project {
             delay
         } else {
             if first_insertion {
-                let this = cx.weak_model();
+                let this = cx.weak_entity();
                 cx.defer(move |cx| {
                     if let Some(this) = this.upgrade() {
                         this.update(cx, |this, cx| {
@@ -2553,7 +2579,7 @@ impl Project {
         language_name: LanguageName,
     ) -> Option<SharedString> {
         languages
-            .language_for_name(&language_name.0)
+            .language_for_name(language_name.as_ref())
             .await
             .ok()?
             .toolchain_lister()
@@ -3541,7 +3567,7 @@ impl Project {
     async fn handle_unshare_project(
         this: Entity<Self>,
         _: TypedEnvelope<proto::UnshareProject>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             if this.is_local() || this.is_via_ssh() {
@@ -3556,7 +3582,7 @@ impl Project {
     async fn handle_add_collaborator(
         this: Entity<Self>,
         mut envelope: TypedEnvelope<proto::AddProjectCollaborator>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let collaborator = envelope
             .payload
@@ -3581,7 +3607,7 @@ impl Project {
     async fn handle_update_project_collaborator(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateProjectCollaborator>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let old_peer_id = envelope
             .payload
@@ -3624,7 +3650,7 @@ impl Project {
     async fn handle_remove_collaborator(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::RemoveProjectCollaborator>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let peer_id = envelope
@@ -3652,7 +3678,7 @@ impl Project {
     async fn handle_update_project(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateProject>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
@@ -3666,7 +3692,7 @@ impl Project {
     async fn handle_toast(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::Toast>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(Event::Toast {
@@ -3680,7 +3706,7 @@ impl Project {
     async fn handle_language_server_prompt_request(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
         let (tx, mut rx) = smol::channel::bounded(1);
         let actions: Vec<_> = envelope
@@ -3727,7 +3753,7 @@ impl Project {
     async fn handle_hide_toast(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::HideToast>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(Event::HideToast {
@@ -3741,7 +3767,7 @@ impl Project {
     async fn handle_update_worktree(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -3758,7 +3784,7 @@ impl Project {
     async fn handle_update_buffer_from_ssh(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let buffer_store = this.read_with(&cx, |this, cx| {
             if let Some(remote_id) = this.remote_id() {
@@ -3776,7 +3802,7 @@ impl Project {
     async fn handle_update_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let buffer_store = this.read_with(&cx, |this, cx| {
             if let Some(ssh) = &this.ssh_client {
@@ -3812,7 +3838,7 @@ impl Project {
     async fn handle_create_buffer_for_peer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CreateBufferForPeer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
@@ -3829,7 +3855,7 @@ impl Project {
     async fn handle_synchronize_buffers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::SynchronizeBuffersResponse> {
         let response = this.update(&mut cx, |this, cx| {
             let client = this.client.clone();
@@ -3844,7 +3870,7 @@ impl Project {
     async fn handle_search_candidate_buffers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::FindSearchCandidates>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
@@ -3874,7 +3900,7 @@ impl Project {
     async fn handle_open_buffer_by_id(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenBufferById>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let buffer_id = BufferId::new(envelope.payload.id)?;
@@ -3887,7 +3913,7 @@ impl Project {
     async fn handle_open_buffer_by_path(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenBufferByPath>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
@@ -3908,7 +3934,7 @@ impl Project {
     async fn handle_open_new_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::OpenNewBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let buffer = this
             .update(&mut cx, |this, cx| this.create_buffer(cx))?
@@ -3922,7 +3948,7 @@ impl Project {
         this: Entity<Self>,
         buffer: Entity<Buffer>,
         peer_id: proto::PeerId,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         this.update(cx, |this, cx| {
             let is_private = buffer

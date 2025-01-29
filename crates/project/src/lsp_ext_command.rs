@@ -1,7 +1,7 @@
 use crate::{lsp_command::LspCommand, lsp_store::LspStore, make_text_document_identifier};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use gpui::{App, AsyncAppContext, Entity};
+use gpui::{App, AsyncApp, Entity};
 use language::{point_to_lsp, proto::deserialize_anchor, Buffer};
 use lsp::{LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
@@ -70,7 +70,7 @@ impl LspCommand for ExpandMacro {
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<ExpandedMacro> {
         Ok(message
             .map(|message| ExpandedMacro {
@@ -94,7 +94,7 @@ impl LspCommand for ExpandMacro {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
@@ -123,7 +123,7 @@ impl LspCommand for ExpandMacro {
         message: proto::LspExtExpandMacroResponse,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<ExpandedMacro> {
         Ok(ExpandedMacro {
             name: message.name,
@@ -200,7 +200,7 @@ impl LspCommand for OpenDocs {
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<DocsUrls> {
         Ok(message
             .map(|message| DocsUrls {
@@ -224,7 +224,7 @@ impl LspCommand for OpenDocs {
         message: Self::ProtoRequest,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         let position = message
             .position
@@ -253,7 +253,7 @@ impl LspCommand for OpenDocs {
         message: proto::LspExtOpenDocsResponse,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<DocsUrls> {
         Ok(DocsUrls {
             web: message.web,
@@ -314,7 +314,7 @@ impl LspCommand for SwitchSourceHeader {
         _: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<SwitchSourceHeaderResult> {
         Ok(message
             .map(|message| SwitchSourceHeaderResult(message.0))
@@ -332,7 +332,7 @@ impl LspCommand for SwitchSourceHeader {
         _: Self::ProtoRequest,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self {})
     }
@@ -354,7 +354,7 @@ impl LspCommand for SwitchSourceHeader {
         message: proto::LspExtSwitchSourceHeaderResponse,
         _: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncAppContext,
+        _: AsyncApp,
     ) -> anyhow::Result<SwitchSourceHeaderResult> {
         Ok(SwitchSourceHeaderResult(message.target_file))
     }

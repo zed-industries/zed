@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use language::{
     language_settings::AllLanguageSettings, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
@@ -58,7 +58,7 @@ impl LspAdapter for YamlLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         let env = delegate.shell_env().await;
@@ -131,7 +131,7 @@ impl LspAdapter for YamlLspAdapter {
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let location = SettingsLocation {
             worktree_id: delegate.worktree_id(),

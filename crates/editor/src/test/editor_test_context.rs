@@ -67,7 +67,7 @@ impl EditorTestContext {
             window.focus(&editor.focus_handle(cx));
             editor
         });
-        let editor_view = editor.root_model(cx).unwrap();
+        let editor_view = editor.root(cx).unwrap();
 
         cx.run_until_parked();
         Self {
@@ -89,7 +89,7 @@ impl EditorTestContext {
     }
 
     pub async fn for_editor(editor: WindowHandle<Editor>, cx: &mut gpui::TestAppContext) -> Self {
-        let editor_view = editor.root_model(cx).unwrap();
+        let editor_view = editor.root(cx).unwrap();
         Self {
             cx: VisualTestContext::from_window(*editor.deref(), cx),
             window: editor.into(),
@@ -126,7 +126,7 @@ impl EditorTestContext {
             editor
         });
 
-        let editor_view = editor.root_model(cx).unwrap();
+        let editor_view = editor.root(cx).unwrap();
         Self {
             cx: VisualTestContext::from_window(*editor.deref(), cx),
             window: editor.into(),

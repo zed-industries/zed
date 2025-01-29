@@ -245,7 +245,7 @@ impl Session {
             repl_session_id = cx.entity_id().to_string(),
         );
 
-        let session_view = cx.model().clone();
+        let session_view = cx.entity().clone();
 
         let kernel = match self.kernel_specification.clone() {
             KernelSpecification::Jupyter(kernel_specification)
@@ -417,7 +417,7 @@ impl Session {
         };
 
         let parent_message_id = message.header.msg_id.clone();
-        let session_view = cx.model().downgrade();
+        let session_view = cx.entity().downgrade();
         let weak_editor = self.editor.clone();
 
         let on_close: CloseBlockFn = Arc::new(

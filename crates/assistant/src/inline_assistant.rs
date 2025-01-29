@@ -77,7 +77,7 @@ pub fn init(
         let Some(window) = window else {
             return;
         };
-        let workspace = cx.model().clone();
+        let workspace = cx.entity().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
         });
@@ -211,7 +211,7 @@ impl InlineAssistant {
                 } else {
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
-                            editor: cx.model().downgrade(),
+                            editor: cx.entity().downgrade(),
                             workspace: workspace.downgrade(),
                         }),
                         window,
@@ -1345,7 +1345,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, cx| {
-                    let editor_handle = cx.model().downgrade();
+                    let editor_handle = cx.entity().downgrade();
                     editor.register_action(move |_: &editor::actions::Newline, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             if let Some(editor) = editor_handle.upgrade() {
@@ -1355,7 +1355,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, cx| {
-                    let editor_handle = cx.model().downgrade();
+                    let editor_handle = cx.entity().downgrade();
                     editor.register_action(move |_: &editor::actions::Cancel, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             if let Some(editor) = editor_handle.upgrade() {
@@ -1878,19 +1878,17 @@ impl PromptEditor {
     ) {
         match event {
             EditorEvent::Edited { .. } => {
-                if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
-                    workspace
-                        .update(cx, |workspace, _, cx| {
-                            let is_via_ssh = workspace
-                                .project()
-                                .update(cx, |project, _| project.is_via_ssh());
+                if let Some(workspace) = window.root::<Workspace>().flatten() {
+                    workspace.update(cx, |workspace, cx| {
+                        let is_via_ssh = workspace
+                            .project()
+                            .update(cx, |project, _| project.is_via_ssh());
 
-                            workspace
-                                .client()
-                                .telemetry()
-                                .log_edit_event("inline assist", is_via_ssh);
-                        })
-                        .log_err();
+                        workspace
+                            .client()
+                            .telemetry()
+                            .log_edit_event("inline assist", is_via_ssh);
+                    });
                 }
                 let prompt = self.editor.read(cx).text(cx);
                 if self
