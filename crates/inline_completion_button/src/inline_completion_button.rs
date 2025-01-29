@@ -375,24 +375,7 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
-        if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
-            // let action = Inline
-            menu = menu
-                .entry(
-                    "Predict Edits at Cursor",
-                    Some(Box::new(ShowInlineCompletion)),
-                    {
-                        let editor_focus_handle = editor_focus_handle.clone();
-
-                        move |window, cx| {
-                            editor_focus_handle.dispatch_action(&ShowInlineCompletion, window, cx);
-                        }
-                    },
-                )
-                .context(editor_focus_handle);
-        }
-
-        menu = menu.header("Automatically Predict:");
+        menu = menu.header("Suggest Edit Predictions For:");
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
@@ -412,13 +395,12 @@ impl InlineCompletionButton {
         }
 
         let settings = AllLanguageSettings::get_global(cx);
-
         if let Some(file) = &self.file {
             let path = file.path().clone();
             let path_enabled = settings.inline_completions_enabled_for_path(&path);
 
             menu = menu.toggleable_entry(
-                "For this file",
+                "This File",
                 path_enabled,
                 IconPosition::Start,
                 None,
@@ -440,13 +422,32 @@ impl InlineCompletionButton {
         }
 
         let globally_enabled = settings.inline_completions_enabled(None, None, cx);
-        menu.toggleable_entry(
+        menu = menu.toggleable_entry(
             "All Files",
             globally_enabled,
             IconPosition::Start,
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
-        )
+        );
+
+        if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            menu = menu
+                .separator()
+                .entry(
+                    "Summon Prediction at Cursor",
+                    Some(Box::new(ShowInlineCompletion)),
+                    {
+                        let editor_focus_handle = editor_focus_handle.clone();
+
+                        move |window, cx| {
+                            editor_focus_handle.dispatch_action(&ShowInlineCompletion, window, cx);
+                        }
+                    },
+                )
+                .context(editor_focus_handle);
+        }
+
+        menu
     }
 
     fn build_copilot_context_menu(
@@ -490,7 +491,7 @@ impl InlineCompletionButton {
             self.build_language_settings_menu(menu, cx).when(
                 cx.has_flag::<PredictEditsRateCompletionsFeatureFlag>(),
                 |this| {
-                    this.separator().entry(
+                    this.entry(
                         "Rate Completions",
                         Some(RateCompletions.boxed_clone()),
                         move |window, cx| {
