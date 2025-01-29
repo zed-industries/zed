@@ -8,7 +8,10 @@ pub struct Model {
     pub id: i64,
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
-    pub abs_path: Vec<String>,
+    // NOTE:
+    // One should use `CrossPlatformPath::to_db_string` to get the path string, and
+    // use `CrossPlatformPath::from_db_string` to get the path back.
+    pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
     /// The last scan for which we've observed entries. It may be in progress.

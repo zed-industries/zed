@@ -11,8 +11,10 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub is_dir: bool,
-    // pub path: String,
-    pub path: Vec<String>,
+    // NOTE:
+    // One should use `CrossPlatformPath::to_db_string` to get the path string, and
+    // use `CrossPlatformPath::from_db_string` to get the path back.
+    pub path: String,
     pub inode: i64,
     pub mtime_seconds: i64,
     pub mtime_nanos: i32,
@@ -22,8 +24,10 @@ pub struct Model {
     pub is_deleted: bool,
     pub scan_id: i64,
     pub is_fifo: bool,
-    // pub canonical_path: Option<String>,
-    pub canonical_path: Option<Vec<String>>,
+    // NOTE:
+    // One should use `CrossPlatformPath::to_db_string` to get the path string, and
+    // use `CrossPlatformPath::from_db_string` to get the path back.
+    pub canonical_path: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
