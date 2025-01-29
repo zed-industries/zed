@@ -1303,15 +1303,17 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         struct ZetaDataCollectionNotification;
         let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
+        const DATA_COLLECTION_INFO: &str = "https://zed.dev/terms-of-service";
 
         self.workspace
             .update(cx, |workspace, cx| {
                 workspace.show_notification(notification_id, cx, |cx| {
                     let zeta = self.zeta.clone();
                     cx.new(move |_cx| {
-                        MessageNotification::new("hi")
+                        MessageNotification::new("To allow Zed to suggest better predictions, turn on data collection. You can turn off at any time via the status bar menu.")
+                            .with_title("Per-Project Data Collection Program")
                             .show_close_button(false)
-                            .with_click_message("Yes")
+                            .with_click_message("Turn On")
                             .on_click({
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
@@ -1324,7 +1326,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                     });
                                 }
                             })
-                            .with_secondary_click_message("No")
+                            .with_secondary_click_message("Turn Off")
                             .on_secondary_click({
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
@@ -1337,7 +1339,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                     })
                                 }
                             })
-                            .with_tertiary_click_message("Don't show me this anymor")
+                            .with_tertiary_click_message("Never Ask Again")
                             .on_tertiary_click({
                                 let zeta = zeta.clone();
                                 move |_window, cx| {
@@ -1346,6 +1348,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                                     });
                                 }
                             })
+                            .more_info_message("Learn More")
+                            .more_info_url(DATA_COLLECTION_INFO)
                     })
                 });
             })

@@ -386,7 +386,10 @@ pub mod simple_message_notification {
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         tertiary_click_message: Option<SharedString>,
         tertiary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
+        more_info_message: Option<SharedString>,
+        more_info_url: Option<Arc<str>>,
         show_close_button: bool,
+        title: Option<SharedString>,
     }
 
     impl EventEmitter<DismissEvent> for MessageNotification {}
@@ -412,7 +415,10 @@ pub mod simple_message_notification {
                 secondary_click_message: None,
                 tertiary_on_click: None,
                 tertiary_click_message: None,
+                more_info_message: None,
+                more_info_url: None,
                 show_close_button: true,
+                title: None,
             }
         }
 
@@ -464,12 +470,36 @@ pub mod simple_message_notification {
             self
         }
 
+        pub fn more_info_message<S>(mut self, message: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.more_info_message = Some(message.into());
+            self
+        }
+
+        pub fn more_info_url<S>(mut self, url: S) -> Self
+        where
+            S: Into<Arc<str>>,
+        {
+            self.more_info_url = Some(url.into());
+            self
+        }
+
         pub fn dismiss(&mut self, cx: &mut Context<Self>) {
             cx.emit(DismissEvent);
         }
 
         pub fn show_close_button(mut self, show: bool) -> Self {
             self.show_close_button = show;
+            self
+        }
+
+        pub fn with_title<S>(mut self, title: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.title = Some(title.into());
             self
         }
     }
@@ -485,7 +515,14 @@ pub mod simple_message_notification {
                         .gap_4()
                         .justify_between()
                         .items_start()
-                        .child(div().max_w_96().child((self.build_content)(window, cx)))
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .when_some(self.title.clone(), |element, title| {
+                                    element.child(Label::new(title))
+                                })
+                                .child(div().max_w_96().child((self.build_content)(window, cx))),
+                        )
                         .when(self.show_close_button, |this| {
                             this.child(
                                 IconButton::new("close", IconName::Close)
@@ -495,8 +532,7 @@ pub mod simple_message_notification {
                 )
                 .child(
                     h_flex()
-                        .gap_2()
-                        .flex_wrap()
+                        .gap_1()
                         .children(self.click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
                                 .label_size(LabelSize::Small)
@@ -525,20 +561,39 @@ pub mod simple_message_notification {
                                     this.dismiss(cx)
                                 }))
                         }))
-                        .children(self.tertiary_click_message.iter().map(|message| {
-                            Button::new(message.clone(), message.clone())
-                                .label_size(LabelSize::Small)
-                                // .icon(IconName::Close)
-                                // .icon_position(IconPosition::Start)
-                                // .icon_size(IconSize::Small)
-                                // .icon_color(Color::Error)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if let Some(on_click) = this.tertiary_on_click.as_ref() {
-                                        (on_click)(window, cx)
-                                    };
-                                    this.dismiss(cx)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .justify_end()
+                                .children(self.tertiary_click_message.iter().map(|message| {
+                                    Button::new(message.clone(), message.clone())
+                                        .label_size(LabelSize::Small)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            if let Some(on_click) = this.tertiary_on_click.as_ref()
+                                            {
+                                                (on_click)(window, cx)
+                                            };
+                                            this.dismiss(cx)
+                                        }))
                                 }))
-                        })),
+                                .children(
+                                    self.more_info_message
+                                        .iter()
+                                        .zip(self.more_info_url.iter())
+                                        .map(|(message, url)| {
+                                            let url = url.clone();
+                                            Button::new(message.clone(), message.clone())
+                                                .label_size(LabelSize::Small)
+                                                .icon(IconName::ArrowUpRight)
+                                                .icon_size(IconSize::Indicator)
+                                                .icon_color(Color::Muted)
+                                                .on_click(cx.listener(move |_, _, _, cx| {
+                                                    cx.open_url(&url);
+                                                }))
+                                        }),
+                                ),
+                        ),
                 )
         }
     }
