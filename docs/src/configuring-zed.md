@@ -789,6 +789,14 @@ List of `string` values
 }
 ```
 
+3. Hide the close button:
+
+```json
+{
+  "close_position": "hidden"
+}
+```
+
 ### File Icons
 
 - Description: Whether to show the file icon for a tab.
