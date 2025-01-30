@@ -1349,6 +1349,17 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             return;
         }
 
+        if let Some(current_completion) = self.current_completion.as_ref() {
+            let snapshot = buffer.read(cx).snapshot();
+            if current_completion
+                .completion
+                .interpolate(&snapshot)
+                .is_some()
+            {
+                return;
+            }
+        }
+
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
 
