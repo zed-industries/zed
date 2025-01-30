@@ -9971,6 +9971,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "once_cell",
  "parking_lot",
  "pathdiff",
  "paths",
