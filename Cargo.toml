@@ -538,7 +538,7 @@ unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
-wasmparser = "0.215"
+wasmparser = "0.224"
 wasm-encoder = "0.215"
 wasmtime = { version = "24", default-features = false, features = [
     "async",
