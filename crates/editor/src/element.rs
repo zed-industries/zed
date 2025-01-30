@@ -3527,7 +3527,7 @@ impl EditorElement {
                     crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
                 })?;
 
-                let line_count = highlighted_edits.text.lines().count() + 1;
+                let line_count = highlighted_edits.text.lines().count();
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
