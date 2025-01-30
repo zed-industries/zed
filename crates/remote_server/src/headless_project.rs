@@ -1,18 +1,22 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
+use futures::channel::mpsc;
+use git::repository::RepoPath;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    git::GitState,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectEntryId, ProjectPath, ToolchainStore,
+    WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
@@ -40,6 +44,7 @@ pub struct HeadlessProject {
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
     pub extensions: Entity<HeadlessExtensionStore>,
+    pub git_state: Entity<GitState>,
 }
 
 pub struct HeadlessAppState {
@@ -77,6 +82,10 @@ impl HeadlessProject {
             store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             store
         });
+
+        let git_state =
+            cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx));
+
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
@@ -164,6 +173,7 @@ impl HeadlessProject {
 
         let client: AnyProtoClient = session.clone().into();
 
+        // local_machine -> ssh handlers
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &buffer_store);
         session.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
@@ -187,6 +197,10 @@ impl HeadlessProject {
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
+
+        client.add_model_request_handler(Self::handle_stage);
+        client.add_model_request_handler(Self::handle_unstage);
+        client.add_model_request_handler(Self::handle_commit);
 
         client.add_request_handler(
             extensions.clone().downgrade(),
@@ -215,6 +229,7 @@ impl HeadlessProject {
             next_entry_id: Default::default(),
             languages,
             extensions,
+            git_state,
         }
     }
 
@@ -601,6 +616,120 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+
+    async fn handle_stage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Stage>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .stage_entries(entries, err_sender)
+            .context("staging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during staging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_unstage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Unstage>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .unstage_entries(entries, err_sender)
+            .context("unstaging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let commit_message = envelope.payload.message;
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .commit_with_message(commit_message, err_sender)
+            .context("unstaging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
     }
 }
 

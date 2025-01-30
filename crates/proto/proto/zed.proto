@@ -308,6 +308,10 @@ message Envelope {
         GetStagedTextResponse get_staged_text_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
+
+        Stage stage = 293;
+        Unstage unstage = 294;
+        Commit commit = 295; // current max
     }
 
     reserved 87 to 88;
@@ -2632,4 +2636,25 @@ message InstallExtension {
 message RegisterBufferWithLanguageServers{
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+}
+
+message Stage {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    repeated string paths = 4;
+}
+
+message Unstage {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    repeated string paths = 4;
+}
+
+message Commit {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    string message = 4;
 }
