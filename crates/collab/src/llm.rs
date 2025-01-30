@@ -447,8 +447,7 @@ async fn predict_edits(
         ));
     }
 
-    let can_sample = claims.is_staff || params.can_sample;
-    let should_sample = can_sample && rand::random::<f32>() < 0.10; // 10%
+    let should_sample = claims.is_staff || params.can_sample;
 
     let api_url = state
         .config
