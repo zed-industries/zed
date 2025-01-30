@@ -4392,7 +4392,10 @@ impl LspStore {
         .pop()
         .flatten()
         .unwrap_or_else(|| {
-            CodeLabel::fallback_for_completion(&completion_item, language.map(|language| language.as_ref()))
+            CodeLabel::fallback_for_completion(
+                &completion_item,
+                language.map(|language| language.as_ref()),
+            )
         });
         ensure_uniform_list_compatible_label(&mut new_label);
 

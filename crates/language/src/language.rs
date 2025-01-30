@@ -1784,14 +1784,13 @@ impl CodeLabel {
         let runs = highlight_id
             .map(|highlight_id| vec![(0..label_length, highlight_id)])
             .unwrap_or_default();
-        let text = if let Some(detail) = dbg!(&item.detail) {
+        let text = if let Some(detail) = &item.detail {
             format!("{label} {detail}")
         } else if let Some(description) = item
             .label_details
             .as_ref()
             .and_then(|label_details| label_details.description.as_ref())
         {
-            dbg!(description);
             format!("{label} {description}")
         } else {
             label.clone()
