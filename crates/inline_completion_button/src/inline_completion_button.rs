@@ -20,15 +20,13 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
-use ui::{prelude::*, ButtonLike, Color, Icon, IconWithIndicator, Indicator, PopoverMenuHandle};
+use ui::{
+    prelude::*, ButtonLike, Clickable, ContextMenu, ContextMenuEntry, IconButton,
+    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip,
+};
 use workspace::{
-    create_and_open_local_file,
-    item::ItemHandle,
-    notifications::NotificationId,
-    ui::{
-        ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip,
-    },
-    StatusItemView, Toast, Workspace,
+    create_and_open_local_file, item::ItemHandle, notifications::NotificationId, StatusItemView,
+    Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
 use zed_predict_onboarding::ZedPredictModal;
@@ -444,10 +442,21 @@ impl InlineCompletionButton {
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
 
-        menu = menu.separator().header("Data Collection:");
+        if let Some(provider) = &self.inline_completion_provider {
+            let data_collection = provider.data_collection_state(cx);
 
-        // Not wired yet
-        menu = menu.toggleable_entry("Turned On", true, IconPosition::Start, None, |_, _| {});
+            if data_collection.is_supported() {
+                let provider = provider.clone();
+                menu = menu.separator().item(
+                    ContextMenuEntry::new("Data Collection")
+                        .toggleable(IconPosition::Start, data_collection.is_enabled())
+                        .disabled(data_collection.is_unknown())
+                        .handler(move |_, cx| {
+                            provider.toggle_data_collection(cx);
+                        }),
+                );
+            }
+        }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu

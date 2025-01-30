@@ -219,7 +219,7 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
 
 fn assign_inline_completion_provider(
     editor: &mut Editor,
-    provider: language::language_settings::InlineCompletionProvider,
+    provider: InlineCompletionProvider,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     window: &mut Window,
@@ -228,8 +228,8 @@ fn assign_inline_completion_provider(
     let singleton_buffer = editor.buffer().read(cx).as_singleton();
 
     match provider {
-        language::language_settings::InlineCompletionProvider::None => {}
-        language::language_settings::InlineCompletionProvider::Copilot => {
+        InlineCompletionProvider::None => {}
+        InlineCompletionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
                 if let Some(buffer) = singleton_buffer {
                     if buffer.read(cx).file().is_some() {
@@ -242,13 +242,13 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-        language::language_settings::InlineCompletionProvider::Supermaven => {
+        InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-        language::language_settings::InlineCompletionProvider::Zed => {
+        InlineCompletionProvider::Zed => {
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
@@ -272,6 +272,7 @@ fn assign_inline_completion_provider(
                         })
                     });
                     let data_collection_choice = project_abs_path
+                        .as_ref()
                         .map(|path| zeta.read(cx).data_collection_choice_at(path))
                         .unwrap_or(zeta::DataCollectionChoice::NotAnswered);
 
@@ -280,6 +281,7 @@ fn assign_inline_completion_provider(
                             zeta,
                             workspace.downgrade(),
                             data_collection_choice,
+                            project_abs_path,
                         )
                     });
                     editor.set_inline_completion_provider(Some(provider), window, cx);

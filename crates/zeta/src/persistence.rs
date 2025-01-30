@@ -10,7 +10,7 @@ define_connection!(
     pub static ref DB: ZetaDb<WorkspaceDb> = &[
         sql! (
             CREATE TABLE zeta_preferences(
-                project_path BLOB NOT NULL,
+                project_path BLOB NOT NULL PRIMARY KEY,
                 accepted_data_collection INTEGER
             ) STRICT;
         ),
@@ -41,8 +41,7 @@ impl ZetaDb {
                 (project_path, accepted_data_collection)
             VALUES
                 (?1, ?2)
-            ON CONFLICT DO UPDATE SET
-                project_path = ?1,
+            ON CONFLICT (project_path) DO UPDATE SET
                 accepted_data_collection = ?2
         }
     }

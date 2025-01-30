@@ -4,6 +4,7 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
+use inline_completion::DataCollectionState;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -891,12 +892,8 @@ and then another
         new_snapshot
     }
 
-    pub fn data_collection_choice_at(&self, path: impl Into<PathBuf>) -> DataCollectionChoice {
-        match self
-            .data_collection_preferences
-            .per_worktree
-            .get(&path.into())
-        {
+    pub fn data_collection_choice_at(&self, path: &Path) -> DataCollectionChoice {
+        match self.data_collection_preferences.per_worktree.get(path) {
             Some(true) => DataCollectionChoice::Enabled,
             Some(false) => DataCollectionChoice::Disabled,
             None => DataCollectionChoice::NotAnswered,
@@ -1402,6 +1399,14 @@ impl DataCollectionChoice {
             Self::NotAnswered => false,
         }
     }
+
+    pub fn toggle(&self) -> DataCollectionChoice {
+        match self {
+            Self::Enabled => Self::Disabled,
+            Self::Disabled => Self::Enabled,
+            Self::NotAnswered => Self::Enabled,
+        }
+    }
 }
 
 pub struct ZetaInlineCompletionProvider {
@@ -1410,6 +1415,7 @@ pub struct ZetaInlineCompletionProvider {
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
+    project_abs_path: Option<PathBuf>,
     data_collection_choice: DataCollectionChoice,
 }
 
@@ -1420,6 +1426,7 @@ impl ZetaInlineCompletionProvider {
         zeta: Entity<Zeta>,
         workspace: WeakEntity<Workspace>,
         data_collection_choice: DataCollectionChoice,
+        project_abs_path: Option<PathBuf>,
     ) -> Self {
         Self {
             zeta,
@@ -1427,6 +1434,7 @@ impl ZetaInlineCompletionProvider {
             next_pending_completion_id: 0,
             current_completion: None,
             workspace,
+            project_abs_path,
             data_collection_choice,
         }
     }
@@ -1438,7 +1446,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn display_name() -> &'static str {
-        "Zed Predict"
+        "Zed's Edit Predictions"
     }
 
     fn show_completions_in_menu() -> bool {
@@ -1451,6 +1459,33 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        if self.project_abs_path.is_none() {
+            DataCollectionState::Unknown
+        } else if self.data_collection_choice.is_enabled() {
+            DataCollectionState::Enabled
+        } else {
+            DataCollectionState::Disabled
+        }
+    }
+
+    fn toggle_data_collection(&mut self, cx: &mut App) {
+        let Some(project_path) = self.project_abs_path.as_ref() else {
+            return;
+        };
+
+        self.data_collection_choice = self.data_collection_choice.toggle();
+
+        let abs_path = project_path.clone();
+        self.zeta.update(cx, |zeta, cx| {
+            zeta.update_data_collection_preference_for_project(
+                abs_path,
+                self.data_collection_choice.is_enabled(),
+                cx,
+            )
+        });
     }
 
     fn is_enabled(
@@ -1585,6 +1620,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         {
             return;
         }
+
+        // TODO az: use project_path
 
         let Some(file) = snapshot.file() else {
             return; // Need a file to check the project preferences and ask for data collecting
