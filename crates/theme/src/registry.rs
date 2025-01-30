@@ -212,6 +212,19 @@ impl ThemeRegistry {
         self.get_icon_theme(DEFAULT_ICON_THEME_NAME)
     }
 
+    /// Returns the metadata of all icon themes in the registry.
+    pub fn list_icon_themes(&self) -> Vec<ThemeMeta> {
+        self.state
+            .read()
+            .icon_themes
+            .values()
+            .map(|theme| ThemeMeta {
+                name: theme.name.clone(),
+                appearance: theme.appearance,
+            })
+            .collect()
+    }
+
     /// Returns the icon theme with the specified name.
     pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>> {
         self.state

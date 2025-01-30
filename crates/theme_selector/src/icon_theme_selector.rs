@@ -1,93 +1,34 @@
-mod icon_theme_selector;
-
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal,
-    WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
+    Window,
 };
 use picker::{Picker, PickerDelegate};
-use settings::{update_settings_file, SettingsStore};
+use settings::{update_settings_file, Settings as _, SettingsStore};
 use std::sync::Arc;
-use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
+use theme::{IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::{ui::HighlightedLabel, ModalView, Workspace};
+use workspace::{ui::HighlightedLabel, ModalView};
 
-use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
-
-actions!(theme_selector, [Reload]);
-
-pub fn init(cx: &mut App) {
-    cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-            workspace
-                .register_action(toggle_theme_selector)
-                .register_action(toggle_icon_theme_selector);
-        },
-    )
-    .detach();
+pub(crate) struct IconThemeSelector {
+    picker: Entity<Picker<IconThemeSelectorDelegate>>,
 }
 
-fn toggle_theme_selector(
-    workspace: &mut Workspace,
-    toggle: &zed_actions::theme_selector::Toggle,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let fs = workspace.app_state().fs.clone();
-    workspace.toggle_modal(window, cx, |window, cx| {
-        let delegate = ThemeSelectorDelegate::new(
-            cx.entity().downgrade(),
-            fs,
-            toggle.themes_filter.as_ref(),
-            cx,
-        );
-        ThemeSelector::new(delegate, window, cx)
-    });
-}
+impl EventEmitter<DismissEvent> for IconThemeSelector {}
 
-fn toggle_icon_theme_selector(
-    workspace: &mut Workspace,
-    toggle: &zed_actions::icon_theme_selector::Toggle,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    let fs = workspace.app_state().fs.clone();
-    workspace.toggle_modal(window, cx, |window, cx| {
-        let delegate = IconThemeSelectorDelegate::new(
-            cx.entity().downgrade(),
-            fs,
-            toggle.themes_filter.as_ref(),
-            cx,
-        );
-        IconThemeSelector::new(delegate, window, cx)
-    });
-}
-
-impl ModalView for ThemeSelector {}
-
-struct ThemeSelector {
-    picker: Entity<Picker<ThemeSelectorDelegate>>,
-}
-
-impl EventEmitter<DismissEvent> for ThemeSelector {}
-
-impl Focusable for ThemeSelector {
+impl Focusable for IconThemeSelector {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
-impl Render for ThemeSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
-    }
-}
+impl ModalView for IconThemeSelector {}
 
-impl ThemeSelector {
+impl IconThemeSelector {
     pub fn new(
-        delegate: ThemeSelectorDelegate,
+        delegate: IconThemeSelectorDelegate,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -96,28 +37,35 @@ impl ThemeSelector {
     }
 }
 
-struct ThemeSelectorDelegate {
+impl Render for IconThemeSelector {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().w(rems(34.)).child(self.picker.clone())
+    }
+}
+
+pub(crate) struct IconThemeSelectorDelegate {
     fs: Arc<dyn Fs>,
     themes: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
-    original_theme: Arc<Theme>,
+    original_theme: Arc<IconTheme>,
     selection_completed: bool,
     selected_index: usize,
-    selector: WeakEntity<ThemeSelector>,
+    selector: WeakEntity<IconThemeSelector>,
 }
 
-impl ThemeSelectorDelegate {
-    fn new(
-        selector: WeakEntity<ThemeSelector>,
+impl IconThemeSelectorDelegate {
+    pub fn new(
+        selector: WeakEntity<IconThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
-        cx: &mut Context<ThemeSelector>,
+        cx: &mut Context<IconThemeSelector>,
     ) -> Self {
-        let original_theme = cx.theme().clone();
+        let theme_settings = ThemeSettings::get_global(cx);
+        let original_theme = theme_settings.active_icon_theme.clone();
 
         let registry = ThemeRegistry::global(cx);
         let mut themes = registry
-            .list()
+            .list_icon_themes()
             .into_iter()
             .filter(|meta| {
                 if let Some(theme_filter) = themes_filter {
@@ -157,15 +105,15 @@ impl ThemeSelectorDelegate {
         this
     }
 
-    fn show_selected_theme(&mut self, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
+    fn show_selected_theme(&mut self, cx: &mut Context<Picker<IconThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
-            match registry.get(&mat.string) {
+            match registry.get_icon_theme(&mat.string) {
                 Ok(theme) => {
-                    Self::set_theme(theme, cx);
+                    Self::set_icon_theme(theme, cx);
                 }
-                Err(error) => {
-                    log::error!("error loading theme {}: {}", mat.string, error)
+                Err(err) => {
+                    log::error!("error loading icon theme {}: {err}", mat.string);
                 }
             }
         }
@@ -179,22 +127,21 @@ impl ThemeSelectorDelegate {
             .unwrap_or(self.selected_index);
     }
 
-    fn set_theme(theme: Arc<Theme>, cx: &mut App) {
+    fn set_icon_theme(theme: Arc<IconTheme>, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
-            theme_settings.active_theme = theme;
-            theme_settings.apply_theme_overrides();
+            theme_settings.active_icon_theme = theme;
             store.override_global(theme_settings);
             cx.refresh_windows();
         });
     }
 }
 
-impl PickerDelegate for ThemeSelectorDelegate {
+impl PickerDelegate for IconThemeSelectorDelegate {
     type ListItem = ui::ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select Theme...".into()
+        "Select Icon Theme...".into()
     }
 
     fn match_count(&self) -> usize {
@@ -204,19 +151,22 @@ impl PickerDelegate for ThemeSelectorDelegate {
     fn confirm(
         &mut self,
         _: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+        _window: &mut Window,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) {
         self.selection_completed = true;
 
-        let theme_name = cx.theme().name.clone();
+        let theme_settings = ThemeSettings::get_global(cx);
+        let theme_name = theme_settings.active_icon_theme.name.clone();
 
-        telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
-
-        let appearance = Appearance::from(window.appearance());
+        telemetry::event!(
+            "Settings Changed",
+            setting = "icon_theme",
+            value = theme_name
+        );
 
         update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_theme(theme_name.to_string(), appearance);
+            settings.icon_theme = Some(theme_name.to_string());
         });
 
         self.selector
@@ -226,9 +176,9 @@ impl PickerDelegate for ThemeSelectorDelegate {
             .ok();
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<IconThemeSelectorDelegate>>) {
         if !self.selection_completed {
-            Self::set_theme(self.original_theme.clone(), cx);
+            Self::set_icon_theme(self.original_theme.clone(), cx);
             self.selection_completed = true;
         }
 
@@ -245,7 +195,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         &mut self,
         ix: usize,
         _: &mut Window,
-        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) {
         self.selected_index = ix;
         self.show_selected_theme(cx);
@@ -255,7 +205,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         &mut self,
         query: String,
         window: &mut Window,
-        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self
