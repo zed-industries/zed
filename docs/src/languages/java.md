@@ -41,10 +41,6 @@ You can add these customizations to your Zed Settings by launching {#action zed:
 {
   "lsp": {
     "jdtls": {
-      "settings": {
-        "version": "1.40.0", // jdtls version to download and use
-        "classpath": "/path/to/classes.jar:/path/to/more/classes/"
-      },
       "initialization_options": {}
     }
   }
