@@ -25,8 +25,8 @@ use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels, Task,
-    TaskLabel, Window,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
+    SharedString, Task, TaskLabel, Window,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -65,7 +65,7 @@ pub use text::{
     Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
     Transaction, TransactionId, Unclipped,
 };
-use theme::SyntaxTheme;
+use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, maybe, RangeExt};
@@ -588,6 +588,183 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
+#[derive(Clone)]
+pub struct EditPreview {
+    old_snapshot: text::BufferSnapshot,
+    applied_edits_snapshot: text::BufferSnapshot,
+    syntax_snapshot: SyntaxSnapshot,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct HighlightedEdits {
+    pub text: SharedString,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl EditPreview {
+    pub fn highlight_edits(
+        &self,
+        current_snapshot: &BufferSnapshot,
+        edits: &[(Range<Anchor>, String)],
+        include_deletions: bool,
+        cx: &App,
+    ) -> HighlightedEdits {
+        let Some(visible_range_in_preview_snapshot) = self.compute_visible_range(edits) else {
+            return HighlightedEdits::default();
+        };
+
+        let mut text = String::new();
+        let mut highlights = Vec::new();
+
+        let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
+
+        let insertion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..Default::default()
+        };
+        let deletion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().deleted_background),
+            ..Default::default()
+        };
+
+        for (range, edit_text) in edits {
+            let edit_new_end_in_preview_snapshot = range
+                .end
+                .bias_right(&self.old_snapshot)
+                .to_offset(&self.applied_edits_snapshot);
+            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
+
+            let unchanged_range_in_preview_snapshot =
+                offset_in_preview_snapshot..edit_start_in_preview_snapshot;
+            if !unchanged_range_in_preview_snapshot.is_empty() {
+                Self::highlight_text(
+                    unchanged_range_in_preview_snapshot.clone(),
+                    &mut text,
+                    &mut highlights,
+                    None,
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    cx,
+                );
+            }
+
+            let range_in_current_snapshot = range.to_offset(current_snapshot);
+            if include_deletions && !range_in_current_snapshot.is_empty() {
+                Self::highlight_text(
+                    range_in_current_snapshot.clone(),
+                    &mut text,
+                    &mut highlights,
+                    Some(deletion_highlight_style),
+                    &current_snapshot.text,
+                    &current_snapshot.syntax,
+                    cx,
+                );
+            }
+
+            if !edit_text.is_empty() {
+                Self::highlight_text(
+                    edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
+                    &mut text,
+                    &mut highlights,
+                    Some(insertion_highlight_style),
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    cx,
+                );
+            }
+
+            offset_in_preview_snapshot = edit_new_end_in_preview_snapshot;
+        }
+
+        Self::highlight_text(
+            offset_in_preview_snapshot..visible_range_in_preview_snapshot.end,
+            &mut text,
+            &mut highlights,
+            None,
+            &self.applied_edits_snapshot,
+            &self.syntax_snapshot,
+            cx,
+        );
+
+        HighlightedEdits {
+            text: text.into(),
+            highlights,
+        }
+    }
+
+    fn highlight_text(
+        range: Range<usize>,
+        text: &mut String,
+        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+        override_style: Option<HighlightStyle>,
+        snapshot: &text::BufferSnapshot,
+        syntax_snapshot: &SyntaxSnapshot,
+        cx: &App,
+    ) {
+        for chunk in Self::highlighted_chunks(range, snapshot, syntax_snapshot) {
+            let start = text.len();
+            text.push_str(chunk.text);
+            let end = text.len();
+
+            if let Some(mut highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(cx.theme().syntax()))
+            {
+                if let Some(override_style) = override_style {
+                    highlight_style.highlight(override_style);
+                }
+                highlights.push((start..end, highlight_style));
+            } else if let Some(override_style) = override_style {
+                highlights.push((start..end, override_style));
+            }
+        }
+    }
+
+    fn highlighted_chunks<'a>(
+        range: Range<usize>,
+        snapshot: &'a text::BufferSnapshot,
+        syntax_snapshot: &'a SyntaxSnapshot,
+    ) -> BufferChunks<'a> {
+        let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+
+        let highlight_maps = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+
+        BufferChunks::new(
+            snapshot.as_rope(),
+            range,
+            Some((captures, highlight_maps)),
+            false,
+            None,
+        )
+    }
+
+    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+        let (first, _) = edits.first()?;
+        let (last, _) = edits.last()?;
+
+        let start = first
+            .start
+            .bias_left(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+        let end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+
+        // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
+        let range = Point::new(start.row, 0)
+            ..Point::new(end.row, self.applied_edits_snapshot.line_len(end.row));
+
+        Some(range.to_offset(&self.applied_edits_snapshot))
+    }
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {
@@ -837,6 +1014,34 @@ impl Buffer {
             branch.reparse(cx);
 
             branch
+        })
+    }
+
+    pub fn preview_edits(
+        &self,
+        edits: Arc<[(Range<Anchor>, String)]>,
+        cx: &App,
+    ) -> Task<EditPreview> {
+        let registry = self.language_registry();
+        let language = self.language().cloned();
+        let old_snapshot = self.text.snapshot();
+        let mut branch_buffer = self.text.branch();
+        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        cx.background_executor().spawn(async move {
+            if !edits.is_empty() {
+                branch_buffer.edit(edits.iter().cloned());
+                let snapshot = branch_buffer.snapshot();
+                syntax_snapshot.interpolate(&snapshot);
+
+                if let Some(language) = language {
+                    syntax_snapshot.reparse(&snapshot, registry, language);
+                }
+            }
+            EditPreview {
+                old_snapshot,
+                applied_edits_snapshot: branch_buffer.snapshot(),
+                syntax_snapshot,
+            }
         })
     }
 

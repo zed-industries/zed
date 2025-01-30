@@ -3468,8 +3468,9 @@ impl EditorElement {
             }
             InlineCompletion::Edit {
                 edits,
+                edit_preview,
                 display_mode,
-                snapshot: _,
+                snapshot,
             } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
@@ -3522,13 +3523,11 @@ impl EditorElement {
                     EditDisplayMode::DiffPopover => {}
                 }
 
-                let crate::InlineCompletionText::Edit { text, highlights } =
-                    crate::inline_completion_edit_text(editor_snapshot, edits, false, cx)
-                else {
-                    return None;
-                };
+                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
+                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
+                })?;
 
-                let line_count = text.lines().count() + 1;
+                let line_count = highlighted_edits.text.lines().count();
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3547,28 +3546,39 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text =
-                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
-                    .px_1()
                     .child(styled_text)
                     .into_any();
 
+                let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
+                    .extend(Edges {
+                        right: -Self::SCROLLBAR_WIDTH,
+                        ..Default::default()
+                    });
+
+                let x_after_longest =
+                    text_bounds.origin.x + longest_line_width + PADDING_X - scroll_pixel_position.x;
+
                 let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let is_fully_visible =
-                    editor_width >= longest_line_width + PADDING_X + element_bounds.width;
+
+                // Fully visible if it can be displayed within the window (allow overlapping other
+                // panes). However, this is only allowed if the popover starts within text_bounds.
+                let is_fully_visible = x_after_longest < text_bounds.right()
+                    && x_after_longest + element_bounds.width < viewport_bounds.right();
 
                 let origin = if is_fully_visible {
-                    text_bounds.origin
-                        + point(
-                            longest_line_width + PADDING_X - scroll_pixel_position.x,
-                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
-                        )
+                    point(
+                        x_after_longest,
+                        text_bounds.origin.y + edit_start.row().as_f32() * line_height
+                            - scroll_pixel_position.y,
+                    )
                 } else {
                     // Avoid overlapping both the edited rows and the user's cursor.
                     let target_above = DisplayRow(
@@ -3608,8 +3618,10 @@ impl EditorElement {
                         )
                 };
 
-                element.prepaint_as_root(origin, element_bounds.into(), window, cx);
-                Some(element)
+                window.defer_draw(element, origin, 1);
+
+                // Do not return an element, since it will already be drawn due to defer_draw.
+                None
             }
         }
     }

@@ -2257,24 +2257,45 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            if entry.is_dir() {
-                let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
-                let dir_path = if include_root {
-                    let mut full_path = PathBuf::from(worktree.read(cx).root_name());
-                    full_path.push(&entry.path);
-                    Arc::from(full_path)
-                } else {
-                    entry.path.clone()
-                };
+            let dir_path = if entry.is_dir() {
+                entry.path.clone()
+            } else {
+                // entry is a file, use its parent directory
+                match entry.path.parent() {
+                    Some(parent) => Arc::from(parent),
+                    None => {
+                        // File at root, open search with empty filter
+                        self.workspace
+                            .update(cx, |workspace, cx| {
+                                search::ProjectSearchView::new_search_in_directory(
+                                    workspace,
+                                    Path::new(""),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        return;
+                    }
+                }
+            };
 
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        search::ProjectSearchView::new_search_in_directory(
-                            workspace, &dir_path, window, cx,
-                        );
-                    })
-                    .ok();
-            }
+            let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
+            let dir_path = if include_root {
+                let mut full_path = PathBuf::from(worktree.read(cx).root_name());
+                full_path.push(&dir_path);
+                Arc::from(full_path)
+            } else {
+                dir_path
+            };
+
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    search::ProjectSearchView::new_search_in_directory(
+                        workspace, &dir_path, window, cx,
+                    );
+                })
+                .ok();
         }
     }
 
