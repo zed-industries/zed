@@ -15,8 +15,8 @@ use gpui::{
 };
 use http_client::{HttpClient, Method};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
-    Point, ToOffset, ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
+    OffsetRangeExt, Point, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
@@ -101,6 +101,7 @@ pub struct InlineCompletion {
     cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
+    edit_preview: EditPreview,
     input_outline: Arc<str>,
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
@@ -116,55 +117,57 @@ impl InlineCompletion {
     }
 
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
-        let mut edits = Vec::new();
+        interpolate(&self.snapshot, new_snapshot, self.edits.clone())
+    }
+}
 
-        let mut user_edits = new_snapshot
-            .edits_since::<usize>(&self.snapshot.version)
-            .peekable();
-        for (model_old_range, model_new_text) in self.edits.iter() {
-            let model_offset_range = model_old_range.to_offset(&self.snapshot);
-            while let Some(next_user_edit) = user_edits.peek() {
-                if next_user_edit.old.end < model_offset_range.start {
-                    user_edits.next();
-                } else {
-                    break;
-                }
-            }
+fn interpolate(
+    old_snapshot: &BufferSnapshot,
+    new_snapshot: &BufferSnapshot,
+    current_edits: Arc<[(Range<Anchor>, String)]>,
+) -> Option<Vec<(Range<Anchor>, String)>> {
+    let mut edits = Vec::new();
 
-            if let Some(user_edit) = user_edits.peek() {
-                if user_edit.old.start > model_offset_range.end {
-                    edits.push((model_old_range.clone(), model_new_text.clone()));
-                } else if user_edit.old == model_offset_range {
-                    let user_new_text = new_snapshot
-                        .text_for_range(user_edit.new.clone())
-                        .collect::<String>();
-
-                    if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
-                        if !model_suffix.is_empty() {
-                            edits.push((
-                                new_snapshot.anchor_after(user_edit.new.end)
-                                    ..new_snapshot.anchor_before(user_edit.new.end),
-                                model_suffix.into(),
-                            ));
-                        }
-
-                        user_edits.next();
-                    } else {
-                        return None;
-                    }
-                } else {
-                    return None;
-                }
-            } else {
+    let mut model_edits = current_edits.into_iter().peekable();
+    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
+        while let Some((model_old_range, _)) = model_edits.peek() {
+            let model_old_range = model_old_range.to_offset(old_snapshot);
+            if model_old_range.end < user_edit.old.start {
+                let (model_old_range, model_new_text) = model_edits.next().unwrap();
                 edits.push((model_old_range.clone(), model_new_text.clone()));
+            } else {
+                break;
             }
         }
 
-        if edits.is_empty() {
-            None
-        } else {
-            Some(edits)
+        if let Some((model_old_range, model_new_text)) = model_edits.peek() {
+            let model_old_offset_range = model_old_range.to_offset(old_snapshot);
+            if user_edit.old == model_old_offset_range {
+                let user_new_text = new_snapshot
+                    .text_for_range(user_edit.new.clone())
+                    .collect::<String>();
+
+                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
+                    if !model_suffix.is_empty() {
+                        let anchor = old_snapshot.anchor_after(user_edit.old.end);
+                        edits.push((anchor..anchor, model_suffix.to_string()));
+                    }
+
+                    model_edits.next();
+                    continue;
+                }
+            }
         }
+
+        return None;
+    }
+
+    edits.extend(model_edits.cloned());
+
+    if edits.is_empty() {
+        None
+    } else {
+        Some(edits)
     }
 }
 
@@ -324,7 +327,8 @@ impl Zeta {
         F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
-        let snapshot = self.report_changes_for_buffer(buffer, cx);
+        let buffer = buffer.clone();
+        let snapshot = self.report_changes_for_buffer(&buffer, cx);
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let events = self.events.clone();
@@ -375,6 +379,7 @@ impl Zeta {
 
             Self::process_completion_response(
                 output_excerpt,
+                buffer,
                 &snapshot,
                 excerpt_range,
                 cursor_offset,
@@ -606,6 +611,7 @@ and then another
     #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         output_excerpt: String,
+        buffer: Entity<Buffer>,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
         cursor_offset: usize,
@@ -617,50 +623,108 @@ and then another
         cx: &AsyncApp,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = snapshot.clone();
-        cx.background_executor().spawn(async move {
-            let content = output_excerpt.replace(CURSOR_MARKER, "");
+        cx.spawn(|cx| async move {
+            let output_excerpt: Arc<str> = output_excerpt.into();
 
-            let start_markers = content
-                .match_indices(EDITABLE_REGION_START_MARKER)
-                .collect::<Vec<_>>();
-            anyhow::ensure!(
-                start_markers.len() == 1,
-                "expected exactly one start marker, found {}",
-                start_markers.len()
-            );
+            let edits: Arc<[(Range<Anchor>, String)]> = cx
+                .background_executor()
+                .spawn({
+                    let output_excerpt = output_excerpt.clone();
+                    let excerpt_range = excerpt_range.clone();
+                    let snapshot = snapshot.clone();
+                    async move { Self::parse_edits(output_excerpt, excerpt_range, &snapshot) }
+                })
+                .await?
+                .into();
 
-            let codefence_start = start_markers[0].0;
-            let content = &content[codefence_start..];
+            let Some((edits, snapshot, edit_preview)) = buffer.read_with(&cx, {
+                let edits = edits.clone();
+                |buffer, cx| {
+                    let new_snapshot = buffer.snapshot();
+                    let edits: Arc<[(Range<Anchor>, String)]> =
+                        interpolate(&snapshot, &new_snapshot, edits)?.into();
+                    Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                }
+            })?
+            else {
+                return anyhow::Ok(None);
+            };
 
-            let newline_ix = content.find('\n').context("could not find newline")?;
-            let content = &content[newline_ix + 1..];
-
-            let codefence_end = content
-                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-                .context("could not find end marker")?;
-            let new_text = &content[..codefence_end];
-
-            let old_text = snapshot
-                .text_for_range(excerpt_range.clone())
-                .collect::<String>();
-
-            let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, &snapshot);
+            let edit_preview = edit_preview.await;
 
             Ok(Some(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
                 cursor_offset,
-                edits: edits.into(),
-                snapshot: snapshot.clone(),
+                edits,
+                edit_preview,
+                snapshot,
                 input_outline: input_outline.into(),
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
-                output_excerpt: output_excerpt.into(),
+                output_excerpt,
                 request_sent_at,
                 response_received_at: Instant::now(),
             }))
         })
+    }
+
+    fn parse_edits(
+        output_excerpt: Arc<str>,
+        excerpt_range: Range<usize>,
+        snapshot: &BufferSnapshot,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let content = output_excerpt.replace(CURSOR_MARKER, "");
+
+        let start_markers = content
+            .match_indices(EDITABLE_REGION_START_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            start_markers.len() == 1,
+            "expected exactly one start marker, found {}",
+            start_markers.len()
+        );
+
+        let end_markers = content
+            .match_indices(EDITABLE_REGION_END_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            end_markers.len() == 1,
+            "expected exactly one end marker, found {}",
+            end_markers.len()
+        );
+
+        let sof_markers = content
+            .match_indices(START_OF_FILE_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            sof_markers.len() <= 1,
+            "expected at most one start-of-file marker, found {}",
+            sof_markers.len()
+        );
+
+        let codefence_start = start_markers[0].0;
+        let content = &content[codefence_start..];
+
+        let newline_ix = content.find('\n').context("could not find newline")?;
+        let content = &content[newline_ix + 1..];
+
+        let codefence_end = content
+            .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+            .context("could not find end marker")?;
+        let new_text = &content[..codefence_end];
+
+        let old_text = snapshot
+            .text_for_range(excerpt_range.clone())
+            .collect::<String>();
+
+        Ok(Self::compute_edits(
+            old_text,
+            new_text,
+            excerpt_range.start,
+            &snapshot,
+        ))
     }
 
     pub fn compute_edits(
@@ -721,10 +785,13 @@ and then another
                 old_range.end = old_range.end.saturating_sub(suffix_len);
 
                 let new_text = new_text[prefix_len..new_text.len() - suffix_len].to_string();
-                (
-                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end),
-                    new_text,
-                )
+                let range = if old_range.is_empty() {
+                    let anchor = snapshot.anchor_after(old_range.start);
+                    anchor..anchor
+                } else {
+                    snapshot.anchor_after(old_range.start)..snapshot.anchor_before(old_range.end)
+                };
+                (range, new_text)
             })
             .collect()
     }
@@ -1434,6 +1501,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         Some(inline_completion::InlineCompletion {
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
+            edit_preview: Some(completion.edit_preview.clone()),
         })
     }
 }
@@ -1452,18 +1520,24 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
+    async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
+        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
+            to_completion_edits(
+                [(2..5, "REM".to_string()), (9..11, "".to_string())],
+                &buffer,
+                cx,
+            )
+            .into()
+        });
+
+        let edit_preview = cx
+            .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
+            .await;
+
         let completion = InlineCompletion {
-            edits: cx
-                .read(|cx| {
-                    to_completion_edits(
-                        [(2..5, "REM".to_string()), (9..11, "".to_string())],
-                        &buffer,
-                        cx,
-                    )
-                })
-                .into(),
+            edits,
+            edit_preview,
             path: Path::new("").into(),
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
             id: InlineCompletionId::new(),
@@ -1477,106 +1551,89 @@ mod tests {
             response_received_at: Instant::now(),
         };
 
-        assert_eq!(
-            cx.read(|cx| {
+        cx.update(|cx| {
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.undo(cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(4..4, "M".to_string()), (8..10, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(9..11, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(9..11, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(4..4, "M".to_string()), (8..10, "".to_string())]
-        );
+                    cx
+                ),
+                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
+            assert_eq!(
                 from_completion_edits(
                     &completion.interpolate(&buffer.read(cx).snapshot()).unwrap(),
                     &buffer,
-                    cx,
-                )
-            }),
-            vec![(4..4, "M".to_string())]
-        );
+                    cx
+                ),
+                vec![(4..4, "M".to_string())]
+            );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
-        assert_eq!(
-            cx.read(|cx| completion.interpolate(&buffer.read(cx).snapshot())),
-            None
-        );
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
+            assert_eq!(completion.interpolate(&buffer.read(cx).snapshot()), None);
+        })
     }
 
     #[gpui::test]
