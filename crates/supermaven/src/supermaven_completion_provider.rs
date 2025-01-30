@@ -176,7 +176,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     ) {
     }
 
-    fn accept(&mut self, _snapshot: &BufferSnapshot, _cx: &mut Context<Self>) {
+    fn accept(&mut self, _cx: &mut Context<Self>) {
         self.pending_refresh = None;
         self.completion_id = None;
     }

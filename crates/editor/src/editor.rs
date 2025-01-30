@@ -4857,11 +4857,9 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit {
-                edits, snapshot, ..
-            } => {
+            InlineCompletion::Edit { edits, .. } => {
                 if let Some(provider) = self.inline_completion_provider() {
-                    provider.accept(&snapshot, cx);
+                    provider.accept(cx);
                 }
 
                 let snapshot = self.buffer.read(cx).snapshot(cx);

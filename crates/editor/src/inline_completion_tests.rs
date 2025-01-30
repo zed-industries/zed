@@ -1,7 +1,6 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
-use language::BufferSnapshot;
 use language::{Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
@@ -411,7 +410,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
     ) {
     }
 
-    fn accept(&mut self, _snapshot: &BufferSnapshot, _cx: &mut gpui::Context<Self>) {}
+    fn accept(&mut self, _cx: &mut gpui::Context<Self>) {}
 
     fn discard(&mut self, _cx: &mut gpui::Context<Self>) {}
 

@@ -4,7 +4,7 @@ use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, BufferSnapshot, OffsetRangeExt, ToOffset,
+    Buffer, OffsetRangeExt, ToOffset,
 };
 use settings::Settings;
 use std::{path::Path, time::Duration};
@@ -194,7 +194,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         }
     }
 
-    fn accept(&mut self, _snapshot: &BufferSnapshot, cx: &mut Context<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
         if let Some(completion) = self.active_completion() {
             self.copilot
                 .update(cx, |copilot, cx| copilot.accept_completion(completion, cx))

@@ -1432,6 +1432,10 @@ impl ProviderDataCollection {
         let worktree_root_path = buffer?.update(cx, |buffer, cx| {
             let file = buffer.file()?;
 
+            if !file.is_local() || file.is_private() {
+                return None;
+            }
+
             workspace.update(cx, |workspace, cx| {
                 Some(
                     workspace
@@ -1662,7 +1666,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, snapshot: &BufferSnapshot, cx: &mut Context<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
         self.pending_completions.clear();
 
         let Some(data_collection) = self.data_collection.as_mut() else {
@@ -1676,14 +1680,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 .data_collection_preferences
                 .never_ask_again
         {
-            return;
-        }
-
-        let Some(file) = snapshot.file() else {
-            return; // Need a file to check the project preferences and ask for data collecting
-        };
-        // Don't collect data through collab
-        if !file.is_local() || file.is_private() {
             return;
         }
 
