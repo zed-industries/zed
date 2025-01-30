@@ -109,6 +109,13 @@ There are also many more options you can pass directly to the language server, f
                 "/**/test/**"
               ]
             },
+            "jdt": {
+              "ls": {
+                "lombokSupport": {
+                  "enabled": false // Set this to true to enable lombok support
+                }
+              }
+            },
             "referencesCodeLens": {
               "enabled": false
             },
