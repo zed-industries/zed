@@ -224,7 +224,6 @@ impl ApplicationMenu {
                     current_index + 1
                 }
             }
-            _ => return,
         };
 
         self.entries[current_index].handle.hide(cx);
