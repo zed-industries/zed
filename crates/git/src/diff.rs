@@ -525,7 +525,7 @@ mod tests {
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text_1);
 
         let empty_diff = BufferDiff::new(&buffer);
-        let diff_1 = BufferDiff::build(&base_text, &buffer);
+        let diff_1 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_1.compare(&empty_diff, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
@@ -543,7 +543,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_2 = BufferDiff::build(&base_text, &buffer);
+        let diff_2 = BufferDiff::build(Some(&base_text), &buffer);
         assert_eq!(None, diff_2.compare(&diff_1, &buffer));
 
         // Edit turns a deletion hunk into a modification.
@@ -560,7 +560,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_3 = BufferDiff::build(&base_text, &buffer);
+        let diff_3 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_3.compare(&diff_2, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
 
@@ -577,7 +577,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_4 = BufferDiff::build(&base_text, &buffer);
+        let diff_4 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_4.compare(&diff_3, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 4)..Point::new(4, 0));
 
@@ -595,7 +595,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_5 = BufferDiff::build(&base_text, &buffer);
+        let diff_5 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_5.compare(&diff_4, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(4, 0));
 
@@ -613,7 +613,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_6 = BufferDiff::build(&base_text, &buffer);
+        let diff_6 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_6.compare(&diff_5, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
     }

@@ -2854,6 +2854,7 @@ impl BufferChangeSet {
                 .as_deref(),
             &snapshot,
         );
+    }
 
     //pub fn recalculate_diff(
     //    &mut self,
