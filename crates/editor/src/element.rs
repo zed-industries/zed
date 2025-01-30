@@ -1320,14 +1320,7 @@ impl EditorElement {
         // cancel the scrollbar drag.
         if cx.has_active_drag() {
             self.editor.update(cx, |editor, cx| {
-                editor.scroll_manager.set_is_dragging_scrollbar(
-                    ScrollbarAxis::Horizontal,
-                    false,
-                    cx,
-                );
-                editor
-                    .scroll_manager
-                    .set_is_dragging_scrollbar(ScrollbarAxis::Vertical, false, cx);
+                editor.scroll_manager.reset_scrollbar_dragging_state(cx)
             });
         }
 
@@ -4500,9 +4493,7 @@ impl EditorElement {
         };
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
-            let hitbox = scrollbar_layout.hitbox.clone();
-            let text_unit_size = scrollbar_layout.text_unit_size;
-            let visible_range = scrollbar_layout.visible_range.clone();
+            let hitbox = &scrollbar_layout.hitbox;
             let thumb_bounds = scrollbar_layout.thumb_bounds();
 
             if scrollbars_layout.visible {
@@ -4554,112 +4545,125 @@ impl EditorElement {
                     ));
                 })
             }
-
             window.set_cursor_style(CursorStyle::Arrow, &hitbox);
+        }
 
+        window.on_mouse_event({
+            let editor = self.editor.clone();
+            let scrollbars_layout = scrollbars_layout.clone();
+
+            let mut mouse_position = window.mouse_position();
+            move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture {
+                    return;
+                }
+
+                editor.update(cx, |editor, cx| {
+                    if let Some((scrollbar_layout, axis)) = event
+                        .pressed_button
+                        .filter(|button| *button == MouseButton::Left)
+                        .and(editor.scroll_manager.dragging_scrollbar_axis())
+                        .and_then(|axis| {
+                            scrollbars_layout
+                                .iter_scrollbars()
+                                .find(|(_, a)| *a == axis)
+                        })
+                    {
+                        let ScrollbarLayout {
+                            hitbox,
+                            text_unit_size,
+                            ..
+                        } = scrollbar_layout;
+
+                        let old_position = mouse_position.along(axis);
+                        let new_position = event.position.along(axis);
+                        if (hitbox.origin.along(axis)..hitbox.bottom_right().along(axis))
+                            .contains(&old_position)
+                        {
+                            let position = editor.scroll_position(cx).apply_along(axis, |p| {
+                                (p + (new_position - old_position) / *text_unit_size).max(0.)
+                            });
+                            editor.set_scroll_position(position, window, cx);
+                        }
+                        cx.stop_propagation();
+                    } else {
+                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
+                    }
+
+                    if scrollbars_layout.get_hovered_axis(window).is_some() {
+                        editor.scroll_manager.show_scrollbars(window, cx);
+                    }
+
+                    mouse_position = event.position;
+                })
+            }
+        });
+
+        if self.editor.read(cx).scroll_manager.any_scrollbar_dragged() {
             window.on_mouse_event({
                 let editor = self.editor.clone();
-
-                // there may be a way to avoid this clone
-                let hitbox = hitbox.clone();
-
-                let mut mouse_position = window.mouse_position();
-                move |event: &MouseMoveEvent, phase, window, cx| {
+                move |_: &MouseUpEvent, phase, _, cx| {
                     if phase == DispatchPhase::Capture {
                         return;
                     }
 
                     editor.update(cx, |editor, cx| {
-                        if event.pressed_button == Some(MouseButton::Left)
-                            && editor.scroll_manager.is_dragging_scrollbar(axis)
-                        {
-                            let old_position = mouse_position.along(axis);
-                            let new_position = event.position.along(axis);
-                            if (hitbox.origin.along(axis)..hitbox.bottom_right().along(axis))
-                                .contains(&old_position)
-                            {
-                                let position = editor.scroll_position(cx).apply_along(axis, |p| {
-                                    (p + (new_position - old_position) / text_unit_size).max(0.)
-                                });
-
-                                editor.set_scroll_position(position, window, cx);
-                            }
-                            cx.stop_propagation();
-                        } else {
-                            editor
-                                .scroll_manager
-                                .set_is_dragging_scrollbar(axis, false, cx);
-
-                            if hitbox.is_hovered(window) {
-                                editor.scroll_manager.show_scrollbars(window, cx);
-                            }
-                        }
-                        mouse_position = event.position;
-                    })
+                        editor.scroll_manager.reset_scrollbar_dragging_state(cx);
+                        cx.stop_propagation();
+                    });
                 }
             });
+        } else {
+            window.on_mouse_event({
+                let editor = self.editor.clone();
+                let scrollbars_layout = scrollbars_layout.clone();
 
-            if self
-                .editor
-                .read(cx)
-                .scroll_manager
-                .is_dragging_scrollbar(axis)
-            {
-                window.on_mouse_event({
-                    let editor = self.editor.clone();
-                    move |_: &MouseUpEvent, phase, _, cx| {
-                        if phase == DispatchPhase::Capture {
-                            return;
+                move |event: &MouseDownEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Capture {
+                        return;
+                    }
+                    let Some((scrollbar_layout, axis)) = scrollbars_layout.get_hovered_axis(window)
+                    else {
+                        return;
+                    };
+
+                    let ScrollbarLayout {
+                        hitbox,
+                        visible_range,
+                        text_unit_size,
+                        ..
+                    } = scrollbar_layout;
+
+                    let thumb_bounds = scrollbar_layout.thumb_bounds();
+
+                    editor.update(cx, |editor, cx| {
+                        editor.scroll_manager.set_dragged_scrollbar_axis(axis, cx);
+
+                        let event_position = event.position.along(axis);
+
+                        if event_position < thumb_bounds.origin.along(axis)
+                            || thumb_bounds.bottom_right().along(axis) < event_position
+                        {
+                            let center_position = ((event_position - hitbox.origin.along(axis))
+                                / *text_unit_size)
+                                .round() as u32;
+                            let start_position = center_position.saturating_sub(
+                                (visible_range.end - visible_range.start) as u32 / 2,
+                            );
+
+                            let position = editor
+                                .scroll_position(cx)
+                                .apply_along(axis, |_| start_position as f32);
+
+                            editor.set_scroll_position(position, window, cx);
+                        } else {
+                            editor.scroll_manager.show_scrollbars(window, cx);
                         }
 
-                        editor.update(cx, |editor, cx| {
-                            editor
-                                .scroll_manager
-                                .set_is_dragging_scrollbar(axis, false, cx);
-                            cx.stop_propagation();
-                        });
-                    }
-                });
-            } else {
-                window.on_mouse_event({
-                    let editor = self.editor.clone();
-
-                    move |event: &MouseDownEvent, phase, window, cx| {
-                        if phase == DispatchPhase::Capture || !hitbox.is_hovered(window) {
-                            return;
-                        }
-
-                        editor.update(cx, |editor, cx| {
-                            editor
-                                .scroll_manager
-                                .set_is_dragging_scrollbar(axis, true, cx);
-
-                            let event_position = event.position.along(axis);
-
-                            if event_position < thumb_bounds.origin.along(axis)
-                                || thumb_bounds.bottom_right().along(axis) < event_position
-                            {
-                                let center_position =
-                                    ((event_position - hitbox.origin.along(axis)) / text_unit_size)
-                                        .round() as u32;
-                                let top_position = center_position.saturating_sub(
-                                    (visible_range.end - visible_range.start) as u32 / 2,
-                                );
-
-                                let position = editor
-                                    .scroll_position(cx)
-                                    .apply_along(axis, |_| top_position as f32);
-
-                                editor.set_scroll_position(position, window, cx);
-                            } else {
-                                editor.scroll_manager.show_scrollbars(window, cx);
-                            }
-
-                            cx.stop_propagation();
-                        });
-                    }
-                });
-            }
+                        cx.stop_propagation();
+                    });
+                }
+            });
         }
     }
 
@@ -7303,6 +7307,12 @@ impl EditorScrollbars {
         ]
         .into_iter()
         .filter_map(|(scrollbar, axis)| scrollbar.as_ref().map(|s| (s, axis)))
+    }
+
+    /// Returns the currently hovered scrollbar axis, if any.
+    pub fn get_hovered_axis(&self, window: &Window) -> Option<(&ScrollbarLayout, ScrollbarAxis)> {
+        self.iter_scrollbars()
+            .find(|s| s.0.hitbox.is_hovered(window))
     }
 }
 
