@@ -6,7 +6,8 @@ use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, App, AsyncAppContext, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity
+    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
+    WeakEntity,
 };
 use image::{ExtendedColorType, GenericImageView, ImageFormat, ImageReader};
 use language::{DiskState, File};
@@ -48,7 +49,7 @@ pub enum ImageStoreEvent {
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ImageItemMeta {
     pub width: u32,
     pub height: u32,
@@ -95,7 +96,7 @@ impl ImageItem {
     pub async fn image_info(
         image: Entity<ImageItem>,
         project: Entity<Project>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<ImageItemMeta> {
         let project_path = cx
             .update(|cx| image.read(cx).project_path(cx))
@@ -342,7 +343,7 @@ pub struct ImageStore {
 
 impl ImageStore {
     pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
-        let this = cx.weak_model();
+        let this = cx.weak_entity();
         Self {
             state: Box::new(cx.new(|cx| {
                 let subscription = cx.subscribe(
@@ -530,15 +531,11 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
-                // width: None,
-                // file_size: None,
-                // height: None,
-                // color_type: None,
                 image_meta: None,
                 reload_task: None,
             })?;
 
-            let image_id = cx.read_model(&model, |model, _| model.id)?;
+            let image_id = cx.read_entity(&model, |model, _| model.id)?;
 
             this.update(&mut cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {

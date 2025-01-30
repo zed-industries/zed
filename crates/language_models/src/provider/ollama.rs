@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, App, AsyncAppContext, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::LanguageModelCompletionEvent;
 use language_model::{
@@ -263,7 +263,7 @@ impl OllamaLanguageModel {
     fn request_completion(
         &self,
         request: ChatRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<ChatResponseDelta>> {
         let http_client = self.http_client.clone();
 
@@ -323,7 +323,7 @@ impl LanguageModel for OllamaLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = self.to_ollama_request(request);
 
@@ -370,7 +370,7 @@ impl LanguageModel for OllamaLanguageModel {
         tool_name: String,
         tool_description: String,
         schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         use ollama::{OllamaFunctionTool, OllamaTool};
         let function = OllamaFunctionTool {
@@ -452,8 +452,7 @@ impl Render for ConfigurationView {
         let ollama_reqs =
             "Ollama must be running with at least one model installed to use it in the assistant.";
 
-        let mut inline_code_bg = cx.theme().colors().editor_background;
-        inline_code_bg.fade_out(0.5);
+        let inline_code_bg = cx.theme().colors().editor_foreground.opacity(0.05);
 
         if self.loading_models_task.is_some() {
             div().child(Label::new("Loading models...")).into_any()
@@ -496,7 +495,7 @@ impl Render for ConfigurationView {
                                         this.child(
                                             Button::new("ollama-site", "Ollama")
                                                 .style(ButtonStyle::Subtle)
-                                                .icon(IconName::ExternalLink)
+                                                .icon(IconName::ArrowUpRight)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
@@ -509,7 +508,7 @@ impl Render for ConfigurationView {
                                                 "Download Ollama",
                                             )
                                             .style(ButtonStyle::Subtle)
-                                            .icon(IconName::ExternalLink)
+                                            .icon(IconName::ArrowUpRight)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _, cx| {
@@ -522,7 +521,7 @@ impl Render for ConfigurationView {
                                 .child(
                                     Button::new("view-models", "All Models")
                                         .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ExternalLink)
+                                        .icon(IconName::ArrowUpRight)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),

@@ -97,7 +97,7 @@ impl ChatPanel {
         });
 
         cx.new(|cx| {
-            let model = cx.model().downgrade();
+            let model = cx.entity().downgrade();
             let message_list = ListState::new(
                 0,
                 gpui::ListAlignment::Bottom,
@@ -680,7 +680,7 @@ impl ChatPanel {
                 })
             })
             .when_some(message_id, |el, message_id| {
-                let this = cx.model().clone();
+                let this = cx.entity().clone();
 
                 el.child(
                     self.render_popover_button(

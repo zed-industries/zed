@@ -3,7 +3,7 @@ use anyhow::Result;
 use client::Client;
 use collections::{HashMap, HashSet};
 use futures::{FutureExt, StreamExt};
-use gpui::{App, AppContext as _, AsyncAppContext, Context, Entity, Global, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Global, Task, WeakEntity};
 use postage::stream::Stream;
 use rpc::proto;
 use std::{sync::Arc, time::Duration};
@@ -39,7 +39,7 @@ impl Manager {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
-        let manager = cx.weak_model();
+        let manager = cx.weak_entity();
         project.update(cx, |_, cx| {
             let manager = manager.clone();
             cx.on_release(move |project, cx| {
@@ -133,7 +133,7 @@ impl Manager {
     async fn maintain_connection(
         this: WeakEntity<Self>,
         client: Arc<Client>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let mut client_status = client.status();
         loop {

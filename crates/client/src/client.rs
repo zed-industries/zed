@@ -19,7 +19,7 @@ use futures::{
     channel::oneshot, future::BoxFuture, AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt,
     TryFutureExt as _, TryStreamExt,
 };
-use gpui::{actions, App, AsyncAppContext, Entity, Global, Task, WeakEntity};
+use gpui::{actions, App, AsyncApp, Entity, Global, Task, WeakEntity};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use parking_lot::RwLock;
 use postage::watch;
@@ -199,9 +199,8 @@ pub struct Client {
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
-    authenticate: RwLock<
-        Option<Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>>>,
-    >,
+    authenticate:
+        RwLock<Option<Box<dyn 'static + Send + Sync + Fn(&AsyncApp) -> Task<Result<Credentials>>>>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -213,7 +212,7 @@ pub struct Client {
                     + Sync
                     + Fn(
                         &Credentials,
-                        &AsyncAppContext,
+                        &AsyncApp,
                     ) -> Task<Result<Connection, EstablishConnectionError>>,
             >,
         >,
@@ -313,7 +312,7 @@ trait CredentialsProvider {
     /// Reads the credentials from the provider.
     fn read_credentials<'a>(
         &'a self,
-        cx: &'a AsyncAppContext,
+        cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>>;
 
     /// Writes the credentials to the provider.
@@ -321,13 +320,13 @@ trait CredentialsProvider {
         &'a self,
         user_id: u64,
         access_token: String,
-        cx: &'a AsyncAppContext,
+        cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 
     /// Deletes the credentials from the provider.
     fn delete_credentials<'a>(
         &'a self,
-        cx: &'a AsyncAppContext,
+        cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 }
 
@@ -380,7 +379,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Entity<T>, cx: &AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Entity<T>, cx: &AsyncApp) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -552,7 +551,7 @@ impl Client {
     #[cfg(any(test, feature = "test-support"))]
     pub fn override_authenticate<F>(&self, authenticate: F) -> &Self
     where
-        F: 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>,
+        F: 'static + Send + Sync + Fn(&AsyncApp) -> Task<Result<Credentials>>,
     {
         *self.authenticate.write() = Some(Box::new(authenticate));
         self
@@ -564,7 +563,7 @@ impl Client {
         F: 'static
             + Send
             + Sync
-            + Fn(&Credentials, &AsyncAppContext) -> Task<Result<Connection, EstablishConnectionError>>,
+            + Fn(&Credentials, &AsyncApp) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         *self.establish_connection.write() = Some(Box::new(connect));
         self
@@ -603,7 +602,7 @@ impl Client {
         self.state.read().status.1.clone()
     }
 
-    fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncAppContext) {
+    fn set_status(self: &Arc<Self>, status: Status, cx: &AsyncApp) {
         log::info!("set status on client {}: {:?}", self.id(), status);
         let mut state = self.state.write();
         *state.status.0.borrow_mut() = status;
@@ -684,7 +683,7 @@ impl Client {
     where
         M: EnvelopedMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
         self.add_message_handler_impl(entity, move |model, message, _, cx| {
@@ -702,7 +701,7 @@ impl Client {
         E: 'static,
         H: 'static
             + Sync
-            + Fn(Entity<E>, TypedEnvelope<M>, AnyProtoClient, AsyncAppContext) -> F
+            + Fn(Entity<E>, TypedEnvelope<M>, AnyProtoClient, AsyncApp) -> F
             + Send
             + Sync,
         F: 'static + Future<Output = Result<()>>,
@@ -745,7 +744,7 @@ impl Client {
     where
         M: RequestMessage,
         E: 'static,
-        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncAppContext) -> F + Send + Sync,
+        H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
         self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
@@ -770,7 +769,7 @@ impl Client {
         }
     }
 
-    pub async fn has_credentials(&self, cx: &AsyncAppContext) -> bool {
+    pub async fn has_credentials(&self, cx: &AsyncApp) -> bool {
         self.credentials_provider
             .read_credentials(cx)
             .await
@@ -781,7 +780,7 @@ impl Client {
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
         try_provider: bool,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> anyhow::Result<()> {
         let was_disconnected = match *self.status().borrow() {
             Status::SignedOut => true,
@@ -883,11 +882,7 @@ impl Client {
         }
     }
 
-    async fn set_connection(
-        self: &Arc<Self>,
-        conn: Connection,
-        cx: &AsyncAppContext,
-    ) -> Result<()> {
+    async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncApp) -> Result<()> {
         let executor = cx.background_executor();
         log::debug!("add connection to peer");
         let (connection_id, handle_io, mut incoming) = self.peer.add_connection(conn, {
@@ -981,7 +976,7 @@ impl Client {
         Ok(())
     }
 
-    fn authenticate(self: &Arc<Self>, cx: &AsyncAppContext) -> Task<Result<Credentials>> {
+    fn authenticate(self: &Arc<Self>, cx: &AsyncApp) -> Task<Result<Credentials>> {
         #[cfg(any(test, feature = "test-support"))]
         if let Some(callback) = self.authenticate.read().as_ref() {
             return callback(cx);
@@ -993,7 +988,7 @@ impl Client {
     fn establish_connection(
         self: &Arc<Self>,
         credentials: &Credentials,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
         #[cfg(any(test, feature = "test-support"))]
         if let Some(callback) = self.establish_connection.read().as_ref() {
@@ -1052,7 +1047,7 @@ impl Client {
     fn establish_websocket_connection(
         self: &Arc<Self>,
         credentials: &Credentials,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
         let release_channel = cx
             .update(|cx| ReleaseChannel::try_global(cx))
@@ -1174,10 +1169,7 @@ impl Client {
         })
     }
 
-    pub fn authenticate_with_browser(
-        self: &Arc<Self>,
-        cx: &AsyncAppContext,
-    ) -> Task<Result<Credentials>> {
+    pub fn authenticate_with_browser(self: &Arc<Self>, cx: &AsyncApp) -> Task<Result<Credentials>> {
         let http = self.http.clone();
         let this = self.clone();
         cx.spawn(|cx| async move {
@@ -1412,7 +1404,7 @@ impl Client {
         })
     }
 
-    pub async fn sign_out(self: &Arc<Self>, cx: &AsyncAppContext) {
+    pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
         self.state.write().credentials = None;
         self.disconnect(cx);
 
@@ -1424,12 +1416,12 @@ impl Client {
         }
     }
 
-    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
+    pub fn disconnect(self: &Arc<Self>, cx: &AsyncApp) {
         self.peer.teardown();
         self.set_status(Status::SignedOut, cx);
     }
 
-    pub fn reconnect(self: &Arc<Self>, cx: &AsyncAppContext) {
+    pub fn reconnect(self: &Arc<Self>, cx: &AsyncApp) {
         self.peer.teardown();
         self.set_status(Status::ConnectionLost, cx);
     }
@@ -1528,11 +1520,7 @@ impl Client {
         }
     }
 
-    fn handle_message(
-        self: &Arc<Client>,
-        message: Box<dyn AnyTypedEnvelope>,
-        cx: &AsyncAppContext,
-    ) {
+    fn handle_message(self: &Arc<Client>, message: Box<dyn AnyTypedEnvelope>, cx: &AsyncApp) {
         let sender_id = message.sender_id();
         let request_id = message.message_id();
         let type_name = message.payload_type_name();
@@ -1640,7 +1628,7 @@ struct DevelopmentCredentialsProvider {
 impl CredentialsProvider for DevelopmentCredentialsProvider {
     fn read_credentials<'a>(
         &'a self,
-        _cx: &'a AsyncAppContext,
+        _cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
         async move {
             if IMPERSONATE_LOGIN.is_some() {
@@ -1663,7 +1651,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
         &'a self,
         user_id: u64,
         access_token: String,
-        _cx: &'a AsyncAppContext,
+        _cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             let json = serde_json::to_string(&DevelopmentCredentials {
@@ -1680,7 +1668,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
 
     fn delete_credentials<'a>(
         &'a self,
-        _cx: &'a AsyncAppContext,
+        _cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move { Ok(std::fs::remove_file(&self.path)?) }.boxed_local()
     }
@@ -1692,7 +1680,7 @@ struct KeychainCredentialsProvider;
 impl CredentialsProvider for KeychainCredentialsProvider {
     fn read_credentials<'a>(
         &'a self,
-        cx: &'a AsyncAppContext,
+        cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Option<Credentials>> + 'a>> {
         async move {
             if IMPERSONATE_LOGIN.is_some() {
@@ -1717,7 +1705,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
         &'a self,
         user_id: u64,
         access_token: String,
-        cx: &'a AsyncAppContext,
+        cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             cx.update(move |cx| {
@@ -1734,7 +1722,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 
     fn delete_credentials<'a>(
         &'a self,
-        cx: &'a AsyncAppContext,
+        cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             cx.update(move |cx| cx.delete_credentials(&ClientSettings::get_global(cx).server_url))?

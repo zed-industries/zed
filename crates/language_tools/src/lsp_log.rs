@@ -242,7 +242,7 @@ impl LogStore {
                 if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
                     if let Some(server) = copilot.read(cx).language_server() {
                         let server_id = server.server_id();
-                        let weak_this = cx.weak_model();
+                        let weak_this = cx.weak_entity();
                         this.copilot_log_subscription =
                             Some(server.on_notification::<copilot::request::LogMessage, _>(
                                 move |params, mut cx| {
@@ -735,7 +735,8 @@ impl LspLogView {
 
 * Binary: {BINARY:#?}
 
-* Running in project: {PATH:?}
+* Registered workspace folders:
+{WORKSPACE_FOLDERS}
 
 * Capabilities: {CAPABILITIES}
 
@@ -743,7 +744,15 @@ impl LspLogView {
                 NAME = server.name(),
                 ID = server.server_id(),
                 BINARY = server.binary(),
-                PATH = server.root_path(),
+                WORKSPACE_FOLDERS = server
+                    .workspace_folders()
+                    .iter()
+                    .filter_map(|path| path
+                        .to_file_path()
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
                     .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
                 CONFIGURATION = serde_json::to_string_pretty(server.configuration())
@@ -926,7 +935,7 @@ impl LspLogView {
                 .expect("log buffer should be a singleton")
                 .update(cx, |_, cx| {
                     cx.spawn({
-                        let buffer = cx.model();
+                        let buffer = cx.entity();
                         |_, mut cx| async move {
                             let language = language.await.ok();
                             buffer.update(&mut cx, |buffer, cx| {
@@ -1222,7 +1231,7 @@ impl Render for LspLogToolbarItemView {
                 )
             })
             .collect();
-        let log_toolbar_view = cx.model().clone();
+        let log_toolbar_view = cx.entity().clone();
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)
             .trigger(Button::new(

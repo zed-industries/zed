@@ -122,8 +122,7 @@
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
-      "shift-f10": "editor::OpenContextMenu",
-      "alt-enter": "editor::OpenSelectionsInMultibuffer"
+      "shift-f10": "editor::OpenContextMenu"
     }
   },
   {
@@ -141,7 +140,8 @@
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
-      "ctrl-alt-e": "editor::SelectEnclosingSymbol"
+      "ctrl-alt-e": "editor::SelectEnclosingSymbol",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
@@ -426,6 +426,7 @@
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
+      "ctrl-shift-g": "git_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "alt-save": "workspace::SaveAll",
       "ctrl-alt-s": "workspace::SaveAll",
@@ -693,6 +694,34 @@
     }
   },
   {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "ctrl-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::FocusChanges",
+      "ctrl-enter": "git::CommitChanges",
+      "ctrl-shift-enter": "git::CommitAllChanges"
+    }
+  },
+  {
     "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
@@ -769,6 +798,8 @@
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      "alt-b": ["terminal::SendText", "\u001bb"],
+      "alt-f": ["terminal::SendText", "\u001bf"],
       // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",

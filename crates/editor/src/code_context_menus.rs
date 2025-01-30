@@ -495,7 +495,7 @@ impl CompletionsMenu {
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
-            cx.model().clone(),
+            cx.entity().clone(),
             "completions",
             self.entries.borrow().len(),
             move |_editor, range, _window, cx| {
@@ -728,13 +728,13 @@ impl CompletionsMenu {
             }
             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::Loaded { text }) => {
                 match text {
-                    InlineCompletionText::Edit(highlighted_edits) => div()
+                    InlineCompletionText::Edit { text, highlights } => div()
                         .mx_1()
                         .rounded_md()
                         .bg(cx.theme().colors().editor_background)
                         .child(
-                            gpui::StyledText::new(highlighted_edits.text.clone())
-                                .with_highlights(&style.text, highlighted_edits.highlights.clone()),
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
                         ),
                     InlineCompletionText::Move(text) => div().child(text.clone()),
                 }
@@ -871,8 +871,9 @@ impl CompletionsMenu {
         };
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
         self.selected_item = new_selection;
-        self.scroll_handle
-            .scroll_to_item(new_selection, ScrollStrategy::Top);
+        // Scroll to 0 even if the LSP completion is the only one selected. This keeps the display
+        // consistent when y_flipped.
+        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
     }
 }
 
@@ -1090,7 +1091,7 @@ impl CodeActionsMenu {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
         let list = uniform_list(
-            cx.model().clone(),
+            cx.entity().clone(),
             "code_actions_menu",
             self.actions.len(),
             move |_this, range, _, cx| {

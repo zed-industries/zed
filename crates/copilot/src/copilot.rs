@@ -11,8 +11,8 @@ use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt, TryFutureExt};
 use gpui::{
-    actions, App, AppContext as _, AsyncAppContext, Context, Entity, EntityId, EventEmitter,
-    Global, Task, WeakEntity,
+    actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    WeakEntity,
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
@@ -424,7 +424,7 @@ impl Copilot {
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         this: WeakEntity<Self>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) {
         let start_language_server = async {
             let server_path = get_copilot_lsp(http).await?;
@@ -458,12 +458,14 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
-            let initialize_params = None;
             let configuration = lsp::DidChangeConfigurationParams {
                 settings: Default::default(),
             };
             let server = cx
-                .update(|cx| server.initialize(initialize_params, configuration.into(), cx))?
+                .update(|cx| {
+                    let params = server.default_initialize_params(cx);
+                    server.initialize(params, configuration.into(), cx)
+                })?
                 .await?;
 
             let status = server

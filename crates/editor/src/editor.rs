@@ -79,11 +79,11 @@ use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, Action, AnyElement, App,
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, ElementId, Entity, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
-    FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, MouseButton, PaintQuad,
-    ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task,
-    TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle,
-    ViewInputHandler, WeakEntity, WeakFocusHandle, Window,
+    DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
+    Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
+    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
+    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -96,9 +96,8 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedEdits, IndentKind, IndentSize,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
-    TreeSitterOptions,
+    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
+    Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -117,7 +116,6 @@ use lsp::{
     LanguageServerId, LanguageServerName,
 };
 
-use language::BufferSnapshot;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
@@ -488,7 +486,10 @@ impl InlineCompletionMenuHint {
 #[derive(Clone, Debug)]
 enum InlineCompletionText {
     Move(SharedString),
-    Edit(HighlightedEdits),
+    Edit {
+        text: SharedString,
+        highlights: Vec<(Range<usize>, HighlightStyle)>,
+    },
 }
 
 pub(crate) enum EditDisplayMode {
@@ -500,9 +501,7 @@ pub(crate) enum EditDisplayMode {
 enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
-        edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
-        snapshot: BufferSnapshot,
     },
     Move(Anchor),
 }
@@ -1159,7 +1158,7 @@ impl Editor {
     ) -> Self {
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let editor = cx.model().downgrade();
+        let editor = cx.entity().downgrade();
         let fold_placeholder = FoldPlaceholder {
             constrain_width: true,
             render: Arc::new(move |fold_id, fold_range, _, cx| {
@@ -4848,7 +4847,10 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit { edits, .. } => {
+            InlineCompletion::Edit {
+                edits,
+                display_mode: _,
+            } => {
                 if let Some(provider) = self.inline_completion_provider() {
                     provider.accept(cx);
                 }
@@ -4896,7 +4898,10 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit { edits, .. } => {
+            InlineCompletion::Edit {
+                edits,
+                display_mode: _,
+            } => {
                 // Find an insertion that starts at the cursor position.
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let cursor_offset = self.selections.newest::<usize>(cx).head();
@@ -5035,8 +5040,8 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        let inline_completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
-        let edits = inline_completion
+        let completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
+        let edits = completion
             .edits
             .into_iter()
             .flat_map(|(range, new_text)| {
@@ -5061,12 +5066,13 @@ impl Editor {
 
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
-        let completion = if cursor_row < edit_start_row {
+        let completion;
+        if cursor_row < edit_start_row {
             invalidation_row_range = cursor_row..edit_end_row;
-            InlineCompletion::Move(first_edit_start)
+            completion = InlineCompletion::Move(first_edit_start);
         } else if cursor_row > edit_end_row {
             invalidation_row_range = edit_start_row..cursor_row;
-            InlineCompletion::Move(first_edit_start)
+            completion = InlineCompletion::Move(first_edit_start);
         } else {
             if edits
                 .iter()
@@ -5111,14 +5117,10 @@ impl Editor {
                 EditDisplayMode::DiffPopover
             };
 
-            let snapshot = multibuffer.buffer_for_excerpt(excerpt_id).cloned()?;
-
-            InlineCompletion::Edit {
+            completion = InlineCompletion::Edit {
                 edits,
-                edit_preview: inline_completion.edit_preview,
                 display_mode,
-                snapshot,
-            }
+            };
         };
 
         let invalidation_range = multibuffer
@@ -5162,26 +5164,19 @@ impl Editor {
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit {
                     edits,
-                    edit_preview,
                     display_mode: _,
-                    snapshot,
-                } => edit_preview
-                    .as_ref()
-                    .and_then(|edit_preview| {
-                        inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
-                    })
-                    .map(InlineCompletionText::Edit),
+                } => inline_completion_edit_text(&editor_snapshot, edits, true, cx),
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
                     let target_line = target_point.row + 1;
-                    Some(InlineCompletionText::Move(
+                    InlineCompletionText::Move(
                         format!("Jump to edit in line {}", target_line).into(),
-                    ))
+                    )
                 }
             };
 
-            Some(InlineCompletionMenuHint::Loaded { text: text? })
+            Some(InlineCompletionMenuHint::Loaded { text })
         } else if provider.is_refreshing(cx) {
             Some(InlineCompletionMenuHint::Loading)
         } else if provider.needs_terms_acceptance(cx) {
@@ -7042,7 +7037,7 @@ impl Editor {
             let mut should_rewrap = is_vim_mode == IsVimMode::Yes;
 
             if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
-                match language_scope.language_name().0.as_ref() {
+                match language_scope.language_name().as_ref() {
                     "Markdown" | "Plain Text" => {
                         should_rewrap = true;
                     }
@@ -13297,28 +13292,27 @@ impl Editor {
                 cx.emit(SearchEvent::MatchesInvalidated);
                 if *singleton_buffer_edited {
                     if let Some(project) = &self.project {
-                        let project = project.read(cx);
                         #[allow(clippy::mutable_key_type)]
-                        let languages_affected = multibuffer
-                            .read(cx)
-                            .all_buffers()
-                            .into_iter()
-                            .filter_map(|buffer| {
-                                let buffer = buffer.read(cx);
-                                let language = buffer.language()?;
-                                if project.is_local()
-                                    && project
-                                        .language_servers_for_local_buffer(buffer, cx)
-                                        .count()
-                                        == 0
-                                {
-                                    None
-                                } else {
-                                    Some(language)
-                                }
-                            })
-                            .cloned()
-                            .collect::<HashSet<_>>();
+                        let languages_affected = multibuffer.update(cx, |multibuffer, cx| {
+                            multibuffer
+                                .all_buffers()
+                                .into_iter()
+                                .filter_map(|buffer| {
+                                    buffer.update(cx, |buffer, cx| {
+                                        let language = buffer.language()?;
+                                        let should_discard = project.update(cx, |project, cx| {
+                                            project.is_local()
+                                                && project.for_language_servers_for_local_buffer(
+                                                    buffer,
+                                                    |it| it.count() == 0,
+                                                    cx,
+                                                )
+                                        });
+                                        should_discard.not().then_some(language.clone())
+                                    })
+                                })
+                                .collect::<HashSet<_>>()
+                        });
                         if !languages_affected.is_empty() {
                             self.refresh_inlay_hints(
                                 InlayHintRefreshReason::BufferEdited(languages_affected),
@@ -13380,6 +13374,9 @@ impl Editor {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
+            }
+            multi_buffer::Event::DiffHunksToggled => {
+                self.tasks_update_task = Some(self.refresh_runnables(window, cx));
             }
             multi_buffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, window, cx);
@@ -13905,15 +13902,18 @@ impl Editor {
         self.handle_input(text, window, cx);
     }
 
-    pub fn supports_inlay_hints(&self, cx: &App) -> bool {
+    pub fn supports_inlay_hints(&self, cx: &mut App) -> bool {
         let Some(provider) = self.semantics_provider.as_ref() else {
             return false;
         };
 
         let mut supports = false;
-        self.buffer().read(cx).for_each_buffer(|buffer| {
-            supports |= provider.supports_inlay_hints(buffer, cx);
+        self.buffer().update(cx, |this, cx| {
+            this.for_each_buffer(|buffer| {
+                supports |= provider.supports_inlay_hints(buffer, cx);
+            })
         });
+
         supports
     }
     pub fn is_focused(&self, window: &mut Window) -> bool {
@@ -14463,7 +14463,7 @@ pub trait SemanticsProvider {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<InlayHint>>>;
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool;
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool;
 
     fn document_highlights(
         &self,
@@ -14854,17 +14854,25 @@ impl SemanticsProvider for Entity<Project> {
         }))
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
         // TODO: make this work for remote projects
-        self.read(cx)
-            .language_servers_for_local_buffer(buffer.read(cx), cx)
-            .any(
-                |(_, server)| match server.capabilities().inlay_hint_provider {
-                    Some(lsp::OneOf::Left(enabled)) => enabled,
-                    Some(lsp::OneOf::Right(_)) => true,
-                    None => false,
-                },
-            )
+        buffer.update(cx, |buffer, cx| {
+            self.update(cx, |this, cx| {
+                this.for_language_servers_for_local_buffer(
+                    buffer,
+                    |mut it| {
+                        it.any(
+                            |(_, server)| match server.capabilities().inlay_hint_provider {
+                                Some(lsp::OneOf::Left(enabled)) => enabled,
+                                Some(lsp::OneOf::Right(_)) => true,
+                                None => false,
+                            },
+                        )
+                    },
+                    cx,
+                )
+            })
+        })
     }
 
     fn inlay_hints(
@@ -15339,7 +15347,7 @@ impl Render for Editor {
         };
 
         EditorElement::new(
-            &cx.model(),
+            &cx.entity(),
             EditorStyle {
                 background,
                 local_player: cx.theme().players().local(),
@@ -15355,7 +15363,7 @@ impl Render for Editor {
     }
 }
 
-impl ViewInputHandler for Editor {
+impl EntityInputHandler for Editor {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -15821,23 +15829,74 @@ pub fn diagnostic_block_renderer(
 }
 
 fn inline_completion_edit_text(
-    current_snapshot: &BufferSnapshot,
-    edits: &[(Range<Anchor>, String)],
-    edit_preview: &EditPreview,
+    editor_snapshot: &EditorSnapshot,
+    edits: &Vec<(Range<Anchor>, String)>,
     include_deletions: bool,
     cx: &App,
-) -> Option<HighlightedEdits> {
-    let edits = edits
-        .iter()
-        .map(|(anchor, text)| {
-            (
-                anchor.start.text_anchor..anchor.end.text_anchor,
-                text.clone(),
-            )
-        })
-        .collect::<Vec<_>>();
+) -> InlineCompletionText {
+    let edit_start = edits
+        .first()
+        .unwrap()
+        .0
+        .start
+        .to_display_point(editor_snapshot);
 
-    Some(edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx))
+    let mut text = String::new();
+    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
+    let mut highlights = Vec::new();
+    for (old_range, new_text) in edits {
+        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
+        text.extend(
+            editor_snapshot
+                .buffer_snapshot
+                .chunks(offset..old_offset_range.start, false)
+                .map(|chunk| chunk.text),
+        );
+        offset = old_offset_range.end;
+
+        let start = text.len();
+        let color = if include_deletions && new_text.is_empty() {
+            text.extend(
+                editor_snapshot
+                    .buffer_snapshot
+                    .chunks(old_offset_range.start..offset, false)
+                    .map(|chunk| chunk.text),
+            );
+            cx.theme().status().deleted_background
+        } else {
+            text.push_str(new_text);
+            cx.theme().status().created_background
+        };
+        let end = text.len();
+
+        highlights.push((
+            start..end,
+            HighlightStyle {
+                background_color: Some(color),
+                ..Default::default()
+            },
+        ));
+    }
+
+    let edit_end = edits
+        .last()
+        .unwrap()
+        .0
+        .end
+        .to_display_point(editor_snapshot);
+    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
+        .to_offset(editor_snapshot, Bias::Right);
+    text.extend(
+        editor_snapshot
+            .buffer_snapshot
+            .chunks(offset..end_of_line, false)
+            .map(|chunk| chunk.text),
+    );
+
+    InlineCompletionText::Edit {
+        text: text.into(),
+        highlights,
+    }
 }
 
 pub fn highlight_diagnostic_message(

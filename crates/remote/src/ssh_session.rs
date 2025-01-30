@@ -17,7 +17,7 @@ use futures::{
     select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    App, AppContext, AsyncAppContext, BorrowAppContext, Context, Entity, EventEmitter, Global,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
     SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
@@ -226,17 +226,13 @@ impl SshPlatform {
 }
 
 pub trait SshClientDelegate: Send + Sync {
-    fn ask_password(
-        &self,
-        prompt: String,
-        cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<String>>;
+    fn ask_password(&self, prompt: String, cx: &mut AsyncApp) -> oneshot::Receiver<Result<String>>;
     fn get_download_params(
         &self,
         platform: SshPlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Option<(String, String)>>>;
 
     fn download_server_binary_locally(
@@ -244,9 +240,9 @@ pub trait SshClientDelegate: Send + Sync {
         platform: SshPlatform,
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<PathBuf>>;
-    fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
+    fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp);
 }
 
 impl SshSocket {
@@ -813,7 +809,7 @@ impl SshRemoteClient {
     fn heartbeat(
         this: WeakEntity<Self>,
         mut connection_activity_rx: mpsc::Receiver<()>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<()>> {
         let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
@@ -915,7 +911,7 @@ impl SshRemoteClient {
     fn monitor(
         this: WeakEntity<Self>,
         io_task: Task<Result<i32>>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(|mut cx| async move {
             let result = io_task.await;
@@ -1204,7 +1200,7 @@ trait RemoteConnection: Send + Sync {
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<i32>>;
     fn upload_directory(&self, src_path: PathBuf, dest_path: PathBuf, cx: &App)
         -> Task<Result<()>>;
@@ -1214,7 +1210,7 @@ trait RemoteConnection: Send + Sync {
     fn connection_options(&self) -> SshConnectionOptions;
 
     #[cfg(any(test, feature = "test-support"))]
-    fn simulate_disconnect(&self, _: &AsyncAppContext) {}
+    fn simulate_disconnect(&self, _: &AsyncApp) {}
 }
 
 struct SshRemoteConnection {
@@ -1298,7 +1294,7 @@ impl RemoteConnection for SshRemoteConnection {
         outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Starting proxy"), cx);
 
@@ -1358,7 +1354,7 @@ impl SshRemoteConnection {
     async fn new(
         _connection_options: SshConnectionOptions,
         _delegate: Arc<dyn SshClientDelegate>,
-        _cx: &mut AsyncAppContext,
+        _cx: &mut AsyncApp,
     ) -> Result<Self> {
         Err(anyhow!("ssh is not supported on this platform"))
     }
@@ -1367,7 +1363,7 @@ impl SshRemoteConnection {
     async fn new(
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
@@ -1584,7 +1580,7 @@ impl SshRemoteConnection {
         incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
         mut connection_activity_tx: Sender<()>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Task<Result<i32>> {
         let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
         let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();
@@ -1688,7 +1684,7 @@ impl SshRemoteConnection {
         release_channel: ReleaseChannel,
         version: SemanticVersion,
         commit: Option<AppCommitSha>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
@@ -1785,7 +1781,7 @@ impl SshRemoteConnection {
         body: &str,
         tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
@@ -1858,7 +1854,7 @@ impl SshRemoteConnection {
         src_path: &Path,
         tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         if let Some(parent) = tmp_path_gz.parent() {
             self.socket
@@ -1888,7 +1884,7 @@ impl SshRemoteConnection {
         dst_path: &Path,
         tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
@@ -1943,7 +1939,7 @@ impl SshRemoteConnection {
         &self,
         platform: SshPlatform,
         delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<PathBuf> {
         use smol::process::{Command, Stdio};
 
@@ -2085,7 +2081,7 @@ impl ChannelClient {
     fn start_handling_messages(
         this: Weak<Self>,
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(|cx| async move {
             let peer_id = PeerId { owner_id: 0, id: 0 };
@@ -2185,7 +2181,7 @@ impl ChannelClient {
         self: &Arc<Self>,
         incoming_rx: UnboundedReceiver<Envelope>,
         outgoing_tx: UnboundedSender<Envelope>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) {
         *self.outgoing_tx.lock() = outgoing_tx;
         *self.task.lock() = Self::start_handling_messages(Arc::downgrade(self), incoming_rx, cx);
@@ -2365,7 +2361,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{App, AsyncAppContext, SemanticVersion, Task, TestAppContext};
+    use gpui::{App, AsyncApp, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
@@ -2379,15 +2375,15 @@ mod fake {
         pub(super) server_cx: SendableCx,
     }
 
-    pub(super) struct SendableCx(AsyncAppContext);
+    pub(super) struct SendableCx(AsyncApp);
     impl SendableCx {
         // SAFETY: When run in test mode, GPUI is always single threaded.
         pub(super) fn new(cx: &TestAppContext) -> Self {
             Self(cx.to_async())
         }
 
-        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncAppContext
-        fn get(&self, _: &AsyncAppContext) -> AsyncAppContext {
+        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncApp
+        fn get(&self, _: &AsyncApp) -> AsyncApp {
             self.0.clone()
         }
     }
@@ -2422,7 +2418,7 @@ mod fake {
             self.connection_options.clone()
         }
 
-        fn simulate_disconnect(&self, cx: &AsyncAppContext) {
+        fn simulate_disconnect(&self, cx: &AsyncApp) {
             let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
             let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
             self.server_channel
@@ -2438,7 +2434,7 @@ mod fake {
             mut client_outgoing_rx: mpsc::UnboundedReceiver<Envelope>,
             mut connection_activity_tx: Sender<()>,
             _delegate: Arc<dyn SshClientDelegate>,
-            cx: &mut AsyncAppContext,
+            cx: &mut AsyncApp,
         ) -> Task<Result<i32>> {
             let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
             let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -2474,11 +2470,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl SshClientDelegate for Delegate {
-        fn ask_password(
-            &self,
-            _: String,
-            _: &mut AsyncAppContext,
-        ) -> oneshot::Receiver<Result<String>> {
+        fn ask_password(&self, _: String, _: &mut AsyncApp) -> oneshot::Receiver<Result<String>> {
             unreachable!()
         }
 
@@ -2487,7 +2479,7 @@ mod fake {
             _: SshPlatform,
             _: ReleaseChannel,
             _: Option<SemanticVersion>,
-            _: &mut AsyncAppContext,
+            _: &mut AsyncApp,
         ) -> Task<Result<PathBuf>> {
             unreachable!()
         }
@@ -2497,11 +2489,11 @@ mod fake {
             _platform: SshPlatform,
             _release_channel: ReleaseChannel,
             _version: Option<SemanticVersion>,
-            _cx: &mut AsyncAppContext,
+            _cx: &mut AsyncApp,
         ) -> Task<Result<Option<(String, String)>>> {
             unreachable!()
         }
 
-        fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {}
+        fn set_status(&self, _: Option<&str>, _: &mut AsyncApp) {}
     }
 }

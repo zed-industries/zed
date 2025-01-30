@@ -1271,7 +1271,7 @@ impl ClipboardItem {
 
         for entry in self.entries.iter() {
             if let ClipboardEntry::String(ClipboardString { text, metadata: _ }) = entry {
-                answer.push_str(text);
+                answer.push_str(&text);
                 any_entries = true;
             }
         }

@@ -156,7 +156,7 @@ impl GitPanel {
         let git_state = project.read(cx).git_state().cloned();
         let active_repository = project.read(cx).active_repository(cx);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
-        let workspace = cx.model().downgrade();
+        let workspace = cx.entity().downgrade();
 
         let git_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
@@ -193,7 +193,7 @@ impl GitPanel {
                 current_modifiers: window.modifiers(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_model(&cx.model()),
+                    .parent_model(&cx.entity()),
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
@@ -703,7 +703,7 @@ impl GitPanel {
     }
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(this) = handle.upgrade() {
@@ -1114,7 +1114,7 @@ impl GitPanel {
             .size_full()
             .overflow_hidden()
             .child(
-                uniform_list(cx.model().clone(), "entries", entry_count, {
+                uniform_list(cx.entity().clone(), "entries", entry_count, {
                     move |git_panel, range, _window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
                         git_panel.for_each_visible_entry(range, cx, |ix, details, cx| {
@@ -1167,7 +1167,7 @@ impl GitPanel {
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
         let is_tree_view = false;
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
 
         let end_slot = h_flex()
             .invisible()

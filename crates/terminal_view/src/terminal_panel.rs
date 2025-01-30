@@ -12,7 +12,7 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnyView, App, AsyncAppContext, AsyncWindowContext, Context, Corner, Entity,
+    actions, Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity,
     EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, ParentElement, Pixels,
     Render, Styled, Task, WeakEntity, Window,
 };
@@ -35,10 +35,10 @@ use workspace::{
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
-    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
-    ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup,
-    SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneInDirection, ToggleZoom,
-    Workspace,
+    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane,
+    DraggedSelection, DraggedTab, ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp,
+    SwapPaneInDirection, ToggleZoom, Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -903,7 +903,7 @@ pub fn new_terminal_pane(
     cx: &mut Context<TerminalPanel>,
 ) -> Entity<Pane> {
     let is_local = project.read(cx).is_local();
-    let terminal_panel = cx.model().clone();
+    let terminal_panel = cx.entity().clone();
     let pane = cx.new(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -923,7 +923,7 @@ pub fn new_terminal_pane(
         let split_closure_terminal_panel = terminal_panel.downgrade();
         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let is_current_pane = tab.pane == cx.model();
+                let is_current_pane = tab.pane == cx.entity();
                 let Some(can_drag_away) = split_closure_terminal_panel
                     .update(cx, |terminal_panel, _| {
                         let current_panes = terminal_panel.center.panes();
@@ -963,7 +963,7 @@ pub fn new_terminal_pane(
                 return ControlFlow::Break(());
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.model().clone();
+                let this_pane = cx.entity().clone();
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {
@@ -1037,6 +1037,17 @@ pub fn new_terminal_pane(
                         }
                     }
                 }
+            } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
+                let project = project.read(cx);
+                let paths_to_add = selection
+                    .items()
+                    .map(|selected_entry| selected_entry.entry_id)
+                    .filter_map(|entry_id| project.path_for_entry(entry_id, cx))
+                    .filter_map(|project_path| project.absolute_path(&project_path, cx))
+                    .collect::<Vec<_>>();
+                if !paths_to_add.is_empty() {
+                    add_paths_to_terminal(pane, &paths_to_add, window, cx);
+                }
             } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
                 if let Some(entry_path) = project
                     .read(cx)
@@ -1066,7 +1077,7 @@ pub fn new_terminal_pane(
 
 async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, Entity<Pane>, Entity<TerminalView>)>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) {
     let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
         terminal

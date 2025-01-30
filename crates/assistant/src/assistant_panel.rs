@@ -155,7 +155,7 @@ impl AssistantPanel {
 
                     let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()
                     {
-                        if tab.pane == cx.model() {
+                        if tab.pane == cx.entity() {
                             return None;
                         }
                         let item = tab.pane.read(cx).item_for_index(tab.ix);
@@ -231,7 +231,7 @@ impl AssistantPanel {
                         pane.active_item()
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
-                let _pane = cx.model().clone();
+                let _pane = cx.entity().clone();
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
@@ -617,7 +617,7 @@ impl AssistantPanel {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_editor,
-                            Some(cx.model().downgrade()),
+                            Some(cx.entity().downgrade()),
                             include_context.then_some(&assistant_panel),
                             initial_prompt,
                             window,
@@ -629,7 +629,7 @@ impl AssistantPanel {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_terminal,
-                            Some(cx.model().downgrade()),
+                            Some(cx.entity().downgrade()),
                             Some(&assistant_panel),
                             initial_prompt,
                             window,

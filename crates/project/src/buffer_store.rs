@@ -12,8 +12,7 @@ use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
 use git::{blame::Blame, diff::BufferDiff, repository::RepoPath};
 use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Subscription, Task,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use http_client::Url;
 use language::{
@@ -68,6 +67,10 @@ pub struct BufferChangeSet {
     pub recalculate_diff_task: Option<Task<Result<()>>>,
     pub diff_updated_futures: Vec<oneshot::Sender<()>>,
     pub language_registry: Option<Arc<LanguageRegistry>>,
+}
+
+pub enum BufferChangeSetEvent {
+    DiffChanged { changed_range: Range<text::Anchor> },
 }
 
 enum BufferStoreState {
@@ -688,7 +691,7 @@ impl LocalBufferStore {
                     buffer_id,
                 );
                 events.push(BufferStoreEvent::BufferChangedFilePath {
-                    buffer: cx.model(),
+                    buffer: cx.entity(),
                     old_file: buffer.file().cloned(),
                 });
             }
@@ -787,7 +790,7 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let load_file = worktree.load_file(path.as_ref(), cx);
-            let reservation = cx.reserve_model();
+            let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
             cx.spawn(move |_, mut cx| async move {
                 let loaded = load_file.await?;
@@ -795,7 +798,7 @@ impl LocalBufferStore {
                     .background_executor()
                     .spawn(async move { text::Buffer::new(0, buffer_id, loaded.text) })
                     .await;
-                cx.insert_model(reservation, |_| {
+                cx.insert_entity(reservation, |_| {
                     Buffer::build(text_buffer, Some(loaded.file), Capability::ReadWrite)
                 })
             })
@@ -876,7 +879,7 @@ impl LocalBufferStore {
                         if !push_to_history {
                             buffer.forget_transaction(transaction.id);
                         }
-                        project_transaction.0.insert(cx.model(), transaction);
+                        project_transaction.0.insert(cx.entity(), transaction);
                     }
                 })?;
             }
@@ -1058,7 +1061,7 @@ impl BufferStore {
         this: WeakEntity<Self>,
         text: Result<Option<String>>,
         buffer: Entity<Buffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<Entity<BufferChangeSet>> {
         let text = match text {
             Err(e) => {
@@ -1303,7 +1306,7 @@ impl BufferStore {
             unstaged_changes: None,
         };
 
-        let handle = cx.model().downgrade();
+        let handle = cx.entity().downgrade();
         buffer.update(cx, move |_, cx| {
             cx.on_release(move |buffer, cx| {
                 handle
@@ -1562,7 +1565,7 @@ impl BufferStore {
     pub async fn handle_update_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         let payload = envelope.payload.clone();
         let buffer_id = BufferId::new(payload.buffer_id)?;
@@ -1717,7 +1720,7 @@ impl BufferStore {
     pub async fn handle_update_buffer_file(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateBufferFile>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let buffer_id = envelope.payload.buffer_id;
         let buffer_id = BufferId::new(buffer_id)?;
@@ -1765,7 +1768,7 @@ impl BufferStore {
     pub async fn handle_save_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::SaveBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::BufferSaved> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let (buffer, project_id) = this.update(&mut cx, |this, _| {
@@ -1806,7 +1809,7 @@ impl BufferStore {
     pub async fn handle_close_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::CloseBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let peer_id = envelope.sender_id;
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
@@ -1830,7 +1833,7 @@ impl BufferStore {
     pub async fn handle_buffer_saved(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::BufferSaved>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
@@ -1858,7 +1861,7 @@ impl BufferStore {
     pub async fn handle_buffer_reloaded(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::BufferReloaded>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
@@ -1891,7 +1894,7 @@ impl BufferStore {
     pub async fn handle_blame_buffer(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::BlameBuffer>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::BlameBufferResponse> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
@@ -1912,7 +1915,7 @@ impl BufferStore {
     pub async fn handle_get_permalink_to_line(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GetPermalinkToLine>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::GetPermalinkToLineResponse> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         // let version = deserialize_version(&envelope.payload.version);
@@ -1937,7 +1940,7 @@ impl BufferStore {
     pub async fn handle_get_staged_text(
         this: Entity<Self>,
         request: TypedEnvelope<proto::GetStagedText>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::GetStagedTextResponse> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
         let change_set = this
@@ -1966,7 +1969,7 @@ impl BufferStore {
     pub async fn handle_update_diff_base(
         this: Entity<Self>,
         request: TypedEnvelope<proto::UpdateDiffBase>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
         let Some((buffer, change_set)) = this.update(&mut cx, |this, _| {
@@ -2011,7 +2014,7 @@ impl BufferStore {
     async fn handle_reload_buffers(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ReloadBuffers>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<proto::ReloadBuffersResponse> {
         let sender_id = envelope.original_sender_id().unwrap_or_default();
         let reload = this.update(&mut cx, |this, cx| {
@@ -2202,6 +2205,8 @@ impl BufferStore {
     }
 }
 
+impl EventEmitter<BufferChangeSetEvent> for BufferChangeSet {}
+
 impl BufferChangeSet {
     pub fn new(buffer: &Entity<Buffer>, cx: &mut Context<Self>) -> Self {
         cx.subscribe(buffer, |this, buffer, event, cx| match event {
@@ -2319,68 +2324,52 @@ impl BufferChangeSet {
         let (tx, rx) = oneshot::channel();
         self.diff_updated_futures.push(tx);
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-            let new_base_text = if base_text_changed {
-                let base_text_rope: Rope = base_text.as_str().into();
-                let snapshot = this.update(&mut cx, |this, cx| {
-                    language::Buffer::build_snapshot(
+            let (old_diff, new_base_text) = this.update(&mut cx, |this, cx| {
+                let new_base_text = if base_text_changed {
+                    let base_text_rope: Rope = base_text.as_str().into();
+                    let snapshot = language::Buffer::build_snapshot(
                         base_text_rope,
                         this.language.clone(),
                         this.language_registry.clone(),
                         cx,
-                    )
-                })?;
-                Some(cx.background_executor().spawn(snapshot).await)
-            } else {
-                None
-            };
-            let diff = cx
-                .background_executor()
-                .spawn({
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    async move { BufferDiff::build(&base_text, &buffer_snapshot) }
-                })
-                .await;
+                    );
+                    cx.background_executor()
+                        .spawn(async move { Some(snapshot.await) })
+                } else {
+                    Task::ready(None)
+                };
+                (this.diff_to_buffer.clone(), new_base_text)
+            })?;
+
+            let diff = cx.background_executor().spawn(async move {
+                let new_diff = BufferDiff::build(&base_text, &buffer_snapshot);
+                let changed_range = if base_text_changed {
+                    Some(text::Anchor::MIN..text::Anchor::MAX)
+                } else {
+                    new_diff.compare(&old_diff, &buffer_snapshot)
+                };
+                (new_diff, changed_range)
+            });
+
+            let (new_base_text, (diff, changed_range)) = futures::join!(new_base_text, diff);
+
             this.update(&mut cx, |this, cx| {
                 if let Some(new_base_text) = new_base_text {
                     this.base_text = Some(new_base_text)
                 }
                 this.diff_to_buffer = diff;
+
                 this.recalculate_diff_task.take();
                 for tx in this.diff_updated_futures.drain(..) {
                     tx.send(()).ok();
                 }
-                cx.notify();
+                if let Some(changed_range) = changed_range {
+                    cx.emit(BufferChangeSetEvent::DiffChanged { changed_range });
+                }
             })?;
             Ok(())
         }));
         rx
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn recalculate_diff_sync(
-        &mut self,
-        mut base_text: String,
-        buffer_snapshot: text::BufferSnapshot,
-        base_text_changed: bool,
-        cx: &mut Context<Self>,
-    ) {
-        LineEnding::normalize(&mut base_text);
-        let diff = BufferDiff::build(&base_text, &buffer_snapshot);
-        if base_text_changed {
-            self.base_text = Some(
-                cx.background_executor()
-                    .clone()
-                    .block(Buffer::build_snapshot(
-                        base_text.into(),
-                        self.language.clone(),
-                        self.language_registry.clone(),
-                        cx,
-                    )),
-            );
-        }
-        self.diff_to_buffer = diff;
-        self.recalculate_diff_task.take();
-        cx.notify();
     }
 }
 

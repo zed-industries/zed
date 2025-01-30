@@ -6,8 +6,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
 use gpui::{
-    AnyView, App, AsyncAppContext, Context, Entity, FontStyle, Subscription, Task, TextStyle,
-    WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -307,12 +306,12 @@ impl AnthropicModel {
     fn stream_completion(
         &self,
         request: anthropic::Request,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event, AnthropicError>>>>
     {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = cx.read_model(&self.state, |state, cx| {
+        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
@@ -373,7 +372,7 @@ impl LanguageModel for AnthropicModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         let request = request.into_anthropic(
             self.model.id().into(),
@@ -404,7 +403,7 @@ impl LanguageModel for AnthropicModel {
         tool_name: String,
         tool_description: String,
         input_schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let mut request = request.into_anthropic(
             self.model.tool_model_id().into(),
@@ -648,11 +647,8 @@ impl ConfigurationView {
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            ..Default::default()
         };
         EditorElement::new(
             &self.api_key_editor,
@@ -690,7 +686,7 @@ impl Render for ConfigurationView {
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("anthropic_console", ANTHROPIC_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _, cx| cx.open_url(ANTHROPIC_CONSOLE_URL))
@@ -704,6 +700,8 @@ impl Render for ConfigurationView {
                         .px_2()
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .rounded_md()
                         .child(self.render_api_key_editor(cx)),
                 )

@@ -94,7 +94,7 @@ impl TabSwitcher {
             let delegate = TabSwitcherDelegate::new(
                 project,
                 action,
-                cx.model().downgrade(),
+                cx.entity().downgrade(),
                 weak_pane,
                 window,
                 cx,

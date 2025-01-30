@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque};
-use gpui::{App, AppContext as _, Entity, Task};
+use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
 use settings::{parse_json_with_comments, SettingsLocation};
@@ -53,7 +53,7 @@ pub enum TaskSourceKind {
         abs_path: PathBuf,
     },
     /// Languages-specific tasks coming from extensions.
-    Language { name: Arc<str> },
+    Language { name: SharedString },
 }
 
 impl TaskSourceKind {
@@ -91,7 +91,7 @@ impl Inventory {
         cx: &App,
     ) -> Vec<(TaskSourceKind, TaskTemplate)> {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name().0,
+            name: language.name().into(),
         });
         let global_tasks = self.global_templates_from_settings();
         let language_tasks = language
@@ -124,7 +124,7 @@ impl Inventory {
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
-            name: language.name().0,
+            name: language.name().into(),
         });
         let file = location
             .as_ref()
@@ -489,7 +489,7 @@ impl ContextProvider for BasicContextProvider {
         if !selected_text.trim().is_empty() {
             task_variables.insert(VariableName::SelectedText, selected_text);
         }
-        let worktree_abs_path =
+        let worktree_root_dir =
             buffer
                 .file()
                 .map(|file| file.worktree_id(cx))
@@ -497,9 +497,9 @@ impl ContextProvider for BasicContextProvider {
                     self.worktree_store
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)
-                        .map(|worktree| worktree.read(cx).abs_path())
+                        .map(|worktree| worktree.read(cx).root_dir())
                 });
-        if let Some(worktree_path) = worktree_abs_path {
+        if let Some(Some(worktree_path)) = worktree_root_dir {
             task_variables.insert(
                 VariableName::WorktreeRoot,
                 worktree_path.to_string_lossy().to_string(),

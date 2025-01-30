@@ -36,7 +36,7 @@ impl ZedPredictTos {
         cx: &mut App,
     ) {
         workspace.update(cx, |this, cx| {
-            let workspace = cx.model().clone();
+            let workspace = cx.entity().clone();
             this.toggle_modal(window, cx, |_window, cx| {
                 ZedPredictTos::new(workspace, user_store, cx)
             });

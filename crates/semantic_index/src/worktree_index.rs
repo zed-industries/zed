@@ -6,9 +6,7 @@ use anyhow::Result;
 use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;
 use futures::future::Shared;
-use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, Subscription, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::LanguageRegistry;
 use log;
 use project::{UpdatedEntriesSet, Worktree};
@@ -170,7 +168,7 @@ impl WorktreeIndex {
     async fn index_entries(
         this: WeakEntity<Self>,
         updated_entries: channel::Receiver<UpdatedEntriesSet>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         let is_auto_available = cx.update(|cx| cx.wait_for_flag::<AutoCommand>())?.await;
         let index = this.update(&mut cx, |this, cx| {

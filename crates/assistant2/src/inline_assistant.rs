@@ -58,7 +58,7 @@ pub fn init(
         let Some(window) = window else {
             return;
         };
-        let workspace = cx.model().clone();
+        let workspace = cx.entity().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
         });
@@ -196,7 +196,7 @@ impl InlineAssistant {
 
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
-                            editor: cx.model().downgrade(),
+                            editor: cx.entity().downgrade(),
                             workspace: workspace.downgrade(),
                             thread_store,
                         }),
@@ -249,7 +249,7 @@ impl InlineAssistant {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_editor,
-                            cx.model().downgrade(),
+                            cx.entity().downgrade(),
                             thread_store,
                             window,
                             cx,
@@ -260,7 +260,7 @@ impl InlineAssistant {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_terminal,
-                            cx.model().downgrade(),
+                            cx.entity().downgrade(),
                             thread_store,
                             window,
                             cx,
@@ -1472,7 +1472,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, cx| {
-                    let editor_handle = cx.model().downgrade();
+                    let editor_handle = cx.entity().downgrade();
                     editor.register_action(move |_: &editor::actions::Newline, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             if let Some(editor) = editor_handle.upgrade() {
@@ -1482,7 +1482,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, cx| {
-                    let editor_handle = cx.model().downgrade();
+                    let editor_handle = cx.entity().downgrade();
                     editor.register_action(move |_: &editor::actions::Cancel, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             if let Some(editor) = editor_handle.upgrade() {

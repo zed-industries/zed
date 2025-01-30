@@ -12,7 +12,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use gpui::{App, AsyncAppContext, Global, WindowHandle};
+use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
@@ -198,7 +198,7 @@ pub async fn open_paths_with_positions(
     path_positions: &[PathWithPosition],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<(
     WindowHandle<Workspace>,
     Vec<Option<Result<Box<dyn ItemHandle>>>>,
@@ -248,7 +248,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) {
     if let Some(request) = requests.next().await {
         match request {
@@ -305,7 +305,7 @@ async fn open_workspaces(
     wait: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> Result<()> {
     let grouped_locations = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
@@ -412,7 +412,7 @@ async fn open_local_workspace(
     responses: &IpcSender<CliResponse>,
     env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
-    cx: &mut AsyncAppContext,
+    cx: &mut AsyncApp,
 ) -> bool {
     let mut errored = false;
 

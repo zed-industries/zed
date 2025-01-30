@@ -33,7 +33,6 @@ impl ImageView {
     pub fn new(
         image_item: Entity<ImageItem>,
         project: Entity<Project>,
-
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();

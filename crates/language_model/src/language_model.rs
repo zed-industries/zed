@@ -10,7 +10,7 @@ pub mod fake_provider;
 use anyhow::Result;
 use futures::FutureExt;
 use futures::{future::BoxFuture, stream::BoxStream, StreamExt, TryStreamExt as _};
-use gpui::{AnyElement, AnyView, App, AsyncAppContext, SharedString, Task, Window};
+use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 pub use model::*;
 use proto::Plan;
 pub use rate_limiter::*;
@@ -136,13 +136,13 @@ pub trait LanguageModel: Send + Sync {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
 
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
         let events = self.stream_completion(request, cx);
 
@@ -186,7 +186,7 @@ pub trait LanguageModel: Send + Sync {
         name: String,
         description: String,
         schema: serde_json::Value,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>>;
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -203,7 +203,7 @@ impl dyn LanguageModel {
     pub fn use_tool<T: LanguageModelTool>(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> impl 'static + Future<Output = Result<T>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();
@@ -218,7 +218,7 @@ impl dyn LanguageModel {
     pub fn use_tool_stream<T: LanguageModelTool>(
         &self,
         request: LanguageModelRequest,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let schema = schemars::schema_for!(T);
         let schema_json = serde_json::to_value(&schema).unwrap();

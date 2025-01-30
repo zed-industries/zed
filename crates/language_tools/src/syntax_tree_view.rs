@@ -303,7 +303,7 @@ impl Render for SyntaxTreeView {
         {
             let layer = layer.clone();
             rendered = rendered.child(uniform_list(
-                cx.model().clone(),
+                cx.entity().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
                 move |this, range, _, cx| {
@@ -451,7 +451,7 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
-        let view = cx.model().clone();
+        let view = cx.entity().clone();
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))
@@ -499,7 +499,7 @@ impl SyntaxTreeToolbarItemView {
 
     fn render_header(active_layer: &OwnedSyntaxLayer) -> ButtonLike {
         ButtonLike::new("syntax tree header")
-            .child(Label::new(active_layer.language.name().0))
+            .child(Label::new(active_layer.language.name()))
             .child(Label::new(format_node_range(active_layer.node())))
     }
 }

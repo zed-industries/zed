@@ -7,8 +7,8 @@ use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, User
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::mpsc, future::Shared, Future, FutureExt, StreamExt};
 use gpui::{
-    App, AppContext as _, AsyncAppContext, Context, Entity, EventEmitter, Global, SharedString,
-    Task, WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, SharedString, Task,
+    WeakEntity,
 };
 use language::Capability;
 use rpc::{
@@ -158,8 +158,8 @@ impl ChannelStore {
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let rpc_subscriptions = [
-            client.add_message_handler(cx.weak_model(), Self::handle_update_channels),
-            client.add_message_handler(cx.weak_model(), Self::handle_update_user_channels),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_channels),
+            client.add_message_handler(cx.weak_entity(), Self::handle_update_user_channels),
         ];
 
         let mut connection_status = client.status();
@@ -306,7 +306,7 @@ impl ChannelStore {
     ) -> Task<Result<Entity<ChannelBuffer>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let channel_store = cx.model();
+        let channel_store = cx.entity();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_buffers,
@@ -436,7 +436,7 @@ impl ChannelStore {
     ) -> Task<Result<Entity<ChannelChat>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let this = cx.model();
+        let this = cx.entity();
         self.open_channel_resource(
             channel_id,
             |this| &mut this.opened_chats,
@@ -458,7 +458,7 @@ impl ChannelStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<T>>>
     where
-        F: 'static + FnOnce(Arc<Channel>, AsyncAppContext) -> Fut,
+        F: 'static + FnOnce(Arc<Channel>, AsyncApp) -> Fut,
         Fut: Future<Output = Result<Entity<T>>>,
         T: 'static,
     {
@@ -848,7 +848,7 @@ impl ChannelStore {
     async fn handle_update_channels(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateChannels>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
             this.update_channels_tx
@@ -861,7 +861,7 @@ impl ChannelStore {
     async fn handle_update_user_channels(
         this: Entity<Self>,
         message: TypedEnvelope<proto::UpdateUserChannels>,
-        mut cx: AsyncAppContext,
+        mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             for buffer_version in message.payload.observed_channel_buffer_version {
