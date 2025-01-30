@@ -11,7 +11,7 @@ use gpui::{
     actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::MultiBuffer;
 use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
@@ -191,7 +191,7 @@ impl ProjectDiff {
         let diff_hunk_ranges = change_set
             .read(cx)
             .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
-            .map(|diff_hunk| diff_hunk.buffer_range)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
             .collect::<Vec<_>>();
 
         self.multibuffer.update(cx, |multibuffer, cx| {

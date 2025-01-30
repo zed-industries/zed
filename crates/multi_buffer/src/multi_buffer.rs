@@ -497,6 +497,7 @@ impl MultiBuffer {
             singleton: false,
             capability,
             title: None,
+            buffers_by_path: Default::default(),
             history: History {
                 next_transaction_id: clock::Lamport::default(),
                 undo_stack: Vec::new(),
@@ -511,6 +512,7 @@ impl MultiBuffer {
         Self {
             snapshot: Default::default(),
             buffers: Default::default(),
+            buffers_by_path: Default::default(),
             diff_bases: HashMap::default(),
             all_diff_hunks_expanded: false,
             subscriptions: Default::default(),
@@ -564,6 +566,7 @@ impl MultiBuffer {
         Self {
             snapshot: RefCell::new(self.snapshot.borrow().clone()),
             buffers: RefCell::new(buffers),
+            buffers_by_path: Default::default(),
             diff_bases,
             all_diff_hunks_expanded: self.all_diff_hunks_expanded,
             subscriptions: Default::default(),
@@ -1394,7 +1397,7 @@ impl MultiBuffer {
     pub fn set_excerpts_for_buffer(
         &mut self,
         buffer: Entity<Buffer>,
-        ranges: Vec<Range<text::Anchor>>,
+        ranges: Vec<Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) {
@@ -1404,12 +1407,13 @@ impl MultiBuffer {
             // sort untitled files first in buffer-id order
             .unwrap_or_else(|| PathBuf::from(format!("\x00/{}", buffer_snapshot.remote_id())));
         let key: Arc<Path> = Arc::from(path);
-        let (insert_after, excerpt_ids) = if let Some(existing) = self.buffers_by_path.get(&key) {
+        let (mut insert_after, excerpt_ids) = if let Some(existing) = self.buffers_by_path.get(&key)
+        {
             (*existing.last().unwrap(), existing.clone())
         } else {
             (
                 self.buffers_by_path
-                    .range(..key)
+                    .range(..key.clone())
                     .next_back()
                     .map(|(_, value)| *value.last().unwrap())
                     .unwrap_or(ExcerptId::min()),
@@ -1419,40 +1423,86 @@ impl MultiBuffer {
 
         let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
 
-        let new_iter = new.iter().peekable();
-        let existing_iter = excerpt_ids.into_iter().peekable();
+        let mut new_iter = new.into_iter().peekable();
+        let mut existing_iter = excerpt_ids.into_iter().peekable();
 
+        let mut new_excerpt_ids = Vec::new();
         let mut to_remove = Vec::new();
         let mut to_insert = Vec::new();
+        let snapshot = self.snapshot(cx);
 
-        let excerpts_cursor = self.snapshot(cx).excerpts.cursor::<Option<ExcerptId>>(&());
+        let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<ExcerptId>>(&());
         excerpts_cursor.next(&());
 
         loop {
-            match (new_iter.peek(), existing_iter.peek()) {
+            let (new, existing) = match (new_iter.peek(), existing_iter.peek()) {
+                (Some(new), Some(existing)) => (new, existing),
                 (None, None) => break,
                 (None, Some(_)) => {
                     to_remove.push(existing_iter.next().unwrap());
+                    continue;
                 }
-                (Some(_), None) => to_insert.push(new_iter.next().unwrap()),
-                (Some(new), Some(existing)) => {
-                    excerpts_cursor.seek_forward(&Some(*existing), Bias::Right, &());
-                    let existing = excerpts_cursor.item().unwrap();
-
-                    let existing_start =
-
-                    if existing.range.context.start < new.context.start {
-                    } else if existing.range.context.start < new.context.end {
-                    } else {
-                    }
-
-                    todo!()
+                (Some(_), None) => {
+                    to_insert.push(new_iter.next().unwrap());
+                    continue;
                 }
+            };
+
+            excerpts_cursor.seek_forward(&Some(*existing), Bias::Right, &());
+            let existing_excerpt = excerpts_cursor.item().unwrap();
+
+            let existing_start = existing_excerpt
+                .range
+                .context
+                .start
+                .to_point(&existing_excerpt.buffer);
+            let existing_end = existing_excerpt
+                .range
+                .context
+                .end
+                .to_point(&existing_excerpt.buffer);
+
+            if existing_end < new.context.start {
+                to_remove.push(existing_iter.next().unwrap());
+                continue;
+            } else if existing_start > new.context.end {
+                to_insert.push(new_iter.next().unwrap());
+                continue;
+            }
+
+            // maybe merge overlapping excerpts?
+            // it's hard to distinguish between a manually expanded excerpt, and one that
+            // got smaller because of a missing diff.
+            //
+            if existing_start == new.context.start && existing_end == new.context.end {
+                new_excerpt_ids.append(&mut self.insert_excerpts_after(
+                    insert_after,
+                    buffer.clone(),
+                    mem::take(&mut to_insert),
+                    cx,
+                ));
+                insert_after = existing_iter.next().unwrap();
+                new_excerpt_ids.push(insert_after);
+                existing_iter.next();
+                new_iter.next();
+            } else {
+                to_remove.push(existing_iter.next().unwrap());
+                to_insert.push(new_iter.next().unwrap());
             }
         }
 
-        self.remove_excerpts_for_buffer(&buffer, cx);
-        self.push_excerpts(buffer, excerpt_ranges, cx);
+        new_excerpt_ids.append(&mut self.insert_excerpts_after(
+            insert_after,
+            buffer,
+            to_insert,
+            cx,
+        ));
+        self.remove_excerpts(to_remove, cx);
+        if new_excerpt_ids.is_empty() {
+            self.buffers_by_path.remove(&key);
+        } else {
+            self.buffers_by_path.insert(key, new_excerpt_ids);
+        }
     }
 
     pub fn push_multiple_excerpts_with_context_lines(
@@ -1926,6 +1976,7 @@ impl MultiBuffer {
         let mut excerpt_ids = ids.iter().copied().peekable();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
+            dbg!(&excerpt_id);
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
             let locator = snapshot.excerpt_locator_for_id(excerpt_id);
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());
