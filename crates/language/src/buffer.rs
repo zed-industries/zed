@@ -618,7 +618,14 @@ impl EditPreview {
 
         let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
 
-        let status_colors = cx.theme().status();
+        let insertion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..Default::default()
+        };
+        let deletion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().deleted_background),
+            ..Default::default()
+        };
 
         for (range, edit_text) in edits {
             let edit_new_end_in_preview_snapshot = range
@@ -647,10 +654,7 @@ impl EditPreview {
                     range_in_current_snapshot.clone(),
                     &mut text,
                     &mut highlights,
-                    Some(HighlightStyle {
-                        background_color: Some(status_colors.deleted_background),
-                        ..Default::default()
-                    }),
+                    Some(insertion_highlight_style),
                     &current_snapshot.text,
                     &current_snapshot.syntax,
                     cx,
@@ -662,10 +666,7 @@ impl EditPreview {
                     edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
                     &mut text,
                     &mut highlights,
-                    Some(HighlightStyle {
-                        background_color: Some(status_colors.created_background),
-                        ..Default::default()
-                    }),
+                    Some(deletion_highlight_style),
                     &self.applied_edits_snapshot,
                     &self.syntax_snapshot,
                     cx,
@@ -1023,7 +1024,6 @@ impl Buffer {
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
         let language = self.language().cloned();
-
         let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
