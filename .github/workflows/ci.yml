@@ -266,7 +266,7 @@ jobs:
 
       - name: Configure CI
         run: |
-          mkdir -p ${{ env.DEV_DRIVE }}/.cargo || $true
+          mkdir -p ${{ env.DEV_DRIVE }}/.cargo -ErrorAction Ignore
           cp ./.cargo/ci-config.toml ${{ env.DEV_DRIVE }}/.cargo/config.toml
 
       - name: cargo clippy
