@@ -472,7 +472,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
         if let Some(buffer) = self.to_base(&buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {
