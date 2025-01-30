@@ -11282,7 +11282,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
     cx.simulate_keystroke(".");
 
     let item1 = lsp::CompletionItem {
-        label: "id".to_string(),
+        label: "method id()".to_string(),
         filter_text: Some("id".to_string()),
         detail: None,
         documentation: None,
@@ -11332,7 +11332,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
                         .iter()
                         .map(|completion| &completion.label.text)
                         .collect::<Vec<_>>(),
-                    vec!["id", "other"]
+                    vec!["method id()", "other"]
                 )
             }
             CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
@@ -11387,7 +11387,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
                         .iter()
                         .map(|completion| &completion.label.text)
                         .collect::<Vec<_>>(),
-                    vec!["method id()", "other"],
+                    vec!["method id() Now resolved!", "other"],
                     "Should update first completion label, but not second as the filter text did not match."
                 );
             }
