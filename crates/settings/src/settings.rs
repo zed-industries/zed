@@ -14,14 +14,13 @@ pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use key_equivalents::*;
 pub use keymap_file::{KeymapFile, KeymapFileLoadResult};
-use serde::{Deserialize, Serialize};
 pub use settings_file::*;
 pub use settings_store::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
     SettingsSources, SettingsStore,
 };
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
 
 impl From<WorktreeId> for usize {
