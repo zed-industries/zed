@@ -53,7 +53,7 @@ reqwest_client.workspace = true
 rpc.workspace = true
 rustc-demangle.workspace = true
 scrypt = "0.11"
-sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
+sea-orm = { version = "1.1.4", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 semantic_version.workspace = true
 semver.workspace = true
 serde.workspace = true
@@ -116,7 +116,7 @@ release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
-sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
+sea-orm = { version = "1.1.4", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
