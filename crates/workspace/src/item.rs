@@ -58,7 +58,7 @@ pub enum ClosePosition {
     Left,
     #[default]
     Right,
-    Hidden
+    Hidden,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

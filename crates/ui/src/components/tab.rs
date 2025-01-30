@@ -25,7 +25,7 @@ pub enum TabPosition {
 pub enum TabCloseSide {
     Start,
     End,
-    Hidden
+    Hidden,
 }
 
 #[derive(IntoElement)]

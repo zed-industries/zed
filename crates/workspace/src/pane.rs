@@ -2186,7 +2186,7 @@ impl Pane {
             ClosePosition::Hidden => true,
             _ => false,
         };
-        
+
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -2265,7 +2265,9 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
-                if never_show_close_button { return this.end_slot(div()) };
+                if never_show_close_button {
+                    return this.end_slot(div());
+                };
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
                 let end_slot = if is_pinned {
