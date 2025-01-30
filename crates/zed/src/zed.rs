@@ -1158,6 +1158,9 @@ pub fn handle_keymap_file_changes(
                 }
             };
             cx.update(|cx| {
+                // todo
+                // let case_errors = KeymapFile::detect_case_errors(&user_keymap_content);
+
                 let load_result = KeymapFile::load(&user_keymap_content, cx);
                 match load_result {
                     KeymapFileLoadResult::Success { key_bindings } => {

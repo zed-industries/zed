@@ -3,6 +3,8 @@ use std::rc::Rc;
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::anyhow;
 use collections::{HashMap, IndexMap};
+
+use convert_case::{Case, Casing};
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
     NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
@@ -13,7 +15,7 @@ use schemars::{
     JsonSchema,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::fmt::Write;
 use util::{asset_str, markdown::MarkdownString};
 
@@ -551,6 +553,106 @@ impl KeymapFile {
     pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
         self.0.iter()
     }
+
+    // Migration methods below. Read more: https://github.com/zed-industries/zed/pull/23834
+    pub fn detect_case_errors(content: &str) -> Result<Vec<CaseError>, anyhow::Error> {
+        let keymap_file = match parse_json_with_comments::<Self>(content) {
+            Ok(keymap_file) => keymap_file,
+            Err(error) => {
+                return Err(error);
+            }
+        };
+        let mut case_errors = Vec::new();
+        for KeymapSection { bindings, .. } in keymap_file.0.iter() {
+            if let Some(bindings) = bindings {
+                for (keystrokes, action) in bindings {
+                    if let Value::Array(items) = &action.0 {
+                        if items.len() == 2 {
+                            if let Some(input_value) = items.get(1) {
+                                Self::check_value_case(input_value, keystrokes, &mut case_errors);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(case_errors)
+    }
+
+    fn check_value_case(value: &Value, keystrokes: &str, errors: &mut Vec<CaseError>) {
+        match value {
+            Value::String(s) => {
+                if !s.is_case(Case::Snake) {
+                    let suggestion = s.to_case(Case::Snake);
+                    errors.push(CaseError {
+                        keystrokes: keystrokes.to_string(),
+                        incorrect_casing: s.clone(),
+                        suggestion,
+                    });
+                }
+            }
+            Value::Object(obj) => {
+                for (key, val) in obj.iter() {
+                    if !key.is_case(Case::Snake) {
+                        let suggestion = key.to_case(Case::Snake);
+                        errors.push(CaseError {
+                            keystrokes: keystrokes.to_string(),
+                            incorrect_casing: key.clone(),
+                            suggestion,
+                        });
+                    }
+                    Self::check_value_case(val, keystrokes, errors);
+                }
+            }
+            _ => {} // Ignore array, null, boolean, etc
+        }
+    }
+
+    pub fn migrate_keymap_case(content: &str) -> Result<Self, anyhow::Error> {
+        let mut keymap_file = match KeymapFile::parse(content) {
+            Ok(km) => km,
+            Err(error) => return Err(error),
+        };
+        for section in &mut keymap_file.0 {
+            if let Some(bindings) = &mut section.bindings {
+                for (_keystrokes, action) in bindings.iter_mut() {
+                    if let Value::Array(items) = &mut action.0 {
+                        if items.len() == 2 {
+                            if let Some(second_item) = items.get_mut(1) {
+                                Self::migrate_action_case(second_item);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(keymap_file)
+    }
+
+    fn migrate_action_case(value: &mut Value) {
+        match value {
+            Value::String(s) => {
+                if !s.is_case(Case::Snake) {
+                    *value = Value::String(s.to_case(Case::Snake));
+                }
+            }
+            Value::Object(obj) => {
+                let mut migrated_obj = Map::new();
+                for (key, val) in obj.iter_mut() {
+                    let migrated_key = if !key.is_case(Case::Snake) {
+                        key.to_case(Case::Snake)
+                    } else {
+                        key.clone()
+                    };
+                    Self::migrate_action_case(val);
+                    migrated_obj.insert(migrated_key, val.clone());
+                }
+                *value = Value::Object(migrated_obj);
+            }
+            _ => {} // Ignore array, null, boolean, etc
+        }
+    }
 }
 
 // Double quotes a string and wraps it in backticks for markdown inline code..
@@ -558,9 +660,17 @@ fn inline_code_string(text: &str) -> MarkdownString {
     MarkdownString::inline_code(&format!("\"{}\"", text))
 }
 
+#[derive(Debug, PartialEq)]
+pub struct CaseError {
+    keystrokes: String,
+    incorrect_casing: String,
+    suggestion: String,
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::KeymapFile;
+    use crate::{keymap_file::CaseError, KeymapFile};
+    use indoc::indoc;
 
     #[test]
     fn can_deserialize_keymap_with_trailing_comma() {
@@ -575,5 +685,71 @@ mod tests {
                   "
         };
         KeymapFile::parse(json).unwrap();
+    }
+
+    #[test]
+    fn test_detect_case_errors() {
+        let json_content = indoc! {r#"
+                        [
+                          {
+                            "bindings": {
+                              "ctrl-k ctrl-left": ["workspace::ActivatePaneInDirection", "Left"],
+                              "shift-b": ["vim::PreviousWordStart", { "ignorePunctuation": true }],
+                              "i": ["vim::PushOperator", { "Object": { "around": false } }],
+                              "shift-z shift-z": ["pane::CloseActiveItem", { "saveIntent": "saveAll" }],
+                              "j": ["test::Action", { "nestedObject": { "CamelCaseKey": "PascalCaseValue" } }],
+                              "k": ["test::Action", { "already_snake_case": "snake_case_value" }],
+                              "l": ["test::Action", "already_snake_case_string"]
+                            }
+                          }
+                        ]
+                    "#};
+
+        let errors = KeymapFile::detect_case_errors(json_content).unwrap();
+        assert_eq!(
+            errors,
+            vec![
+                CaseError {
+                    keystrokes: "ctrl-k ctrl-left".to_string(),
+                    incorrect_casing: "Left".to_string(),
+                    suggestion: "left".to_string()
+                },
+                CaseError {
+                    keystrokes: "shift-b".to_string(),
+                    incorrect_casing: "ignorePunctuation".to_string(),
+                    suggestion: "ignore_punctuation".to_string()
+                },
+                CaseError {
+                    keystrokes: "i".to_string(),
+                    incorrect_casing: "Object".to_string(),
+                    suggestion: "object".to_string()
+                },
+                CaseError {
+                    keystrokes: "shift-z shift-z".to_string(),
+                    incorrect_casing: "saveIntent".to_string(),
+                    suggestion: "save_intent".to_string()
+                },
+                CaseError {
+                    keystrokes: "shift-z shift-z".to_string(),
+                    incorrect_casing: "saveAll".to_string(),
+                    suggestion: "save_all".to_string()
+                },
+                CaseError {
+                    keystrokes: "j".to_string(),
+                    incorrect_casing: "nestedObject".to_string(),
+                    suggestion: "nested_object".to_string()
+                },
+                CaseError {
+                    keystrokes: "j".to_string(),
+                    incorrect_casing: "CamelCaseKey".to_string(),
+                    suggestion: "camel_case_key".to_string()
+                },
+                CaseError {
+                    keystrokes: "j".to_string(),
+                    incorrect_casing: "PascalCaseValue".to_string(),
+                    suggestion: "pascal_case_value".to_string()
+                },
+            ]
+        );
     }
 }
