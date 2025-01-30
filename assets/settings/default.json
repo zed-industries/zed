@@ -10,6 +10,7 @@
     "light": "One Light",
     "dark": "One Dark"
   },
+  "icon_theme": "Zed (Default)",
   // The name of a base set of key bindings to use.
   // This setting can take six values, each named after another
   // text editor:

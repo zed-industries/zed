@@ -319,9 +319,6 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
-    ///
-    /// Currently not exposed to the user.
-    #[serde(skip)]
     #[serde(default)]
     pub icon_theme: Option<String>,
 
