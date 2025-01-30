@@ -12,7 +12,6 @@ use assistant_tool::ToolWorkingSet;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use fs::{Fs, RemoveOptions};
 use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{
@@ -23,8 +22,8 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role, StopReason,
+    LanguageModelToolResult, LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role,
+    StopReason,
 };
 use language_models::{
     provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
@@ -2298,23 +2297,7 @@ impl AssistantContext {
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let mut request = self.to_completion_request(request_type, cx);
-
-        // Don't attach tools for now; we'll be removing tool use from
-        // Assistant1 shortly.
-        #[allow(clippy::overly_complex_bool_expr)]
-        if false && cx.has_flag::<ToolUseFeatureFlag>() {
-            request.tools = self
-                .tools
-                .tools(cx)
-                .into_iter()
-                .map(|tool| LanguageModelRequestTool {
-                    name: tool.name(),
-                    description: tool.description(),
-                    input_schema: tool.input_schema(),
-                })
-                .collect();
-        }
+        let request = self.to_completion_request(request_type, cx);
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
