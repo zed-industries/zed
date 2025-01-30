@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
@@ -232,12 +233,19 @@ impl Render for ZedPredictModal {
                 )),
             ));
 
-        let blog_post_button = Button::new("view-blog", "Read the Blog Post")
-            .full_width()
-            .icon(IconName::ArrowUpRight)
-            .icon_size(IconSize::Indicator)
-            .icon_color(Color::Muted)
-            .on_click(cx.listener(Self::view_blog));
+        let blog_post_button = if cx.is_staff() {
+            Some(
+                Button::new("view-blog", "Read the Blog Post")
+                    .full_width()
+                    .icon(IconName::ArrowUpRight)
+                    .icon_size(IconSize::Indicator)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener(Self::view_blog)),
+            )
+        } else {
+            // TODO: put back when blog post is published
+            None
+        };
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
@@ -279,7 +287,7 @@ impl Render for ZedPredictModal {
                                 .full_width()
                                 .on_click(cx.listener(Self::accept_and_enable)),
                         )
-                        .child(blog_post_button),
+                        .children(blog_post_button),
                 )
         } else {
             base.child(
@@ -298,7 +306,7 @@ impl Render for ZedPredictModal {
                             .full_width()
                             .on_click(cx.listener(Self::sign_in)),
                     )
-                    .child(blog_post_button),
+                    .children(blog_post_button),
             )
         }
     }
