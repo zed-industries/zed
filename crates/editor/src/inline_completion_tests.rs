@@ -1,6 +1,7 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
+use language::BufferSnapshot;
 use language::{Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
