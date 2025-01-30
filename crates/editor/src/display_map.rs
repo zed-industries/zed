@@ -1069,12 +1069,9 @@ impl DisplaySnapshot {
     }
 
     pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
-        let mut point = point.0;
-        if point.column == self.line_len(DisplayRow(point.row)) {
-            point.column = point.column.saturating_sub(1);
-            point = self.block_snapshot.clip_point(point, Bias::Left);
-        }
-        DisplayPoint(point)
+        let mut point = self.display_point_to_point(point, Bias::Left);
+        point.column = point.column.saturating_sub(1);
+        self.point_to_display_point(point, Bias::Left)
     }
 
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
