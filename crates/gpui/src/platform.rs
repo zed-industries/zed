@@ -882,6 +882,13 @@ pub trait InputHandler: 'static {
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
 
+    /// Returns UTF16 offset
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        cx: &mut WindowContext,
+    ) -> Option<usize>;
+
     /// Allows a given input context to opt into getting raw key repeats instead of
     /// sending these to the platform.
     /// TODO: Ideally we should be able to set ApplePressAndHoldEnabled in NSUserDefaults
