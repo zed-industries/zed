@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, Context as _};
 
+use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
-    platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
+    px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
     Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
@@ -55,6 +55,7 @@ x11rb::atom_manager! {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
+        _NET_WM_PID,
         _NET_WM_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
@@ -247,7 +248,6 @@ pub struct X11WindowState {
     x_root_window: xproto::Window,
     pub(crate) counter_id: sync::Counter,
     pub(crate) last_sync_counter: Option<sync::Int64>,
-    _raw: RawWindow,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
     renderer: BladeRenderer,
@@ -358,6 +358,7 @@ impl X11WindowState {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
+        gpu_context: &BladeContext,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -436,6 +437,18 @@ impl X11WindowState {
 
         // Collect errors during setup, so that window can be destroyed on failure.
         let setup_result = maybe!({
+            let pid = std::process::id();
+            check_reply(
+                || "X11 ChangeProperty for _NET_WM_PID failed.",
+                xcb.change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_PID,
+                    xproto::AtomEnum::CARDINAL,
+                    &[pid],
+                ),
+            )?;
+
             if let Some(size) = params.window_min_size {
                 let mut size_hints = WmSizeHints::new();
                 let min_size = (size.width.0 as i32, size.height.0 as i32);
@@ -555,50 +568,39 @@ impl X11WindowState {
 
             xcb.flush().with_context(|| "X11 Flush failed.")?;
 
-            let raw = RawWindow {
-                connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(xcb)
-                    as *mut _,
-                screen_id: x_screen_index,
-                window_id: x_window,
-                visual_id: visual.id,
+            let renderer = {
+                let raw_window = RawWindow {
+                    connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
+                        xcb,
+                    ) as *mut _,
+                    screen_id: x_screen_index,
+                    window_id: x_window,
+                    visual_id: visual.id,
+                };
+                let config = BladeSurfaceConfig {
+                    // Note: this has to be done after the GPU init, or otherwise
+                    // the sizes are immediately invalidated.
+                    size: query_render_extent(xcb, x_window)?,
+                    // We set it to transparent by default, even if we have client-side
+                    // decorations, since those seem to work on X11 even without `true` here.
+                    // If the window appearance changes, then the renderer will get updated
+                    // too
+                    transparent: false,
+                };
+                BladeRenderer::new(gpu_context, &raw_window, config)?
             };
-            let gpu = Arc::new(
-                unsafe {
-                    gpu::Context::init_windowed(
-                        &raw,
-                        gpu::ContextDesc {
-                            validation: false,
-                            capture: false,
-                            overlay: false,
-                        },
-                    )
-                }
-                .map_err(|e| anyhow!("{:?}", e))?,
-            );
 
-            let config = BladeSurfaceConfig {
-                // Note: this has to be done after the GPU init, or otherwise
-                // the sizes are immediately invalidated.
-                size: query_render_extent(xcb, x_window)?,
-                // We set it to transparent by default, even if we have client-side
-                // decorations, since those seem to work on X11 even without `true` here.
-                // If the window appearance changes, then the renderer will get updated
-                // too
-                transparent: false,
-            };
             check_reply(|| "X11 MapWindow failed.", xcb.map_window(x_window))?;
-
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
                 client,
                 executor,
                 display,
-                _raw: raw,
                 x_root_window: visual_set.root,
                 bounds: bounds.to_pixels(scale_factor),
                 scale_factor,
-                renderer: BladeRenderer::new(gpu, config),
+                renderer,
                 atoms: *atoms,
                 input_handler: None,
                 active: false,
@@ -716,6 +718,7 @@ impl X11Window {
         handle: AnyWindowHandle,
         client: X11ClientStatePtr,
         executor: ForegroundExecutor,
+        gpu_context: &BladeContext,
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
@@ -730,6 +733,7 @@ impl X11Window {
                 handle,
                 client,
                 executor,
+                gpu_context,
                 params,
                 xcb,
                 client_side_decorations_supported,
@@ -1109,6 +1113,30 @@ impl PlatformWindow for X11Window {
         }
     }
 
+    fn inner_window_bounds(&self) -> WindowBounds {
+        let state = self.0.state.borrow();
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            let mut bounds = state.bounds;
+            let [left, right, top, bottom] = state.last_insets;
+
+            let [left, right, top, bottom] = [
+                Pixels((left as f32) / state.scale_factor),
+                Pixels((right as f32) / state.scale_factor),
+                Pixels((top as f32) / state.scale_factor),
+                Pixels((bottom as f32) / state.scale_factor),
+            ];
+
+            bounds.origin.x += left;
+            bounds.origin.y += top;
+            bounds.size.width -= left + right;
+            bounds.size.height -= top + bottom;
+
+            WindowBounds::Windowed(bounds)
+        }
+    }
+
     fn content_size(&self) -> Size<Pixels> {
         // We divide by the scale factor here because this value is queried to determine how much to draw,
         // but it will be multiplied later by the scale to adjust for scaling.
@@ -1215,7 +1243,7 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             ),
         )
-        .unwrap();
+        .log_err();
 
         check_reply(
             || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
@@ -1227,8 +1255,8 @@ impl PlatformWindow for X11Window {
                 title.as_bytes(),
             ),
         )
-        .unwrap();
-        self.flush().unwrap();
+        .log_err();
+        self.flush().log_err();
     }
 
     fn set_app_id(&mut self, app_id: &str) {
@@ -1536,7 +1564,7 @@ impl PlatformWindow for X11Window {
         client.update_ime_position(bounds);
     }
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
     }
 }

@@ -73,7 +73,7 @@
                 ]
             )
         ] @context
-        (#any-of? @_name "it" "test" "describe")
+        (#any-of? @_name "it" "test" "describe" "context" "suite")
         arguments: (
             arguments . (string (string_fragment) @name)
         )

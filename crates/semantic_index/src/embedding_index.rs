@@ -8,22 +8,21 @@ use collections::Bound;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fs::MTime;
-use futures::stream::StreamExt;
+use futures::{stream::StreamExt, FutureExt as _};
 use futures_batch::ChunksTimeoutStreamExt;
-use gpui::{AppContext, Model, Task};
+use gpui::{App, Entity, Task};
 use heed::types::{SerdeBincode, Str};
 use language::LanguageRegistry;
 use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use smol::future::FutureExt;
-use std::{cmp::Ordering, future::Future, iter, path::Path, sync::Arc, time::Duration};
+use std::{cmp::Ordering, future::Future, iter, path::Path, pin::pin, sync::Arc, time::Duration};
 use util::ResultExt;
 use worktree::Snapshot;
 
 pub struct EmbeddingIndex {
-    worktree: Model<Worktree>,
+    worktree: Entity<Worktree>,
     db_connection: heed::Env,
     db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
     fs: Arc<dyn Fs>,
@@ -34,7 +33,7 @@ pub struct EmbeddingIndex {
 
 impl EmbeddingIndex {
     pub fn new(
-        worktree: Model<Worktree>,
+        worktree: Entity<Worktree>,
         fs: Arc<dyn Fs>,
         db_connection: heed::Env,
         embedding_db: heed::Database<Str, SerdeBincode<EmbeddedFile>>,
@@ -57,10 +56,7 @@ impl EmbeddingIndex {
         &self.db
     }
 
-    pub fn index_entries_changed_on_disk(
-        &self,
-        cx: &AppContext,
-    ) -> impl Future<Output = Result<()>> {
+    pub fn index_entries_changed_on_disk(&self, cx: &App) -> impl Future<Output = Result<()>> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
         }
@@ -81,7 +77,7 @@ impl EmbeddingIndex {
     pub fn index_updated_entries(
         &self,
         updated_entries: UpdatedEntriesSet,
-        cx: &AppContext,
+        cx: &App,
     ) -> impl Future<Output = Result<()>> {
         if !cx.is_staff() {
             return async move { Ok(()) }.boxed();
@@ -100,7 +96,7 @@ impl EmbeddingIndex {
         .boxed()
     }
 
-    fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
+    fn scan_entries(&self, worktree: Snapshot, cx: &App) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
         let db_connection = self.db_connection.clone();
@@ -184,7 +180,7 @@ impl EmbeddingIndex {
         &self,
         worktree: Snapshot,
         updated_entries: UpdatedEntriesSet,
-        cx: &AppContext,
+        cx: &App,
     ) -> ScanEntries {
         let (updated_entries_tx, updated_entries_rx) = channel::bounded(512);
         let (deleted_entry_ranges_tx, deleted_entry_ranges_rx) = channel::bounded(128);
@@ -228,7 +224,7 @@ impl EmbeddingIndex {
         &self,
         worktree_abs_path: Arc<Path>,
         entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
-        cx: &AppContext,
+        cx: &App,
     ) -> ChunkFiles {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
@@ -278,13 +274,13 @@ impl EmbeddingIndex {
     pub fn embed_files(
         embedding_provider: Arc<dyn EmbeddingProvider>,
         chunked_files: channel::Receiver<ChunkedFile>,
-        cx: &AppContext,
+        cx: &App,
     ) -> EmbedFiles {
         let embedding_provider = embedding_provider.clone();
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
-                chunked_files.chunks_timeout(512, Duration::from_secs(2));
+                pin!(chunked_files.chunks_timeout(512, Duration::from_secs(2)));
             while let Some(chunked_files) = chunked_file_batches.next().await {
                 // View the batch of files as a vec of chunks
                 // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
@@ -358,14 +354,16 @@ impl EmbeddingIndex {
 
     fn persist_embeddings(
         &self,
-        mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
-        mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
-        cx: &AppContext,
+        deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+        embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+        cx: &App,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
 
         cx.background_executor().spawn(async move {
+            let mut deleted_entry_ranges = pin!(deleted_entry_ranges);
+            let mut embedded_files = pin!(embedded_files);
             loop {
                 // Interleave deletions and persists of embedded files
                 futures::select_biased! {
@@ -396,7 +394,7 @@ impl EmbeddingIndex {
         })
     }
 
-    pub fn paths(&self, cx: &AppContext) -> Task<Result<Vec<Arc<Path>>>> {
+    pub fn paths(&self, cx: &App) -> Task<Result<Vec<Arc<Path>>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
         cx.background_executor().spawn(async move {
@@ -412,11 +410,7 @@ impl EmbeddingIndex {
         })
     }
 
-    pub fn chunks_for_path(
-        &self,
-        path: Arc<Path>,
-        cx: &AppContext,
-    ) -> Task<Result<Vec<EmbeddedChunk>>> {
+    pub fn chunks_for_path(&self, path: Arc<Path>, cx: &App) -> Task<Result<Vec<EmbeddedChunk>>> {
         let connection = self.db_connection.clone();
         let db = self.db;
         cx.background_executor().spawn(async move {

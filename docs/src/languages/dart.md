@@ -35,4 +35,20 @@ If you would like to use a specific dart binary or use dart via FVM you can spec
 }
 ```
 
+### Formatting
+
+Dart by-default uses a very conservative maximum line length (80). If you would like the dart LSP to permit a longer line length when auto-formatting, add the following to your Zed settings.json:
+
+```json
+{
+  "lsp": {
+    "dart": {
+      "settings": {
+        "lineLength": 140
+      }
+    }
+  }
+}
+```
+
 Please see the Dart documentation for more information on [dart language-server capabilities](https://github.com/dart-lang/sdk/blob/main/pkg/analysis_server/tool/lsp_spec/README.md).

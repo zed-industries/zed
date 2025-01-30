@@ -3,14 +3,14 @@ use crate::notifications::collab_notification::CollabNotification;
 use call::{room, ActiveCall};
 use client::User;
 use collections::HashMap;
-use gpui::{AppContext, Size};
+use gpui::{App, Size};
 use std::sync::{Arc, Weak};
 
 use ui::{prelude::*, Button, Label};
 use util::ResultExt;
 use workspace::AppState;
 
-pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     let app_state = Arc::downgrade(app_state);
     let active_call = ActiveCall::global(cx);
     let mut notification_windows = HashMap::default();
@@ -28,8 +28,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size, cx);
                 let Some(window) = cx
-                    .open_window(options, |cx| {
-                        cx.new_view(|_| {
+                    .open_window(options, |_, cx| {
+                        cx.new(|_| {
                             ProjectSharedNotification::new(
                                 owner.clone(),
                                 *project_id,
@@ -55,8 +55,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             if let Some(windows) = notification_windows.remove(project_id) {
                 for window in windows {
                     window
-                        .update(cx, |_, cx| {
-                            cx.remove_window();
+                        .update(cx, |_, window, _| {
+                            window.remove_window();
                         })
                         .ok();
                 }
@@ -67,8 +67,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for (_, windows) in notification_windows.drain() {
                 for window in windows {
                     window
-                        .update(cx, |_, cx| {
-                            cx.remove_window();
+                        .update(cx, |_, window, _| {
+                            window.remove_window();
                         })
                         .ok();
                 }
@@ -101,14 +101,14 @@ impl ProjectSharedNotification {
         }
     }
 
-    fn join(&mut self, cx: &mut ViewContext<Self>) {
+    fn join(&mut self, cx: &mut Context<Self>) {
         if let Some(app_state) = self.app_state.upgrade() {
             workspace::join_in_room_project(self.project_id, self.owner.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
         if let Some(active_room) =
             ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
         {
@@ -122,18 +122,20 @@ impl ProjectSharedNotification {
 }
 
 impl Render for ProjectSharedNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.owner.avatar_uri.clone(),
-                Button::new("open", "Open").on_click(cx.listener(move |this, _event, cx| {
+                Button::new("open", "Open").on_click(cx.listener(move |this, _event, _, cx| {
                     this.join(cx);
                 })),
-                Button::new("dismiss", "Dismiss").on_click(cx.listener(move |this, _event, cx| {
-                    this.dismiss(cx);
-                })),
+                Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                    move |this, _event, _, cx| {
+                        this.dismiss(cx);
+                    },
+                )),
             )
             .child(Label::new(self.owner.github_login.clone()))
             .child(Label::new(format!(

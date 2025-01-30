@@ -11,6 +11,8 @@
 mod default_colors;
 mod fallback_themes;
 mod font_family_cache;
+mod icon_theme;
+mod icon_theme_schema;
 mod registry;
 mod scale;
 mod schema;
@@ -20,18 +22,20 @@ mod styles;
 use std::path::Path;
 use std::sync::Arc;
 
-use ::settings::{Settings, SettingsStore};
+use ::settings::Settings;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{
-    px, AppContext, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString,
-    WindowAppearance, WindowBackgroundAppearance,
+    px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
+    WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
 pub use crate::default_colors::*;
 pub use crate::font_family_cache::*;
+pub use crate::icon_theme::*;
+pub use crate::icon_theme_schema::*;
 pub use crate::registry::*;
 pub use crate::scale::*;
 pub use crate::schema::*;
@@ -71,7 +75,7 @@ impl From<WindowAppearance> for Appearance {
     }
 }
 
-/// Which themes should be loaded. This is used primarlily for testing.
+/// Which themes should be loaded. This is used primarily for testing.
 pub enum LoadThemes {
     /// Only load the base theme.
     ///
@@ -83,7 +87,7 @@ pub enum LoadThemes {
 }
 
 /// Initialize the theme system.
-pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
+pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let (assets, load_user_themes) = match themes_to_load {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
@@ -96,16 +100,6 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
 
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
-
-    let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        if buffer_font_size != prev_buffer_font_size {
-            prev_buffer_font_size = buffer_font_size;
-            reset_buffer_font_size(cx);
-        }
-    })
-    .detach();
 }
 
 /// Implementing this trait allows accessing the active theme.
@@ -114,7 +108,7 @@ pub trait ActiveTheme {
     fn theme(&self) -> &Arc<Theme>;
 }
 
-impl ActiveTheme for AppContext {
+impl ActiveTheme for App {
     fn theme(&self) -> &Arc<Theme> {
         &ThemeSettings::get_global(self).active_theme
     }
@@ -361,4 +355,15 @@ pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<Theme
     }
 
     Ok(theme_family)
+}
+
+/// Asynchronously reads the icon theme from the specified path.
+pub async fn read_icon_theme(
+    icon_theme_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<IconThemeFamilyContent> {
+    let reader = fs.open_sync(icon_theme_path).await?;
+    let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
+
+    Ok(icon_theme_family)
 }

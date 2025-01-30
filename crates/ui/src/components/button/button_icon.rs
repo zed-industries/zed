@@ -65,8 +65,8 @@ impl Disableable for ButtonIcon {
     }
 }
 
-impl Selectable for ButtonIcon {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ButtonIcon {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -80,7 +80,7 @@ impl SelectableButton for ButtonIcon {
 }
 
 impl RenderOnce for ButtonIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let icon = self
             .selected_icon
             .filter(|_| self.selected)

@@ -9,19 +9,19 @@ use std::{rc::Rc, sync::Arc};
 
 pub use collab_panel::CollabPanel;
 use gpui::{
-    point, AppContext, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
+    point, App, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowKind, WindowOptions,
 };
 use panel_settings::MessageEditorSettings;
 pub use panel_settings::{
-    ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
+    ChatPanelButton, ChatPanelSettings, CollaborationPanelSettings, NotificationPanelSettings,
 };
 use release_channel::ReleaseChannel;
 use settings::Settings;
 use ui::px;
 use workspace::AppState;
 
-pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
+pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     CollaborationPanelSettings::register(cx);
     ChatPanelSettings::register(cx);
     NotificationPanelSettings::register(cx);
@@ -38,13 +38,13 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
 fn notification_window_options(
     screen: Rc<dyn PlatformDisplay>,
     size: Size<Pixels>,
-    cx: &AppContext,
+    cx: &App,
 ) -> WindowOptions {
     let notification_margin_width = px(16.);
     let notification_margin_height = px(-48.);
 
     let bounds = gpui::Bounds::<Pixels> {
-        origin: screen.bounds().upper_right()
+        origin: screen.bounds().top_right()
             - point(
                 size.width + notification_margin_width,
                 notification_margin_height,

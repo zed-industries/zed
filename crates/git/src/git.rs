@@ -6,7 +6,8 @@ mod remote;
 pub mod repository;
 pub mod status;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
+use gpui::actions;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -16,12 +17,31 @@ use std::sync::LazyLock;
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
 pub use git2 as libgit;
+pub use repository::WORK_DIRECTORY_REPO_PATH;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
 pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cookies"));
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
+
+actions!(
+    git,
+    [
+        StageFile,
+        UnstageFile,
+        ToggleStaged,
+        // Revert actions are currently in the editor crate:
+        // editor::RevertFile,
+        // editor::RevertSelectedHunks
+        StageAll,
+        UnstageAll,
+        RevertAll,
+        CommitChanges,
+        CommitAllChanges,
+        ClearCommitMessage
+    ]
+);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Oid(libgit::Oid);

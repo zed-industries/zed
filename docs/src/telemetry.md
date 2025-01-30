@@ -22,8 +22,8 @@ The telemetry settings can also be configured via the welcome screen, which can 
 Telemetry is sent from the application to our servers. Data is proxied through our servers to enable us to easily switch analytics services. We currently use:
 
 - [Axiom](https://axiom.co): Cloud-monitoring service - stores diagnostic events
-- [Clickhouse](https://clickhouse.com): Business Intelligence platform - stores both diagnostic and metric events
-- [Metabase](https://www.metabase.com): Dashboards - dashboards built around data pulled from Clickhouse
+- [Snowflake](https://snowflake.com): Business Intelligence platform - stores both diagnostic and metric events
+- [Metabase](https://www.metabase.com): Dashboards - dashboards built around data pulled from Snowflake
 
 ## Types of Telemetry
 

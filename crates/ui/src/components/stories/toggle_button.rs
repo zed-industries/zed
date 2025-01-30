@@ -6,7 +6,7 @@ use crate::{prelude::*, ToggleButton};
 pub struct ToggleButtonStory;
 
 impl Render for ToggleButtonStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<ToggleButton>())
             .child(
@@ -68,7 +68,7 @@ impl Render for ToggleButtonStory {
                                 ToggleButton::new(2, "Banana")
                                     .style(ButtonStyle::Filled)
                                     .size(ButtonSize::Large)
-                                    .selected(true)
+                                    .toggle_state(true)
                                     .middle(),
                             )
                             .child(

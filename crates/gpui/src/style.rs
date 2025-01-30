@@ -5,10 +5,11 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
-    PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, WindowContext,
+    black, phi, point, quad, rems, size, AbsoluteLength, App, Background, BackgroundTag, Bounds,
+    ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges,
+    EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length,
+    Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
+    Window,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -286,13 +287,10 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum Truncate {
-    /// Truncate the text without an ellipsis
-    #[default]
-    Truncate,
-    /// Truncate the text with an ellipsis
-    Ellipsis,
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextOverflow {
+    /// Truncate the text with an ellipsis, same as: `text-overflow: ellipsis;` in CSS
+    Ellipsis(&'static str),
 }
 
 /// The properties that can be used to style text in GPUI
@@ -336,7 +334,9 @@ pub struct TextStyle {
     pub white_space: WhiteSpace,
 
     /// The text should be truncated if it overflows the width of the element
-    pub truncate: Option<Truncate>,
+    pub text_overflow: Option<TextOverflow>,
+    /// The number of lines to display before truncating the text
+    pub line_clamp: Option<usize>,
 }
 
 impl Default for TextStyle {
@@ -361,7 +361,8 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            text_overflow: None,
+            line_clamp: None,
         }
     }
 }
@@ -508,7 +509,7 @@ impl Style {
             } => None,
             _ => {
                 let mut min = bounds.origin;
-                let mut max = bounds.lower_right();
+                let mut max = bounds.bottom_right();
 
                 if self
                     .border_color
@@ -529,12 +530,12 @@ impl Style {
                     // x visible, y hidden
                     (true, false) => Bounds::from_corners(
                         point(min.x, bounds.origin.y),
-                        point(max.x, bounds.lower_right().y),
+                        point(max.x, bounds.bottom_right().y),
                     ),
                     // x hidden, y visible
                     (false, true) => Bounds::from_corners(
                         point(bounds.origin.x, min.y),
-                        point(bounds.lower_right().x, max.y),
+                        point(bounds.bottom_right().x, max.y),
                     ),
                     // both hidden
                     (false, false) => Bounds::from_corners(min, max),
@@ -549,8 +550,9 @@ impl Style {
     pub fn paint(
         &self,
         bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
-        continuation: impl FnOnce(&mut WindowContext),
+        window: &mut Window,
+        cx: &mut App,
+        continuation: impl FnOnce(&mut Window, &mut App),
     ) {
         #[cfg(debug_assertions)]
         if self.debug_below {
@@ -559,12 +561,12 @@ impl Style {
 
         #[cfg(debug_assertions)]
         if self.debug || cx.has_global::<DebugBelow>() {
-            cx.paint_quad(crate::outline(bounds, crate::red()));
+            window.paint_quad(crate::outline(bounds, crate::red()));
         }
 
-        let rem_size = cx.rem_size();
+        let rem_size = window.rem_size();
 
-        cx.paint_shadows(
+        window.paint_shadows(
             bounds,
             self.corner_radii.to_pixels(bounds.size, rem_size),
             &self.box_shadow,
@@ -572,9 +574,20 @@ impl Style {
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.map_or(false, |color| !color.is_transparent()) {
-            let mut border_color = background_color.unwrap_or_default();
+            let mut border_color = match background_color {
+                Some(color) => match color.tag {
+                    BackgroundTag::Solid => color.solid,
+                    BackgroundTag::LinearGradient => color
+                        .colors
+                        .first()
+                        .map(|stop| stop.color)
+                        .unwrap_or_default(),
+                    BackgroundTag::PatternSlash => color.solid,
+                },
+                None => Hsla::default(),
+            };
             border_color.a = 0.;
-            cx.paint_quad(quad(
+            window.paint_quad(quad(
                 bounds,
                 self.corner_radii.to_pixels(bounds.size, rem_size),
                 background_color.unwrap_or_default(),
@@ -583,7 +596,7 @@ impl Style {
             ));
         }
 
-        continuation(cx);
+        continuation(window, cx);
 
         if self.is_border_visible() {
             let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
@@ -593,19 +606,19 @@ impl Style {
 
             let top_bounds = Bounds::from_corners(
                 bounds.origin,
-                bounds.upper_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
             );
             let bottom_bounds = Bounds::from_corners(
-                bounds.lower_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                bounds.lower_right(),
+                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
+                bounds.bottom_right(),
             );
             let left_bounds = Bounds::from_corners(
-                top_bounds.lower_left(),
+                top_bounds.bottom_left(),
                 bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
             );
             let right_bounds = Bounds::from_corners(
-                top_bounds.lower_right() - point(max_border_width, Pixels::ZERO),
-                bottom_bounds.upper_right(),
+                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
+                bottom_bounds.top_right(),
             );
 
             let mut background = self.border_color.unwrap_or_default();
@@ -618,31 +631,31 @@ impl Style {
                 self.border_color.unwrap_or_default(),
             );
 
-            cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
-                cx.paint_quad(quad.clone());
+            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
+                window.paint_quad(quad.clone());
             });
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: right_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad.clone());
+                |window| {
+                    window.paint_quad(quad.clone());
                 },
             );
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: bottom_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad.clone());
+                |window| {
+                    window.paint_quad(quad.clone());
                 },
             );
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: left_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad);
+                |window| {
+                    window.paint_quad(quad);
                 },
             );
         }
@@ -737,12 +750,14 @@ pub struct StrikethroughStyle {
 #[derive(Clone, Debug)]
 pub enum Fill {
     /// A solid color fill.
-    Color(Hsla),
+    Color(Background),
 }
 
 impl Fill {
     /// Unwrap this fill into a solid color, if it is one.
-    pub fn color(&self) -> Option<Hsla> {
+    ///
+    /// If the fill is not a solid color, this method returns `None`.
+    pub fn color(&self) -> Option<Background> {
         match self {
             Fill::Color(color) => Some(*color),
         }
@@ -751,19 +766,25 @@ impl Fill {
 
 impl Default for Fill {
     fn default() -> Self {
-        Self::Color(Hsla::default())
+        Self::Color(Background::default())
     }
 }
 
 impl From<Hsla> for Fill {
     fn from(color: Hsla) -> Self {
-        Self::Color(color)
+        Self::Color(color.into())
     }
 }
 
 impl From<Rgba> for Fill {
     fn from(color: Rgba) -> Self {
         Self::Color(color.into())
+    }
+}
+
+impl From<Background> for Fill {
+    fn from(background: Background) -> Self {
+        Self::Color(background)
     }
 }
 

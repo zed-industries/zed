@@ -36,8 +36,22 @@
         (function_definition
             name: (identifier) @run @_pytest_method_name
             (#match? @_pytest_method_name "^test_")
-        ) @python-pytest-method
+        ) @_python-pytest-method
     )
+    (#set! tag python-pytest-method)
+)
+
+; decorated pytest functions
+(
+    (module
+        (decorated_definition
+            (decorator)+ @_decorator
+            definition: (function_definition
+                name: (identifier) @run @_pytest_method_name
+                (#match? @_pytest_method_name "^test_")
+                )
+            ) @_python-pytest-method
+        )
     (#set! tag python-pytest-method)
 )
 
@@ -62,7 +76,7 @@
                     (function_definition
                         name: (identifier) @run @_pytest_method_name
                         (#match? @_pytest_method_name "^test")
-                    ) @python-pytest-method
+                    ) @_python-pytest-method
                     (#set! tag python-pytest-method)
             )
         )

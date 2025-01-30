@@ -74,11 +74,11 @@ impl Tab {
         self
     }
 
-    pub fn content_height(cx: &mut WindowContext) -> Pixels {
+    pub fn content_height(cx: &mut App) -> Pixels {
         DynamicSpacing::Base32.px(cx) - px(1.)
     }
 
-    pub fn container_height(cx: &mut WindowContext) -> Pixels {
+    pub fn container_height(cx: &mut App) -> Pixels {
         DynamicSpacing::Base32.px(cx)
     }
 }
@@ -91,8 +91,8 @@ impl InteractiveElement for Tab {
 
 impl StatefulInteractiveElement for Tab {}
 
-impl Selectable for Tab {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for Tab {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -106,7 +106,7 @@ impl ParentElement for Tab {
 
 impl RenderOnce for Tab {
     #[allow(refining_impl_trait)]
-    fn render(self, cx: &mut WindowContext) -> Stateful<Div> {
+    fn render(self, _: &mut Window, cx: &mut App) -> Stateful<Div> {
         let (text_color, tab_bg, _tab_hover_bg, _tab_active_bg) = match self.selected {
             false => (
                 cx.theme().colors().text_muted,

@@ -1,10 +1,10 @@
 [package]
 name = "gpui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
-publish = false
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -22,7 +22,7 @@ test-support = [
     "x11",
 ]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
+macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck", "objc2", "objc2-metal"]
 wayland = [
     "blade-graphics",
     "blade-macros",
@@ -108,22 +108,7 @@ thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
-
-[dev-dependencies]
-backtrace = "0.3"
-collections = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
-rand.workspace = true
-util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
-
-[build-dependencies]
-embed-resource = "3.0"
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
-cbindgen = { version = "0.27.0", default-features = false }
+lyon = "1.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -132,12 +117,15 @@ core-foundation.workspace = true
 core-foundation-sys = "0.8"
 core-graphics = "0.23"
 core-text = "20.1"
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true}
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
-metal = "0.29"
 objc = "0.2"
+objc2 = { version = "0.5", optional = true }
+objc2-metal = { version = "0.2", optional = true }
+#TODO: replace with "objc2"
+metal.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
@@ -145,7 +133,7 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = "0.3.0"
+oo7 = { git = "https://github.com/zed-industries/oo7", branch = "avoid-crypto-panic" }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
@@ -181,7 +169,7 @@ wayland-protocols-plasma = { version = "0.2.0", features = [
 
 # X11
 as-raw-xcb-connection = { version = "1", optional = true }
-x11rb = { version = "0.13.0", features = [
+x11rb = { version = "0.13.1", features = [
     "allow-unsafe-code",
     "xkb",
     "randr",
@@ -198,7 +186,7 @@ xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf
     "x11rb-xcb",
     "x11rb-client",
 ], optional = true }
-x11-clipboard = { version = "0.9.2", optional = true }
+x11-clipboard = { version = "0.9.3", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 blade-util.workspace = true
@@ -210,6 +198,29 @@ rand.workspace = true
 windows.workspace = true
 windows-core = "0.58"
 
+[dev-dependencies]
+backtrace = "0.3"
+collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+rand.workspace = true
+util = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
+unicode-segmentation.workspace = true
+lyon = { version = "1.0", features = ["extra"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3.0"
+naga.workspace = true
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+bindgen = "0.70.0"
+cbindgen = { version = "0.28.0", default-features = false }
+naga.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
+naga.workspace = true
+
+
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
@@ -219,16 +230,20 @@ name = "image"
 path = "examples/image/image.rs"
 
 [[example]]
-name = "set_menus"
-path = "examples/set_menus.rs"
-
-[[example]]
-name = "window_shadow"
-path = "examples/window_shadow.rs"
-
-[[example]]
 name = "input"
 path = "examples/input.rs"
+
+[[example]]
+name = "opacity"
+path = "examples/opacity.rs"
+
+[[example]]
+name = "pattern"
+path = "examples/pattern.rs"
+
+[[example]]
+name = "set_menus"
+path = "examples/set_menus.rs"
 
 [[example]]
 name = "shadow"
@@ -243,9 +258,9 @@ name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
-name = "opacity"
-path = "examples/opacity.rs"
-
-[[example]]
 name = "uniform_list"
 path = "examples/uniform_list.rs"
+
+[[example]]
+name = "window_shadow"
+path = "examples/window_shadow.rs"

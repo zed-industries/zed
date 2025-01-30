@@ -3,10 +3,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
-use collections::HashMap;
+use collections::{BTreeMap, HashMap, HashSet};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
-use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
+use gpui::{App, Context, EventEmitter, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolUse,
@@ -16,6 +16,9 @@ use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequi
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
+
+use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
+use crate::thread_store::SavedThread;
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -62,6 +65,8 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
+    context: BTreeMap<ContextId, ContextSnapshot>,
+    context_by_message: HashMap<MessageId, Vec<ContextId>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
@@ -71,7 +76,7 @@ pub struct Thread {
 }
 
 impl Thread {
-    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(tools: Arc<ToolWorkingSet>, _cx: &mut Context<Self>) -> Self {
         Self {
             id: ThreadId::new(),
             updated_at: Utc::now(),
@@ -79,6 +84,42 @@ impl Thread {
             pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            context: BTreeMap::default(),
+            context_by_message: HashMap::default(),
+            completion_count: 0,
+            pending_completions: Vec::new(),
+            tools,
+            tool_uses_by_message: HashMap::default(),
+            tool_results_by_message: HashMap::default(),
+            pending_tool_uses_by_id: HashMap::default(),
+        }
+    }
+
+    pub fn from_saved(
+        id: ThreadId,
+        saved: SavedThread,
+        tools: Arc<ToolWorkingSet>,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        let next_message_id = MessageId(saved.messages.len());
+
+        Self {
+            id,
+            updated_at: saved.updated_at,
+            summary: Some(saved.summary),
+            pending_summary: Task::ready(None),
+            messages: saved
+                .messages
+                .into_iter()
+                .map(|message| Message {
+                    id: message.id,
+                    role: message.role,
+                    text: message.text,
+                })
+                .collect(),
+            next_message_id,
+            context: BTreeMap::default(),
+            context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
@@ -108,7 +149,12 @@ impl Thread {
         self.summary.clone()
     }
 
-    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
+    pub fn summary_or_default(&self) -> SharedString {
+        const DEFAULT: SharedString = SharedString::new_static("New Thread");
+        self.summary.clone().unwrap_or(DEFAULT)
+    }
+
+    pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
     }
@@ -121,24 +167,48 @@ impl Thread {
         self.messages.iter()
     }
 
+    pub fn is_streaming(&self) -> bool {
+        !self.pending_completions.is_empty()
+    }
+
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
+    }
+
+    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
+        let context = self.context_by_message.get(&id)?;
+        Some(
+            context
+                .into_iter()
+                .filter_map(|context_id| self.context.get(&context_id))
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
     }
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
-        self.insert_message(Role::User, text, cx)
+    pub fn insert_user_message(
+        &mut self,
+        text: impl Into<String>,
+        context: Vec<ContextSnapshot>,
+        cx: &mut Context<Self>,
+    ) {
+        let message_id = self.insert_message(Role::User, text, cx);
+        let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
+        self.context
+            .extend(context.into_iter().map(|context| (context.id, context)));
+        self.context_by_message.insert(message_id, context_ids);
     }
 
     pub fn insert_message(
         &mut self,
         role: Role,
         text: impl Into<String>,
-        cx: &mut ModelContext<Self>,
-    ) {
+        cx: &mut Context<Self>,
+    ) -> MessageId {
         let id = self.next_message_id.post_inc();
         self.messages.push(Message {
             id,
@@ -147,12 +217,34 @@ impl Thread {
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
+        id
+    }
+
+    /// Returns the representation of this [`Thread`] in a textual form.
+    ///
+    /// This is the representation we use when attaching a thread as context to another thread.
+    pub fn text(&self) -> String {
+        let mut text = String::new();
+
+        for message in &self.messages {
+            text.push_str(match message.role {
+                language_model::Role::User => "User:",
+                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::System => "System:",
+            });
+            text.push('\n');
+
+            text.push_str(&message.text);
+            text.push('\n');
+        }
+
+        text
     }
 
     pub fn to_completion_request(
         &self,
         _request_kind: RequestKind,
-        _cx: &AppContext,
+        _cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             messages: vec![],
@@ -161,7 +253,13 @@ impl Thread {
             temperature: None,
         };
 
+        let mut referenced_context_ids = HashSet::default();
+
         for message in &self.messages {
+            if let Some(context_ids) = self.context_by_message.get(&message.id) {
+                referenced_context_ids.extend(context_ids);
+            }
+
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -193,6 +291,22 @@ impl Thread {
             request.messages.push(request_message);
         }
 
+        if !referenced_context_ids.is_empty() {
+            let mut context_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+            };
+
+            let referenced_context = referenced_context_ids
+                .into_iter()
+                .filter_map(|context_id| self.context.get(context_id))
+                .cloned();
+            attach_context_to_message(&mut context_message, referenced_context);
+
+            request.messages.push(context_message);
+        }
+
         request
     }
 
@@ -200,7 +314,7 @@ impl Thread {
         &mut self,
         request: LanguageModelRequest,
         model: Arc<dyn LanguageModel>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let pending_completion_id = post_inc(&mut self.completion_count);
 
@@ -229,6 +343,13 @@ impl Thread {
                                             last_message.id,
                                             chunk,
                                         ));
+                                    } else {
+                                        // If we won't have an Assistant message yet, assume this chunk marks the beginning
+                                        // of a new Assistant response.
+                                        //
+                                        // Importantly: We do *not* want to emit a `StreamedAssistantText` event here, as it
+                                        // will result in duplicating the text of the chunk in the rendered Markdown.
+                                        thread.insert_message(Role::Assistant, chunk, cx);
                                     }
                                 }
                             }
@@ -282,7 +403,7 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |_thread, cx| match result.as_ref() {
+                .update(&mut cx, |thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
                             cx.emit(ThreadEvent::UsePendingTools);
@@ -305,6 +426,8 @@ impl Thread {
                                 SharedString::from(error_message.clone()),
                             )));
                         }
+
+                        thread.cancel_last_completion();
                     }
                 })
                 .ok();
@@ -316,7 +439,7 @@ impl Thread {
         });
     }
 
-    pub fn summarize(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn summarize(&mut self, cx: &mut Context<Self>) {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
@@ -374,7 +497,7 @@ impl Thread {
         assistant_message_id: MessageId,
         tool_use_id: LanguageModelToolUseId,
         output: Task<Result<String>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn(|thread, mut cx| {
             let tool_use_id = tool_use_id.clone();
@@ -425,6 +548,17 @@ impl Thread {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
+        }
+    }
+
+    /// Cancels the last pending completion, if there are any pending.
+    ///
+    /// Returns whether a completion was canceled.
+    pub fn cancel_last_completion(&mut self) -> bool {
+        if let Some(_last_completion) = self.pending_completions.pop() {
+            true
+        } else {
+            false
         }
     }
 }

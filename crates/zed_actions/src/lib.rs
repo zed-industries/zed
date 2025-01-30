@@ -1,5 +1,6 @@
 use gpui::{actions, impl_actions};
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -10,12 +11,12 @@ use serde::Deserialize;
 // https://github.com/mmastrac/rust-ctor/issues/280
 pub fn init() {}
 
-#[derive(Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
-#[derive(Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
 pub struct OpenZedUrl {
     pub url: String,
 }
@@ -64,9 +65,10 @@ pub mod feedback {
 
 pub mod theme_selector {
     use gpui::impl_actions;
+    use schemars::JsonSchema;
     use serde::Deserialize;
 
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
     pub struct Toggle {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -75,39 +77,69 @@ pub mod theme_selector {
     impl_actions!(theme_selector, [Toggle]);
 }
 
-#[derive(Clone, Default, Deserialize, PartialEq)]
-pub struct InlineAssist {
-    pub prompt: Option<String>,
+pub mod assistant {
+    use gpui::{actions, impl_actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
+
+    #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    pub struct InlineAssist {
+        pub prompt: Option<String>,
+    }
+
+    impl_actions!(assistant, [InlineAssist]);
 }
 
-impl_actions!(assistant, [InlineAssist]);
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
 }
-gpui::impl_actions!(projects, [OpenRecent]);
-gpui::actions!(projects, [OpenRemote]);
 
-/// Spawn a task with name or open tasks modal
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct Spawn {
-    #[serde(default)]
-    /// Name of the task to spawn.
-    /// If it is not set, a modal with a list of available tasks is opened instead.
-    /// Defaults to None.
-    pub task_name: Option<String>,
+impl_actions!(projects, [OpenRecent]);
+actions!(projects, [OpenRemote]);
+
+/// Where to spawn the task in the UI.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RevealTarget {
+    /// In the central pane group, "main" editor area.
+    Center,
+    /// In the terminal dock, "regular" terminal items' place.
+    #[default]
+    Dock,
+}
+
+/// Spawn a task with name or open tasks modal.
+#[derive(Debug, PartialEq, Clone, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Spawn {
+    /// Spawns a task by the name given.
+    ByName {
+        task_name: String,
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
+    /// Spawns a task via modal's selection.
+    ViaModal {
+        /// Selected task's `reveal_target` property override.
+        #[serde(default)]
+        reveal_target: Option<RevealTarget>,
+    },
 }
 
 impl Spawn {
     pub fn modal() -> Self {
-        Self { task_name: None }
+        Self::ViaModal {
+            reveal_target: None,
+        }
     }
 }
 
-/// Rerun last task
-#[derive(PartialEq, Clone, Deserialize, Default)]
+/// Rerun the last task.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct Rerun {
     /// Controls whether the task context is reevaluated prior to execution of a task.
     /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task
@@ -125,7 +157,18 @@ pub struct Rerun {
     pub use_new_terminal: Option<bool>,
 
     /// If present, rerun the task with this ID, otherwise rerun the last task.
+    #[serde(skip)]
     pub task_id: Option<String>,
 }
 
 impl_actions!(task, [Spawn, Rerun]);
+
+pub mod outline {
+    use std::sync::OnceLock;
+
+    use gpui::{action_as, AnyView, App, Window};
+
+    action_as!(outline, ToggleOutline as Toggle);
+    /// A pointer to outline::toggle function, exposed here to sewer the breadcrumbs <-> outline dependency.
+    pub static TOGGLE_OUTLINE: OnceLock<fn(AnyView, &mut Window, &mut App)> = OnceLock::new();
+}

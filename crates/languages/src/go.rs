@@ -1,11 +1,12 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
+use project::Fs;
 use regex::Regex;
 use serde_json::json;
 use smol::fs;
@@ -15,6 +16,7 @@ use std::{
     ffi::{OsStr, OsString},
     ops::Range,
     path::PathBuf,
+    process::Output,
     str,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -35,12 +37,18 @@ impl GoLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("gopls");
 }
 
-static GOPLS_VERSION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create GOPLS_VERSION_REGEX"));
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create VERSION_REGEX"));
 
 static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"[.*+?^${}()|\[\]\\]"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
 });
+
+const BINARY: &str = if cfg!(target_os = "windows") {
+    "gopls.exe"
+} else {
+    "gopls"
+};
 
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
@@ -68,7 +76,7 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         Some(LanguageServerBinary {
@@ -81,7 +89,7 @@ impl super::LspAdapter for GoLspAdapter {
     fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
         static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
 
@@ -111,11 +119,18 @@ impl super::LspAdapter for GoLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
+        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+        let go_version_output = util::command::new_smol_command(&go)
+            .args(["version"])
+            .output()
+            .await
+            .context("failed to get go version via `go version` command`")?;
+        let go_version = parse_version_output(&go_version_output)?;
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
         if let Some(version) = *version {
-            let binary_path = container_dir.join(format!("gopls_{version}"));
+            let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {
                     remove_matching(&container_dir, |entry| {
@@ -139,8 +154,6 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-
-        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
         let install_output = util::command::new_smol_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
@@ -158,19 +171,14 @@ impl super::LspAdapter for GoLspAdapter {
             return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
         }
 
-        let installed_binary_path = gobin_dir.join("gopls");
+        let installed_binary_path = gobin_dir.join(BINARY);
         let version_output = util::command::new_smol_command(&installed_binary_path)
             .arg("version")
             .output()
             .await
             .context("failed to run installed gopls binary")?;
-        let version_stdout = str::from_utf8(&version_output.stdout)
-            .context("gopls version produced invalid utf8 output")?;
-        let version = GOPLS_VERSION_REGEX
-            .find(version_stdout)
-            .with_context(|| format!("failed to parse golps version output '{version_stdout}'"))?
-            .as_str();
-        let binary_path = container_dir.join(format!("gopls_{version}"));
+        let gopls_version = parse_version_output(&version_output)?;
+        let binary_path = container_dir.join(format!("gopls_{gopls_version}_go_{go_version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
 
         Ok(LanguageServerBinary {
@@ -190,6 +198,7 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -366,6 +375,18 @@ impl super::LspAdapter for GoLspAdapter {
     }
 }
 
+fn parse_version_output(output: &Output) -> Result<&str> {
+    let version_stdout =
+        str::from_utf8(&output.stdout).context("version command produced invalid utf8 output")?;
+
+    let version = VERSION_REGEX
+        .find(version_stdout)
+        .with_context(|| format!("failed to parse version output '{version_stdout}'"))?
+        .as_str();
+
+    Ok(version)
+}
+
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_binary_path = None;
@@ -422,7 +443,7 @@ impl ContextProvider for GoContextProvider {
         location: &Location,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
@@ -485,7 +506,7 @@ impl ContextProvider for GoContextProvider {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn language::File>>,
-        _: &AppContext,
+        _: &App,
     ) -> Option<TaskTemplates> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None

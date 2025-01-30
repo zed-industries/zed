@@ -1,8 +1,8 @@
 [package]
 name = "cli"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -25,7 +25,6 @@ anyhow.workspace = true
 clap.workspace = true
 collections.workspace = true
 ipc-channel = "0.19"
-once_cell.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 release_channel.workspace = true

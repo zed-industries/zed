@@ -1,8 +1,8 @@
 [package]
 name = "collab_ui"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -44,7 +44,6 @@ gpui.workspace = true
 language.workspace = true
 menu.workspace = true
 notifications.workspace = true
-parking_lot.workspace = true
 picker.workspace = true
 project.workspace = true
 release_channel.workspace = true
@@ -57,6 +56,7 @@ serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
+telemetry.workspace = true
 theme.workspace = true
 time.workspace = true
 time_format.workspace = true

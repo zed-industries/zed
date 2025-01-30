@@ -24,6 +24,8 @@ interface github {
     }
 
     /// Returns the latest release for the given GitHub repository.
+    ///
+    /// Takes repo as a string in the form "<owner-name>/<repo-name>", for example: "zed-industries/zed".
     latest-github-release: func(repo: string, options: github-release-options) -> result<github-release, string>;
 
     /// Returns the GitHub release with the specified tag name for the given GitHub repository.

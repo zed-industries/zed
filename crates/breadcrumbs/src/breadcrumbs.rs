@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, FocusableView, IntoElement, ParentElement, Render, StyledText,
-    Subscription, ViewContext,
+    Context, Element, EventEmitter, Focusable, IntoElement, ParentElement, Render, StyledText,
+    Subscription, Window,
 };
 use itertools::Itertools;
 use std::cmp;
@@ -37,12 +37,19 @@ impl Breadcrumbs {
 impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 
 impl Render for Breadcrumbs {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
-        let element = h_flex().text_ui(cx);
+
+        let element = h_flex()
+            .id("breadcrumb-container")
+            .flex_grow()
+            .overflow_x_scroll()
+            .text_ui(cx);
+
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
         };
+
         let Some(mut segments) = active_item.breadcrumbs(cx.theme(), cx) else {
             return element;
         };
@@ -52,6 +59,7 @@ impl Render for Breadcrumbs {
             prefix_end_ix,
             segments.len().saturating_sub(MAX_SEGMENTS / 2),
         );
+
         if suffix_start_ix > prefix_end_ix {
             segments.splice(
                 prefix_end_ix..suffix_start_ix,
@@ -64,7 +72,7 @@ impl Render for Breadcrumbs {
         }
 
         let highlighted_segments = segments.into_iter().map(|segment| {
-            let mut text_style = cx.text_style();
+            let mut text_style = window.text_style();
             if let Some(font) = segment.font {
                 text_style.font_family = font.family;
                 text_style.font_features = font.features;
@@ -82,6 +90,7 @@ impl Render for Breadcrumbs {
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
+
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
@@ -92,25 +101,30 @@ impl Render for Breadcrumbs {
                     .style(ButtonStyle::Transparent)
                     .on_click({
                         let editor = editor.clone();
-                        move |_, cx| {
-                            if let Some(editor) = editor.upgrade() {
-                                outline::toggle(editor, &editor::actions::ToggleOutline, cx)
+                        move |_, window, cx| {
+                            if let Some((editor, callback)) = editor
+                                .upgrade()
+                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                            {
+                                callback(editor.to_any(), window, cx);
                             }
                         }
                     })
-                    .tooltip(move |cx| {
+                    .tooltip(move |window, cx| {
                         if let Some(editor) = editor.upgrade() {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
-                                "Show symbol outline",
-                                &editor::actions::ToggleOutline,
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
                                 &focus_handle,
+                                window,
                                 cx,
                             )
                         } else {
                             Tooltip::for_action(
-                                "Show symbol outline",
-                                &editor::actions::ToggleOutline,
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
+                                window,
                                 cx,
                             )
                         }
@@ -128,7 +142,8 @@ impl ToolbarItemView for Breadcrumbs {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.active_item = None;
@@ -137,10 +152,11 @@ impl ToolbarItemView for Breadcrumbs {
             return ToolbarItemLocation::Hidden;
         };
 
-        let this = cx.view().downgrade();
+        let this = cx.entity().downgrade();
         self.subscription = Some(item.subscribe_to_item_events(
+            window,
             cx,
-            Box::new(move |event, cx| {
+            Box::new(move |event, _, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, cx| {
                         cx.notify();
@@ -158,7 +174,12 @@ impl ToolbarItemView for Breadcrumbs {
         item.breadcrumb_location(cx)
     }
 
-    fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
+    fn pane_focus_update(
+        &mut self,
+        pane_focused: bool,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
         self.pane_focused = pane_focused;
     }
 }

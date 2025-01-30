@@ -49,7 +49,7 @@ impl HighlightedText {
     }
 }
 impl RenderOnce for HighlightedText {
-    fn render(self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         HighlightedLabel::new(self.text, self.highlight_positions).color(self.color)
     }
 }
@@ -65,7 +65,7 @@ impl HighlightedMatchWithPaths {
 }
 
 impl RenderOnce for HighlightedMatchWithPaths {
-    fn render(mut self, _: &mut WindowContext) -> impl IntoElement {
+    fn render(mut self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         v_flex()
             .child(self.match_label.clone())
             .when(!self.paths.is_empty(), |this| {

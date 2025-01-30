@@ -73,7 +73,8 @@ message Envelope {
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;
         ExpandProjectEntryResponse expand_project_entry_response = 52;
-
+        ExpandAllForProjectEntry expand_all_for_project_entry = 291;
+        ExpandAllForProjectEntryResponse expand_all_for_project_entry_response = 292;
         UpdateDiagnosticSummary update_diagnostic_summary = 53;
         StartLanguageServer start_language_server = 54;
         UpdateLanguageServer update_language_server = 55;
@@ -304,7 +305,9 @@ message Envelope {
         InstallExtension install_extension = 287;
 
         GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289; // current max
+        GetStagedTextResponse get_staged_text_response = 289;
+
+        RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
     }
 
     reserved 87 to 88;
@@ -628,6 +631,15 @@ message ExpandProjectEntryResponse {
     uint64 worktree_scan_id = 1;
 }
 
+message ExpandAllForProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandAllForProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
 message ProjectEntryResponse {
     optional Entry entry = 1;
     uint64 worktree_scan_id = 2;
@@ -763,6 +775,7 @@ message Symbol {
     PointUtf16 start = 7;
     PointUtf16 end = 8;
     bytes signature = 9;
+    uint64 language_server_id = 10;
 }
 
 message OpenBufferForSymbol {
@@ -925,6 +938,7 @@ message Completion {
     string new_text = 3;
     uint64 server_id = 4;
     bytes lsp_completion = 5;
+    bool resolved = 6;
 }
 
 message GetCodeActions {
@@ -1030,6 +1044,7 @@ message PrepareRenameResponse {
     Anchor start = 2;
     Anchor end = 3;
     repeated VectorClockEntry version = 4;
+    bool only_unprepared_rename_supported = 5;
 }
 
 message PerformRename {
@@ -1746,6 +1761,8 @@ message User {
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
+    optional string email = 4;
+    optional string name = 5;
 }
 
 message File {
@@ -1765,7 +1782,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     reserved 6;
-    optional GitStatus git_status = 9;
+    reserved 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
@@ -1774,17 +1791,47 @@ message Entry {
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
+    repeated StatusEntry updated_statuses = 3;
+    repeated string removed_statuses = 4;
 }
 
 message StatusEntry {
     string repo_path = 1;
-    GitStatus status = 2;
+    // Can be removed once collab's min version is >=0.171.0.
+    GitStatus simple_status = 2;
+    GitFileStatus status = 3;
 }
 
 enum GitStatus {
     Added = 0;
     Modified = 1;
     Conflict = 2;
+    Deleted = 3;
+    Updated = 4;
+    TypeChanged = 5;
+    Renamed = 6;
+    Copied = 7;
+    Unmodified = 8;
+}
+
+message GitFileStatus {
+    oneof variant {
+        Untracked untracked = 1;
+        Ignored ignored = 2;
+        Unmerged unmerged = 3;
+        Tracked tracked = 4;
+    }
+
+    message Untracked {}
+    message Ignored {}
+    message Unmerged {
+        GitStatus first_head = 1;
+        GitStatus second_head = 2;
+    }
+    message Tracked {
+        GitStatus index_status = 1;
+        GitStatus worktree_status = 2;
+    }
 }
 
 message BufferState {
@@ -2537,7 +2584,6 @@ message UpdateGitBranch {
     string branch_name = 2;
     ProjectPath repository = 3;
 }
-
 message GetPanicFiles {
 }
 
@@ -2581,4 +2627,9 @@ message SyncExtensionsResponse {
 message InstallExtension {
     Extension extension = 1;
     string tmp_dir = 2;
+}
+
+message RegisterBufferWithLanguageServers{
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
 }

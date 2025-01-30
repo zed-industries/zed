@@ -73,8 +73,8 @@ impl<T> Outline<T> {
                 .map(|range| &item.text[range.start..range.end])
                 .collect::<String>();
 
-            path_candidates.push(StringMatchCandidate::new(id, path_text.clone()));
-            candidates.push(StringMatchCandidate::new(id, candidate_text));
+            path_candidates.push(StringMatchCandidate::new(id, &path_text));
+            candidates.push(StringMatchCandidate::new(id, &candidate_text));
         }
 
         Self {

@@ -10,7 +10,7 @@ use crate::{
     PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task,
     WindowAppearance, WindowParams,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
@@ -57,6 +57,7 @@ use std::{
     sync::Arc,
 };
 use strum::IntoEnumIterator;
+use util::ResultExt;
 
 #[allow(non_upper_case_globals)]
 const NSUTF8StringEncoding: NSUInteger = 4;
@@ -289,6 +290,11 @@ impl MacPlatform {
                 action,
                 os_action,
             } => {
+                // Note that this is not the standard logic for selecting which keybinding to
+                // display. Typically the last binding takes precedence for display. However, in
+                // this case the menus are not updated on context changes. To make these bindings
+                // more likely to be correct, the first binding instead takes precedence (typically
+                // from the base keymap).
                 let keystrokes = keymap
                     .bindings_for_action(action.as_ref())
                     .next()
@@ -758,6 +764,10 @@ impl Platform for MacPlatform {
         done_rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        true
+    }
+
     fn reveal_path(&self, path: &Path) {
         unsafe {
             let path = path.to_path_buf();
@@ -779,15 +789,16 @@ impl Platform for MacPlatform {
     }
 
     fn open_with_system(&self, path: &Path) {
-        let path = path.to_path_buf();
+        let path = path.to_owned();
         self.0
             .lock()
             .background_executor
             .spawn(async move {
-                std::process::Command::new("open")
+                let _ = std::process::Command::new("open")
                     .arg(path)
                     .spawn()
-                    .expect("Failed to open file");
+                    .context("invoking open command")
+                    .log_err();
             })
             .detach();
     }

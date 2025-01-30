@@ -181,7 +181,7 @@ impl Button {
         self
     }
 
-    /// Binds a key combination to the button for keyboard shortcuts.
+    /// Display the keybinding that triggers the button action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
         self
@@ -194,7 +194,7 @@ impl Button {
     }
 }
 
-impl Selectable for Button {
+impl Toggleable for Button {
     /// Sets the selected state of the button.
     ///
     /// This method allows the selection state of the button to be specified.
@@ -213,8 +213,8 @@ impl Selectable for Button {
     /// ```
     ///
     /// Use [`selected_style`](Button::selected_style) to change the style of the button when it is selected.
-    fn selected(mut self, selected: bool) -> Self {
-        self.base = self.base.selected(selected);
+    fn toggle_state(mut self, selected: bool) -> Self {
+        self.base = self.base.toggle_state(selected);
         self
     }
 }
@@ -271,7 +271,7 @@ impl Clickable for Button {
     /// Sets the click event handler for the button.
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -359,16 +359,14 @@ impl ButtonCommon for Button {
     /// use ui::Tooltip;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .tooltip(move |cx| {
-    ///         Tooltip::text("This is a tooltip", cx)
-    ///     })
+    ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
     ///     .on_click(|event, cx| {
     ///         // Handle click event
     ///     });
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -381,7 +379,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(self, cx: &mut WindowContext) -> ButtonLike {
+    fn render(self, _window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -405,7 +403,7 @@ impl RenderOnce for Button {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
                             .disabled(is_disabled)
-                            .selected(is_selected)
+                            .toggle_state(is_selected)
                             .selected_icon(self.selected_icon)
                             .selected_icon_color(self.selected_icon_color)
                             .size(self.icon_size)
@@ -429,7 +427,7 @@ impl RenderOnce for Button {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
                             .disabled(is_disabled)
-                            .selected(is_selected)
+                            .toggle_state(is_selected)
                             .selected_icon(self.selected_icon)
                             .selected_icon_color(self.selected_icon_color)
                             .size(self.icon_size)
@@ -445,7 +443,7 @@ impl ComponentPreview for Button {
         "A button allows users to take actions, and make choices, with a single tap."
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Styles",
@@ -474,9 +472,9 @@ impl ComponentPreview for Button {
                             .style(ButtonStyle::Tinted(TintColor::Accent)),
                     ),
                     single_example(
-                        "Negative",
-                        Button::new("tinted_negative", "Negative")
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
+                        "Error",
+                        Button::new("tinted_negative", "Error")
+                            .style(ButtonStyle::Tinted(TintColor::Error)),
                     ),
                     single_example(
                         "Warning",
@@ -484,9 +482,9 @@ impl ComponentPreview for Button {
                             .style(ButtonStyle::Tinted(TintColor::Warning)),
                     ),
                     single_example(
-                        "Positive",
-                        Button::new("tinted_positive", "Positive")
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
+                        "Success",
+                        Button::new("tinted_positive", "Success")
+                            .style(ButtonStyle::Tinted(TintColor::Success)),
                     ),
                 ],
             ),
@@ -500,7 +498,7 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Selected",
-                        Button::new("selected", "Selected").selected(true),
+                        Button::new("selected", "Selected").toggle_state(true),
                     ),
                 ],
             ),
@@ -527,8 +525,8 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Tinted Icons",
-                        Button::new("icon_color", "Delete")
-                            .style(ButtonStyle::Tinted(TintColor::Negative))
+                        Button::new("tinted_icons", "Error")
+                            .style(ButtonStyle::Tinted(TintColor::Error))
                             .color(Color::Error)
                             .icon_color(Color::Error)
                             .icon(IconName::Trash)

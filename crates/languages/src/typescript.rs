@@ -3,13 +3,13 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
 use project::ContextProviderWithTasks;
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::{json, Value};
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
@@ -73,19 +73,29 @@ impl TypeScriptLspAdapter {
     const NEW_SERVER_PATH: &'static str = "node_modules/typescript-language-server/lib/cli.mjs";
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
+    const PACKAGE_NAME: &str = "typescript";
     pub fn new(node: NodeRuntime) -> Self {
         TypeScriptLspAdapter { node }
     }
-    async fn tsdk_path(adapter: &Arc<dyn LspAdapterDelegate>) -> &'static str {
+    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
             .is_ok();
 
-        if is_yarn {
+        let tsdk_path = if is_yarn {
             ".yarn/sdks/typescript/lib"
         } else {
             "node_modules/typescript/lib"
+        };
+
+        if fs
+            .is_dir(&adapter.worktree_root_path().join(tsdk_path))
+            .await
+        {
+            Some(tsdk_path)
+        } else {
+            None
         }
     }
 }
@@ -114,6 +124,36 @@ impl LspAdapter for TypeScriptLspAdapter {
         }) as Box<_>)
     }
 
+    async fn check_if_version_installed(
+        &self,
+        version: &(dyn 'static + Send + Any),
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
+        let server_path = container_dir.join(Self::NEW_SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                &container_dir,
+                version.typescript_version.as_str(),
+            )
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: typescript_server_binary_arguments(&server_path),
+            })
+        }
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -122,32 +162,22 @@ impl LspAdapter for TypeScriptLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
-        let package_name = "typescript";
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                package_name,
-                &server_path,
+        self.node
+            .npm_install_packages(
                 &container_dir,
-                latest_version.typescript_version.as_str(),
+                &[
+                    (
+                        Self::PACKAGE_NAME,
+                        latest_version.typescript_version.as_str(),
+                    ),
+                    (
+                        "typescript-language-server",
+                        latest_version.server_version.as_str(),
+                    ),
+                ],
             )
-            .await;
-
-        if should_install_language_server {
-            self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[
-                        (package_name, latest_version.typescript_version.as_str()),
-                        (
-                            "typescript-language-server",
-                            latest_version.server_version.as_str(),
-                        ),
-                    ],
-                )
-                .await?;
-        }
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
@@ -191,9 +221,16 @@ impl LspAdapter for TypeScriptLspAdapter {
             _ => None,
         }?;
 
-        let text = match &item.detail {
-            Some(detail) => format!("{} {}", item.label, detail),
-            None => item.label.clone(),
+        let text = if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{} {}", item.label, description)
+        } else if let Some(detail) = &item.detail {
+            format!("{} {}", item.label, detail)
+        } else {
+            item.label.clone()
         };
 
         Some(language::CodeLabel {
@@ -205,9 +242,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        fs: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(adapter).await;
+        let tsdk_path = Self::tsdk_path(fs, adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
@@ -229,9 +267,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
@@ -325,9 +364,10 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
 
@@ -358,6 +398,11 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let working_directory = eslint_user_settings
+            .get("workingDirectory")
+            .cloned()
+            .unwrap_or_else(|| json!({"mode": "auto"}));
+
         let problems = eslint_user_settings
             .get("problems")
             .cloned()
@@ -379,7 +424,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "rulesCustomizations": rules_customizations,
                 "run": "onType",
                 "nodePath": node_path,
-                "workingDirectory": {"mode": "auto"},
+                "workingDirectory": working_directory,
                 "workspaceFolder": {
                     "uri": workspace_root,
                     "name": workspace_root.file_name()
@@ -548,7 +593,7 @@ async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
     use unindent::Unindent;
 
     #[gpui::test]
@@ -573,8 +618,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer =
-            cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline

@@ -560,6 +560,21 @@ fn populate_defaults(manifest: &mut ExtensionManifest, extension_path: &Path) ->
         }
     }
 
+    let icon_themes_dir = extension_path.join("icon_themes");
+    if icon_themes_dir.exists() {
+        for entry in fs::read_dir(&icon_themes_dir).context("failed to list icon themes dir")? {
+            let entry = entry?;
+            let icon_theme_path = entry.path();
+            if icon_theme_path.extension() == Some("json".as_ref()) {
+                let relative_icon_theme_path =
+                    icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
+                if !manifest.icon_themes.contains(&relative_icon_theme_path) {
+                    manifest.icon_themes.push(relative_icon_theme_path);
+                }
+            }
+        }
+    }
+
     let snippets_json_path = extension_path.join("snippets.json");
     if snippets_json_path.exists() {
         manifest.snippets = Some(snippets_json_path);

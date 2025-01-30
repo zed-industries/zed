@@ -2,9 +2,8 @@
 
 pub use gpui::prelude::*;
 pub use gpui::{
-    div, px, relative, rems, AbsoluteLength, DefiniteLength, Div, Element, ElementId,
-    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, ViewContext,
-    WindowContext,
+    div, px, relative, rems, AbsoluteLength, App, Context, DefiniteLength, Div, Element, ElementId,
+    InteractiveElement, ParentElement, Pixels, Rems, RenderOnce, SharedString, Styled, Window,
 };
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};
@@ -12,8 +11,8 @@ pub use crate::traits::clickable::*;
 pub use crate::traits::component_preview::*;
 pub use crate::traits::disableable::*;
 pub use crate::traits::fixed::*;
-pub use crate::traits::selectable::*;
 pub use crate::traits::styled_ext::*;
+pub use crate::traits::toggleable::*;
 pub use crate::traits::visible_on_hover::*;
 pub use crate::DynamicSpacing;
 pub use crate::{h_flex, h_group, v_flex, v_group};

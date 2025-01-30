@@ -1,24 +1,24 @@
 mod event_coalescer;
 
-use crate::{ChannelId, TelemetrySettings};
+use crate::TelemetrySettings;
 use anyhow::Result;
 use clock::SystemClock;
 use collections::{HashMap, HashSet};
-use futures::Future;
-use gpui::{AppContext, BackgroundExecutor, Task};
+use futures::channel::mpsc;
+use futures::{Future, StreamExt};
+use gpui::{App, BackgroundExecutor, Task};
 use http_client::{self, AsyncBody, HttpClient, HttpClientWithUrl, Method, Request};
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Write;
+use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
-    ActionEvent, AppEvent, AssistantEvent, CallEvent, EditEvent, EditorEvent, Event,
-    EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, ReplEvent, SettingEvent,
+    AppEvent, AssistantEvent, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -83,7 +83,7 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
-static ZED_CLIENT_CHECKSUM_SEED: Lazy<Option<Vec<u8>>> = Lazy::new(|| {
+static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
     option_env!("ZED_CLIENT_CHECKSUM_SEED")
         .map(|s| s.as_bytes().into())
         .or_else(|| {
@@ -178,7 +178,7 @@ impl Telemetry {
     pub fn new(
         clock: Arc<dyn SystemClock>,
         client: Arc<HttpClientWithUrl>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Arc<Self> {
         let release_channel =
             ReleaseChannel::try_global(cx).map(|release_channel| release_channel.display_name());
@@ -244,13 +244,27 @@ impl Telemetry {
         })
         .detach();
 
-        // TODO: Replace all hardware stuff with nested SystemSpecs json
         let this = Arc::new(Self {
             clock,
             http_client: client,
             executor: cx.background_executor().clone(),
             state,
         });
+
+        let (tx, mut rx) = mpsc::unbounded();
+        ::telemetry::init(tx);
+
+        cx.background_executor()
+            .spawn({
+                let this = Arc::downgrade(&this);
+                async move {
+                    while let Some(event) = rx.next().await {
+                        let Some(state) = this.upgrade() else { break };
+                        state.report_event(Event::Flexible(event))
+                    }
+                }
+            })
+            .detach();
 
         // We should only ever have one instance of Telemetry, leak the subscription to keep it alive
         // rather than store in TelemetryState, complicating spawn as subscriptions are not Send
@@ -285,7 +299,7 @@ impl Telemetry {
         system_id: Option<String>,
         installation_id: Option<String>,
         session_id: String,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let mut state = self.state.lock();
         state.system_id = system_id.map(|id| id.into());
@@ -319,59 +333,26 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_editor_event(
-        self: &Arc<Self>,
-        file_extension: Option<String>,
-        vim_mode: bool,
-        operation: &'static str,
-        copilot_enabled: bool,
-        copilot_enabled_for_language: bool,
-        is_via_ssh: bool,
-    ) {
-        let event = Event::Editor(EditorEvent {
-            file_extension,
-            vim_mode,
-            operation: operation.into(),
-            copilot_enabled,
-            copilot_enabled_for_language,
-            is_via_ssh,
-        });
-
-        self.report_event(event)
-    }
-
-    pub fn report_inline_completion_event(
-        self: &Arc<Self>,
-        provider: String,
-        suggestion_accepted: bool,
-        file_extension: Option<String>,
-    ) {
-        let event = Event::InlineCompletion(InlineCompletionEvent {
-            provider,
-            suggestion_accepted,
-            file_extension,
-        });
-
-        self.report_event(event)
-    }
-
     pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
-        self.report_event(Event::Assistant(event));
-    }
+        let event_type = match event.phase {
+            AssistantPhase::Response => "Assistant Responded",
+            AssistantPhase::Invoked => "Assistant Invoked",
+            AssistantPhase::Accepted => "Assistant Response Accepted",
+            AssistantPhase::Rejected => "Assistant Response Rejected",
+        };
 
-    pub fn report_call_event(
-        self: &Arc<Self>,
-        operation: &'static str,
-        room_id: Option<u64>,
-        channel_id: Option<ChannelId>,
-    ) {
-        let event = Event::Call(CallEvent {
-            operation: operation.to_string(),
-            room_id,
-            channel_id: channel_id.map(|cid| cid.0),
-        });
-
-        self.report_event(event)
+        telemetry::event!(
+            event_type,
+            conversation_id = event.conversation_id,
+            kind = event.kind,
+            phase = event.phase,
+            message_id = event.message_id,
+            model = event.model,
+            model_provider = event.model_provider,
+            response_latency = event.response_latency,
+            error_message = event.error_message,
+            language_name = event.language_name,
+        );
     }
 
     pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {
@@ -380,22 +361,6 @@ impl Telemetry {
         self.report_event(event.clone());
 
         event
-    }
-
-    pub fn report_setting_event(self: &Arc<Self>, setting: &'static str, value: String) {
-        let event = Event::Setting(SettingEvent {
-            setting: setting.to_string(),
-            value,
-        });
-
-        self.report_event(event)
-    }
-
-    pub fn report_extension_event(self: &Arc<Self>, extension_id: Arc<str>, version: Arc<str>) {
-        self.report_event(Event::Extension(ExtensionEvent {
-            extension_id,
-            version,
-        }))
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
@@ -415,15 +380,6 @@ impl Telemetry {
 
             self.report_event(event);
         }
-    }
-
-    pub fn report_action_event(self: &Arc<Self>, source: &'static str, action: String) {
-        let event = Event::Action(ActionEvent {
-            source: source.to_string(),
-            action,
-        });
-
-        self.report_event(event)
     }
 
     pub fn report_discovered_project_events(
@@ -470,21 +426,6 @@ impl Telemetry {
         for project_type_name in project_type_names {
             self.report_app_event(format!("open {} project", project_type_name));
         }
-    }
-
-    pub fn report_repl_event(
-        self: &Arc<Self>,
-        kernel_language: String,
-        kernel_status: String,
-        repl_session_id: String,
-    ) {
-        let event = Event::Repl(ReplEvent {
-            kernel_language,
-            kernel_status,
-            repl_session_id,
-        });
-
-        self.report_event(event)
     }
 
     fn report_event(self: &Arc<Self>, event: Event) {

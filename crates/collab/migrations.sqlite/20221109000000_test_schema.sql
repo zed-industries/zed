@@ -3,6 +3,7 @@ CREATE TABLE "users" (
     "github_login" VARCHAR,
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
+    "name" TEXT,
     "invite_code" VARCHAR(64),
     "invite_count" INTEGER NOT NULL DEFAULT 0,
     "inviter_id" INTEGER REFERENCES users (id),
@@ -105,6 +106,25 @@ CREATE TABLE "worktree_repositories" (
 );
 CREATE INDEX "index_worktree_repositories_on_project_id" ON "worktree_repositories" ("project_id");
 CREATE INDEX "index_worktree_repositories_on_project_id_and_worktree_id" ON "worktree_repositories" ("project_id", "worktree_id");
+
+CREATE TABLE "worktree_repository_statuses" (
+    "project_id" INTEGER NOT NULL,
+    "worktree_id" INT8 NOT NULL,
+    "work_directory_id" INT8 NOT NULL,
+    "repo_path" VARCHAR NOT NULL,
+    "status" INT8 NOT NULL,
+    "status_kind" INT4 NOT NULL,
+    "first_status" INT4 NULL,
+    "second_status" INT4 NULL,
+    "scan_id" INT8 NOT NULL,
+    "is_deleted" BOOL NOT NULL,
+    PRIMARY KEY(project_id, worktree_id, work_directory_id, repo_path),
+    FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
+);
+CREATE INDEX "index_wt_repos_statuses_on_project_id" ON "worktree_repository_statuses" ("project_id");
+CREATE INDEX "index_wt_repos_statuses_on_project_id_and_wt_id" ON "worktree_repository_statuses" ("project_id", "worktree_id");
+CREATE INDEX "index_wt_repos_statuses_on_project_id_and_wt_id_and_wd_id" ON "worktree_repository_statuses" ("project_id", "worktree_id", "work_directory_id");
 
 CREATE TABLE "worktree_settings_files" (
     "project_id" INTEGER NOT NULL,
@@ -422,7 +442,8 @@ CREATE TABLE IF NOT EXISTS billing_subscriptions (
     billing_customer_id INTEGER NOT NULL REFERENCES billing_customers(id),
     stripe_subscription_id TEXT NOT NULL,
     stripe_subscription_status TEXT NOT NULL,
-    stripe_cancel_at TIMESTAMP
+    stripe_cancel_at TIMESTAMP,
+    stripe_cancellation_reason TEXT
 );
 
 CREATE INDEX "ix_billing_subscriptions_on_billing_customer_id" ON billing_subscriptions (billing_customer_id);

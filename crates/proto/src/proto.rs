@@ -174,6 +174,8 @@ messages!(
     (Error, Foreground),
     (ExpandProjectEntry, Foreground),
     (ExpandProjectEntryResponse, Foreground),
+    (ExpandAllForProjectEntry, Foreground),
+    (ExpandAllForProjectEntryResponse, Foreground),
     (Follow, Foreground),
     (FollowResponse, Foreground),
     (FormatBuffers, Foreground),
@@ -373,6 +375,7 @@ messages!(
     (SyncExtensions, Background),
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
+    (RegisterBufferWithLanguageServers, Background),
 );
 
 request_messages!(
@@ -393,6 +396,7 @@ request_messages!(
     (DeleteChannel, Ack),
     (DeleteProjectEntry, ProjectEntryResponse),
     (ExpandProjectEntry, ExpandProjectEntryResponse),
+    (ExpandAllForProjectEntry, ExpandAllForProjectEntryResponse),
     (Follow, FollowResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
@@ -499,6 +503,7 @@ request_messages!(
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
+    (RegisterBufferWithLanguageServers, Ack),
 );
 
 entity_messages!(
@@ -516,6 +521,7 @@ entity_messages!(
     CreateProjectEntry,
     DeleteProjectEntry,
     ExpandProjectEntry,
+    ExpandAllForProjectEntry,
     FindSearchCandidates,
     FormatBuffers,
     GetCodeActions,
@@ -584,6 +590,7 @@ entity_messages!(
     ActiveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
+    RegisterBufferWithLanguageServers,
 );
 
 entity_messages!(
@@ -677,7 +684,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
         if !repository_map.is_empty() {
             for entry in &updated_entries {
                 if let Some(repo) = repository_map.remove(&entry.id) {
-                    updated_repositories.push(repo)
+                    updated_repositories.push(repo);
                 }
             }
         }

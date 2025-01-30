@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use language::{
     language_settings::AllLanguageSettings, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::lsp_store::language_server_settings;
+use project::{lsp_store::language_server_settings, Fs};
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use smol::fs;
@@ -31,6 +31,7 @@ pub struct YamlLspAdapter {
 
 impl YamlLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("yaml-language-server");
+    const PACKAGE_NAME: &str = "yaml-language-server";
     pub fn new(node: NodeRuntime) -> Self {
         YamlLspAdapter { node }
     }
@@ -53,6 +54,22 @@ impl LspAdapter for YamlLspAdapter {
         ) as Box<_>)
     }
 
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec!["--stdio".into()],
+        })
+    }
+
     async fn fetch_server_binary(
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
@@ -61,24 +78,44 @@ impl LspAdapter for YamlLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "yaml-language-server";
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
-            .await;
-
-        if should_install_language_server {
-            self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await?;
-        }
+        self.node
+            .npm_install_packages(
+                &container_dir,
+                &[(Self::PACKAGE_NAME, latest_version.as_str())],
+            )
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
             arguments: server_binary_arguments(&server_path),
         })
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        version: &(dyn 'static + Send + Any),
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let version = version.downcast_ref::<String>().unwrap();
+        let server_path = container_dir.join(SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -91,9 +128,10 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Value> {
         let location = SettingsLocation {
             worktree_id: delegate.worktree_id(),
@@ -105,7 +143,11 @@ impl LspAdapter for YamlLspAdapter {
                 .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
         })?;
-        let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});
+
+        let mut options = serde_json::json!({
+            "[yaml]": {"editor.tabSize": tab_size},
+            "yaml": {"format": {"enable": true}}
+        });
 
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)

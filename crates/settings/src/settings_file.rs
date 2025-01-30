@@ -1,9 +1,8 @@
 use crate::{settings_store::SettingsStore, Settings};
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
-use gpui::{AppContext, BackgroundExecutor, ReadGlobal, UpdateGlobal};
+use gpui::{App, BackgroundExecutor, ReadGlobal, UpdateGlobal};
 use std::{path::PathBuf, sync::Arc, time::Duration};
-use util::ResultExt;
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
@@ -65,17 +64,19 @@ pub fn watch_config_file(
 
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
+    cx: &mut App,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
 ) {
     let user_settings_content = cx
         .background_executor()
         .block(user_settings_file_rx.next())
         .unwrap();
     SettingsStore::update_global(cx, |store, cx| {
-        store
-            .set_user_settings(&user_settings_content, cx)
-            .log_err();
+        let result = store.set_user_settings(&user_settings_content, cx);
+        if let Err(err) = &result {
+            log::error!("Failed to load user settings: {err}");
+        }
+        settings_changed(result.err(), cx);
     });
     cx.spawn(move |cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
@@ -85,7 +86,7 @@ pub fn handle_settings_file_changes(
                     log::error!("Failed to load user settings: {err}");
                 }
                 settings_changed(result.err(), cx);
-                cx.refresh();
+                cx.refresh_windows();
             });
             if result.is_err() {
                 break; // App dropped
@@ -97,8 +98,8 @@ pub fn handle_settings_file_changes(
 
 pub fn update_settings_file<T: Settings>(
     fs: Arc<dyn Fs>,
-    cx: &AppContext,
-    update: impl 'static + Send + FnOnce(&mut T::FileContent, &AppContext),
+    cx: &App,
+    update: impl 'static + Send + FnOnce(&mut T::FileContent, &App),
 ) {
     SettingsStore::global(cx).update_settings_file::<T>(fs, update);
 }

@@ -32,15 +32,15 @@ impl ListSubHeader {
     }
 }
 
-impl Selectable for ListSubHeader {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListSubHeader {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 }
 
 impl RenderOnce for ListSubHeader {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .flex_1()
             .w_full()
@@ -49,7 +49,7 @@ impl RenderOnce for ListSubHeader {
             .px(DynamicSpacing::Base02.rems(cx))
             .child(
                 div()
-                    .h_6()
+                    .h_5()
                     .when(self.inset, |this| this.px_2())
                     .when(self.selected, |this| {
                         this.bg(cx.theme().colors().ghost_element_selected)
@@ -70,7 +70,11 @@ impl RenderOnce for ListSubHeader {
                                     Icon::new(i).color(Color::Muted).size(IconSize::Small)
                                 }),
                             )
-                            .child(Label::new(self.label.clone()).color(Color::Muted)),
+                            .child(
+                                Label::new(self.label.clone())
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
                     ),
             )
     }

@@ -2,8 +2,8 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 use crate::{
-    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Background, Bounds, ContentMask,
+    Corners, Edges, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -458,7 +458,7 @@ pub(crate) struct Quad {
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub background: Hsla,
+    pub background: Background,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
@@ -671,7 +671,7 @@ pub struct Path<P: Clone + Default + Debug> {
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
-    pub(crate) color: Hsla,
+    pub(crate) color: Background,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
@@ -715,6 +715,13 @@ impl Path<Pixels> {
         }
     }
 
+    /// Move the start, current point to the given point.
+    pub fn move_to(&mut self, to: Point<Pixels>) {
+        self.contour_count += 1;
+        self.start = to;
+        self.current = to;
+    }
+
     /// Draw a straight line from the current point to the given point.
     pub fn line_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
@@ -744,7 +751,8 @@ impl Path<Pixels> {
         self.current = to;
     }
 
-    fn push_triangle(
+    /// Push a triangle to the Path.
+    pub fn push_triangle(
         &mut self,
         xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
         st: (Point<f32>, Point<f32>, Point<f32>),

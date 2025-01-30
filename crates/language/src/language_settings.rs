@@ -9,7 +9,7 @@ use ec4rs::{
     Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::AppContext;
+use gpui::App;
 use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
@@ -27,7 +27,7 @@ use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 /// Initializes the language settings.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     AllLanguageSettings::register(cx);
 }
 
@@ -35,7 +35,7 @@ pub fn init(cx: &mut AppContext) {
 pub fn language_settings<'a>(
     language: Option<LanguageName>,
     file: Option<&'a Arc<dyn File>>,
-    cx: &'a AppContext,
+    cx: &'a App,
 ) -> Cow<'a, LanguageSettings> {
     let location = file.map(|f| SettingsLocation {
         worktree_id: f.worktree_id(cx),
@@ -47,7 +47,7 @@ pub fn language_settings<'a>(
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
     file: Option<&'a Arc<dyn File>>,
-    cx: &'a AppContext,
+    cx: &'a App,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| SettingsLocation {
         worktree_id: f.worktree_id(cx),
@@ -138,6 +138,12 @@ pub struct LanguageSettings {
     pub linked_edits: bool,
     /// Task configuration for this language.
     pub tasks: LanguageTaskConfig,
+    /// Whether to pop the completions menu while typing in an editor without
+    /// explicitly requesting it.
+    pub show_completions_on_input: bool,
+    /// Whether to display inline and alongside documentation for items in the
+    /// completions menu.
+    pub show_completion_documentation: bool,
 }
 
 impl LanguageSettings {
@@ -197,6 +203,7 @@ pub enum InlineCompletionProvider {
     #[default]
     Copilot,
     Supermaven,
+    Zed,
 }
 
 /// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
@@ -381,6 +388,16 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {}
     pub tasks: Option<LanguageTaskConfig>,
+    /// Whether to pop the completions menu while typing in an editor without
+    /// explicitly requesting it.
+    ///
+    /// Default: true
+    pub show_completions_on_input: Option<bool>,
+    /// Whether to display inline and alongside documentation for items in the
+    /// completions menu.
+    ///
+    /// Default: true
+    pub show_completion_documentation: Option<bool>,
 }
 
 /// The contents of the inline completion settings.
@@ -840,7 +857,7 @@ impl AllLanguageSettings {
         &'a self,
         location: Option<SettingsLocation<'a>>,
         language_name: Option<&LanguageName>,
-        cx: &'a AppContext,
+        cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
         let settings = language_name
             .and_then(|name| self.languages.get(name))
@@ -873,7 +890,7 @@ impl AllLanguageSettings {
         &self,
         language: Option<&Arc<Language>>,
         path: Option<&Path>,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool {
         if let Some(path) = path {
             if !self.inline_completions_enabled_for_path(path) {
@@ -962,7 +979,7 @@ impl settings::Settings for AllLanguageSettings {
 
     type FileContent = AllLanguageSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let default_value = sources.default;
 
         // A default is provided for all settings.
@@ -1078,7 +1095,7 @@ impl settings::Settings for AllLanguageSettings {
     fn json_schema(
         generator: &mut schemars::gen::SchemaGenerator,
         params: &settings::SettingsJsonSchemaParams,
-        _: &AppContext,
+        _: &App,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<Self::FileContent>();
 
@@ -1185,6 +1202,14 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.extend_comment_on_newline,
     );
     merge(&mut settings.inlay_hints, src.inlay_hints);
+    merge(
+        &mut settings.show_completions_on_input,
+        src.show_completions_on_input,
+    );
+    merge(
+        &mut settings.show_completion_documentation,
+        src.show_completion_documentation,
+    );
 }
 
 /// Allows to enable/disable formatting with Prettier
