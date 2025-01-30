@@ -531,9 +531,7 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(buffer, position, false, cx, |_, _, _| {
-            ready(Ok(response))
-        })
+        self.request_completion_impl(buffer, position, false, cx, |_, _, _| ready(Ok(response)))
     }
 
     pub fn request_completion(
