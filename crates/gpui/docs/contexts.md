@@ -26,7 +26,7 @@ Provides access to the state of an application window, and also derefs to an `Ap
 
 ## `Context<T>`
 
-Available when you create or update a `Model<T>`. It derefs to an `AppContext`, but also contains methods specific to the particular model, such as the ability to notify change observers or emit events.
+Available when you create or update a `Model<T>`. It derefs to an `AppContext`, but also contains methods specific to the particular entity, such as the ability to notify change observers or emit events.
 
 ## `ViewContext<V>`
 

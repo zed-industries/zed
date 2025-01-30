@@ -25,14 +25,14 @@ impl AppContext for AsyncApp {
 
     fn new<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let app = self
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
-        Ok(app.new(build_model))
+        Ok(app.new(build_entity))
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
@@ -47,14 +47,14 @@ impl AppContext for AsyncApp {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Result<Entity<T>> {
         let app = self
             .app
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut app = app.borrow_mut();
-        Ok(app.insert_entity(reservation, build_model))
+        Ok(app.insert_entity(reservation, build_entity))
     }
 
     fn update_entity<T: 'static, R>(
@@ -310,11 +310,11 @@ impl AsyncWindowContext {
 impl AppContext for AsyncWindowContext {
     type Result<T> = Result<T>;
 
-    fn new<T>(&mut self, build_model: impl FnOnce(&mut Context<'_, T>) -> T) -> Result<Entity<T>>
+    fn new<T>(&mut self, build_entity: impl FnOnce(&mut Context<'_, T>) -> T) -> Result<Entity<T>>
     where
         T: 'static,
     {
-        self.window.update(self, |_, _, cx| cx.new(build_model))
+        self.window.update(self, |_, _, cx| cx.new(build_entity))
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
@@ -324,10 +324,10 @@ impl AppContext for AsyncWindowContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
-            .update(self, |_, _, cx| cx.insert_entity(reservation, build_model))
+            .update(self, |_, _, cx| cx.insert_entity(reservation, build_entity))
     }
 
     fn update_entity<T: 'static, R>(
@@ -376,10 +376,10 @@ impl VisualContext for AsyncWindowContext {
 
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Window, &mut Context<T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
-            .update(self, |_, window, cx| cx.new(|cx| build_model(window, cx)))
+            .update(self, |_, window, cx| cx.new(|cx| build_entity(window, cx)))
     }
 
     fn update_window_entity<T: 'static, R>(
@@ -388,7 +388,7 @@ impl VisualContext for AsyncWindowContext {
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Self::Result<R> {
         self.window.update(self, |_, window, cx| {
-            view.update(cx, |model, cx| update(model, window, cx))
+            view.update(cx, |entity, cx| update(entity, window, cx))
         })
     }
 

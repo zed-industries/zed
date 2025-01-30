@@ -1191,9 +1191,9 @@ impl Window {
         });
     }
 
-    /// Subscribe to events emitted by a model or view.
+    /// Subscribe to events emitted by a entity.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    /// The callback will be invoked a handle to the emitting entity, the event, and a window context for the current window.
     pub fn observe<T: 'static>(
         &mut self,
         observed: &Entity<T>,
@@ -1220,9 +1220,9 @@ impl Window {
         )
     }
 
-    /// Subscribe to events emitted by a model or view.
+    /// Subscribe to events emitted by a entity.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    /// The callback will be invoked a handle to the emitting entity, the event, and a window context for the current window.
     pub fn subscribe<Emitter, Evt>(
         &mut self,
         entity: &Entity<Emitter>,
@@ -1257,7 +1257,7 @@ impl Window {
         )
     }
 
-    /// Register a callback to be invoked when the given Model or View is released.
+    /// Register a callback to be invoked when the given `Entity` is released.
     pub fn observe_release<T>(
         &self,
         entity: &Entity<T>,

@@ -165,26 +165,26 @@ pub trait AppContext {
     /// can't hold a direct reference to the application context.
     type Result<T>;
 
-    /// Create a new model in the app context.
+    /// Create a new entity in the app context.
     fn new<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
-    /// Reserve a slot for a model to be inserted later.
-    /// The returned [Reservation] allows you to obtain the [EntityId] for the future model.
+    /// Reserve a slot for a entity to be inserted later.
+    /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
 
-    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
+    /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
     ///
     /// [`reserve_entity`]: Self::reserve_entity
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
-    /// Update a model in the app context.
+    /// Update a entity in the app context.
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
@@ -193,7 +193,7 @@ pub trait AppContext {
     where
         T: 'static;
 
-    /// Read a model from the app context.
+    /// Read a entity from the app context.
     fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
@@ -217,12 +217,12 @@ pub trait AppContext {
         T: 'static;
 }
 
-/// Returned by [Context::reserve_entity] to later be passed to [Context::insert_model].
-/// Allows you to obtain the [EntityId] for a model before it is created.
+/// Returned by [Context::reserve_entity] to later be passed to [Context::insert_entity].
+/// Allows you to obtain the [EntityId] for a entity before it is created.
 pub struct Reservation<T>(pub(crate) Slot<T>);
 
 impl<T: 'static> Reservation<T> {
-    /// Returns the [EntityId] that will be associated with the model once it is inserted.
+    /// Returns the [EntityId] that will be associated with the entity once it is inserted.
     pub fn entity_id(&self) -> EntityId {
         self.0.entity_id()
     }
@@ -237,14 +237,14 @@ pub trait VisualContext: AppContext {
     /// Update a view with the given callback
     fn update_window_entity<T: 'static, R>(
         &mut self,
-        model: &Entity<T>,
+        entity: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Self::Result<R>;
 
     /// Update a view with the given callback
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
     /// Replace the root view of a window with a new view.
@@ -255,8 +255,8 @@ pub trait VisualContext: AppContext {
     where
         V: 'static + Render;
 
-    /// Focus a model in the window, if it implements the [`Focusable`] trait.
-    fn focus<V>(&mut self, model: &Entity<V>) -> Self::Result<()>
+    /// Focus a entity in the window, if it implements the [`Focusable`] trait.
+    fn focus<V>(&mut self, entity: &Entity<V>) -> Self::Result<()>
     where
         V: Focusable;
 }
