@@ -1431,7 +1431,7 @@ impl MultiBuffer {
         let mut to_insert = Vec::new();
         let snapshot = self.snapshot(cx);
 
-        let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<ExcerptId>>(&());
+        let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
         excerpts_cursor.next(&());
 
         loop {
@@ -1447,20 +1447,21 @@ impl MultiBuffer {
                     continue;
                 }
             };
-
-            excerpts_cursor.seek_forward(&Some(*existing), Bias::Right, &());
+            let locator = snapshot.excerpt_locator_for_id(*existing);
+            excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
             let existing_excerpt = excerpts_cursor.item().unwrap();
+            debug_assert_eq!(existing_excerpt.buffer_id, buffer_snapshot.remote_id());
 
             let existing_start = existing_excerpt
                 .range
                 .context
                 .start
-                .to_point(&existing_excerpt.buffer);
+                .to_point(&buffer_snapshot);
             let existing_end = existing_excerpt
                 .range
                 .context
                 .end
-                .to_point(&existing_excerpt.buffer);
+                .to_point(&buffer_snapshot);
 
             if existing_end < new.context.start {
                 to_remove.push(existing_iter.next().unwrap());
@@ -1483,7 +1484,6 @@ impl MultiBuffer {
                 ));
                 insert_after = existing_iter.next().unwrap();
                 new_excerpt_ids.push(insert_after);
-                existing_iter.next();
                 new_iter.next();
             } else {
                 to_remove.push(existing_iter.next().unwrap());
@@ -1976,7 +1976,6 @@ impl MultiBuffer {
         let mut excerpt_ids = ids.iter().copied().peekable();
 
         while let Some(excerpt_id) = excerpt_ids.next() {
-            dbg!(&excerpt_id);
             // Seek to the next excerpt to remove, preserving any preceding excerpts.
             let locator = snapshot.excerpt_locator_for_id(excerpt_id);
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left, &()), &());

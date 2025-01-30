@@ -1,10 +1,7 @@
-use std::{
-    any::{Any, TypeId},
-    sync::mpsc,
-};
+use std::any::{Any, TypeId};
 
 use anyhow::Result;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{Editor, EditorEvent};
 use futures::StreamExt;
 use gpui::{
@@ -19,6 +16,7 @@ use ui::prelude::*;
 use util::ResultExt as _;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    searchable::SearchableItemHandle,
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
@@ -26,16 +24,15 @@ actions!(project_diff, [Deploy]);
 
 pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
-    buffers_to_show: HashMap<ProjectPath, Entity<Buffer>>, // tbd.
     editor: Entity<Editor>,
     project: Entity<Project>,
     git_state: Entity<GitState>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    worker: Task<Result<()>>,
     update_needed: postage::watch::Sender<()>,
 
-    git_state_subscription: Subscription,
+    _task: Task<Result<()>>,
+    _subscription: Subscription,
 }
 
 struct DiffBuffer {
@@ -113,12 +110,11 @@ impl ProjectDiff {
             git_state: git_state.clone(),
             workspace,
             focus_handle,
-            buffers_to_show: HashMap::default(),
             editor,
             multibuffer,
             update_needed: send,
-            worker,
-            git_state_subscription,
+            _task: worker,
+            _subscription: git_state_subscription,
         }
     }
 
@@ -257,7 +253,7 @@ impl Item for ProjectDiff {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, _: &App) -> AnyElement {
-        Label::new("No changes")
+        Label::new("Uncommitted Changes")
             .color(if params.selected {
                 Color::Default
             } else {
@@ -268,6 +264,10 @@ impl Item for ProjectDiff {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("project diagnostics")
+    }
+
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
     }
 
     fn for_each_project_item(
