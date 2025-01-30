@@ -44,7 +44,7 @@ impl FeatureUpsell {
 }
 
 impl RenderOnce for FeatureUpsell {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         self.base
             .p_4()
             .justify_between()
@@ -63,7 +63,7 @@ impl RenderOnce for FeatureUpsell {
                             )
                             .on_click({
                                 let docs_url = docs_url.clone();
-                                move |_event, cx| {
+                                move |_event, _window, cx| {
                                     telemetry::event!(
                                         "Documentation Viewed",
                                         source = "Feature Upsell",

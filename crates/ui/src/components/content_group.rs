@@ -67,7 +67,7 @@ impl Styled for ContentGroup {
 }
 
 impl RenderOnce for ContentGroup {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         // TODO:
         // Baked in padding will make scrollable views inside of content boxes awkward.
         //
@@ -95,7 +95,7 @@ impl ComponentPreview for ContentGroup {
         ExampleLabelSide::Bottom
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
                 "Default",

@@ -1,6 +1,6 @@
 use gpui::{
-    div, hsla, point, prelude::*, px, relative, rgb, size, App, AppContext, Bounds, BoxShadow, Div,
-    SharedString, ViewContext, WindowBounds, WindowOptions,
+    div, hsla, point, prelude::*, px, relative, rgb, size, App, Application, Bounds, BoxShadow,
+    Context, Div, SharedString, Window, WindowBounds, WindowOptions,
 };
 
 use smallvec::smallvec;
@@ -86,7 +86,7 @@ fn example(label: impl Into<SharedString>, example: impl IntoElement) -> impl In
 }
 
 impl Render for Shadow {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("shadow-example")
             .overflow_y_scroll()
@@ -567,14 +567,14 @@ impl Render for Shadow {
 }
 
 fn main() {
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1000.0), px(800.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |cx| cx.new_view(|_cx| Shadow {}),
+            |_, cx| cx.new(|_| Shadow {}),
         )
         .unwrap();
 

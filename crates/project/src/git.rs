@@ -1,6 +1,7 @@
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use crate::{Project, ProjectPath};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
+use client::ProjectId;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use git::{
@@ -8,17 +9,19 @@ use git::{
     status::{GitSummary, TrackedSummary},
 };
 use gpui::{
-    AppContext, Context as _, EventEmitter, Model, ModelContext, SharedString, Subscription,
-    WeakModel,
+    App, AppContext as _, Context, Entity, EventEmitter, SharedString, Subscription, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
+use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::sync::Arc;
 use text::Rope;
 use util::maybe;
-use worktree::{RepositoryEntry, StatusEntry};
+use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
+    project_id: Option<ProjectId>,
+    client: Option<AnyProtoClient>,
     repositories: Vec<RepositoryHandle>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
@@ -28,12 +31,23 @@ pub struct GitState {
 
 #[derive(Clone)]
 pub struct RepositoryHandle {
-    git_state: WeakModel<GitState>,
-    worktree_id: WorktreeId,
-    repository_entry: RepositoryEntry,
-    git_repo: Arc<dyn GitRepository>,
-    commit_message: Model<Buffer>,
+    git_state: WeakEntity<GitState>,
+    pub worktree_id: WorktreeId,
+    pub repository_entry: RepositoryEntry,
+    git_repo: Option<GitRepo>,
+    commit_message: Entity<Buffer>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
+}
+
+#[derive(Clone)]
+enum GitRepo {
+    Local(Arc<dyn GitRepository>),
+    Remote {
+        project_id: ProjectId,
+        client: AnyProtoClient,
+        worktree_id: WorktreeId,
+        work_directory_id: ProjectEntryId,
+    },
 }
 
 impl PartialEq<Self> for RepositoryHandle {
@@ -53,10 +67,10 @@ impl PartialEq<RepositoryEntry> for RepositoryHandle {
 }
 
 enum Message {
-    StageAndCommit(Arc<dyn GitRepository>, Rope, Vec<RepoPath>),
-    Commit(Arc<dyn GitRepository>, Rope),
-    Stage(Arc<dyn GitRepository>, Vec<RepoPath>),
-    Unstage(Arc<dyn GitRepository>, Vec<RepoPath>),
+    StageAndCommit(GitRepo, Rope, Vec<RepoPath>),
+    Commit(GitRepo, Rope),
+    Stage(GitRepo, Vec<RepoPath>),
+    Unstage(GitRepo, Vec<RepoPath>),
 }
 
 pub enum Event {
@@ -67,9 +81,11 @@ impl EventEmitter<Event> for GitState {}
 
 impl GitState {
     pub fn new(
-        worktree_store: &Model<WorktreeStore>,
+        worktree_store: &Entity<WorktreeStore>,
         languages: Arc<LanguageRegistry>,
-        cx: &mut ModelContext<'_, Self>,
+        client: Option<AnyProtoClient>,
+        project_id: Option<ProjectId>,
+        cx: &mut Context<'_, Self>,
     ) -> Self {
         let (update_sender, mut update_receiver) =
             mpsc::unbounded::<(Message, mpsc::Sender<anyhow::Error>)>();
@@ -80,13 +96,117 @@ impl GitState {
                     .spawn(async move {
                         match msg {
                             Message::StageAndCommit(repo, message, paths) => {
-                                repo.stage_paths(&paths)?;
-                                repo.commit(&message.to_string())?;
+                                match repo {
+                                    GitRepo::Local(repo) => {
+                                        repo.stage_paths(&paths)?;
+                                        repo.commit(&message.to_string())?;
+                                    }
+                                    GitRepo::Remote {
+                                        project_id,
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => {
+                                        client
+                                            .request(proto::Stage {
+                                                project_id: project_id.0,
+                                                worktree_id: worktree_id.to_proto(),
+                                                work_directory_id: work_directory_id.to_proto(),
+                                                paths: paths
+                                                    .into_iter()
+                                                    .map(|repo_path| repo_path.to_proto())
+                                                    .collect(),
+                                            })
+                                            .await
+                                            .context("sending stage request")?;
+                                        client
+                                            .request(proto::Commit {
+                                                project_id: project_id.0,
+                                                worktree_id: worktree_id.to_proto(),
+                                                work_directory_id: work_directory_id.to_proto(),
+                                                message: message.to_string(),
+                                            })
+                                            .await
+                                            .context("sending commit request")?;
+                                    }
+                                }
+
                                 Ok(())
                             }
-                            Message::Stage(repo, paths) => repo.stage_paths(&paths),
-                            Message::Unstage(repo, paths) => repo.unstage_paths(&paths),
-                            Message::Commit(repo, message) => repo.commit(&message.to_string()),
+                            Message::Stage(repo, paths) => {
+                                match repo {
+                                    GitRepo::Local(repo) => repo.stage_paths(&paths)?,
+                                    GitRepo::Remote {
+                                        project_id,
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => {
+                                        client
+                                            .request(proto::Stage {
+                                                project_id: project_id.0,
+                                                worktree_id: worktree_id.to_proto(),
+                                                work_directory_id: work_directory_id.to_proto(),
+                                                paths: paths
+                                                    .into_iter()
+                                                    .map(|repo_path| repo_path.to_proto())
+                                                    .collect(),
+                                            })
+                                            .await
+                                            .context("sending stage request")?;
+                                    }
+                                }
+                                Ok(())
+                            }
+                            Message::Unstage(repo, paths) => {
+                                match repo {
+                                    GitRepo::Local(repo) => repo.unstage_paths(&paths)?,
+                                    GitRepo::Remote {
+                                        project_id,
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => {
+                                        client
+                                            .request(proto::Unstage {
+                                                project_id: project_id.0,
+                                                worktree_id: worktree_id.to_proto(),
+                                                work_directory_id: work_directory_id.to_proto(),
+                                                paths: paths
+                                                    .into_iter()
+                                                    .map(|repo_path| repo_path.to_proto())
+                                                    .collect(),
+                                            })
+                                            .await
+                                            .context("sending unstage request")?;
+                                    }
+                                }
+                                Ok(())
+                            }
+                            Message::Commit(repo, message) => {
+                                match repo {
+                                    GitRepo::Local(repo) => repo.commit(&message.to_string())?,
+                                    GitRepo::Remote {
+                                        project_id,
+                                        client,
+                                        worktree_id,
+                                        work_directory_id,
+                                    } => {
+                                        client
+                                            .request(proto::Commit {
+                                                project_id: project_id.0,
+                                                worktree_id: worktree_id.to_proto(),
+                                                work_directory_id: work_directory_id.to_proto(),
+                                                // TODO implement collaborative commit message buffer instead and use it
+                                                // If it works, remove `commit_with_message` method.
+                                                message: message.to_string(),
+                                            })
+                                            .await
+                                            .context("sending commit request")?;
+                                    }
+                                }
+                                Ok(())
+                            }
                         }
                     })
                     .await;
@@ -100,8 +220,10 @@ impl GitState {
         let _subscription = cx.subscribe(worktree_store, Self::on_worktree_store_event);
 
         GitState {
+            project_id,
             languages,
-            repositories: vec![],
+            client,
+            repositories: Vec::new(),
             active_index: None,
             update_sender,
             _subscription,
@@ -115,27 +237,38 @@ impl GitState {
 
     fn on_worktree_store_event(
         &mut self,
-        worktree_store: Model<WorktreeStore>,
+        worktree_store: Entity<WorktreeStore>,
         _event: &WorktreeStoreEvent,
-        cx: &mut ModelContext<'_, Self>,
+        cx: &mut Context<'_, Self>,
     ) {
         // TODO inspect the event
 
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
-        let this = cx.weak_model();
+        let this = cx.weak_entity();
+        let client = self.client.clone();
+        let project_id = self.project_id;
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
                 worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
-                    let Some(local) = worktree.as_local() else {
-                        return;
-                    };
                     for repo in snapshot.repositories().iter() {
-                        let Some(local_repo) = local.get_local_repo(repo) else {
-                            continue;
-                        };
+                        let git_repo = worktree
+                            .as_local()
+                            .and_then(|local_worktree| local_worktree.get_local_repo(repo))
+                            .map(|local_repo| local_repo.repo().clone())
+                            .map(GitRepo::Local)
+                            .or_else(|| {
+                                let client = client.clone()?;
+                                let project_id = project_id?;
+                                Some(GitRepo::Remote {
+                                    project_id,
+                                    client,
+                                    worktree_id: worktree.id(),
+                                    work_directory_id: repo.work_directory_id(),
+                                })
+                            });
                         let existing = self
                             .repositories
                             .iter()
@@ -150,7 +283,7 @@ impl GitState {
                             existing_handle.repository_entry = repo.clone();
                             existing_handle
                         } else {
-                            let commit_message = cx.new_model(|cx| Buffer::local("", cx));
+                            let commit_message = cx.new(|cx| Buffer::local("", cx));
                             cx.spawn({
                                 let commit_message = commit_message.downgrade();
                                 let languages = self.languages.clone();
@@ -167,7 +300,7 @@ impl GitState {
                                 git_state: this.clone(),
                                 worktree_id: worktree.id(),
                                 repository_entry: repo.clone(),
-                                git_repo: local_repo.repo().clone(),
+                                git_repo,
                                 commit_message,
                                 update_sender: self.update_sender.clone(),
                             }
@@ -194,7 +327,7 @@ impl GitState {
 }
 
 impl RepositoryHandle {
-    pub fn display_name(&self, project: &Project, cx: &AppContext) -> SharedString {
+    pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
             let path = self.unrelativize(&"".into())?;
             Some(
@@ -209,7 +342,7 @@ impl RepositoryHandle {
         .unwrap_or("".into())
     }
 
-    pub fn activate(&self, cx: &mut AppContext) {
+    pub fn activate(&self, cx: &mut App) {
         let Some(git_state) = self.git_state.upgrade() else {
             return;
         };
@@ -236,7 +369,7 @@ impl RepositoryHandle {
         Some((self.worktree_id, path).into())
     }
 
-    pub fn commit_message(&self) -> Model<Buffer> {
+    pub fn commit_message(&self) -> Entity<Buffer> {
         self.commit_message.clone()
     }
 
@@ -248,8 +381,11 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
         self.update_sender
-            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Stage(git_repo, entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
         Ok(())
     }
@@ -262,8 +398,11 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
         self.update_sender
-            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Unstage(git_repo, entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
         Ok(())
     }
@@ -304,7 +443,7 @@ impl RepositoryHandle {
         self.repository_entry.status_summary().index != TrackedSummary::UNCHANGED
     }
 
-    pub fn can_commit(&self, commit_all: bool, cx: &AppContext) -> bool {
+    pub fn can_commit(&self, commit_all: bool, cx: &App) -> bool {
         return self
             .commit_message
             .read(cx)
@@ -314,12 +453,14 @@ impl RepositoryHandle {
             && (commit_all || self.have_staged_changes());
     }
 
-    pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut AppContext) {
+    pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return;
+        };
         let message = self.commit_message.read(cx).as_rope().clone();
-        let result = self.update_sender.unbounded_send((
-            Message::Commit(self.git_repo.clone(), message),
-            err_sender.clone(),
-        ));
+        let result = self
+            .update_sender
+            .unbounded_send((Message::Commit(git_repo, message), err_sender.clone()));
         if result.is_err() {
             cx.spawn(|_| async move {
                 err_sender
@@ -335,7 +476,25 @@ impl RepositoryHandle {
         });
     }
 
-    pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut AppContext) {
+    pub fn commit_with_message(
+        &self,
+        message: String,
+        err_sender: mpsc::Sender<anyhow::Error>,
+    ) -> anyhow::Result<()> {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return Ok(());
+        };
+        let result = self
+            .update_sender
+            .unbounded_send((Message::Commit(git_repo, message.into()), err_sender));
+        anyhow::ensure!(result.is_ok(), "Failed to submit commit operation");
+        Ok(())
+    }
+
+    pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+        let Some(git_repo) = self.git_repo.clone() else {
+            return;
+        };
         let to_stage = self
             .repository_entry
             .status()
@@ -344,7 +503,7 @@ impl RepositoryHandle {
             .collect::<Vec<_>>();
         let message = self.commit_message.read(cx).as_rope().clone();
         let result = self.update_sender.unbounded_send((
-            Message::StageAndCommit(self.git_repo.clone(), message, to_stage),
+            Message::StageAndCommit(git_repo, message, to_stage),
             err_sender.clone(),
         ));
         if result.is_err() {

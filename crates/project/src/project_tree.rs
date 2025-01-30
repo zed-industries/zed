@@ -13,7 +13,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Subscription};
 use language::{CachedLspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerName;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
@@ -29,17 +29,17 @@ pub(crate) use server_tree::{AdapterQuery, LanguageServerTree, LaunchDisposition
 
 struct WorktreeRoots {
     roots: RootPathTrie<LanguageServerName>,
-    worktree_store: Model<WorktreeStore>,
+    worktree_store: Entity<WorktreeStore>,
     _worktree_subscription: Subscription,
 }
 
 impl WorktreeRoots {
     fn new(
-        worktree_store: Model<WorktreeStore>,
-        worktree: Model<Worktree>,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(|cx| Self {
+        worktree_store: Entity<WorktreeStore>,
+        worktree: Entity<Worktree>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        cx.new(|cx| Self {
             roots: RootPathTrie::new(),
             worktree_store,
             _worktree_subscription: cx.subscribe(&worktree, |this: &mut Self, _, event, cx| {
@@ -71,8 +71,8 @@ impl WorktreeRoots {
 }
 
 pub struct ProjectTree {
-    root_points: HashMap<WorktreeId, Model<WorktreeRoots>>,
-    worktree_store: Model<WorktreeStore>,
+    root_points: HashMap<WorktreeId, Entity<WorktreeRoots>>,
+    worktree_store: Entity<WorktreeStore>,
     _subscriptions: [Subscription; 2],
 }
 
@@ -119,8 +119,8 @@ pub(crate) enum ProjectTreeEvent {
 impl EventEmitter<ProjectTreeEvent> for ProjectTree {}
 
 impl ProjectTree {
-    pub(crate) fn new(worktree_store: Model<WorktreeStore>, cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|cx| Self {
+    pub(crate) fn new(worktree_store: Entity<WorktreeStore>, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| Self {
             root_points: Default::default(),
             _subscriptions: [
                 cx.subscribe(&worktree_store, Self::on_worktree_store_event),
@@ -142,7 +142,7 @@ impl ProjectTree {
         ProjectPath { worktree_id, path }: ProjectPath,
         adapters: Vec<Arc<CachedLspAdapter>>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
         #[allow(clippy::mutable_key_type)]
@@ -228,9 +228,9 @@ impl ProjectTree {
     }
     fn on_worktree_store_event(
         &mut self,
-        _: Model<WorktreeStore>,
+        _: Entity<WorktreeStore>,
         evt: &WorktreeStoreEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match evt {
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {

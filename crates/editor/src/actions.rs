@@ -318,6 +318,7 @@ gpui::actions!(
         OpenProposedChangesEditor,
         OpenDocs,
         OpenPermalinkToLine,
+        OpenSelectionsInMultibuffer,
         OpenUrl,
         Outdent,
         AutoIndent,
@@ -372,7 +373,6 @@ gpui::actions!(
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
-        ToggleHunkDiff,
         ToggleIndentGuides,
         ToggleInlayHints,
         ToggleInlineCompletions,
@@ -397,3 +397,4 @@ gpui::actions!(
 action_as!(go_to_line, ToggleGoToLine as Toggle);
 
 action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);
+action_with_deprecated_aliases!(editor, ToggleSelectedDiffHunks, ["editor::ToggleHunkDiff"]);

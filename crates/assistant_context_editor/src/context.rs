@@ -16,8 +16,8 @@ use feature_flags::{FeatureFlagAppExt, ToolUseFeatureFlag};
 use fs::{Fs, RemoveOptions};
 use futures::{future::Shared, FutureExt, StreamExt};
 use gpui::{
-    AppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage, SharedString,
-    Subscription, Task,
+    App, AppContext as _, Context, Entity, EventEmitter, RenderImage, SharedString, Subscription,
+    Task,
 };
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
@@ -588,13 +588,13 @@ pub enum XmlTagKind {
     Operation,
 }
 
-pub struct Context {
+pub struct AssistantContext {
     id: ContextId,
     timestamp: clock::Lamport,
     version: clock::Global,
     pending_ops: Vec<ContextOperation>,
     operations: Vec<ContextOperation>,
-    buffer: Model<Buffer>,
+    buffer: Entity<Buffer>,
     parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
@@ -619,7 +619,7 @@ pub struct Context {
     language_registry: Arc<LanguageRegistry>,
     patches: Vec<AssistantPatch>,
     xml_tags: Vec<XmlTag>,
-    project: Option<Model<Project>>,
+    project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
 }
 
@@ -645,17 +645,17 @@ impl ContextAnnotation for XmlTag {
     }
 }
 
-impl EventEmitter<ContextEvent> for Context {}
+impl EventEmitter<ContextEvent> for AssistantContext {}
 
-impl Context {
+impl AssistantContext {
     pub fn local(
         language_registry: Arc<LanguageRegistry>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
             ContextId::new(),
@@ -680,11 +680,11 @@ impl Context {
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new_model(|_cx| {
+        let buffer = cx.new(|_cx| {
             let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
@@ -755,7 +755,7 @@ impl Context {
         this
     }
 
-    pub(crate) fn serialize(&self, cx: &AppContext) -> SavedContext {
+    pub(crate) fn serialize(&self, cx: &App) -> SavedContext {
         let buffer = self.buffer.read(cx);
         SavedContext {
             id: Some(self.id.clone()),
@@ -803,9 +803,9 @@ impl Context {
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
         tools: Arc<ToolWorkingSet>,
-        project: Option<Model<Project>>,
+        project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let id = saved_context.id.clone().unwrap_or_else(ContextId::new);
         let mut this = Self::new(
@@ -837,7 +837,7 @@ impl Context {
         self.timestamp.replica_id
     }
 
-    pub fn version(&self, cx: &AppContext) -> ContextVersion {
+    pub fn version(&self, cx: &App) -> ContextVersion {
         ContextVersion {
             context: self.version.clone(),
             buffer: self.buffer.read(cx).version(),
@@ -852,11 +852,7 @@ impl Context {
         &self.tools
     }
 
-    pub fn set_capability(
-        &mut self,
-        capability: language::Capability,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_capability(&mut self, capability: language::Capability, cx: &mut Context<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.set_capability(capability, cx));
     }
@@ -870,7 +866,7 @@ impl Context {
     pub fn serialize_ops(
         &self,
         since: &ContextVersion,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Vec<proto::ContextOperation>> {
         let buffer_ops = self
             .buffer
@@ -905,7 +901,7 @@ impl Context {
     pub fn apply_ops(
         &mut self,
         ops: impl IntoIterator<Item = ContextOperation>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut buffer_ops = Vec::new();
         for op in ops {
@@ -919,7 +915,7 @@ impl Context {
         self.flush_ops(cx);
     }
 
-    fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
+    fn flush_ops(&mut self, cx: &mut Context<AssistantContext>) {
         let mut changed_messages = HashSet::default();
         let mut summary_changed = false;
 
@@ -1038,7 +1034,7 @@ impl Context {
         }
     }
 
-    fn can_apply_op(&self, op: &ContextOperation, cx: &AppContext) -> bool {
+    fn can_apply_op(&self, op: &ContextOperation, cx: &App) -> bool {
         if !self.version.observed_all(op.version()) {
             return false;
         }
@@ -1069,7 +1065,7 @@ impl Context {
     fn has_received_operations_for_anchor_range(
         &self,
         range: Range<text::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool {
         let version = &self.buffer.read(cx).version;
         let observed_start = range.start == language::Anchor::MIN
@@ -1081,12 +1077,12 @@ impl Context {
         observed_start && observed_end
     }
 
-    fn push_op(&mut self, op: ContextOperation, cx: &mut ModelContext<Self>) {
+    fn push_op(&mut self, op: ContextOperation, cx: &mut Context<Self>) {
         self.operations.push(op.clone());
         cx.emit(ContextEvent::Operation(op));
     }
 
-    pub fn buffer(&self) -> &Model<Buffer> {
+    pub fn buffer(&self) -> &Entity<Buffer> {
         &self.buffer
     }
 
@@ -1094,7 +1090,7 @@ impl Context {
         self.language_registry.clone()
     }
 
-    pub fn project(&self) -> Option<Model<Project>> {
+    pub fn project(&self) -> Option<Entity<Project>> {
         self.project.clone()
     }
 
@@ -1110,7 +1106,7 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub fn patch_containing(&self, position: Point, cx: &AppContext) -> Option<&AssistantPatch> {
+    pub fn patch_containing(&self, position: Point, cx: &App) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
         let index = self.patches.binary_search_by(|patch| {
             let patch_range = patch.range.to_point(&buffer);
@@ -1136,7 +1132,7 @@ impl Context {
     pub fn patch_for_range(
         &self,
         range: &Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
         let index = self.patch_index_for_range(range, buffer).ok()?;
@@ -1167,7 +1163,7 @@ impl Context {
         &self.slash_command_output_sections
     }
 
-    pub fn contains_files(&self, cx: &AppContext) -> bool {
+    pub fn contains_files(&self, cx: &App) -> bool {
         let buffer = self.buffer.read(cx);
         self.slash_command_output_sections.iter().any(|section| {
             section.is_valid(buffer)
@@ -1189,7 +1185,7 @@ impl Context {
         self.pending_tool_uses_by_id.get(id)
     }
 
-    fn set_language(&mut self, cx: &mut ModelContext<Self>) {
+    fn set_language(&mut self, cx: &mut Context<Self>) {
         let markdown = self.language_registry.language_for_name("Markdown");
         cx.spawn(|this, mut cx| async move {
             let markdown = markdown.await?;
@@ -1203,9 +1199,9 @@ impl Context {
 
     fn handle_buffer_event(
         &mut self,
-        _: Model<Buffer>,
+        _: Entity<Buffer>,
         event: &language::BufferEvent,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
             language::BufferEvent::Operation {
@@ -1227,7 +1223,7 @@ impl Context {
         self.token_count
     }
 
-    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
+    pub(crate) fn count_remaining_tokens(&mut self, cx: &mut Context<Self>) {
         // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
         // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
         let request = self.to_completion_request(RequestType::Chat, cx);
@@ -1255,7 +1251,7 @@ impl Context {
         &mut self,
         cache_configuration: &Option<LanguageModelCacheConfiguration>,
         speculative: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let cache_configuration =
             cache_configuration
@@ -1357,7 +1353,7 @@ impl Context {
         new_anchor_needs_caching
     }
 
-    fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut ModelContext<Self>) {
+    fn start_cache_warming(&mut self, model: &Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
         let cache_configuration = model.cache_configuration();
 
         if !self.mark_cache_anchors(&cache_configuration, true, cx) {
@@ -1407,7 +1403,7 @@ impl Context {
         });
     }
 
-    pub fn update_cache_status_for_completion(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn update_cache_status_for_completion(&mut self, cx: &mut Context<Self>) {
         let cached_message_ids: Vec<MessageId> = self
             .messages_metadata
             .iter()
@@ -1432,7 +1428,7 @@ impl Context {
         cx.notify();
     }
 
-    pub fn reparse(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn reparse(&mut self, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).text_snapshot();
         let mut row_ranges = self
             .edits_since_last_parse
@@ -1505,7 +1501,7 @@ impl Context {
         buffer: &BufferSnapshot,
         updated: &mut Vec<ParsedSlashCommand>,
         removed: &mut Vec<Range<text::Anchor>>,
-        cx: &AppContext,
+        cx: &App,
     ) {
         let old_range = self.pending_command_indices_for_range(range.clone(), cx);
 
@@ -1559,7 +1555,7 @@ impl Context {
     fn invalidate_pending_slash_commands(
         &mut self,
         buffer: &BufferSnapshot,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let mut invalidated_command_ids = Vec::new();
         for (&command_id, command) in self.invoked_slash_commands.iter_mut() {
@@ -1593,7 +1589,7 @@ impl Context {
         buffer: &BufferSnapshot,
         updated: &mut Vec<Range<text::Anchor>>,
         removed: &mut Vec<Range<text::Anchor>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         // Rebuild the XML tags in the edited range.
         let intersecting_tags_range =
@@ -1636,7 +1632,7 @@ impl Context {
         &self,
         buffer: &BufferSnapshot,
         range: Range<text::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<XmlTag> {
         let mut messages = self.messages(cx).peekable();
 
@@ -1693,7 +1689,7 @@ impl Context {
         tags_start_ix: usize,
         buffer_end: text::Anchor,
         buffer: &BufferSnapshot,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<AssistantPatch> {
         let mut new_patches = Vec::new();
         let mut pending_patch = None;
@@ -1851,7 +1847,7 @@ impl Context {
     pub fn pending_command_for_position(
         &mut self,
         position: language::Anchor,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<&mut ParsedSlashCommand> {
         let buffer = self.buffer.read(cx);
         match self
@@ -1875,7 +1871,7 @@ impl Context {
     pub fn pending_commands_for_range(
         &self,
         range: Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> &[ParsedSlashCommand] {
         let range = self.pending_command_indices_for_range(range, cx);
         &self.parsed_slash_commands[range]
@@ -1884,7 +1880,7 @@ impl Context {
     fn pending_command_indices_for_range(
         &self,
         range: Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Range<usize> {
         self.indices_intersecting_buffer_range(&self.parsed_slash_commands, range, cx)
     }
@@ -1893,7 +1889,7 @@ impl Context {
         &self,
         all_annotations: &[T],
         range: Range<language::Anchor>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Range<usize> {
         let buffer = self.buffer.read(cx);
         let start_ix = match all_annotations
@@ -1916,7 +1912,7 @@ impl Context {
         name: &str,
         output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let version = self.version.clone();
         let command_id = InvokedSlashCommandId(self.next_timestamp());
@@ -2184,7 +2180,7 @@ impl Context {
     fn insert_slash_command_output_section(
         &mut self,
         section: SlashCommandOutputSection<language::Anchor>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
@@ -2214,7 +2210,7 @@ impl Context {
         &mut self,
         tool_use_id: LanguageModelToolUseId,
         output: Task<Result<String>>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         let insert_output_task = cx.spawn(|this, mut cx| {
             let tool_use_id = tool_use_id.clone();
@@ -2272,11 +2268,11 @@ impl Context {
         }
     }
 
-    pub fn completion_provider_changed(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn completion_provider_changed(&mut self, cx: &mut Context<Self>) {
         self.count_remaining_tokens(cx);
     }
 
-    fn get_last_valid_message_id(&self, cx: &ModelContext<Self>) -> Option<MessageId> {
+    fn get_last_valid_message_id(&self, cx: &Context<Self>) -> Option<MessageId> {
         self.message_anchors.iter().rev().find_map(|message| {
             message
                 .start
@@ -2288,7 +2284,7 @@ impl Context {
     pub fn assist(
         &mut self,
         request_type: RequestType,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let provider = model_registry.active_provider()?;
@@ -2519,7 +2515,7 @@ impl Context {
     pub fn to_completion_request(
         &self,
         request_type: RequestType,
-        cx: &AppContext,
+        cx: &App,
     ) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
 
@@ -2631,7 +2627,7 @@ impl Context {
         completion_request
     }
 
-    pub fn cancel_last_assist(&mut self, cx: &mut ModelContext<Self>) -> bool {
+    pub fn cancel_last_assist(&mut self, cx: &mut Context<Self>) -> bool {
         if let Some(pending_completion) = self.pending_completions.pop() {
             self.update_metadata(pending_completion.assistant_message_id, cx, |metadata| {
                 if metadata.status == MessageStatus::Pending {
@@ -2644,7 +2640,7 @@ impl Context {
         }
     }
 
-    pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
+    pub fn cycle_message_roles(&mut self, ids: HashSet<MessageId>, cx: &mut Context<Self>) {
         for id in &ids {
             if let Some(metadata) = self.messages_metadata.get(id) {
                 let role = metadata.role.cycle();
@@ -2655,7 +2651,7 @@ impl Context {
         self.message_roles_updated(ids, cx);
     }
 
-    fn message_roles_updated(&mut self, ids: HashSet<MessageId>, cx: &mut ModelContext<Self>) {
+    fn message_roles_updated(&mut self, ids: HashSet<MessageId>, cx: &mut Context<Self>) {
         let mut ranges = Vec::new();
         for message in self.messages(cx) {
             if ids.contains(&message.id) {
@@ -2678,7 +2674,7 @@ impl Context {
     pub fn update_metadata(
         &mut self,
         id: MessageId,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
         f: impl FnOnce(&mut MessageMetadata),
     ) {
         let version = self.version.clone();
@@ -2702,7 +2698,7 @@ impl Context {
         message_id: MessageId,
         role: Role,
         status: MessageStatus,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<MessageAnchor> {
         if let Some(prev_message_ix) = self
             .message_anchors
@@ -2736,7 +2732,7 @@ impl Context {
         offset: usize,
         role: Role,
         status: MessageStatus,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> MessageAnchor {
         let start = self.buffer.update(cx, |buffer, cx| {
             buffer.edit([(offset..offset, "\n")], None, cx);
@@ -2766,7 +2762,7 @@ impl Context {
         anchor
     }
 
-    pub fn insert_content(&mut self, content: Content, cx: &mut ModelContext<Self>) {
+    pub fn insert_content(&mut self, content: Content, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx);
         let insertion_ix = match self
             .contents
@@ -2782,7 +2778,7 @@ impl Context {
         cx.emit(ContextEvent::MessagesEdited);
     }
 
-    pub fn contents<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Content> {
+    pub fn contents<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = Content> {
         let buffer = self.buffer.read(cx);
         self.contents
             .iter()
@@ -2796,7 +2792,7 @@ impl Context {
     pub fn split_message(
         &mut self,
         range: Range<usize>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> (Option<MessageAnchor>, Option<MessageAnchor>) {
         let start_message = self.message_for_offset(range.start, cx);
         let end_message = self.message_for_offset(range.end, cx);
@@ -2922,7 +2918,7 @@ impl Context {
         &mut self,
         new_anchor: MessageAnchor,
         new_metadata: MessageMetadata,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         cx.emit(ContextEvent::MessagesEdited);
 
@@ -2940,7 +2936,7 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    pub fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
+    pub fn summarize(&mut self, replace_old: bool, cx: &mut Context<Self>) {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
@@ -3018,14 +3014,14 @@ impl Context {
         }
     }
 
-    fn message_for_offset(&self, offset: usize, cx: &AppContext) -> Option<Message> {
+    fn message_for_offset(&self, offset: usize, cx: &App) -> Option<Message> {
         self.messages_for_offsets([offset], cx).pop()
     }
 
     pub fn messages_for_offsets(
         &self,
         offsets: impl IntoIterator<Item = usize>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<Message> {
         let mut result = Vec::new();
 
@@ -3058,14 +3054,14 @@ impl Context {
     fn messages_from_anchors<'a>(
         &'a self,
         message_anchors: impl Iterator<Item = &'a MessageAnchor> + 'a,
-        cx: &'a AppContext,
+        cx: &'a App,
     ) -> impl 'a + Iterator<Item = Message> {
         let buffer = self.buffer.read(cx);
 
         Self::messages_from_iters(buffer, &self.messages_metadata, message_anchors.enumerate())
     }
 
-    pub fn messages<'a>(&'a self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Message> {
+    pub fn messages<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = Message> {
         self.messages_from_anchors(self.message_anchors.iter(), cx)
     }
 
@@ -3113,7 +3109,7 @@ impl Context {
         &mut self,
         debounce: Option<Duration>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Context>,
+        cx: &mut Context<AssistantContext>,
     ) {
         if self.replica_id() != ReplicaId::default() {
             // Prevent saving a remote context for now.
@@ -3179,7 +3175,7 @@ impl Context {
         });
     }
 
-    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
         let timestamp = self.next_timestamp();
         let summary = self.summary.get_or_insert(ContextSummary::default());
         summary.timestamp = timestamp;
@@ -3339,8 +3335,8 @@ impl SavedContext {
 
     fn into_ops(
         self,
-        buffer: &Model<Buffer>,
-        cx: &mut ModelContext<Context>,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<AssistantContext>,
     ) -> Vec<ContextOperation> {
         let mut operations = Vec::new();
         let mut version = clock::Global::new();

@@ -9,8 +9,7 @@ use std::sync::Arc;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    div, px, size, AnyView, AppContext, Bounds, Render, ViewContext, VisualContext, WindowBounds,
-    WindowOptions,
+    div, px, size, AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions,
 };
 use log::LevelFilter;
 use project::Project;
@@ -65,7 +64,7 @@ fn main() {
     });
     let theme_name = args.theme.unwrap_or("One Dark".to_string());
 
-    gpui::App::new().with_assets(Assets).run(move |cx| {
+    gpui::Application::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
         let http_client = ReqwestClient::user_agent("zed_storybook").unwrap();
@@ -95,10 +94,10 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            move |cx| {
-                theme::setup_ui_font(cx);
+            move |window, cx| {
+                theme::setup_ui_font(window, cx);
 
-                cx.new_view(|cx| StoryWrapper::new(selector.story(cx)))
+                cx.new(|cx| StoryWrapper::new(selector.story(window, cx)))
             },
         );
 
@@ -118,7 +117,7 @@ impl StoryWrapper {
 }
 
 impl Render for StoryWrapper {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -128,7 +127,7 @@ impl Render for StoryWrapper {
     }
 }
 
-fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
+fn load_embedded_fonts(cx: &App) -> gpui::Result<()> {
     let font_paths = cx.asset_source().list("fonts")?;
     let mut embedded_fonts = Vec::new();
     for font_path in font_paths {
@@ -144,15 +143,15 @@ fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
     cx.text_system().add_fonts(embedded_fonts)
 }
 
-fn load_storybook_keymap(cx: &mut AppContext) {
+fn load_storybook_keymap(cx: &mut App) {
     cx.bind_keys(KeymapFile::load_asset("keymaps/storybook.json", cx).unwrap());
 }
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     cx.on_action(quit);
 }
 
-fn quit(_: &Quit, cx: &mut AppContext) {
+fn quit(_: &Quit, cx: &mut App) {
     cx.spawn(|cx| async move {
         cx.update(|cx| cx.quit())?;
         anyhow::Ok(())

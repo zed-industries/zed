@@ -1,4 +1,4 @@
-use gpui::{AppContext, Model, ModelContext};
+use gpui::{App, Context, Entity};
 use language::Buffer;
 use std::ops::Range;
 
@@ -28,35 +28,35 @@ pub trait InlineCompletionProvider: 'static + Sized {
     }
     fn is_enabled(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool;
     fn is_refreshing(&self) -> bool;
     fn refresh(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     );
-    fn needs_terms_acceptance(&self, _cx: &AppContext) -> bool {
+    fn needs_terms_acceptance(&self, _cx: &App) -> bool {
         false
     }
     fn cycle(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         direction: Direction,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     );
-    fn accept(&mut self, cx: &mut ModelContext<Self>);
-    fn discard(&mut self, cx: &mut ModelContext<Self>);
+    fn accept(&mut self, cx: &mut Context<Self>);
+    fn discard(&mut self, cx: &mut Context<Self>);
     fn suggest(
         &mut self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<InlineCompletion>;
 }
 
@@ -65,40 +65,40 @@ pub trait InlineCompletionProviderHandle {
     fn display_name(&self) -> &'static str;
     fn is_enabled(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
     fn show_completions_in_normal_mode(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
-    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool;
-    fn is_refreshing(&self, cx: &AppContext) -> bool;
+    fn needs_terms_acceptance(&self, cx: &App) -> bool;
+    fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
     fn cycle(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         direction: Direction,
-        cx: &mut AppContext,
+        cx: &mut App,
     );
-    fn accept(&self, cx: &mut AppContext);
-    fn discard(&self, cx: &mut AppContext);
+    fn accept(&self, cx: &mut App);
+    fn discard(&self, cx: &mut App);
     fn suggest(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<InlineCompletion>;
 }
 
-impl<T> InlineCompletionProviderHandle for Model<T>
+impl<T> InlineCompletionProviderHandle for Entity<T>
 where
     T: InlineCompletionProvider,
 {
@@ -124,27 +124,27 @@ where
 
     fn is_enabled(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &AppContext,
+        cx: &App,
     ) -> bool {
         self.read(cx).is_enabled(buffer, cursor_position, cx)
     }
 
-    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool {
+    fn needs_terms_acceptance(&self, cx: &App) -> bool {
         self.read(cx).needs_terms_acceptance(cx)
     }
 
-    fn is_refreshing(&self, cx: &AppContext) -> bool {
+    fn is_refreshing(&self, cx: &App) -> bool {
         self.read(cx).is_refreshing()
     }
 
     fn refresh(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
             this.refresh(buffer, cursor_position, debounce, cx)
@@ -153,29 +153,29 @@ where
 
     fn cycle(
         &self,
-        buffer: Model<Buffer>,
+        buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         direction: Direction,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) {
         self.update(cx, |this, cx| {
             this.cycle(buffer, cursor_position, direction, cx)
         })
     }
 
-    fn accept(&self, cx: &mut AppContext) {
+    fn accept(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.accept(cx))
     }
 
-    fn discard(&self, cx: &mut AppContext) {
+    fn discard(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.discard(cx))
     }
 
     fn suggest(
         &self,
-        buffer: &Model<Buffer>,
+        buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
-        cx: &mut AppContext,
+        cx: &mut App,
     ) -> Option<InlineCompletion> {
         self.update(cx, |this, cx| this.suggest(buffer, cursor_position, cx))
     }

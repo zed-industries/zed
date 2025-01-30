@@ -1,4 +1,4 @@
-use gpui::{div, img, prelude::*, App, AppContext, Render, ViewContext, WindowOptions};
+use gpui::{div, img, prelude::*, App, Application, Context, Render, Window, WindowOptions};
 use std::path::PathBuf;
 
 struct GifViewer {
@@ -12,7 +12,7 @@ impl GifViewer {
 }
 
 impl Render for GifViewer {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div().size_full().child(
             img(self.gif_path.clone())
                 .size_full()
@@ -24,7 +24,7 @@ impl Render for GifViewer {
 
 fn main() {
     env_logger::init();
-    App::new().run(|cx: &mut AppContext| {
+    Application::new().run(|cx: &mut App| {
         let cwd = std::env::current_dir().expect("Failed to get current working directory");
         let gif_path = cwd.join("crates/gpui/examples/image/black-cat-typing.gif");
 
@@ -40,7 +40,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_cx| GifViewer::new(gif_path)),
+            |_, cx| cx.new(|_| GifViewer::new(gif_path)),
         )
         .unwrap();
         cx.activate(true);
