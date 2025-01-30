@@ -18,6 +18,7 @@ test-support = ["gpui/test-support", "fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
+convert_case.workspace = true
 ec4rs.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -35,7 +36,6 @@ smallvec.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
-convert_case.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
