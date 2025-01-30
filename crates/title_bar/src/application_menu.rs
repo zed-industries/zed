@@ -12,8 +12,15 @@ impl_actions!(
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct OpenApplicationMenu(String);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
-pub struct NavigateApplicationMenuInDirection(String);
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub struct NavigateApplicationMenuInDirection(NavigationDirection);
+
+#[derive(Clone, Copy, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum NavigationDirection {
+    Left,
+    Right,
+}
 
 #[derive(Clone)]
 struct MenuEntry {
@@ -202,15 +209,15 @@ impl ApplicationMenu {
             return;
         };
 
-        let next_index = match action.0.as_str() {
-            "Left" => {
+        let next_index = match action.0 {
+            NavigationDirection::Left => {
                 if current_index == 0 {
                     self.entries.len() - 1
                 } else {
                     current_index - 1
                 }
             }
-            "Right" => {
+            NavigationDirection::Right => {
                 if current_index == self.entries.len() - 1 {
                     0
                 } else {
