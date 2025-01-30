@@ -20,6 +20,7 @@ use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
+use gpui_tokio::Tokio;
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -279,6 +280,7 @@ fn main() {
 
     app.run(move |cx| {
         release_channel::init(app_version, cx);
+        gpui_tokio::init(cx);
         if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
             AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
         }
@@ -302,8 +304,11 @@ fn main() {
                     .ok()
             })
             .or_else(read_proxy_from_env);
-        let http = ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
-            .expect("could not start HTTP client");
+        let http = {
+            let _guard = Tokio::handle(cx).enter();
+            ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+                .expect("could not start HTTP client")
+        };
         cx.set_http_client(Arc::new(http));
 
         <dyn Fs>::set_global(fs.clone(), cx);

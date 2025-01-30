@@ -46,7 +46,6 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
-use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -62,6 +61,7 @@ use std::{
         Arc, LazyLock,
     },
 };
+use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
@@ -164,6 +164,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -199,6 +200,7 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
+            attach_kind: Default::default(),
         })
     }
 
@@ -260,6 +262,38 @@ impl CachedLspAdapter {
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+    pub fn find_project_root(
+        &self,
+        path: &Path,
+        ancestor_depth: usize,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        self.adapter
+            .find_project_root(path, ancestor_depth, delegate)
+    }
+    pub fn attach_kind(&self) -> Attach {
+        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Attach {
+    /// Create a single language server instance per subproject root.
+    InstancePerRoot,
+    /// Use one shared language server instance for all subprojects within a project.
+    Shared,
+}
+
+impl Attach {
+    pub fn root_path(
+        &self,
+        root_subproject_path: (WorktreeId, Arc<Path>),
+    ) -> (WorktreeId, Arc<Path>) {
+        match self {
+            Attach::InstancePerRoot => root_subproject_path,
+            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
+        }
+    }
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -270,6 +304,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
@@ -507,6 +542,19 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Support custom initialize params.
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
+    }
+    fn attach_kind(&self) -> Attach {
+        Attach::Shared
+    }
+    fn find_project_root(
+        &self,
+
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        // By default all language servers are rooted at the root of the worktree.
+        Some(Arc::from("".as_ref()))
     }
 }
 

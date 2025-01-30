@@ -11111,7 +11111,6 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         0,
         "Should not restart LSP server on an unrelated LSP settings change"
     );
-
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
