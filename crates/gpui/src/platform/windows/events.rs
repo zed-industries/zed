@@ -2,15 +2,18 @@ use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context as _;
-use windows::Win32::{
-    Foundation::*,
-    Graphics::Gdi::*,
-    System::SystemServices::*,
-    UI::{
-        Controls::*,
-        HiDpi::*,
-        Input::{Ime::*, KeyboardAndMouse::*},
-        WindowsAndMessaging::*,
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::*,
+        Graphics::Gdi::*,
+        System::SystemServices::*,
+        UI::{
+            Controls::*,
+            HiDpi::*,
+            Input::{Ime::*, KeyboardAndMouse::*},
+            WindowsAndMessaging::*,
+        },
     },
 };
 
@@ -46,9 +49,8 @@ pub(crate) fn handle_msg(
         WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
-        WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
+        WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
-        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -88,8 +90,7 @@ pub(crate) fn handle_msg(
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
-        WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(handle, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
@@ -261,26 +262,7 @@ fn handle_mouse_move_msg(
     wparam: WPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
@@ -314,18 +296,6 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
-}
-
-fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.hovered = false;
-    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-        drop(lock);
-        callback(false);
-        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-    }
-
-    Some(0)
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -985,26 +955,7 @@ fn handle_nc_mouse_move_msg(
         return None;
     }
 
-    let mut lock = state_ptr.state.borrow_mut();
-    if !lock.hovered {
-        lock.hovered = true;
-        unsafe {
-            TrackMouseEvent(&mut TRACKMOUSEEVENT {
-                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                dwFlags: TME_LEAVE | TME_NONCLIENT,
-                hwndTrack: handle,
-                dwHoverTime: HOVER_DEFAULT,
-            })
-            .log_err()
-        };
-        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
-            drop(lock);
-            callback(true);
-            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
-        }
-    } else {
-        drop(lock);
-    }
+    start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
@@ -1187,6 +1138,7 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
 
 fn handle_system_settings_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
@@ -1198,6 +1150,22 @@ fn handle_system_settings_changed(
     // window border offset
     lock.border_offset.update(handle).log_err();
     drop(lock);
+
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    handle_system_theme_changed(handle, state_ptr);
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
@@ -1227,7 +1195,7 @@ fn handle_system_theme_changed(
         .take()?;
     callback();
     state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-    set_dwm_window_appearance(handle);
+    configure_dwm_dark_mode(handle);
     Some(0)
 }
 
@@ -1515,6 +1483,31 @@ fn notify_frame_changed(handle: HWND) {
                 | SWP_NOZORDER,
         )
         .log_err();
+    }
+}
+
+fn start_tracking_mouse(
+    handle: HWND,
+    state_ptr: &Rc<WindowsWindowStatePtr>,
+    flags: TRACKMOUSEEVENT_FLAGS,
+) {
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: flags,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
     }
 }
 

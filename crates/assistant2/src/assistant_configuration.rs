@@ -3,7 +3,7 @@ use std::sync::Arc;
 use collections::HashMap;
 use gpui::{AnyView, App, EventEmitter, FocusHandle, Focusable, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{prelude::*, ElevationIndex};
+use ui::{prelude::*, Divider, DividerColor, ElevationIndex};
 use zed_actions::assistant::DeployPromptLibrary;
 
 pub struct AssistantConfiguration {
@@ -91,38 +91,47 @@ impl AssistantConfiguration {
             .cloned();
 
         v_flex()
-            .gap_2()
+            .gap_1p5()
             .child(
                 h_flex()
                     .justify_between()
-                    .child(Headline::new(provider_name.clone()).size(HeadlineSize::Small))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Icon::new(provider.icon())
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Label::new(provider_name.clone())),
+                    )
                     .when(provider.is_authenticated(cx), |parent| {
                         parent.child(
-                            h_flex().justify_end().child(
-                                Button::new(
-                                    SharedString::from(format!("new-thread-{provider_id}")),
-                                    "Open New Thread",
-                                )
-                                .icon_position(IconPosition::Start)
-                                .icon(IconName::Plus)
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .on_click(cx.listener({
-                                    let provider = provider.clone();
-                                    move |_this, _event, _window, cx| {
-                                        cx.emit(AssistantConfigurationEvent::NewThread(
-                                            provider.clone(),
-                                        ))
-                                    }
-                                })),
-                            ),
+                            Button::new(
+                                SharedString::from(format!("new-thread-{provider_id}")),
+                                "Start New Thread",
+                            )
+                            .icon_position(IconPosition::Start)
+                            .icon(IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener({
+                                let provider = provider.clone();
+                                move |_this, _event, _window, cx| {
+                                    cx.emit(AssistantConfigurationEvent::NewThread(
+                                        provider.clone(),
+                                    ))
+                                }
+                            })),
                         )
                     }),
             )
             .child(
                 div()
                     .p(DynamicSpacing::Base08.rems(cx))
-                    .bg(cx.theme().colors().surface_background)
+                    .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border_variant)
                     .rounded_md()
@@ -143,26 +152,43 @@ impl Render for AssistantConfiguration {
         v_flex()
             .id("assistant-configuration")
             .track_focus(&self.focus_handle(cx))
-            .bg(cx.theme().colors().editor_background)
+            .bg(cx.theme().colors().panel_background)
             .size_full()
             .overflow_y_scroll()
             .child(
-                h_flex().p(DynamicSpacing::Base16.rems(cx)).child(
-                    Button::new("open-prompt-library", "Open Prompt Library")
-                        .style(ButtonStyle::Filled)
-                        .full_width()
-                        .icon(IconName::Book)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_event, _window, cx| cx.dispatch_action(&DeployPromptLibrary)),
-                ),
+                v_flex()
+                    .p(DynamicSpacing::Base16.rems(cx))
+                    .gap_1()
+                    .child(Headline::new("Prompt Library").size(HeadlineSize::Small))
+                    .child(
+                        Button::new("open-prompt-library", "Open Prompt Library")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
+                            .full_width()
+                            .icon(IconName::Book)
+                            .icon_size(IconSize::Small)
+                            .icon_position(IconPosition::Start)
+                            .on_click(|_event, _window, cx| {
+                                cx.dispatch_action(&DeployPromptLibrary)
+                            }),
+                    ),
             )
+            .child(Divider::horizontal().color(DividerColor::Border))
             .child(
                 v_flex()
                     .p(DynamicSpacing::Base16.rems(cx))
                     .mt_1()
                     .gap_6()
                     .flex_1()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(Headline::new("LLM Providers").size(HeadlineSize::Small))
+                            .child(
+                                Label::new("Add at least one provider to use AI-powered features.")
+                                    .color(Color::Muted),
+                            ),
+                    )
                     .children(
                         providers
                             .into_iter()

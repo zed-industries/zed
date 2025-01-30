@@ -139,7 +139,8 @@ pub(crate) fn load_cursor(style: CursorStyle) -> HCURSOR {
     }))
 }
 
-pub(crate) fn set_dwm_window_appearance(hwnd: HWND) {
+/// This function is used to configure the dark mode for the window built-in title bar.
+pub(crate) fn configure_dwm_dark_mode(hwnd: HWND) {
     let dark_mode_enabled: BOOL = match system_appearance().log_err().unwrap_or_default() {
         WindowAppearance::Dark | WindowAppearance::VibrantDark => true.into(),
         WindowAppearance::Light | WindowAppearance::VibrantLight => false.into(),

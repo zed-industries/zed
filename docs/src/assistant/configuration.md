@@ -194,6 +194,45 @@ The Zed Assistant comes pre-configured to use the latest version for common mode
 
 You must provide the model's Context Window in the `max_tokens` parameter, this can be found [OpenAI Model Docs](https://platform.openai.com/docs/models). OpenAI `o1` models should set `max_completion_tokens` as well to avoid incurring high reasoning token costs. Custom models will be listed in the model dropdown in the assistant panel.
 
+### DeepSeek {#deepseek}
+
+1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
+2. Open the configuration view (`assistant: show configuration`) and navigate to the DeepSeek section
+3. Enter your DeepSeek API key
+
+The DeepSeek API key will be saved in your keychain.
+
+Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
+
+#### DeepSeek Custom Models {#deepseek-custom-models}
+
+The Zed Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+
+```json
+{
+  "language_models": {
+    "deepseek": {
+      "api_url": "https://api.deepseek.com",
+      "available_models": [
+        {
+          "name": "deepseek-chat",
+          "display_name": "DeepSeek Chat",
+          "max_tokens": 64000
+        },
+        {
+          "name": "deepseek-reasoner",
+          "display_name": "DeepSeek Reasoner",
+          "max_tokens": 64000,
+          "max_output_tokens": 4096
+        }
+      ]
+    }
+  }
+}
+```
+
+Custom models will be listed in the model dropdown in the assistant panel. You can also modify the `api_url` to use a custom endpoint if needed.
+
 ### OpenAI API Compatible
 
 Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.

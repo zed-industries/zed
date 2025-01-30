@@ -1,20 +1,13 @@
 use crate::{Toast, Workspace};
-use anyhow::Context as _;
-use anyhow::{anyhow, Result};
 use gpui::{
     svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Entity, EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task,
 };
-use std::rc::Rc;
+use parking_lot::Mutex;
+use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
-
-pub fn init(cx: &mut App) {
-    cx.set_global(GlobalAppNotifications {
-        app_notifications: Vec::new(),
-    })
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NotificationId {
@@ -164,7 +157,7 @@ impl Workspace {
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
         let app_notifications = cx
-            .try_global::<GlobalAppNotifications>()
+            .try_global::<AppNotifications>()
             .iter()
             .flat_map(|global| global.app_notifications.iter().cloned())
             .collect::<Vec<_>>();
@@ -502,21 +495,27 @@ pub mod simple_message_notification {
     }
 }
 
+static GLOBAL_APP_NOTIFICATIONS: LazyLock<Mutex<AppNotifications>> = LazyLock::new(|| {
+    Mutex::new(AppNotifications {
+        app_notifications: Vec::new(),
+    })
+});
+
 /// Stores app notifications so that they can be shown in new workspaces.
-struct GlobalAppNotifications {
+struct AppNotifications {
     app_notifications: Vec<(
         NotificationId,
-        Rc<dyn Fn(&mut Context<Workspace>) -> AnyView>,
+        Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync>,
     )>,
 }
 
-impl Global for GlobalAppNotifications {}
+impl Global for AppNotifications {}
 
-impl GlobalAppNotifications {
+impl AppNotifications {
     pub fn insert(
         &mut self,
         id: NotificationId,
-        build_notification: Rc<dyn Fn(&mut Context<Workspace>) -> AnyView>,
+        build_notification: Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync>,
     ) {
         self.remove(&id);
         self.app_notifications.push((id, build_notification))
@@ -534,73 +533,64 @@ impl GlobalAppNotifications {
 pub fn show_app_notification<V: Notification + 'static>(
     id: NotificationId,
     cx: &mut App,
-    build_notification: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static,
-) -> Result<()> {
-    // Handle dismiss events by removing the notification from all workspaces.
-    let build_notification: Rc<dyn Fn(&mut Context<Workspace>) -> AnyView> = Rc::new({
-        let id = id.clone();
-        move |cx| {
-            let notification = build_notification(cx);
-            cx.subscribe(&notification, {
+    build_notification: impl Fn(&mut Context<Workspace>) -> Entity<V> + 'static + Send + Sync,
+) {
+    // Defer notification creation so that windows on the stack can be returned to GPUI
+    cx.defer(move |cx| {
+        // Handle dismiss events by removing the notification from all workspaces.
+        let build_notification: Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync> =
+            Arc::new({
                 let id = id.clone();
-                move |_, _, _: &DismissEvent, cx| {
-                    dismiss_app_notification(&id, cx);
+                move |cx| {
+                    let notification = build_notification(cx);
+                    cx.subscribe(&notification, {
+                        let id = id.clone();
+                        move |_, _, _: &DismissEvent, cx| {
+                            dismiss_app_notification(&id, cx);
+                        }
+                    })
+                    .detach();
+                    notification.into()
                 }
-            })
-            .detach();
-            notification.into()
-        }
-    });
-
-    // Store the notification so that new workspaces also receive it.
-    cx.global_mut::<GlobalAppNotifications>()
-        .insert(id.clone(), build_notification.clone());
-
-    let mut notify_errors = Vec::new();
-
-    for window in cx.windows() {
-        if let Some(workspace_window) = window.downcast::<Workspace>() {
-            let notify_result = workspace_window.update(cx, |workspace, _window, cx| {
-                workspace.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
-                    build_notification(cx)
-                });
             });
-            match notify_result {
-                Ok(()) => {}
-                Err(notify_err) => notify_errors.push(notify_err),
+
+        // Store the notification so that new workspaces also receive it.
+        GLOBAL_APP_NOTIFICATIONS
+            .lock()
+            .insert(id.clone(), build_notification.clone());
+
+        for window in cx.windows() {
+            if let Some(workspace_window) = window.downcast::<Workspace>() {
+                workspace_window
+                    .update(cx, |workspace, _window, cx| {
+                        workspace.show_notification_without_handling_dismiss_events(
+                            &id,
+                            cx,
+                            |cx| build_notification(cx),
+                        );
+                    })
+                    .ok(); // Doesn't matter if the windows are dropped
             }
         }
-    }
-
-    if notify_errors.is_empty() {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "No workspaces were able to show notification. Errors:\n\n{}",
-            notify_errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        ))
-    }
+    });
 }
 
 pub fn dismiss_app_notification(id: &NotificationId, cx: &mut App) {
-    cx.global_mut::<GlobalAppNotifications>().remove(id);
-    for window in cx.windows() {
-        if let Some(workspace_window) = window.downcast::<Workspace>() {
-            let id = id.clone();
-            // This spawn is necessary in order to dismiss the notification on which the click
-            // occurred, because in that case we're already in the middle of an update.
-            cx.spawn(move |mut cx| async move {
-                workspace_window.update(&mut cx, |workspace, _window, cx| {
-                    workspace.dismiss_notification(&id, cx)
-                })
-            })
-            .detach_and_log_err(cx);
+    let id = id.clone();
+    // Defer notification dismissal so that windows on the stack can be returned to GPUI
+    cx.defer(move |cx| {
+        GLOBAL_APP_NOTIFICATIONS.lock().remove(&id);
+        for window in cx.windows() {
+            if let Some(workspace_window) = window.downcast::<Workspace>() {
+                let id = id.clone();
+                workspace_window
+                    .update(cx, |workspace, _window, cx| {
+                        workspace.dismiss_notification(&id, cx)
+                    })
+                    .ok();
+            }
         }
-    }
+    });
 }
 
 pub trait NotifyResultExt {
@@ -662,9 +652,8 @@ where
                             move |_cx| ErrorMessagePrompt::new(message)
                         })
                     }
-                })
-                .with_context(|| format!("Error while showing error notification: {message}"))
-                .log_err();
+                });
+
                 None
             }
         }

@@ -377,6 +377,10 @@ pub struct BufferChangeSet {
     pub staged_diff: Option<BufferDiff>,
 }
 
+pub enum BufferChangeSetEvent {
+    DiffChanged { changed_range: Range<text::Anchor> },
+}
+
 enum BufferStoreState {
     Local(LocalBufferStore),
     Remote(RemoteBufferStore),
@@ -2758,6 +2762,8 @@ impl BufferStore {
     }
 }
 
+impl EventEmitter<BufferChangeSetEvent> for BufferChangeSet {}
+
 impl BufferChangeSet {
     pub fn diff_hunks_intersecting_range<'a>(
         &'a self,
@@ -2848,7 +2854,76 @@ impl BufferChangeSet {
                 .as_deref(),
             &snapshot,
         );
-    }
+
+    //pub fn recalculate_diff(
+    //    &mut self,
+    //    buffer_snapshot: text::BufferSnapshot,
+    //    cx: &mut Context<Self>,
+    //) -> oneshot::Receiver<()> {
+    //    if let Some(base_text) = self.base_text.clone() {
+    //        self.recalculate_diff_internal(base_text.text(), buffer_snapshot, false, cx)
+    //    } else {
+    //        oneshot::channel().1
+    //    }
+    //}
+
+    //fn recalculate_diff_internal(
+    //    &mut self,
+    //    base_text: String,
+    //    buffer_snapshot: text::BufferSnapshot,
+    //    base_text_changed: bool,
+    //    cx: &mut Context<Self>,
+    //) -> oneshot::Receiver<()> {
+    //    let (tx, rx) = oneshot::channel();
+    //    self.diff_updated_futures.push(tx);
+    //    self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+    //        let (old_diff, new_base_text) = this.update(&mut cx, |this, cx| {
+    //            let new_base_text = if base_text_changed {
+    //                let base_text_rope: Rope = base_text.as_str().into();
+    //                let snapshot = language::Buffer::build_snapshot(
+    //                    base_text_rope,
+    //                    this.language.clone(),
+    //                    this.language_registry.clone(),
+    //                    cx,
+    //                );
+    //                cx.background_executor()
+    //                    .spawn(async move { Some(snapshot.await) })
+    //            } else {
+    //                Task::ready(None)
+    //            };
+    //            (this.diff_to_buffer.clone(), new_base_text)
+    //        })?;
+
+    //        let diff = cx.background_executor().spawn(async move {
+    //            let new_diff = BufferDiff::build(&base_text, &buffer_snapshot);
+    //            let changed_range = if base_text_changed {
+    //                Some(text::Anchor::MIN..text::Anchor::MAX)
+    //            } else {
+    //                new_diff.compare(&old_diff, &buffer_snapshot)
+    //            };
+    //            (new_diff, changed_range)
+    //        });
+
+    //        let (new_base_text, (diff, changed_range)) = futures::join!(new_base_text, diff);
+
+    //        this.update(&mut cx, |this, cx| {
+    //            if let Some(new_base_text) = new_base_text {
+    //                this.base_text = Some(new_base_text)
+    //            }
+    //            this.diff_to_buffer = diff;
+
+    //            this.recalculate_diff_task.take();
+    //            for tx in this.diff_updated_futures.drain(..) {
+    //                tx.send(()).ok();
+    //            }
+    //            if let Some(changed_range) = changed_range {
+    //                cx.emit(BufferChangeSetEvent::DiffChanged { changed_range });
+    //            }
+    //        })?;
+    //        Ok(())
+    //    }));
+    //    rx
+    //}
 }
 
 impl OpenBuffer {

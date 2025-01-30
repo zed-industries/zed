@@ -11111,7 +11111,6 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         0,
         "Should not restart LSP server on an unrelated LSP settings change"
     );
-
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -14402,6 +14401,7 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
             buffer.read(cx).remote_id()
         })
     });
+    cx.run_until_parked();
 
     cx.assert_state_with_diff(
         indoc! { "

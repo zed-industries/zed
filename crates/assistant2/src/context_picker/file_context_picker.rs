@@ -124,7 +124,7 @@ impl FileContextPickerDelegate {
             let file_matches = project.worktrees(cx).flat_map(|worktree| {
                 let worktree = worktree.read(cx);
                 let path_prefix: Arc<str> = worktree.root_name().into();
-                worktree.files(true, 0).map(move |entry| PathMatch {
+                worktree.files(false, 0).map(move |entry| PathMatch {
                     score: 0.,
                     positions: Vec::new(),
                     worktree_id: worktree.id().to_usize(),
