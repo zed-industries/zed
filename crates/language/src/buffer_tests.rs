@@ -2694,19 +2694,19 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
     assert_preview_edits(
         indoc! {"
         struct Person {
-            sur_name: String,
+            first_name: String,
         }
 
         impl Person {
-            fn sur_name(&self) -> &String {
-                &self.sur_name
+            fn first_name(&self) -> &String {
+                &self.first_name
             }
         }"
         },
         vec![
-            (Point::new(1, 4)..Point::new(1, 7), "last"),
-            (Point::new(5, 7)..Point::new(5, 10), "last"),
-            (Point::new(6, 14)..Point::new(6, 17), "last"),
+            (Point::new(1, 4)..Point::new(1, 9), "last"),
+            (Point::new(5, 7)..Point::new(5, 12), "last"),
+            (Point::new(6, 14)..Point::new(6, 19), "last"),
         ],
         true,
         cx,
@@ -2714,22 +2714,22 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
             assert_eq!(
                 hl.text,
                 indoc! {"
-                        surlast_name: String,
+                        firstlast_name: String,
                     }
 
                     impl Person {
-                        fn surlast_name(&self) -> &String {
-                            &self.surlast_name"
+                        fn firstlast_name(&self) -> &String {
+                            &self.firstlast_name"
                 }
             );
 
             assert_eq!(hl.highlights.len(), 6);
-            assert_eq!(hl.highlights[0], ((4..7), deletion_style));
-            assert_eq!(hl.highlights[1], ((7..11), insertion_style));
-            assert_eq!(hl.highlights[2], ((50..53), deletion_style));
-            assert_eq!(hl.highlights[3], ((53..57), insertion_style));
-            assert_eq!(hl.highlights[4], ((97..100), deletion_style));
-            assert_eq!(hl.highlights[5], ((100..104), insertion_style));
+            assert_eq!(hl.highlights[0], ((4..9), deletion_style));
+            assert_eq!(hl.highlights[1], ((9..13), insertion_style));
+            assert_eq!(hl.highlights[2], ((52..57), deletion_style));
+            assert_eq!(hl.highlights[3], ((57..61), insertion_style));
+            assert_eq!(hl.highlights[4], ((101..106), deletion_style));
+            assert_eq!(hl.highlights[5], ((106..110), insertion_style));
         },
     )
     .await;
