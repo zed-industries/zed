@@ -959,7 +959,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
                         client.fs().create_dir(&dot_git_dir).await?;
                     }
-                    client.fs().set_head_for_repo(&dot_git_dir, &contents);
+                    client.fs().set_index_for_repo(&dot_git_dir, &contents);
                 }
                 GitOperation::WriteGitBranch {
                     repo_path,

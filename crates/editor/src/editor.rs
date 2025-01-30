@@ -14115,7 +14115,7 @@ fn get_uncommitted_changes_for_buffers(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_changes(buffer.clone(), cx))
+            tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
         }
     });
     cx.spawn(|mut cx| async move {

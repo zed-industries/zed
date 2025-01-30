@@ -44,7 +44,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         }),
     )
     .await;
-    fs.set_head_for_repo(
+    fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), "fn one() -> usize { 0 }".into())],
     );
@@ -81,7 +81,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         .unwrap();
     let change_set = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_changes(buffer.clone(), cx)
+            project.open_unstaged_changes(buffer.clone(), cx)
         })
         .await
         .unwrap();
@@ -145,7 +145,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
     });
 
-    fs.set_head_for_repo(
+    fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib2.rs".into(), "fn one() -> usize { 100 }".into())],
     );

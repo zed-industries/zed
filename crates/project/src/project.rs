@@ -1908,7 +1908,7 @@ impl Project {
         })
     }
 
-    pub fn open_uncommitted_changes(
+    pub fn open_unstaged_changes(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -1919,6 +1919,20 @@ impl Project {
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.open_unstaged_changes(buffer, cx)
+        })
+    }
+
+    pub fn open_uncommitted_changes(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferChangeSet>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_uncommitted_changes(buffer, cx)
         })
     }
 
