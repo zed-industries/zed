@@ -533,7 +533,7 @@ tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
-unindent = "0.1.7"
+unindent = "0.2.0"
 unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"
