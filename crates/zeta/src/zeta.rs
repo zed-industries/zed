@@ -52,6 +52,30 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY: &'static str =
     "zed_predict_data_collection_never_ask_again";
 
+// TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
+
+/// Typical number of string bytes per token for the purposes of limiting model input. This is
+/// intentionally low to err on the side of underestimating limits.
+const BYTES_PER_TOKEN_GUESS: usize = 3;
+
+/// This is based on the output token limit `max_tokens: 2048` in `crates/collab/src/llm.rs`. Number
+/// of output tokens is relevant to the size of the input excerpt because the model is tasked with
+/// outputting a modified excerpt. `2/3` is chosen so that there are some output tokens remaining
+/// for the model to specify insertions.
+const BUFFER_EXCERPT_BYTE_LIMIT: usize = (2048 * 2 / 3) * BYTES_PER_TOKEN_GUESS;
+
+/// Note that this is not the limit for the overall prompt, just for the inputs to the template
+/// instantiated in `crates/collab/src/llm.rs`.
+const TOTAL_BYTE_LIMIT: usize = BUFFER_EXCERPT_BYTE_LIMIT * 2;
+
+/// Maximum number of events to include in the prompt.
+const MAX_EVENT_COUNT: usize = 16;
+
+/// Maximum number of string bytes in a single event. Arbitrarily choosing this to be 4x the size of
+/// equally splitting up the the remaining bytes after the largest possible buffer excerpt.
+const PER_EVENT_BYTE_LIMIT: usize =
+    (TOTAL_BYTE_LIMIT - BUFFER_EXCERPT_BYTE_LIMIT) / MAX_EVENT_COUNT * 4;
+
 actions!(edit_prediction, [ClearHistory]);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -243,8 +267,6 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
-        const MAX_EVENT_COUNT: usize = 16;
-
         if let Some(Event::BufferChange {
             new_snapshot: last_new_snapshot,
             timestamp: last_timestamp,
@@ -311,7 +333,7 @@ impl Zeta {
     pub fn request_completion_impl<F, R>(
         &mut self,
         buffer: &Entity<Buffer>,
-        position: language::Anchor,
+        cursor: language::Anchor,
         can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
@@ -320,10 +342,10 @@ impl Zeta {
         F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
-        let snapshot = self.report_changes_for_buffer(buffer, cx);
-        let point = position.to_point(&snapshot);
-        let offset = point.to_offset(&snapshot);
-        let excerpt_range = excerpt_range_for_position(point, &snapshot);
+        let snapshot = self.report_changes_for_buffer(&buffer, cx);
+        let cursor_point = cursor.to_point(&snapshot);
+        let cursor_offset = cursor_point.to_offset(&snapshot);
+        let excerpt_range = excerpt_range_for_position(cursor_point, &snapshot);
         let events = self.events.clone();
         let path = snapshot
             .file()
@@ -334,6 +356,7 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let is_staff = cx.is_staff();
 
+        let buffer = buffer.clone();
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
@@ -343,16 +366,12 @@ impl Zeta {
                     let snapshot = snapshot.clone();
                     let excerpt_range = excerpt_range.clone();
                     async move {
-                        let mut input_events = String::new();
-                        for event in events {
-                            if !input_events.is_empty() {
-                                input_events.push('\n');
-                                input_events.push('\n');
-                            }
-                            input_events.push_str(&event.to_prompt());
-                        }
+                        let input_excerpt =
+                            prompt_for_excerpt(&snapshot, &excerpt_range, cursor_offset);
 
-                        let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
+                        let bytes_remaining = todo!();
+                        let input_events = prompt_for_events(events.iter(), bytes_remaining);
+
                         let input_outline = prompt_for_outline(&snapshot);
 
                         (input_events, input_excerpt, input_outline)
@@ -379,7 +398,7 @@ impl Zeta {
                 buffer,
                 &snapshot,
                 excerpt_range,
-                offset,
+                cursor_offset,
                 path,
                 input_outline,
                 input_events,
@@ -1050,6 +1069,30 @@ fn excerpt_range_for_position(point: Point, snapshot: &BufferSnapshot) -> Range<
     let excerpt_end_row = cmp::min(point.row + context_lines_after, snapshot.max_point().row);
     let excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
     excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot)
+}
+
+fn prompt_for_events<'a>(
+    events: impl Iterator<Item = &'a Event>,
+    mut bytes_remaining: usize,
+) -> String {
+    let mut result = String::new();
+    for event in events {
+        if !result.is_empty() {
+            result.push('\n');
+            result.push('\n');
+        }
+        let event_string = event.to_prompt();
+        let len = event_string.len();
+        if len > PER_EVENT_BYTE_LIMIT {
+            continue;
+        }
+        if len > bytes_remaining {
+            break;
+        }
+        bytes_remaining -= len;
+        result.push_str(&event_string);
+    }
+    result
 }
 
 struct RegisteredBuffer {
