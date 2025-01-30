@@ -170,7 +170,6 @@ members = [
     "extensions/lua",
     "extensions/php",
     "extensions/perplexity",
-    "extensions/prisma",
     "extensions/proto",
     "extensions/purescript",
     "extensions/ruff",
