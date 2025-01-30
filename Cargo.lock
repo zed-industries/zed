@@ -4021,7 +4021,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "zed_predict_tos",
+ "zed_predict_onboarding",
 ]
 
 [[package]]
@@ -6415,7 +6415,7 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
- "zed_predict_tos",
+ "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -13541,6 +13541,7 @@ dependencies = [
  "windows 0.58.0",
  "workspace",
  "zed_actions",
+ "zed_predict_onboarding",
 ]
 
 [[package]]
@@ -16557,7 +16558,7 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
- "zed_predict_tos",
+ "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -16672,13 +16673,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_predict_tos"
+name = "zed_predict_onboarding"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "client",
+ "db",
+ "feature_flags",
+ "fs",
  "gpui",
+ "language",
  "menu",
+ "settings",
+ "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -16872,6 +16881,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "db",
  "editor",
  "env_logger 0.11.6",
  "feature_flags",
@@ -16886,6 +16896,7 @@ dependencies = [
  "menu",
  "reqwest_client",
  "rpc",
+ "serde",
  "serde_json",
  "settings",
  "similar",

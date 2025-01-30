@@ -1,7 +1,10 @@
 mod completion_diff_element;
+mod persistence;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
+use db::kvp::KEY_VALUE_STORE;
+use inline_completion::DataCollectionState;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -12,6 +15,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
+    WeakEntity,
 };
 use http_client::{HttpClient, Method};
 use language::{
@@ -20,26 +24,33 @@ use language::{
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cmp,
+    cmp, env,
     fmt::Write,
     future::Future,
     mem,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    Workspace,
+};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
+const ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY: &'static str =
+    "zed_predict_data_collection_never_ask_again";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
 
@@ -187,6 +198,7 @@ pub struct Zeta {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
+    data_collection_preferences: DataCollectionPreferences,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     tos_accepted: bool, // Terms of service accepted
@@ -216,13 +228,13 @@ impl Zeta {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
-
         Self {
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
+            data_collection_preferences: Self::load_data_collection_preferences(cx),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -240,11 +252,16 @@ impl Zeta {
                 .read(cx)
                 .current_user_has_accepted_terms()
                 .unwrap_or(false),
-            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
-                client::user::Event::TermsStatusUpdated { accepted } => {
-                    this.tos_accepted = *accepted;
+            _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
+                match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        this.tos_accepted = user_store
+                            .read(cx)
+                            .current_user_has_accepted_terms()
+                            .unwrap_or(false);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }),
         }
     }
@@ -308,11 +325,8 @@ impl Zeta {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            language::BufferEvent::Edited => {
-                self.report_changes_for_buffer(&buffer, cx);
-            }
-            _ => {}
+        if let language::BufferEvent::Edited = event {
+            self.report_changes_for_buffer(&buffer, cx);
         }
     }
 
@@ -320,6 +334,7 @@ impl Zeta {
         &mut self,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
@@ -370,6 +385,7 @@ impl Zeta {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
+                can_collect_data,
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
@@ -540,16 +556,25 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(buffer, position, cx, |_, _, _, _| ready(Ok(response)))
+        self.request_completion_impl(buffer, position, false, cx, |_, _, _, _| {
+            ready(Ok(response))
+        })
     }
 
     pub fn request_completion(
         &mut self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
-        self.request_completion_impl(buffer, position, cx, Self::perform_predict_edits)
+        self.request_completion_impl(
+            buffer,
+            position,
+            can_collect_data,
+            cx,
+            Self::perform_predict_edits,
+        )
     }
 
     fn perform_predict_edits(
@@ -862,6 +887,80 @@ and then another
 
         new_snapshot
     }
+
+    pub fn data_collection_choice_at(&self, path: &Path) -> DataCollectionChoice {
+        match self.data_collection_preferences.per_worktree.get(path) {
+            Some(true) => DataCollectionChoice::Enabled,
+            Some(false) => DataCollectionChoice::Disabled,
+            None => DataCollectionChoice::NotAnswered,
+        }
+    }
+
+    fn update_data_collection_choice_for_worktree(
+        &mut self,
+        absolute_path_of_project_worktree: PathBuf,
+        can_collect_data: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.data_collection_preferences
+            .per_worktree
+            .insert(absolute_path_of_project_worktree.clone(), can_collect_data);
+
+        db::write_and_log(cx, move || {
+            persistence::DB
+                .save_accepted_data_collection(absolute_path_of_project_worktree, can_collect_data)
+        });
+    }
+
+    fn set_never_ask_again_for_data_collection(&mut self, cx: &mut Context<Self>) {
+        self.data_collection_preferences.never_ask_again = true;
+
+        // persist choice
+        db::write_and_log(cx, move || {
+            KEY_VALUE_STORE.write_kvp(
+                ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into(),
+                "true".to_string(),
+            )
+        });
+    }
+
+    fn load_data_collection_preferences(cx: &mut Context<Self>) -> DataCollectionPreferences {
+        if env::var("ZED_PREDICT_CLEAR_DATA_COLLECTION_PREFERENCES").is_ok() {
+            db::write_and_log(cx, move || async move {
+                KEY_VALUE_STORE
+                    .delete_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into())
+                    .await
+                    .log_err();
+
+                persistence::DB.clear_all_zeta_preferences().await
+            });
+            return DataCollectionPreferences::default();
+        }
+
+        let never_ask_again = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY)
+            .log_err()
+            .flatten()
+            .map(|value| value == "true")
+            .unwrap_or(false);
+
+        let preferences_per_project = persistence::DB
+            .get_all_zeta_preferences()
+            .log_err()
+            .unwrap_or_else(HashMap::default);
+
+        DataCollectionPreferences {
+            never_ask_again,
+            per_worktree: preferences_per_project,
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DataCollectionPreferences {
+    /// Set when a user clicks on "Never Ask Again", can never be unset.
+    never_ask_again: bool,
+    per_worktree: HashMap<PathBuf, bool>,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -1276,22 +1375,120 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+#[derive(Clone, Copy)]
+pub enum DataCollectionChoice {
+    NotAnswered,
+    Enabled,
+    Disabled,
+}
+
+impl DataCollectionChoice {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Enabled => true,
+            Self::NotAnswered | Self::Disabled => false,
+        }
+    }
+
+    pub fn is_answered(&self) -> bool {
+        match self {
+            Self::Enabled | Self::Disabled => true,
+            Self::NotAnswered => false,
+        }
+    }
+
+    pub fn toggle(&self) -> DataCollectionChoice {
+        match self {
+            Self::Enabled => Self::Disabled,
+            Self::Disabled => Self::Enabled,
+            Self::NotAnswered => Self::Enabled,
+        }
+    }
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
+    data_collection: Option<ProviderDataCollection>,
+}
+
+pub struct ProviderDataCollection {
+    workspace: WeakEntity<Workspace>,
+    worktree_root_path: PathBuf,
+    choice: DataCollectionChoice,
+}
+
+impl ProviderDataCollection {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        workspace: Option<Entity<Workspace>>,
+        buffer: Option<Entity<Buffer>>,
+        cx: &mut App,
+    ) -> Option<ProviderDataCollection> {
+        let workspace = workspace?;
+
+        let worktree_root_path = buffer?.update(cx, |buffer, cx| {
+            let file = buffer.file()?;
+
+            if !file.is_local() || file.is_private() {
+                return None;
+            }
+
+            workspace.update(cx, |workspace, cx| {
+                Some(
+                    workspace
+                        .absolute_path_of_worktree(file.worktree_id(cx), cx)?
+                        .to_path_buf(),
+                )
+            })
+        })?;
+
+        let choice = zeta.read(cx).data_collection_choice_at(&worktree_root_path);
+
+        Some(ProviderDataCollection {
+            workspace: workspace.downgrade(),
+            worktree_root_path,
+            choice,
+        })
+    }
+
+    fn set_choice(&mut self, choice: DataCollectionChoice, zeta: &Entity<Zeta>, cx: &mut App) {
+        self.choice = choice;
+
+        let worktree_root_path = self.worktree_root_path.clone();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.update_data_collection_choice_for_worktree(
+                worktree_root_path,
+                choice.is_enabled(),
+                cx,
+            )
+        });
+    }
+
+    fn toggle_choice(&mut self, zeta: &Entity<Zeta>, cx: &mut App) {
+        self.set_choice(self.choice.toggle(), zeta, cx);
+    }
 }
 
 impl ZetaInlineCompletionProvider {
     pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
 
-    pub fn new(zeta: Entity<Zeta>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, data_collection: Option<ProviderDataCollection>) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
+            data_collection,
+        }
+    }
+
+    fn set_data_collection_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
+        if let Some(data_collection) = self.data_collection.as_mut() {
+            data_collection.set_choice(choice, &self.zeta, cx);
         }
     }
 }
@@ -1302,7 +1499,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn display_name() -> &'static str {
-        "Zed Predict"
+        "Zed's Edit Predictions"
     }
 
     fn show_completions_in_menu() -> bool {
@@ -1315,6 +1512,24 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        let Some(data_collection) = self.data_collection.as_ref() else {
+            return DataCollectionState::Unknown;
+        };
+
+        if data_collection.choice.is_enabled() {
+            DataCollectionState::Enabled
+        } else {
+            DataCollectionState::Disabled
+        }
+    }
+
+    fn toggle_data_collection(&mut self, cx: &mut App) {
+        if let Some(data_collection) = self.data_collection.as_mut() {
+            data_collection.toggle_choice(&self.zeta, cx);
+        }
     }
 
     fn is_enabled(
@@ -1362,6 +1577,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
+        let can_collect_data = self
+            .data_collection
+            .as_ref()
+            .map_or(false, |data_collection| data_collection.choice.is_enabled());
 
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {
@@ -1370,7 +1589,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, cx)
+                    zeta.request_completion(&buffer, position, can_collect_data, cx)
                 })
             });
 
@@ -1447,8 +1666,80 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
         self.pending_completions.clear();
+
+        let Some(data_collection) = self.data_collection.as_mut() else {
+            return;
+        };
+
+        if data_collection.choice.is_answered()
+            || self
+                .zeta
+                .read(cx)
+                .data_collection_preferences
+                .never_ask_again
+        {
+            return;
+        }
+
+        struct ZetaDataCollectionNotification;
+        let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
+
+        const DATA_COLLECTION_INFO_URL: &str = "https://zed.dev/terms-of-service"; // TODO: Replace for a link that's dedicated to Edit Predictions data collection
+
+        let this = cx.entity();
+        data_collection
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_notification(notification_id, cx, |cx| {
+                    let zeta = self.zeta.clone();
+
+                    cx.new(move |_cx| {
+                        let message =
+                            "To allow Zed to suggest better edits, turn on data collection. You \
+                            can turn off at any time via the status bar menu.";
+                        MessageNotification::new(message)
+                            .with_title("Per-Project Data Collection Program")
+                            .show_close_button(false)
+                            .with_click_message("Turn On")
+                            .on_click({
+                                let this = this.clone();
+                                move |_window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.set_data_collection_choice(
+                                            DataCollectionChoice::Enabled,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            })
+                            .with_secondary_click_message("Turn Off")
+                            .on_secondary_click({
+                                move |_window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.set_data_collection_choice(
+                                            DataCollectionChoice::Disabled,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            })
+                            .with_tertiary_click_message("Never Ask Again")
+                            .on_tertiary_click({
+                                let zeta = zeta.clone();
+                                move |_window, cx| {
+                                    zeta.update(cx, |zeta, cx| {
+                                        zeta.set_never_ask_again_for_data_collection(cx);
+                                    });
+                                }
+                            })
+                            .more_info_message("Learn More")
+                            .more_info_url(DATA_COLLECTION_INFO_URL)
+                    })
+                });
+            })
+            .log_err();
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
@@ -1688,8 +1979,9 @@ mod tests {
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-        let completion_task =
-            zeta.update(cx, |zeta, cx| zeta.request_completion(&buffer, cursor, cx));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_completion(&buffer, cursor, false, cx)
+        });
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
