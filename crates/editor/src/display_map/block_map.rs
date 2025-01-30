@@ -1994,7 +1994,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap},
-        test::retrieve_test_font,
+        test::test_font,
     };
     use gpui::{div, font, px, App, AppContext as _, Element};
     use itertools::Itertools;
@@ -2228,7 +2228,7 @@ mod tests {
             multi_buffer
         });
 
-        let font = retrieve_test_font();
+        let font = test_font();
         let font_size = px(14.);
         let font_id = cx.text_system().resolve_font(&font);
         let mut wrap_width = px(0.);
@@ -3070,7 +3070,7 @@ mod tests {
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let font = retrieve_test_font();
+        let font = test_font();
         let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font, font_size, wrap_width, cx));
         let mut block_map = BlockMap::new(

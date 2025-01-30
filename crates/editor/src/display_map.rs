@@ -1435,7 +1435,7 @@ pub mod tests {
     use super::*;
     use crate::{
         movement,
-        test::{marked_display_snapshot, retrieve_test_font},
+        test::{marked_display_snapshot, test_font},
     };
     use block_map::BlockPlacement;
     use gpui::{
@@ -1495,7 +1495,7 @@ pub mod tests {
             }
         });
 
-        let font = retrieve_test_font();
+        let font = test_font();
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),

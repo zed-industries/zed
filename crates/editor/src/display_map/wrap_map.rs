@@ -1169,7 +1169,7 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
-        test::retrieve_test_font,
+        test::test_font,
         MultiBuffer,
     };
     use gpui::{px, test::observe};
@@ -1198,7 +1198,7 @@ mod tests {
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
 
-        let font = retrieve_test_font();
+        let font = test_font();
         let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
 
