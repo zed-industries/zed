@@ -411,7 +411,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
     ) {
     }
 
-    fn accept(&mut self, snapshot: &BufferSnapshot, _cx: &mut gpui::Context<Self>) {}
+    fn accept(&mut self, _snapshot: &BufferSnapshot, _cx: &mut gpui::Context<Self>) {}
 
     fn discard(&mut self, _cx: &mut gpui::Context<Self>) {}
 

@@ -556,13 +556,9 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(
-            buffer,
-            position,
-            cx,
-            |_, _, _, _| ready(Ok(response)),
-            false,
-        )
+        self.request_completion_impl(buffer, position, false, cx, |_, _, _, _| {
+            ready(Ok(response))
+        })
     }
 
     pub fn request_completion(
@@ -1988,7 +1984,7 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&buffer, cursor, cx, false)
+            zeta.request_completion(&buffer, cursor, false, cx)
         });
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
