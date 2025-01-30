@@ -129,9 +129,9 @@ impl LineLayout {
         &self,
         text: &str,
         wrap_width: Pixels,
+        max_lines: Option<usize>,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
-
         let mut first_non_whitespace_ix = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
@@ -182,7 +182,15 @@ impl LineLayout {
 
             let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
             let width = next_x - last_boundary_x;
+
             if width > wrap_width && boundary > last_boundary {
+                // When used line_clamp, we should limit the number of lines.
+                if let Some(max_lines) = max_lines {
+                    if boundaries.len() >= max_lines - 1 {
+                        break;
+                    }
+                }
+
                 if let Some(last_candidate_ix) = last_candidate_ix.take() {
                     last_boundary = last_candidate_ix;
                     last_boundary_x = last_candidate_x;
@@ -190,7 +198,6 @@ impl LineLayout {
                     last_boundary = boundary;
                     last_boundary_x = x;
                 }
-
                 boundaries.push(last_boundary);
             }
             prev_ch = ch;
@@ -434,6 +441,7 @@ impl LineLayoutCache {
         font_size: Pixels,
         runs: &[FontRun],
         wrap_width: Option<Pixels>,
+        max_lines: Option<usize>,
     ) -> Arc<WrappedLineLayout>
     where
         Text: AsRef<str>,
@@ -464,7 +472,7 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width)
+                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
             } else {
                 SmallVec::new()
             };

@@ -1677,6 +1677,7 @@ impl Interactivity {
                         FONT_SIZE,
                         &[window.text_style().to_run(str_len)],
                         None,
+                        None,
                     )
                     .ok()
                     .and_then(|mut text| text.pop())

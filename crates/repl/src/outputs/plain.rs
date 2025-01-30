@@ -77,11 +77,9 @@ pub fn text_style(window: &mut Window, cx: &mut App) -> TextStyle {
         line_height: window.line_height().into(),
         background_color: Some(theme.colors().terminal_ansi_background),
         white_space: WhiteSpace::Normal,
-        truncate: None,
         // These are going to be overridden per-cell
-        underline: None,
-        strikethrough: None,
         color: theme.colors().terminal_foreground,
+        ..Default::default()
     };
 
     text_style

@@ -2581,7 +2581,7 @@ impl Project {
         language_name: LanguageName,
     ) -> Option<SharedString> {
         languages
-            .language_for_name(&language_name.0)
+            .language_for_name(language_name.as_ref())
             .await
             .ok()?
             .toolchain_lister()
