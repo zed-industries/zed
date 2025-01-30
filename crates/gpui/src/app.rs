@@ -24,7 +24,7 @@ pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
-pub use model_context::*;
+pub use entity_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -42,7 +42,7 @@ use crate::{
 
 mod async_context;
 mod entity_map;
-mod model_context;
+mod entity_context;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
