@@ -43,6 +43,7 @@ log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 image.workspace = true
+once_cell.workspace = true
 parking_lot.workspace = true
 pathdiff.workspace = true
 paths.workspace = true

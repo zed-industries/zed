@@ -176,6 +176,7 @@ pub fn initialize_workspace(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
+                app_state.client.clone(),
                 popover_menu_handle.clone(),
                 cx,
             )

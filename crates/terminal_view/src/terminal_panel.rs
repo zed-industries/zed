@@ -35,10 +35,10 @@ use workspace::{
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
-    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane, DraggedTab,
-    ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup,
-    SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneInDirection, ToggleZoom,
-    Workspace,
+    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane,
+    DraggedSelection, DraggedTab, ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal,
+    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp,
+    SwapPaneInDirection, ToggleZoom, Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -1036,6 +1036,17 @@ pub fn new_terminal_pane(
                             add_paths_to_terminal(pane, &[entry_path], window, cx);
                         }
                     }
+                }
+            } else if let Some(selection) = dropped_item.downcast_ref::<DraggedSelection>() {
+                let project = project.read(cx);
+                let paths_to_add = selection
+                    .items()
+                    .map(|selected_entry| selected_entry.entry_id)
+                    .filter_map(|entry_id| project.path_for_entry(entry_id, cx))
+                    .filter_map(|project_path| project.absolute_path(&project_path, cx))
+                    .collect::<Vec<_>>();
+                if !paths_to_add.is_empty() {
+                    add_paths_to_terminal(pane, &paths_to_add, window, cx);
                 }
             } else if let Some(&entry_id) = dropped_item.downcast_ref::<ProjectEntryId>() {
                 if let Some(entry_path) = project

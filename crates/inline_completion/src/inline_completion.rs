@@ -18,6 +18,31 @@ pub struct InlineCompletion {
     pub edit_preview: Option<language::EditPreview>,
 }
 
+pub enum DataCollectionState {
+    /// The provider doesn't support data collection.
+    Unsupported,
+    /// When there's a file not saved yet. In this case, we can't tell to which project it belongs.
+    Unknown,
+    /// Data collection is enabled
+    Enabled,
+    /// Data collection is disabled or unanswered.
+    Disabled,
+}
+
+impl DataCollectionState {
+    pub fn is_supported(&self) -> bool {
+        !matches!(self, DataCollectionState::Unsupported)
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, DataCollectionState::Unknown)
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, DataCollectionState::Enabled)
+    }
+}
+
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
@@ -26,6 +51,10 @@ pub trait InlineCompletionProvider: 'static + Sized {
     fn show_tab_accept_marker() -> bool {
         false
     }
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        DataCollectionState::Unsupported
+    }
+    fn toggle_data_collection(&mut self, _cx: &mut App) {}
     fn is_enabled(
         &self,
         buffer: &Entity<Buffer>,
@@ -72,6 +101,8 @@ pub trait InlineCompletionProviderHandle {
     fn show_completions_in_menu(&self) -> bool;
     fn show_completions_in_normal_mode(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState;
+    fn toggle_data_collection(&self, cx: &mut App);
     fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
@@ -120,6 +151,14 @@ where
 
     fn show_tab_accept_marker(&self) -> bool {
         T::show_tab_accept_marker()
+    }
+
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
+        self.read(cx).data_collection_state(cx)
+    }
+
+    fn toggle_data_collection(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.toggle_data_collection(cx))
     }
 
     fn is_enabled(

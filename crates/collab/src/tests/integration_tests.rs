@@ -8,7 +8,6 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_context_editor::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
-use assistant_tool::ToolWorkingSet;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -6547,7 +6546,6 @@ async fn test_context_collaboration_with_reconnect(
                 project_a.clone(),
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
-                Arc::new(ToolWorkingSet::default()),
                 cx,
             )
         })
@@ -6559,7 +6557,6 @@ async fn test_context_collaboration_with_reconnect(
                 project_b.clone(),
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
-                Arc::new(ToolWorkingSet::default()),
                 cx,
             )
         })
