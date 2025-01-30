@@ -7374,29 +7374,19 @@ impl ScrollbarLayout {
     }
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
-        match self.axis {
-            ScrollbarAxis::Vertical => {
-                let thumb_top = self.y_for_row(self.visible_range.start);
-                let thumb_bottom = thumb_top + self.thumb_size;
-                Bounds::from_corners(
-                    point(self.hitbox.left(), thumb_top),
-                    point(self.hitbox.right(), thumb_bottom),
-                )
-            }
-            ScrollbarAxis::Horizontal => {
-                let thumb_left =
-                    self.hitbox.left() + self.visible_range.start * self.text_unit_size;
-                let thumb_right = thumb_left + self.thumb_size;
-                Bounds::from_corners(
-                    point(thumb_left, self.hitbox.top()),
-                    point(thumb_right, self.hitbox.bottom()),
-                )
-            }
-        }
+        let scrollbar_track = &self.hitbox.bounds;
+        Bounds::new(
+            scrollbar_track
+                .origin
+                .apply_along(self.axis, |origin| self.thumb_origin(origin)),
+            scrollbar_track
+                .size
+                .apply_along(self.axis, |_| self.thumb_size),
+        )
     }
 
-    fn y_for_row(&self, row: f32) -> Pixels {
-        self.hitbox.top() + row * self.text_unit_size
+    fn thumb_origin(&self, origin: Pixels) -> Pixels {
+        origin + self.visible_range.start * self.text_unit_size
     }
 
     fn marker_quads_for_ranges(
