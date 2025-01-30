@@ -15,6 +15,11 @@ impl SharedString {
     pub const fn new_static(str: &'static str) -> Self {
         Self(ArcCow::Borrowed(str))
     }
+
+    /// Creates a [`SharedString`] from anything that can become an Arc<str>
+    pub fn new(str: impl Into<Arc<str>>) -> Self {
+        SharedString(ArcCow::Owned(str.into()))
+    }
 }
 
 impl JsonSchema for SharedString {

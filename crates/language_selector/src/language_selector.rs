@@ -141,7 +141,7 @@ impl LanguageSelectorDelegate {
         let need_icon = FileFinderSettings::get_global(cx).file_icons;
         if let Some(buffer_language) = buffer_language {
             let buffer_language_name = buffer_language.name();
-            if buffer_language_name.0.as_ref() == mat.string.as_str() {
+            if buffer_language_name.as_ref() == mat.string.as_str() {
                 label.push_str(" (current)");
                 let icon = need_icon
                     .then(|| self.language_icon(&buffer_language.config().matcher, cx))
@@ -154,7 +154,7 @@ impl LanguageSelectorDelegate {
             let language_name = LanguageName::new(mat.string.as_str());
             match self
                 .language_registry
-                .available_language_for_name(&language_name.0)
+                .available_language_for_name(language_name.as_ref())
             {
                 Some(available_language) => {
                     let icon = self.language_icon(available_language.matcher(), cx);

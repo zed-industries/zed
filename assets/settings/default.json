@@ -11,7 +11,7 @@
     "dark": "One Dark"
   },
   // The name of a base set of key bindings to use.
-  // This setting can take four values, each named after another
+  // This setting can take six values, each named after another
   // text editor:
   //
   // 1. "VSCode"
@@ -202,7 +202,7 @@
   // Example: ["string", "comment"]
   "inline_completions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
-  // This setting can take three values:
+  // This setting can take four values:
   //
   // 1. Draw tabs and spaces only for the selected text (default):
   //    "selection"
@@ -392,7 +392,7 @@
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
-      /// This setting can take four values:
+      /// This setting can take five values:
       ///
       /// 1. null (default): Inherit editor settings
       /// 2. Show the scrollbar if there's important information or
@@ -464,7 +464,7 @@
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the project panel.
-      /// This setting can take four values:
+      /// This setting can take five values:
       ///
       /// 1. null (default): Inherit editor settings
       /// 2. Show the scrollbar if there's important information or
@@ -914,7 +914,7 @@
     /// Scrollbar-related settings
     "scrollbar": {
       /// When to show the scrollbar in the terminal.
-      /// This setting can take four values:
+      /// This setting can take five values:
       ///
       /// 1. null (default): Inherit editor settings
       /// 2. Show the scrollbar if there's important information or

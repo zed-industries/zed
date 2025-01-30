@@ -10,6 +10,7 @@ pub mod lsp_ext_command;
 pub mod lsp_store;
 pub mod prettier_store;
 pub mod project_settings;
+mod project_tree;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -30,7 +31,9 @@ mod yarn;
 use crate::git::GitState;
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
-use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
+use client::{
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
+};
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -45,7 +48,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{
     blame::Blame,
-    repository::{Branch, GitRepository},
+    repository::{Branch, GitRepository, RepoPath},
     status::FileStatus,
 };
 use gpui::{
@@ -476,6 +479,7 @@ pub struct DocumentHighlight {
 pub struct Symbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
+    pub source_language_server_id: LanguageServerId,
     pub path: ProjectPath,
     pub label: CodeLabel,
     pub name: String,
@@ -605,6 +609,10 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
+        client.add_model_request_handler(Self::handle_stage);
+        client.add_model_request_handler(Self::handle_unstage);
+        client.add_model_request_handler(Self::handle_commit);
+
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
@@ -694,8 +702,9 @@ impl Project {
                 )
             });
 
-            let git_state =
-                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+            let git_state = Some(
+                cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx)),
+            );
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -815,8 +824,15 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state =
-                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+            let git_state = Some(cx.new(|cx| {
+                GitState::new(
+                    &worktree_store,
+                    languages.clone(),
+                    Some(ssh_proto.clone()),
+                    Some(ProjectId(SSH_PROJECT_ID)),
+                    cx,
+                )
+            }));
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -873,6 +889,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
             };
 
+            // ssh -> local machine handlers
             let ssh = ssh.read(cx);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
@@ -1013,8 +1030,16 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state =
-            Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx))).transpose()?;
+        let git_state = Some(cx.new(|cx| {
+            GitState::new(
+                &worktree_store,
+                languages.clone(),
+                Some(client.clone().into()),
+                Some(ProjectId(remote_id)),
+                cx,
+            )
+        }))
+        .transpose()?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -1907,7 +1932,7 @@ impl Project {
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> Task<Result<Entity<Buffer>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -1922,11 +1947,11 @@ impl Project {
     pub fn open_buffer_with_lsp(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> Task<Result<(Entity<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         let buffer = self.open_buffer(path, cx);
         let lsp_store = self.lsp_store().clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let buffer = buffer.await?;
             let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
                 lsp_store.register_buffer_with_language_servers(&buffer, cx)
@@ -2580,7 +2605,7 @@ impl Project {
         language_name: LanguageName,
     ) -> Option<SharedString> {
         languages
-            .language_for_name(&language_name.0)
+            .language_for_name(language_name.as_ref())
             .await
             .ok()?
             .toolchain_lister()
@@ -3945,6 +3970,123 @@ impl Project {
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
 
+    async fn handle_stage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Stage>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state()
+                .context("missing git state")?
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .stage_entries(entries, err_sender)
+            .context("staging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during staging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_unstage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Unstage>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state()
+                .context("missing git state")?
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .unstage_entries(entries, err_sender)
+            .context("unstaging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state()
+                .context("missing git state")?
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let commit_message = envelope.payload.message;
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .commit_with_message(commit_message, err_sender)
+            .context("unstaging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
     fn respond_to_open_buffer_request(
         this: Entity<Self>,
         buffer: Entity<Buffer>,
@@ -4132,14 +4274,25 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_servers_for_local_buffer<'a>(
-        &'a self,
-        buffer: &'a Buffer,
-        cx: &'a App,
-    ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.lsp_store
-            .read(cx)
-            .language_servers_for_local_buffer(buffer, cx)
+    pub fn language_server_for_id(
+        &self,
+        id: LanguageServerId,
+        cx: &App,
+    ) -> Option<Arc<LanguageServer>> {
+        self.lsp_store.read(cx).language_server_for_id(id)
+    }
+
+    pub fn for_language_servers_for_local_buffer<R: 'static>(
+        &self,
+        buffer: &Buffer,
+        callback: impl FnOnce(
+            Box<dyn Iterator<Item = (&Arc<CachedLspAdapter>, &Arc<LanguageServer>)> + '_>,
+        ) -> R,
+        cx: &mut App,
+    ) -> R {
+        self.lsp_store.update(cx, |this, cx| {
+            callback(Box::new(this.language_servers_for_local_buffer(buffer, cx)))
+        })
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {
