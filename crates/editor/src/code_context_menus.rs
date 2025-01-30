@@ -652,7 +652,7 @@ impl CompletionsMenu {
                                     )
                                     .on_click(cx.listener(move |editor, _event, window, cx| {
                                         cx.stop_propagation();
-                                        editor.toggle_zed_predict_tos(window, cx);
+                                        editor.toggle_zed_predict_onboarding(window, cx);
                                     })),
                             ),
 

@@ -121,9 +121,7 @@ pub enum Event {
     },
     ShowContacts,
     ParticipantIndicesChanged,
-    TermsStatusUpdated {
-        accepted: bool,
-    },
+    PrivateUserInfoUpdated,
 }
 
 #[derive(Clone, Copy)]
@@ -227,9 +225,7 @@ impl UserStore {
                                             };
 
                                             this.set_current_user_accepted_tos_at(accepted_tos_at);
-                                            cx.emit(Event::TermsStatusUpdated {
-                                                accepted: accepted_tos_at.is_some(),
-                                            });
+                                            cx.emit(Event::PrivateUserInfoUpdated);
                                         })
                                     } else {
                                         anyhow::Ok(())
@@ -244,6 +240,8 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(&mut cx, |this, cx| {
+                                this.accepted_tos_at = None;
+                                cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
                             })?
@@ -714,7 +712,7 @@ impl UserStore {
 
                 this.update(&mut cx, |this, cx| {
                     this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
-                    cx.emit(Event::TermsStatusUpdated { accepted: true });
+                    cx.emit(Event::PrivateUserInfoUpdated);
                 })
             } else {
                 Err(anyhow!("client not found"))
