@@ -1393,7 +1393,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     // Recalculate the diff, changing the first diff hunk.
     change_set.update(cx, |change_set, cx| {
-        change_set.recalculate_diff_sync(buffer.read(cx).text_snapshot());
+        change_set.recalculate_diff_sync(buffer.read(cx).text_snapshot(), cx);
     });
     cx.run_until_parked();
     assert_new_snapshot(
@@ -2160,12 +2160,12 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                         let _ = multibuffer
                             .change_set_for(snapshot.remote_id())
                             .unwrap()
-                            .update(cx, |change_set, _| {
+                            .update(cx, |change_set, cx| {
                                 log::info!(
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
-                                change_set.recalculate_diff_sync(snapshot.text);
+                                change_set.recalculate_diff_sync(snapshot.text, cx);
                             });
                     }
                     reference.diffs_updated(cx);
