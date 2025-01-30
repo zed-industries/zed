@@ -613,7 +613,7 @@ impl AssistantPanel {
                 })
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
             ActiveView::History | ActiveView::PromptEditorHistory => "History".into(),
-            ActiveView::Configuration => "Configuration".into(),
+            ActiveView::Configuration => "Assistant Settings".into(),
         };
 
         let sub_title = match self.active_view {
@@ -700,7 +700,7 @@ impl AssistantPanel {
                         IconButton::new("configure-assistant", IconName::Settings)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
-                            .tooltip(Tooltip::text("Configure Assistant"))
+                            .tooltip(Tooltip::text("Assistant Settings"))
                             .on_click(move |_event, window, cx| {
                                 window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
                             }),

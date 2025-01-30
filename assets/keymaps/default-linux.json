@@ -798,6 +798,8 @@
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      "alt-b": ["terminal::SendText", "\u001bb"],
+      "alt-f": ["terminal::SendText", "\u001bf"],
       // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
