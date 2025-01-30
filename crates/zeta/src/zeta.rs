@@ -1,4 +1,5 @@
 mod completion_diff_element;
+mod persistence;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
@@ -47,8 +48,8 @@ const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-const ZED_PREDICT_DATA_COLLECTION_PREFERENCES_KEY: &'static str =
-    "zed-predict-data-collections-preferences";
+const ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY: &'static str =
+    "zed_predict_data_collection_never_ask_again";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
 
@@ -843,60 +844,59 @@ and then another
     ) {
         self.data_collection_preferences
             .per_worktree
-            .insert(absolute_path_of_project_worktree, can_collect_data);
-        self.persist_data_collection_preferences(cx);
+            .insert(absolute_path_of_project_worktree.clone(), can_collect_data);
+
+        db::write_and_log(cx, move || {
+            persistence::DB
+                .save_accepted_data_collection(absolute_path_of_project_worktree, can_collect_data)
+        });
     }
 
     fn set_never_ask_again_for_data_collection(&mut self, cx: &mut Context<Self>) {
         self.data_collection_preferences.never_ask_again = true;
-        self.persist_data_collection_preferences(cx);
-    }
 
-    fn persist_data_collection_preferences(&self, cx: &mut Context<Self>) {
-        let Ok(preferences) = serde_json::to_string(&self.data_collection_preferences) else {
-            log::error!("serializing preferences should never fail");
-            return;
-        };
-
+        // persist choice
         db::write_and_log(cx, move || {
             KEY_VALUE_STORE.write_kvp(
-                ZED_PREDICT_DATA_COLLECTION_PREFERENCES_KEY.into(),
-                preferences,
+                ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into(),
+                "true".to_string(),
             )
         });
     }
 
     fn load_data_collection_preferences(cx: &mut Context<Self>) -> DataCollectionPreferences {
-        db::write_and_log(cx, move || async move {
-            if env::var("ZED_PREDICT_CLEAR_DATA_COLLECTION_PREFERENCES").is_ok() {
+        if env::var("ZED_PREDICT_CLEAR_DATA_COLLECTION_PREFERENCES").is_ok() {
+            db::write_and_log(cx, move || async move {
                 KEY_VALUE_STORE
-                    .delete_kvp(ZED_PREDICT_DATA_COLLECTION_PREFERENCES_KEY.into())
+                    .delete_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into())
                     .await
-            } else {
-                Ok(())
-            }
-        });
+                    .log_err();
 
-        let default = || DataCollectionPreferences {
-            never_ask_again: false,
-            per_worktree: HashMap::default(),
-        };
+                persistence::DB.clear_all_zeta_preferences().await
+            });
+            return DataCollectionPreferences::default();
+        }
 
-        let Some(preferences) = KEY_VALUE_STORE
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_PREFERENCES_KEY)
+        let never_ask_again = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY)
             .log_err()
             .flatten()
-        else {
-            return default();
-        };
+            .map(|value| value == "true")
+            .unwrap_or(false);
 
-        serde_json::from_str(&preferences)
+        let preferences_per_project = persistence::DB
+            .get_all_zeta_preferences()
             .log_err()
-            .unwrap_or_else(default)
+            .unwrap_or_else(HashMap::default);
+
+        DataCollectionPreferences {
+            never_ask_again,
+            per_worktree: preferences_per_project,
+        }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DataCollectionPreferences {
     /// Set when a user clicks on "Never Ask Again", can never be unset.
     never_ask_again: bool,
