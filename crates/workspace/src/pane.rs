@@ -2182,7 +2182,11 @@ impl Pane {
         let is_last_item = ix == self.items.len() - 1;
         let is_pinned = self.is_tab_pinned(ix);
         let position_relative_to_active_item = ix.cmp(&self.active_item_index);
-
+        let never_show_close_button = match settings.close_position {
+            ClosePosition::Hidden => true,
+            _ => false,
+        };
+        
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -2194,6 +2198,7 @@ impl Pane {
             .close_side(match close_side {
                 ClosePosition::Left => ui::TabCloseSide::Start,
                 ClosePosition::Right => ui::TabCloseSide::End,
+                ClosePosition::Hidden => ui::TabCloseSide::Hidden,
             })
             .toggle_state(is_active)
             .on_click(cx.listener(move |pane: &mut Self, _, window, cx| {
@@ -2260,6 +2265,7 @@ impl Pane {
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
+                if never_show_close_button { return this.end_slot(div()) };
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
                 let end_slot = if is_pinned {
