@@ -900,7 +900,7 @@ and then another
         }
     }
 
-    fn update_data_collection_preference_for_project(
+    fn update_data_collection_choice_for_worktree(
         &mut self,
         absolute_path_of_project_worktree: PathBuf,
         can_collect_data: bool,
@@ -1379,6 +1379,7 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+#[derive(Clone, Copy)]
 pub enum DataCollectionChoice {
     NotAnswered,
     Enabled,
@@ -1411,31 +1412,83 @@ impl DataCollectionChoice {
 
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
-    workspace: WeakEntity<Workspace>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
-    project_abs_path: Option<PathBuf>,
-    data_collection_choice: DataCollectionChoice,
+    data_collection: Option<ProviderDataCollection>,
+}
+
+pub struct ProviderDataCollection {
+    workspace: WeakEntity<Workspace>,
+    worktree_root_path: PathBuf,
+    choice: DataCollectionChoice,
+}
+
+impl ProviderDataCollection {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        workspace: Option<Entity<Workspace>>,
+        buffer: Option<Entity<Buffer>>,
+        cx: &mut App,
+    ) -> Option<ProviderDataCollection> {
+        let workspace = workspace?;
+
+        let worktree_root_path = buffer?.update(cx, |buffer, cx| {
+            let file = buffer.file()?;
+
+            workspace.update(cx, |workspace, cx| {
+                Some(
+                    workspace
+                        .absolute_path_of_worktree(file.worktree_id(cx), cx)?
+                        .to_path_buf(),
+                )
+            })
+        })?;
+
+        let choice = zeta.read(cx).data_collection_choice_at(&worktree_root_path);
+
+        Some(ProviderDataCollection {
+            workspace: workspace.downgrade(),
+            worktree_root_path,
+            choice,
+        })
+    }
+
+    fn set_choice(&mut self, choice: DataCollectionChoice, zeta: &Entity<Zeta>, cx: &mut App) {
+        self.choice = choice;
+
+        let worktree_root_path = self.worktree_root_path.clone();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.update_data_collection_choice_for_worktree(
+                worktree_root_path,
+                choice.is_enabled(),
+                cx,
+            )
+        });
+    }
+
+    fn toggle_choice(&mut self, zeta: &Entity<Zeta>, cx: &mut App) {
+        self.set_choice(self.choice.toggle(), zeta, cx);
+    }
 }
 
 impl ZetaInlineCompletionProvider {
     pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
 
-    pub fn new(
-        zeta: Entity<Zeta>,
-        workspace: WeakEntity<Workspace>,
-        data_collection_choice: DataCollectionChoice,
-        project_abs_path: Option<PathBuf>,
-    ) -> Self {
+    pub fn new(zeta: Entity<Zeta>, data_collection: Option<ProviderDataCollection>) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
-            workspace,
-            project_abs_path,
-            data_collection_choice,
+            data_collection,
+        }
+    }
+
+    fn set_data_collection_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
+        if let Some(data_collection) = self.data_collection.as_mut() {
+            data_collection.set_choice(choice, &self.zeta, cx);
         }
     }
 }
@@ -1462,9 +1515,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
-        if self.project_abs_path.is_none() {
-            DataCollectionState::Unknown
-        } else if self.data_collection_choice.is_enabled() {
+        let Some(data_collection) = self.data_collection.as_ref() else {
+            return DataCollectionState::Unknown;
+        };
+
+        if data_collection.choice.is_enabled() {
             DataCollectionState::Enabled
         } else {
             DataCollectionState::Disabled
@@ -1472,20 +1527,9 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
-        let Some(project_path) = self.project_abs_path.as_ref() else {
-            return;
-        };
-
-        self.data_collection_choice = self.data_collection_choice.toggle();
-
-        let abs_path = project_path.clone();
-        self.zeta.update(cx, |zeta, cx| {
-            zeta.update_data_collection_preference_for_project(
-                abs_path,
-                self.data_collection_choice.is_enabled(),
-                cx,
-            )
-        });
+        if let Some(data_collection) = self.data_collection.as_mut() {
+            data_collection.toggle_choice(&self.zeta, cx);
+        }
     }
 
     fn is_enabled(
@@ -1522,7 +1566,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
-        let can_collect_data = self.data_collection_choice.is_enabled();
+        let can_collect_data = self
+            .data_collection
+            .as_ref()
+            .map_or(false, |data_collection| data_collection.choice.is_enabled());
 
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {
@@ -1611,7 +1658,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     fn accept(&mut self, snapshot: &BufferSnapshot, cx: &mut Context<Self>) {
         self.pending_completions.clear();
 
-        if self.data_collection_choice.is_answered()
+        let Some(data_collection) = self.data_collection.as_mut() else {
+            return;
+        };
+
+        if data_collection.choice.is_answered()
             || self
                 .zeta
                 .read(cx)
@@ -1621,8 +1672,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             return;
         }
 
-        // TODO az: use project_path
-
         let Some(file) = snapshot.file() else {
             return; // Need a file to check the project preferences and ask for data collecting
         };
@@ -1631,24 +1680,18 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             return;
         }
 
-        let worktree_id = file.worktree_id(cx);
-
         struct ZetaDataCollectionNotification;
         let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
 
         const DATA_COLLECTION_INFO_URL: &str = "https://zed.dev/terms-of-service"; // TODO: Replace for a link that's dedicated to Edit Predictions data collection
 
         let this = cx.entity();
-
-        self.workspace
+        data_collection
+            .workspace
             .update(cx, |workspace, cx| {
-                let Some(project_abs_path) = workspace.absolute_path_of_worktree(worktree_id, cx)
-                else {
-                    return; // If we don't have the path to persist the information, don't even ask
-                };
-
                 workspace.show_notification(notification_id, cx, |cx| {
                     let zeta = self.zeta.clone();
+
                     cx.new(move |_cx| {
                         let message =
                             "To allow Zed to suggest better edits, turn on data collection. You \
@@ -1658,33 +1701,24 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                             .show_close_button(false)
                             .with_click_message("Turn On")
                             .on_click({
-                                let (zeta, this, project_abs_path) =
-                                    (zeta.clone(), this.clone(), project_abs_path.clone());
+                                let this = this.clone();
                                 move |_window, cx| {
-                                    let abs_path = project_abs_path.clone();
-                                    zeta.update(cx, |zeta, cx| {
-                                        zeta.update_data_collection_preference_for_project(
-                                            abs_path, true, cx,
+                                    this.update(cx, |this, cx| {
+                                        this.set_data_collection_choice(
+                                            DataCollectionChoice::Enabled,
+                                            cx,
                                         )
-                                    });
-                                    this.update(cx, |this, _| {
-                                        this.data_collection_choice = DataCollectionChoice::Enabled
                                     });
                                 }
                             })
                             .with_secondary_click_message("Turn Off")
                             .on_secondary_click({
-                                let (zeta, this, project_abs_path) =
-                                    (zeta.clone(), this.clone(), project_abs_path.clone());
                                 move |_window, cx| {
-                                    let abs_path = project_abs_path.clone();
-                                    zeta.update(cx, |zeta, cx| {
-                                        zeta.update_data_collection_preference_for_project(
-                                            abs_path, false, cx,
+                                    this.update(cx, |this, cx| {
+                                        this.set_data_collection_choice(
+                                            DataCollectionChoice::Disabled,
+                                            cx,
                                         )
-                                    });
-                                    this.update(cx, |this, _| {
-                                        this.data_collection_choice = DataCollectionChoice::Disabled
                                     });
                                 }
                             })

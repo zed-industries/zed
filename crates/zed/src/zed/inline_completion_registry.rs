@@ -11,7 +11,9 @@ use language::language_settings::{all_language_settings, InlineCompletionProvide
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
+use workspace::Workspace;
 use zed_predict_onboarding::ZedPredictModal;
+use zeta::ProviderDataCollection;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, fs: Arc<dyn Fs>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -39,6 +41,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, fs: Arc<dyn Fs>,
                 }
             })
             .detach();
+
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
@@ -261,31 +264,17 @@ fn assign_inline_completion_provider(
                     }
                 }
 
-                if let Some(workspace) = editor.workspace() {
-                    let project_abs_path = singleton_buffer.and_then(|buffer| {
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.file().and_then(|file| {
-                                workspace.update(cx, |workspace, cx| {
-                                    workspace.absolute_path_of_worktree(file.worktree_id(cx), cx)
-                                })
-                            })
-                        })
-                    });
-                    let data_collection_choice = project_abs_path
-                        .as_ref()
-                        .map(|path| zeta.read(cx).data_collection_choice_at(path))
-                        .unwrap_or(zeta::DataCollectionChoice::NotAnswered);
+                let data_collection = ProviderDataCollection::new(
+                    zeta.clone(),
+                    window.root::<Workspace>().flatten(),
+                    singleton_buffer,
+                    cx,
+                );
 
-                    let provider = cx.new(|_| {
-                        zeta::ZetaInlineCompletionProvider::new(
-                            zeta,
-                            workspace.downgrade(),
-                            data_collection_choice,
-                            project_abs_path,
-                        )
-                    });
-                    editor.set_inline_completion_provider(Some(provider), window, cx);
-                }
+                let provider =
+                    cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta, data_collection));
+
+                editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
     }

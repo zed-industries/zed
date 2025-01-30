@@ -10,7 +10,7 @@ define_connection!(
     pub static ref DB: ZetaDb<WorkspaceDb> = &[
         sql! (
             CREATE TABLE zeta_preferences(
-                project_path BLOB NOT NULL PRIMARY KEY,
+                worktree_path BLOB NOT NULL PRIMARY KEY,
                 accepted_data_collection INTEGER
             ) STRICT;
         ),
@@ -24,24 +24,24 @@ impl ZetaDb {
 
     query! {
         fn get_all_zeta_preferences_query() -> Result<Vec<(PathBuf, bool)>> {
-            SELECT project_path, accepted_data_collection FROM zeta_preferences
+            SELECT worktree_path, accepted_data_collection FROM zeta_preferences
         }
     }
 
     query! {
-        pub fn get_accepted_data_collection(project_path: &Path) -> Result<Option<bool>> {
+        pub fn get_accepted_data_collection(worktree_path: &Path) -> Result<Option<bool>> {
             SELECT accepted_data_collection FROM zeta_preferences
-            WHERE project_path = ?
+            WHERE worktree_path = ?
         }
     }
 
     query! {
-        pub async fn save_accepted_data_collection(project_path: PathBuf, accepted_data_collection: bool) -> Result<()> {
+        pub async fn save_accepted_data_collection(worktree_path: PathBuf, accepted_data_collection: bool) -> Result<()> {
             INSERT INTO zeta_preferences
-                (project_path, accepted_data_collection)
+                (worktree_path, accepted_data_collection)
             VALUES
                 (?1, ?2)
-            ON CONFLICT (project_path) DO UPDATE SET
+            ON CONFLICT (worktree_path) DO UPDATE SET
                 accepted_data_collection = ?2
         }
     }
