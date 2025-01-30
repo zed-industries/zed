@@ -1023,10 +1023,37 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
 fn prompt_for_excerpt(
     offset: usize,
     excerpt_range: &Range<usize>,
-    len_guess: usize,
+    mut len_guess: usize,
     path: &str,
     snapshot: &BufferSnapshot,
 ) -> String {
+    let point_range = excerpt_range.to_point(snapshot);
+
+    // Include one line of extra context before and after editable range, if those lines are non-empty.
+    let extra_context_before_range =
+        if point_range.start.row > 0 && !snapshot.is_line_blank(point_range.start.row - 1) {
+            let range =
+                (Point::new(point_range.start.row - 1, 0)..point_range.start).to_offset(snapshot);
+            len_guess += range.end - range.start;
+            Some(range)
+        } else {
+            None
+        };
+    let extra_context_after_range = if point_range.end.row < snapshot.max_point().row
+        && !snapshot.is_line_blank(point_range.end.row + 1)
+    {
+        let range = (point_range.end
+            ..Point::new(
+                point_range.end.row + 1,
+                snapshot.line_len(point_range.end.row + 1),
+            ))
+            .to_offset(snapshot);
+        len_guess += range.end - range.start;
+        Some(range)
+    } else {
+        None
+    };
+
     let mut prompt_excerpt = String::with_capacity(len_guess);
     writeln!(prompt_excerpt, "```{}", path).unwrap();
 
@@ -1034,10 +1061,8 @@ fn prompt_for_excerpt(
         writeln!(prompt_excerpt, "{START_OF_FILE_MARKER}").unwrap();
     }
 
-    let point_range = excerpt_range.to_point(snapshot);
-    if point_range.start.row > 0 && !snapshot.is_line_blank(point_range.start.row - 1) {
-        let extra_context_line_range = Point::new(point_range.start.row - 1, 0)..point_range.start;
-        for chunk in snapshot.text_for_range(extra_context_line_range) {
+    if let Some(extra_context_before_range) = extra_context_before_range {
+        for chunk in snapshot.text_for_range(extra_context_before_range) {
             prompt_excerpt.push_str(chunk);
         }
     }
@@ -1051,15 +1076,8 @@ fn prompt_for_excerpt(
     }
     write!(prompt_excerpt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
 
-    if point_range.end.row < snapshot.max_point().row
-        && !snapshot.is_line_blank(point_range.end.row + 1)
-    {
-        let extra_context_line_range = point_range.end
-            ..Point::new(
-                point_range.end.row + 1,
-                snapshot.line_len(point_range.end.row + 1),
-            );
-        for chunk in snapshot.text_for_range(extra_context_line_range) {
+    if let Some(extra_context_after_range) = extra_context_after_range {
+        for chunk in snapshot.text_for_range(extra_context_after_range) {
             prompt_excerpt.push_str(chunk);
         }
     }
@@ -1094,7 +1112,7 @@ fn excerpt_range_for_position(
     len_guess += EDITABLE_REGION_END_MARKER.len() + 1;
     len_guess += "```".len() + 1;
 
-    len_guess += usize::try_from(snapshot.line_len(cursor_row)).unwrap();
+    len_guess += usize::try_from(snapshot.line_len(cursor_row) + 1).unwrap();
 
     if len_guess > byte_limit {
         return Err(anyhow!("Current line too long to send to model."));

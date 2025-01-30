@@ -45,7 +45,7 @@ pub use token::*;
 const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
 
 /// Output token limit. A copy of this constant is also in `crates/zeta/src/zeta.rs`.
-const MAX_OUTPUT_TOKENS: usize = 2048;
+const MAX_OUTPUT_TOKENS: u32 = 2048;
 
 pub struct LlmState {
     pub config: Config,
