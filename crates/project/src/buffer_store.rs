@@ -281,7 +281,7 @@ impl BufferChangeSetState {
                     .await;
 
                 unstaged_changes.update(&mut cx, |unstaged_changes, cx| {
-                    unstaged_changes.set_state(snapshot.clone(), diff, cx);
+                    unstaged_changes.set_state(snapshot.clone(), diff, &buffer, cx);
                 })?;
 
                 if let Some(uncommitted_changes) = &uncommitted_changes {
@@ -324,7 +324,7 @@ impl BufferChangeSetState {
                 };
 
                 uncommitted_changes.update(&mut cx, |change_set, cx| {
-                    change_set.set_state(snapshot, diff, cx);
+                    change_set.set_state(snapshot, diff, &buffer, cx);
                 })?;
 
                 if index_changed || head_changed {
@@ -2764,23 +2764,24 @@ impl EventEmitter<BufferChangeSetEvent> for BufferChangeSet {}
 impl BufferChangeSet {
     fn set_state(
         &mut self,
-        snapshot: Option<language::BufferSnapshot>,
+        base_text: Option<language::BufferSnapshot>,
         diff: BufferDiff,
+        buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        if let Some(snapshot) = snapshot.as_ref() {
-            let changed_range = if Some(snapshot.remote_id())
+        if let Some(base_text) = base_text.as_ref() {
+            let changed_range = if Some(base_text.remote_id())
                 != self.base_text.as_ref().map(|buffer| buffer.remote_id())
             {
                 Some(text::Anchor::MIN..text::Anchor::MAX)
             } else {
-                diff.compare(&self.diff_to_buffer, snapshot)
+                diff.compare(&self.diff_to_buffer, buffer)
             };
             if let Some(changed_range) = changed_range {
                 cx.emit(BufferChangeSetEvent::DiffChanged { changed_range });
             }
         }
-        self.base_text = snapshot;
+        self.base_text = base_text;
         self.diff_to_buffer = diff;
     }
 
@@ -2817,6 +2818,7 @@ impl BufferChangeSet {
                 .background_executor()
                 .spawn({
                     let base_buffer = base_buffer.clone();
+                    let buffer = buffer.clone();
                     async move { BufferDiff::build(Some(&base_buffer.text()), &buffer) }
                 })
                 .await;
@@ -2824,9 +2826,8 @@ impl BufferChangeSet {
                 tx.send(()).ok();
                 return;
             };
-            this.update(&mut cx, |this, _| {
-                this.base_text = Some(base_buffer);
-                this.diff_to_buffer = diff;
+            this.update(&mut cx, |this, cx| {
+                this.set_state(Some(base_buffer), diff, &buffer, cx);
             })
             .log_err();
             tx.send(()).ok();
@@ -2865,15 +2866,15 @@ impl BufferChangeSet {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn recalculate_diff_sync(&mut self, snapshot: text::BufferSnapshot, cx: &mut Context<Self>) {
+    pub fn recalculate_diff_sync(
+        &mut self,
+        snapshot: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
         let base_text = self.base_text.as_ref().map(|buffer| buffer.text());
         let base_text = base_text.as_deref();
-        eprintln!(
-            "calculating diff between {base_text:?} and {:?}",
-            snapshot.text()
-        );
         let diff_to_buffer = BufferDiff::build(base_text, &snapshot);
-        self.set_state(self.base_text.clone(), diff_to_buffer, cx);
+        self.set_state(self.base_text.clone(), diff_to_buffer, &snapshot, cx);
     }
 }
 
