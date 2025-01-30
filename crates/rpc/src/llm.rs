@@ -41,7 +41,7 @@ pub struct PredictEditsParams {
     pub input_excerpt: String,
     /// Whether the user provided consent for sampling this interaction.
     #[serde(default)]
-    pub can_sample: bool,
+    pub can_collect_data: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

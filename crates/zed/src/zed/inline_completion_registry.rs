@@ -225,11 +225,13 @@ fn assign_inline_completion_provider(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    let singleton_buffer = editor.buffer().read(cx).as_singleton();
+
     match provider {
         language::language_settings::InlineCompletionProvider::None => {}
         language::language_settings::InlineCompletionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
-                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                if let Some(buffer) = singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         copilot.update(cx, |copilot, cx| {
                             copilot.register_buffer(&buffer, cx);
@@ -246,13 +248,12 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-
         language::language_settings::InlineCompletionProvider::Zed => {
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
                 let zeta = zeta::Zeta::register(client.clone(), user_store, cx);
-                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {
                             zeta.register_buffer(&buffer, cx);
@@ -261,8 +262,25 @@ fn assign_inline_completion_provider(
                 }
 
                 if let Some(workspace) = editor.workspace() {
+                    let project_abs_path = singleton_buffer.and_then(|buffer| {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.file().and_then(|file| {
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.absolute_path_of_worktree(file.worktree_id(cx), cx)
+                                })
+                            })
+                        })
+                    });
+                    let data_collection_choice = project_abs_path
+                        .map(|path| zeta.read(cx).data_collection_choice_at(path))
+                        .unwrap_or(zeta::DataCollectionChoice::NotAnswered);
+
                     let provider = cx.new(|_| {
-                        zeta::ZetaInlineCompletionProvider::new(zeta, workspace.downgrade())
+                        zeta::ZetaInlineCompletionProvider::new(
+                            zeta,
+                            workspace.downgrade(),
+                            data_collection_choice,
+                        )
                     });
                     editor.set_inline_completion_provider(Some(provider), window, cx);
                 }

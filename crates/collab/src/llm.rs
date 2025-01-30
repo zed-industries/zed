@@ -447,7 +447,7 @@ async fn predict_edits(
         ));
     }
 
-    let should_sample = claims.is_staff || params.can_sample;
+    let should_sample = claims.is_staff || params.can_collect_data;
 
     let api_url = state
         .config
