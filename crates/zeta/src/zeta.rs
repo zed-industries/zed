@@ -69,6 +69,9 @@ const MAX_OUTPUT_TOKENS: usize = 2048;
 /// remaining for the model to specify insertions.
 const BUFFER_EXCERPT_BYTE_LIMIT: usize = (MAX_OUTPUT_TOKENS * 2 / 3) * BYTES_PER_TOKEN_GUESS;
 
+/// Total line limit for editable region of buffer excerpt.
+const BUFFER_EXCERPT_LINE_LIMIT: u32 = 64;
+
 /// Note that this is not the limit for the overall prompt, just for the inputs to the template
 /// instantiated in `crates/collab/src/llm.rs`.
 const TOTAL_BYTE_LIMIT: usize = BUFFER_EXCERPT_BYTE_LIMIT * 2;
@@ -374,6 +377,7 @@ impl Zeta {
                         let (excerpt_range, excerpt_len_guess) = excerpt_range_for_position(
                             cursor_point,
                             BUFFER_EXCERPT_BYTE_LIMIT,
+                            BUFFER_EXCERPT_LINE_LIMIT,
                             &path,
                             &snapshot,
                         )?;
@@ -1073,6 +1077,7 @@ fn prompt_for_excerpt(
 fn excerpt_range_for_position(
     cursor_point: Point,
     byte_limit: usize,
+    line_limit: u32,
     path: &str,
     snapshot: &BufferSnapshot,
 ) -> Result<(Range<usize>, usize)> {
@@ -1118,6 +1123,9 @@ fn excerpt_range_for_position(
                 no_more_before = true;
             }
         }
+        if excerpt_end_row - excerpt_start_row >= line_limit {
+            break;
+        }
         if !no_more_after {
             let row = cursor_point.row + row_delta;
             let line_len: usize = usize::try_from(snapshot.line_len(row) + 1).unwrap();
@@ -1131,6 +1139,9 @@ fn excerpt_range_for_position(
             } else {
                 no_more_after = true;
             }
+        }
+        if excerpt_end_row - excerpt_start_row >= line_limit {
+            break;
         }
         if no_more_before && no_more_after {
             break;
