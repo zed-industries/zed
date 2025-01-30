@@ -13338,11 +13338,7 @@ impl Editor {
                 refresh_linked_ranges(self, window, cx);
                 telemetry.log_edit_event("editor", is_via_ssh);
             }
-            multi_buffer::Event::ExcerptsAdded {
-                buffer,
-                predecessor,
-                excerpts,
-            } => {
+            multi_buffer::Event::ExcerptsAdded { buffer, excerpts } => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).change_set_for(buffer_id).is_none() {
@@ -13357,7 +13353,6 @@ impl Editor {
                 }
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
-                    predecessor: *predecessor,
                     excerpts: excerpts.clone(),
                 });
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
@@ -15251,7 +15246,6 @@ pub enum EditorEvent {
     },
     ExcerptsAdded {
         buffer: Entity<Buffer>,
-        predecessor: ExcerptId,
         excerpts: Vec<(ExcerptId, ExcerptRange<language::Anchor>)>,
     },
     ExcerptsRemoved {

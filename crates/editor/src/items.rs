@@ -255,16 +255,12 @@ impl FollowableItem for Editor {
 
         match update {
             proto::update_view::Variant::Editor(update) => match event {
-                EditorEvent::ExcerptsAdded {
-                    buffer,
-                    predecessor,
-                    excerpts,
-                } => {
+                EditorEvent::ExcerptsAdded { buffer, excerpts } => {
                     let buffer_id = buffer.read(cx).remote_id();
                     let mut excerpts = excerpts.iter();
                     if let Some((id, range)) = excerpts.next() {
                         update.inserted_excerpts.push(proto::ExcerptInsertion {
-                            previous_excerpt_id: Some(predecessor.to_proto()),
+                            previous_excerpt_id: None,
                             excerpt: serialize_excerpt(buffer_id, id, range),
                         });
                         update.inserted_excerpts.extend(excerpts.map(|(id, range)| {
@@ -394,8 +390,7 @@ async fn update_editor_from_message(
                     }
                 });
 
-                multibuffer.insert_excerpts_with_ids_after(
-                    ExcerptId::from_proto(previous_excerpt_id),
+                multibuffer.insert_excerpts_with_ids(
                     buffer,
                     [excerpt]
                         .into_iter()

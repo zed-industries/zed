@@ -10431,8 +10431,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
                 ],
                 cx,
             );
-            multibuffer.insert_excerpts_after(
-                excerpt_ids[0],
+            multibuffer.push_excerpts(
                 buffer_2.clone(),
                 [
                     ExcerptRange {

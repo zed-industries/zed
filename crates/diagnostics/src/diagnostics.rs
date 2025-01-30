@@ -466,8 +466,7 @@ impl ProjectDiagnosticsEditor {
                             }
 
                             let excerpt_id = excerpts
-                                .insert_excerpts_after(
-                                    prev_excerpt_id,
+                                .push_excerpts(
                                     buffer.clone(),
                                     [ExcerptRange {
                                         context: context_range.clone(),

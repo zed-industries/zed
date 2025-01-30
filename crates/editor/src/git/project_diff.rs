@@ -856,8 +856,7 @@ impl ProjectDiffEditor {
                     for (_, buffer, hunk_ranges) in excerpts_to_add {
                         let buffer_snapshot = buffer.read(cx).snapshot();
                         let max_point = buffer_snapshot.max_point();
-                        let new_excerpts = multi_buffer.insert_excerpts_after(
-                            after_excerpt_id,
+                        let new_excerpts = multi_buffer.push_excerpts(
                             buffer,
                             hunk_ranges.into_iter().map(|range| {
                                 let mut extended_point_range = range.to_point(&buffer_snapshot);

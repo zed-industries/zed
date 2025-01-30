@@ -669,10 +669,8 @@ fn test_excerpt_events(cx: &mut App) {
             &leader_multibuffer,
             move |follower, _, event, cx| match event.clone() {
                 Event::ExcerptsAdded {
-                    buffer,
-                    predecessor,
-                    excerpts,
-                } => follower.insert_excerpts_with_ids_after(predecessor, buffer, excerpts, cx),
+                    buffer, excerpts, ..
+                } => follower.insert_excerpts_with_ids(buffer, excerpts, cx),
                 Event::ExcerptsRemoved { ids } => follower.remove_excerpts(ids, cx),
                 Event::Edited { .. } => {
                     *follower_edit_event_count.write() += 1;
@@ -698,8 +696,7 @@ fn test_excerpt_events(cx: &mut App) {
             ],
             cx,
         );
-        leader.insert_excerpts_after(
-            leader.excerpt_ids()[0],
+        leader.push_excerpts(
             buffer_2.clone(),
             [
                 ExcerptRange {
@@ -1155,8 +1152,7 @@ fn test_resolving_anchors_after_replacing_their_excerpts(cx: &mut App) {
     let excerpt_id_5 = multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.remove_excerpts([excerpt_id_3], cx);
         multibuffer
-            .insert_excerpts_after(
-                excerpt_id_2,
+            .push_excerpts(
                 buffer_2.clone(),
                 [ExcerptRange {
                     context: 5..8,
@@ -2249,8 +2245,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
                 let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer
-                        .insert_excerpts_after(
-                            prev_excerpt_id,
+                        .push_excerpts(
                             buffer_handle.clone(),
                             [ExcerptRange {
                                 context: range,
