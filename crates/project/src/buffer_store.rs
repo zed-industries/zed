@@ -243,86 +243,95 @@ impl BufferChangeSetState {
             _ => false,
         };
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-            if index_changed {
-                let snapshot = cx.update(|cx| {
-                    index.as_ref().map(|index| {
-                        language::Buffer::build_snapshot(
-                            Rope::from(index.as_str()),
-                            language.clone(),
-                            language_registry.clone(),
-                            cx,
-                        )
-                    })
-                })?;
-                let snapshot = cx
+            let snapshot = cx.update(|cx| {
+                index.as_ref().map(|index| {
+                    language::Buffer::build_snapshot(
+                        Rope::from(index.as_str()),
+                        language.clone(),
+                        language_registry.clone(),
+                        cx,
+                    )
+                })
+            })?;
+            let snapshot = cx
+                .background_executor()
+                .spawn(OptionFuture::from(snapshot))
+                .await;
+
+            let unstaged_changed_range = if let Some(unstaged_changes) = &unstaged_changes {
+                let diff = cx
                     .background_executor()
-                    .spawn(OptionFuture::from(snapshot))
+                    .spawn({
+                        let buffer = buffer.clone();
+                        async move {
+                            BufferDiff::build(index.as_ref().map(|index| index.as_str()), &buffer)
+                        }
+                    })
                     .await;
 
-                if let Some(unstaged_changes) = &unstaged_changes {
-                    let diff = cx
-                        .background_executor()
-                        .spawn({
-                            let buffer = buffer.clone();
-                            async move {
-                                BufferDiff::build(
-                                    index.as_ref().map(|index| index.as_str()),
-                                    &buffer,
-                                )
-                            }
-                        })
-                        .await;
+                let unstaged_changed_range =
                     unstaged_changes.update(&mut cx, |unstaged_changes, _| {
+                        let unstaged_changed_range = if let Some(snapshot) = snapshot.as_ref() {
+                            if index_changed {
+                                Some(text::Anchor::MIN..text::Anchor::MAX)
+                            } else {
+                                diff.compare(&unstaged_changes.diff_to_buffer, snapshot)
+                            }
+                        } else {
+                            None
+                        };
                         unstaged_changes.base_text = snapshot.clone();
                         unstaged_changes.diff_to_buffer = diff;
+                        unstaged_changed_range
                     })?;
-                }
 
                 if let Some(uncommitted_changes) = &uncommitted_changes {
                     uncommitted_changes.update(&mut cx, |uncommitted_changes, _| {
                         uncommitted_changes.staged_text = snapshot;
                     })?;
                 }
-            }
+
+                unstaged_changed_range
+            } else {
+                None
+            };
 
             if let Some(uncommitted_changes) = &uncommitted_changes {
-                if head_changed {
-                    let (snapshot, diff) = if let (Some(unstaged_changes), true) =
-                        (&unstaged_changes, index_matches_head)
-                    {
-                        unstaged_changes.read_with(&cx, |change_set, _| {
-                            (
-                                change_set.base_text.clone(),
-                                change_set.diff_to_buffer.clone(),
+                let (snapshot, diff) = if let (Some(unstaged_changes), true) =
+                    (&unstaged_changes, index_matches_head)
+                {
+                    unstaged_changes.read_with(&cx, |change_set, _| {
+                        (
+                            change_set.base_text.clone(),
+                            change_set.diff_to_buffer.clone(),
+                        )
+                    })?
+                } else {
+                    let snapshot = cx.update(|cx| {
+                        head.as_deref().map(|head| {
+                            language::Buffer::build_snapshot(
+                                Rope::from(head.as_str()),
+                                language.clone(),
+                                language_registry.clone(),
+                                cx,
                             )
-                        })?
-                    } else {
-                        let snapshot = cx.update(|cx| {
-                            head.as_deref().map(|head| {
-                                language::Buffer::build_snapshot(
-                                    Rope::from(head.as_str()),
-                                    language.clone(),
-                                    language_registry.clone(),
-                                    cx,
-                                )
-                            })
-                        })?;
-                        let snapshot = cx.background_executor().spawn(OptionFuture::from(snapshot));
-                        let diff = cx.background_executor().spawn({
-                            let buffer = buffer.clone();
-                            let head = head.clone();
-                            async move {
-                                BufferDiff::build(head.as_ref().map(|head| head.as_str()), &buffer)
-                            }
-                        });
-                        futures::join!(snapshot, diff)
-                    };
-
-                    uncommitted_changes.update(&mut cx, |change_set, _| {
-                        change_set.base_text = snapshot;
-                        change_set.diff_to_buffer = diff;
+                        })
                     })?;
-                }
+                    let snapshot = cx.background_executor().spawn(OptionFuture::from(snapshot));
+                    let diff = cx.background_executor().spawn({
+                        let buffer = buffer.clone();
+                        let head = head.clone();
+                        async move {
+                            BufferDiff::build(head.as_ref().map(|head| head.as_str()), &buffer)
+                        }
+                    });
+                    futures::join!(snapshot, diff)
+                };
+
+                uncommitted_changes.update(&mut cx, |change_set, _| {
+                    change_set.base_text = snapshot;
+                    change_set.diff_to_buffer = diff;
+                })?;
 
                 if index_changed || head_changed {
                     let staged_text = uncommitted_changes
@@ -359,6 +368,14 @@ impl BufferChangeSetState {
                         tx.send(()).ok();
                     }
                 })?;
+            }
+
+            if let Some(changed_range) = unstaged_changed_range {
+                if let Some(unstaged_changes) = unstaged_changes {
+                    unstaged_changes.update(&mut cx, |_, cx| {
+                        cx.emit(BufferChangeSetEvent::DiffChanged { changed_range });
+                    })?;
+                }
             }
 
             Ok(())
@@ -1572,13 +1589,7 @@ impl BufferStore {
                 }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
                 {
                     let change_set = change_set_state.update(cx, |change_set_state, cx| {
-                        change_set_state.add_change_set(
-                            buffer,
-                            kind,
-                            dbg!(base_text),
-                            dbg!(staged_text),
-                            cx,
-                        )
+                        change_set_state.add_change_set(buffer, kind, base_text, staged_text, cx)
                     });
                     Ok(change_set)
                 } else {
@@ -2523,11 +2534,11 @@ impl BufferStore {
                 staged_text = change_set.staged_text.as_ref().map(|buffer| buffer.text());
             }
 
-            dbg!(proto::OpenUncommittedChangesResponse {
+            proto::OpenUncommittedChangesResponse {
                 committed_text,
                 staged_text,
                 mode: mode.into(),
-            })
+            }
         })
     }
 
