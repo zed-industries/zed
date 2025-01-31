@@ -2588,11 +2588,6 @@ impl Editor {
         }
 
         if self.hide_context_menu(window, cx).is_some() {
-            /* todo!
-            if self.show_inline_completions_in_menu(cx) && self.has_active_inline_completion() {
-                self.update_visible_inline_completion(window, cx);
-            }
-            */
             return true;
         }
 
@@ -5521,7 +5516,10 @@ impl Editor {
                         }
                     })
                 }
-                Some(InlineCompletion::Move(_)) => return None,
+                Some(InlineCompletion::Move(_)) => {
+                    // TODO handle
+                    return None;
+                }
                 None => {
                     if is_loading {
                         Label::new("...")
