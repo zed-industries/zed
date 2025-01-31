@@ -1,5 +1,6 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
+use crate::Zeta;
 use client::{Client, UserStore};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
@@ -11,8 +12,9 @@ use language::language_settings::{AllLanguageSettings, InlineCompletionProvider}
 use settings::{update_settings_file, Settings};
 use ui::{prelude::*, Checkbox, TintColor, Tooltip};
 use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
+use worktree::Worktree;
 
-/// Introduces user to AI inline prediction feature and terms of service
+/// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
@@ -22,7 +24,7 @@ pub struct ZedPredictModal {
     terms_of_service: bool,
     data_collection_expanded: bool,
     data_collection_opted_in: bool,
-    worktree_root_path: Option<PathBuf>,
+    worktrees: Vec<Entity<Worktree>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -44,16 +46,7 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let worktree_root_path = workspace
-            .recent_navigation_history_iter(cx)
-            .next()
-            .and_then(|(latest, _)| {
-                Some(
-                    workspace
-                        .absolute_path_of_worktree(latest.worktree_id, cx)?
-                        .to_path_buf(),
-                )
-            });
+        let worktrees = workspace.visible_worktrees(cx).collect();
 
         workspace.toggle_modal(window, cx, |_window, cx| Self {
             user_store,
@@ -64,7 +57,7 @@ impl ZedPredictModal {
             terms_of_service: false,
             data_collection_expanded: false,
             data_collection_opted_in: false,
-            worktree_root_path,
+            worktrees,
         });
     }
 
@@ -86,14 +79,30 @@ impl ZedPredictModal {
         cx.spawn(|this, mut cx| async move {
             task.await?;
 
-            // TODO az: persist data collection choice
-
             this.update(&mut cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
                         .inline_completion_provider = Some(InlineCompletionProvider::Zed);
                 });
+
+                if this.worktrees.is_empty() {
+                    cx.emit(DismissEvent);
+                    return ();
+                }
+
+                Zeta::register(this.client.clone(), this.user_store.clone(), cx).update(
+                    cx,
+                    |zeta, cx| {
+                        for worktree in this.worktrees.iter() {
+                            zeta.update_data_collection_choice(
+                                worktree.read(cx).abs_path().as_ref(),
+                                |_| this.data_collection_opted_in.into(),
+                                cx,
+                            );
+                        }
+                    },
+                );
 
                 cx.emit(DismissEvent);
             })
@@ -276,6 +285,7 @@ impl Render for ZedPredictModal {
                     h_flex()
                         .child(
                             Checkbox::new("tos-checkbox", self.terms_of_service.into())
+                                .fill()
                                 .label("Read and accept the")
                                 .on_click(cx.listener(move |this, state, _window, cx| {
                                     this.terms_of_service = *state == ToggleState::Selected;
@@ -299,12 +309,12 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .disabled(self.worktree_root_path.is_none())
-                                    .when(self.worktree_root_path.is_none(), |element|
-                                        element.tooltip(move |window, cx| Tooltip::with_meta(
+                                    .fill()
+                                    .when(self.worktrees.is_empty(), |element|
+                                        element.disabled(true).tooltip(move |window, cx| Tooltip::with_meta(
                                             "No Project Open",
                                             None,
-                                            "This is a per-project setting.",
+                                            "Open a project to enable this option.",
                                             window,
                                             cx,
                                         ))
@@ -315,6 +325,7 @@ impl Render for ZedPredictModal {
                                         cx.notify()
                                     })),
                                 )
+                                // TODO: show each worktree if more than 1
                                 .child(
                                     Button::new("learn-more", "Learn More")
                                         .icon(if self.data_collection_expanded {

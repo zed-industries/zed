@@ -310,7 +310,7 @@ impl TitleBar {
             }
         }));
 
-        let zed_predict_banner = cx.new(|cx| ZedPredictBanner::new(cx));
+        let zed_predict_banner = cx.new(ZedPredictBanner::new);
 
         Self {
             platform_style,

@@ -37,9 +37,9 @@ impl ZetaDb {
     query! {
         pub async fn save_data_collection_choice(worktree_path: PathBuf, accepted_data_collection: bool) -> Result<()> {
             INSERT INTO zeta_preferences
-                (worktree_path, accepted_data_collection)
+                (worktree_path, accepted_data_collection, updated_at)
             VALUES
-                (?1, ?2)
+                (?1, ?2, CURRENT_TIMESTAMP)
             ON CONFLICT (worktree_path) DO UPDATE SET
                 accepted_data_collection = ?2,
                 updated_at = CURRENT_TIMESTAMP

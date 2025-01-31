@@ -922,11 +922,16 @@ and then another
         }
     }
 
-    fn toggle_data_collection_choice(&mut self, worktree_abs_path: &Path, cx: &mut Context<Self>) {
+    fn update_data_collection_choice(
+        &mut self,
+        worktree_abs_path: &Path,
+        update_fn: impl Fn(&DataCollectionChoice) -> DataCollectionChoice,
+        cx: &mut Context<Self>,
+    ) {
         let choice = self
             .data_collection_choice_at(worktree_abs_path, cx)
             .update(cx, |choice, _cx| {
-                *choice = choice.toggle();
+                *choice = update_fn(choice);
                 *choice
             });
 
@@ -1311,7 +1316,7 @@ impl DataCollectionChoice {
         }
     }
 
-    pub fn toggle(self) -> DataCollectionChoice {
+    pub fn toggle(&self) -> DataCollectionChoice {
         match self {
             Self::Enabled => Self::Disabled,
             Self::Disabled => Self::Enabled,
@@ -1426,7 +1431,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     fn toggle_data_collection(&mut self, cx: &mut App) {
         if let Some(data_collection) = self.data_collection.as_mut() {
             self.zeta.update(cx, |zeta, cx| {
-                zeta.toggle_data_collection_choice(&data_collection.worktree_root_path, cx)
+                zeta.update_data_collection_choice(
+                    &data_collection.worktree_root_path,
+                    |choice| choice.toggle(),
+                    cx,
+                )
             });
         }
     }
