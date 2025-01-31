@@ -14864,6 +14864,7 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
+ "db",
  "editor",
  "futures 0.3.31",
  "git_ui",

@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
@@ -39,7 +39,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
-use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
+use state::{Mode, Operator, RecordedSelection, SearchState, VimDb, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
@@ -791,6 +791,17 @@ impl Vim {
                 _ => {}
             }
         }
+    }
+
+    fn set_mark(&mut self, name: String, positions: Vec<Anchor>) {
+        match name.to_string() {
+            m if m.starts_with(|c: char| c.is_uppercase()) => {
+                // VimGlobals::set_mark(m, positions);
+            } // global mark
+            m => {
+                let _ = self.marks.insert(m, positions);
+            } // local mark
+        };
     }
 
     fn handle_editor_event(

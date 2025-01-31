@@ -131,14 +131,14 @@ impl Vim {
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         let mut ranges_to_highlight = Vec::new();
 
-        self.marks.insert(
+        self.set_mark(
             "[".to_string(),
             selections
                 .iter()
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
         );
-        self.marks.insert(
+        self.set_mark(
             "]".to_string(),
             selections
                 .iter()

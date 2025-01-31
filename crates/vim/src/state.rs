@@ -5,17 +5,24 @@ use crate::{motion::Motion, object::Object};
 use crate::{UseSystemClipboard, Vim, VimSettings};
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
+use db::sqlez_macros::sql;
+use db::{define_connection, query};
 use editor::{Anchor, ClipboardSelection, Editor};
 use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
-use language::Point;
+use language::{BufferId, Point};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
+use std::ffi::OsString;
+use std::os::unix::ffi::OsStringExt;
+use std::path::{Path, PathBuf};
 use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{Context, KeyBinding, SharedString};
+use util::ResultExt;
 use workspace::searchable::Direction;
+use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
@@ -171,7 +178,7 @@ impl From<String> for Register {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub struct VimGlobals {
     pub last_find: Option<Motion>,
 
@@ -200,6 +207,15 @@ pub struct VimGlobals {
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
     pub focused_vim: Option<WeakEntity<Vim>>,
+
+    pub local_marks: HashMap<(WorkspaceId, Arc<Path>), HashMap<String, Vec<Point>>>,
+}
+
+// when you open a buffer, read from the local marks and convert to anchor
+// when you create a mark, or edit a buffer such that an anchor's point changes, write that to the database
+pub struct MarksCollection {
+    pub local_loaded: HashMap<BufferId, HashMap<String, Vec<Anchor>>>, // keep this type on non-global-vim
+    pub local: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
 }
 impl Global for VimGlobals {}
 
@@ -236,6 +252,22 @@ impl VimGlobals {
             }
         })
         .detach();
+        cx.observe_new(|workspace: &mut Workspace, _, cx| {
+            let Some(workspace_id) = workspace.database_id() else {
+                return;
+            };
+            cx.spawn(|this, mut cx| async move {
+                let marks = cx
+                    .background_executor()
+                    .spawn(async move { DB.get_local_marks(workspace_id) })
+                    .await?;
+                cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
+                    g.load_local_marks(workspace_id, marks, cx)
+                })
+            })
+            .detach_and_log_err(cx)
+        })
+        .detach()
     }
 
     pub(crate) fn write_registers(
@@ -360,6 +392,29 @@ impl VimGlobals {
                 }
             }),
             _ => self.registers.get(&lower).cloned(),
+        }
+    }
+
+    fn load_local_marks(
+        &mut self,
+        workspace_id: WorkspaceId,
+        marks: Vec<(Vec<u8>, String, String)>,
+        cx: &mut App,
+    ) {
+        for (abs_path, name, values) in marks {
+            let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
+                continue;
+            };
+            let path = PathBuf::from(OsString::from_vec(abs_path));
+            let mut marks = self
+                .local_marks
+                .entry((workspace_id, Arc::from(path)))
+                .or_default();
+            let points = value
+                .into_iter()
+                .map(|(row, col)| Point::new(row, col))
+                .collect();
+            marks.insert(name, points);
         }
     }
 
@@ -559,6 +614,48 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
             | Operator::ToggleComments => false,
+        }
+    }
+}
+
+define_connection! {
+    pub static ref DB: VimDb<WorkspaceDb> = &[
+        sql! (
+            CREATE TABLE vim_local_marks(
+                workspace_id INTEGER,
+                mark_name TEXT,
+                absolute_path BLOB,
+                value TEXT
+            );
+            CREATE UNIQUE INDEX idx_vim_local_marks
+            ON vim_local_marks (workspace_id, mark_name, absolute_path);
+
+        ),
+        sql! (
+            CREATE TABLE vim_global_marks(
+                workspace_id INTEGER,
+                mark_name TEXT,
+                absolute_path BLOB,
+                value TEXT
+            );
+            CREATE UNIQUE INDEX idx_vim_global_marks
+            ON vim_global_marks (workspace_id, mark_name);
+        ),
+];
+}
+
+impl VimDb {
+    query! {
+        pub fn set_local_mark(workspace_id: WorkspaceId, mark_name: String, absolute_path: Vec<u8>, value: String) -> Result<Vec<(PathBuf, bool)>> {
+            INSERT OR REPLACE INTO vim_local_marks (workspace_id, mark_name, absolute_path, value)
+            VALUES (?, ?, ?, ?)
+        }
+    }
+
+    query! {
+        pub fn get_local_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
+            SELECT absolute_path, mark_name, value FROM vim_local_marks
+                WHERE workspace_id = ?
         }
     }
 }
