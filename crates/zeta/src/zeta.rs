@@ -3,7 +3,6 @@ mod persistence;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
-use db::kvp::KEY_VALUE_STORE;
 use inline_completion::DataCollectionState;
 pub use rate_completion_modal::*;
 
@@ -16,7 +15,6 @@ use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
-    WeakEntity,
 };
 use http_client::{HttpClient, Method};
 use language::{
@@ -39,18 +37,13 @@ use std::{
 use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::{
-    notifications::{simple_message_notification::MessageNotification, NotificationId},
-    Workspace,
-};
+use workspace::Workspace;
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-const ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY: &'static str =
-    "zed_predict_data_collection_never_ask_again";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
 
@@ -923,37 +916,13 @@ and then another
         }
     }
 
-    fn set_never_ask_again_for_data_collection(&mut self, cx: &mut Context<Self>) {
-        self.data_collection_preferences.never_ask_again = true;
-
-        // persist choice
-        db::write_and_log(cx, move || {
-            KEY_VALUE_STORE.write_kvp(
-                ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into(),
-                "true".to_string(),
-            )
-        });
-    }
-
     fn load_data_collection_preferences(cx: &mut Context<Self>) -> DataCollectionPreferences {
         if env::var("ZED_PREDICT_CLEAR_DATA_COLLECTION_PREFERENCES").is_ok() {
             db::write_and_log(cx, move || async move {
-                KEY_VALUE_STORE
-                    .delete_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into())
-                    .await
-                    .log_err();
-
                 persistence::DB.clear_all_zeta_preferences().await
             });
             return DataCollectionPreferences::default();
         }
-
-        let never_ask_again = KEY_VALUE_STORE
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY)
-            .log_err()
-            .flatten()
-            .map(|value| value == "true")
-            .unwrap_or(false);
 
         let preferences_per_worktree = persistence::DB
             .get_all_data_collection_preferences()
@@ -967,7 +936,6 @@ and then another
             .collect();
 
         DataCollectionPreferences {
-            never_ask_again,
             per_worktree: preferences_per_worktree,
         }
     }
@@ -975,8 +943,6 @@ and then another
 
 #[derive(Default, Debug)]
 struct DataCollectionPreferences {
-    /// Set when a user clicks on "Never Ask Again", can never be unset.
-    never_ask_again: bool,
     /// The choices for each worktree.
     ///
     /// This is filled when loading from database, or when querying if no matching path is found.
@@ -1335,7 +1301,6 @@ pub struct ZetaInlineCompletionProvider {
 }
 
 pub struct ProviderDataCollection {
-    workspace: WeakEntity<Workspace>,
     worktree_root_path: PathBuf,
     choice: Entity<DataCollectionChoice>,
 }
@@ -1347,8 +1312,6 @@ impl ProviderDataCollection {
         buffer: Option<Entity<Buffer>>,
         cx: &mut App,
     ) -> Option<ProviderDataCollection> {
-        let workspace = workspace?;
-
         let worktree_root_path = buffer?.update(cx, |buffer, cx| {
             let file = buffer.file()?;
 
@@ -1356,7 +1319,7 @@ impl ProviderDataCollection {
                 return None;
             }
 
-            workspace.update(cx, |workspace, cx| {
+            workspace?.update(cx, |workspace, cx| {
                 Some(
                     workspace
                         .absolute_path_of_worktree(file.worktree_id(cx), cx)?
@@ -1370,7 +1333,6 @@ impl ProviderDataCollection {
         });
 
         Some(ProviderDataCollection {
-            workspace: workspace.downgrade(),
             worktree_root_path,
             choice,
         })
@@ -1401,12 +1363,6 @@ impl ZetaInlineCompletionProvider {
             next_pending_completion_id: 0,
             current_completion: None,
             data_collection,
-        }
-    }
-
-    fn set_data_collection_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
-        if let Some(data_collection) = self.data_collection.as_mut() {
-            data_collection.set_choice(choice, cx);
         }
     }
 }
@@ -1586,79 +1542,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, cx: &mut Context<Self>) {
+    fn accept(&mut self, _cx: &mut Context<Self>) {
         self.pending_completions.clear();
-
-        let Some(data_collection) = self.data_collection.as_mut() else {
-            return;
-        };
-
-        if data_collection.choice.read(cx).is_answered()
-            || self
-                .zeta
-                .read(cx)
-                .data_collection_preferences
-                .never_ask_again
-        {
-            return;
-        }
-
-        struct ZetaDataCollectionNotification;
-        let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
-
-        const DATA_COLLECTION_INFO_URL: &str = "https://zed.dev/terms-of-service"; // TODO: Replace for a link that's dedicated to Edit Predictions data collection
-
-        let this = cx.entity();
-        data_collection
-            .workspace
-            .update(cx, |workspace, cx| {
-                workspace.show_notification(notification_id, cx, |cx| {
-                    let zeta = self.zeta.clone();
-
-                    cx.new(move |_cx| {
-                        let message =
-                            "To allow Zed to suggest better edits, turn on data collection. You \
-                            can turn off at any time via the status bar menu.";
-                        MessageNotification::new(message)
-                            .with_title("Per-Project Data Collection Program")
-                            .show_close_button(false)
-                            .with_click_message("Turn On")
-                            .on_click({
-                                let this = this.clone();
-                                move |_window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.set_data_collection_choice(
-                                            DataCollectionChoice::Enabled,
-                                            cx,
-                                        )
-                                    });
-                                }
-                            })
-                            .with_secondary_click_message("Turn Off")
-                            .on_secondary_click({
-                                move |_window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.set_data_collection_choice(
-                                            DataCollectionChoice::Disabled,
-                                            cx,
-                                        )
-                                    });
-                                }
-                            })
-                            .with_tertiary_click_message("Never Ask Again")
-                            .on_tertiary_click({
-                                move |_window, cx| {
-                                    zeta.update(cx, |zeta, cx| {
-                                        zeta.set_never_ask_again_for_data_collection(cx);
-                                    });
-                                }
-                            })
-                            .more_info_message("Learn More")
-                            .more_info_url(DATA_COLLECTION_INFO_URL)
-                    })
-                });
-            })
-            .log_err();
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
