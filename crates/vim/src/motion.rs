@@ -3473,7 +3473,7 @@ mod test {
                 snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
             let inlay_text = " hint";
             let inlay = Inlay::inline_completion(1, end_of_line, inlay_text);
-            editor.splice_inlays(vec![], vec![inlay], cx);
+            editor.splice_inlays(&[], vec![inlay], cx);
         });
         cx.simulate_keystrokes("$");
         cx.assert_state(

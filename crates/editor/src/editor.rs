@@ -466,32 +466,6 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 
 type CompletionId = usize;
 
-#[derive(Debug, Clone)]
-enum InlineCompletionMenuHint {
-    Loading,
-    Loaded { text: InlineCompletionText },
-    PendingTermsAcceptance,
-    None,
-}
-
-impl InlineCompletionMenuHint {
-    pub fn label(&self) -> &'static str {
-        match self {
-            InlineCompletionMenuHint::Loading | InlineCompletionMenuHint::Loaded { .. } => {
-                "Edit Prediction"
-            }
-            InlineCompletionMenuHint::PendingTermsAcceptance => "Accept Terms of Service",
-            InlineCompletionMenuHint::None => "No Prediction",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum InlineCompletionText {
-    Move(SharedString),
-    Edit(HighlightedEdits),
-}
-
 pub(crate) enum EditDisplayMode {
     TabAccept,
     DiffPopover,
