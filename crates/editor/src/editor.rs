@@ -15089,15 +15089,16 @@ impl EditorSnapshot {
         &self,
         font_id: FontId,
         font_size: Pixels,
-        em_width: Pixels,
-        em_advance: Pixels,
         max_line_number_width: Pixels,
         cx: &App,
     ) -> GutterDimensions {
         if !self.show_gutter {
             return GutterDimensions::default();
         }
+
         let descent = cx.text_system().descent(font_id, font_size);
+        let em_width = cx.text_system().em_width(font_id, font_size).unwrap();
+        let em_advance = cx.text_system().em_advance(font_id, font_size).unwrap();
 
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
