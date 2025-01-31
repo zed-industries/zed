@@ -1148,11 +1148,12 @@ impl SearchableItem for LspLogView {
     ) {
         // Since LSP Log is read-only, it doesn't make sense to support replace operation.
     }
-    fn supported_options() -> workspace::searchable::SearchOptions {
+    fn supported_options(&self) -> workspace::searchable::SearchOptions {
         workspace::searchable::SearchOptions {
             case: true,
             word: true,
             regex: true,
+            find_in_results: false,
             // LSP log is read-only.
             replacement: false,
             selection: false,

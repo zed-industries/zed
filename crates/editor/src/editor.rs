@@ -727,6 +727,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1425,6 +1426,7 @@ impl Editor {
             ],
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
+            in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
@@ -1700,6 +1702,10 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+        self.in_project_search = in_project_search;
     }
 
     pub fn set_custom_context_menu(
@@ -12154,6 +12160,10 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn set_soft_wrap(&mut self) {
+        self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
+    }
+
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
         if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
@@ -14107,13 +14117,7 @@ impl Editor {
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
-
-        let em_width = window
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
         gpui::Point::new(em_width, line_height)
     }

@@ -12,24 +12,24 @@
 //! gpui = { git = "https://github.com/zed-industries/zed" }
 //! ```
 //!
-//! Everything in GPUI starts with an [`App`]. You can create one with [`App::new`], and
-//! kick off your application by passing a callback to [`App::run`]. Inside this callback,
-//! you can create a new window with [`AppContext::open_window`], and register your first root
+//! Everything in GPUI starts with an [`Application`]. You can create one with [`Application::new`], and
+//! kick off your application by passing a callback to [`Application::run`]. Inside this callback,
+//! you can create a new window with [`App::open_window`], and register your first root
 //! view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
 //!
 //! ## The Big Picture
 //!
 //! GPUI offers three different [registers](https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
 //!
-//! - State management and communication with Models. Whenever you need to store application state
+//! - State management and communication with [`Entity`]'s. Whenever you need to store application state
 //!   that communicates between different parts of your application, you'll want to use GPUI's
-//!   models. Models are owned by GPUI and are only accessible through an owned smart pointer
-//!   similar to an [`Rc`]. See the [`app::model_context`] module for more information.
+//!   entities. Entities are owned by GPUI and are only accessible through an owned smart pointer
+//!   similar to an [`std::rc::Rc`]. See the [`app::context`] module for more information.
 //!
-//! - High level, declarative UI with Views. All UI in GPUI starts with a View. A view is simply
-//!   a model that can be rendered, via the [`Render`] trait. At the start of each frame, GPUI
+//! - High level, declarative UI with views. All UI in GPUI starts with a view. A view is simply
+//!   a [`Entity`] that can be rendered, by implementing the [`Render`] trait. At the start of each frame, GPUI
 //!   will call this render method on the root view of a given window. Views build a tree of
-//!   `elements`, lay them out and style them with a tailwind-style API, and then give them to
+//!   [`Element`]s, lay them out and style them with a tailwind-style API, and then give them to
 //!   GPUI to turn into pixels. See the [`elements::Div`] element for an all purpose swiss-army
 //!   knife for UI.
 //!
@@ -49,7 +49,7 @@
 //!
 //! - Actions are user-defined structs that are used for converting keystrokes into logical operations in your UI.
 //!   Use this for implementing keyboard shortcuts, such as cmd-q. See the [`action`] module for more information.
-//! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::AppContext`].
+//! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::App`].
 //! - An async executor that is integrated with the platform's event loop. See the [`executor`] module for more information.,
 //! - The [gpui::test] macro provides a convenient way to write tests for your GPUI applications. Tests also have their
 //!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`app::test_context`]
@@ -165,26 +165,26 @@ pub trait AppContext {
     /// can't hold a direct reference to the application context.
     type Result<T>;
 
-    /// Create a new model in the app context.
+    /// Create a new entity in the app context.
     fn new<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
-    /// Reserve a slot for a model to be inserted later.
-    /// The returned [Reservation] allows you to obtain the [EntityId] for the future model.
+    /// Reserve a slot for a entity to be inserted later.
+    /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
 
-    /// Insert a new model in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
+    /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].
     ///
     /// [`reserve_entity`]: Self::reserve_entity
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
-    /// Update a model in the app context.
+    /// Update a entity in the app context.
     fn update_entity<T, R>(
         &mut self,
         handle: &Entity<T>,
@@ -193,7 +193,7 @@ pub trait AppContext {
     where
         T: 'static;
 
-    /// Read a model from the app context.
+    /// Read a entity from the app context.
     fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
@@ -227,12 +227,12 @@ pub trait AppContext {
         G: Global;
 }
 
-/// Returned by [Context::reserve_entity] to later be passed to [Context::insert_model].
-/// Allows you to obtain the [EntityId] for a model before it is created.
+/// Returned by [Context::reserve_entity] to later be passed to [Context::insert_entity].
+/// Allows you to obtain the [EntityId] for a entity before it is created.
 pub struct Reservation<T>(pub(crate) Slot<T>);
 
 impl<T: 'static> Reservation<T> {
-    /// Returns the [EntityId] that will be associated with the model once it is inserted.
+    /// Returns the [EntityId] that will be associated with the entity once it is inserted.
     pub fn entity_id(&self) -> EntityId {
         self.0.entity_id()
     }
@@ -247,14 +247,14 @@ pub trait VisualContext: AppContext {
     /// Update a view with the given callback
     fn update_window_entity<T: 'static, R>(
         &mut self,
-        model: &Entity<T>,
+        entity: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Window, &mut Context<T>) -> R,
     ) -> Self::Result<R>;
 
     /// Update a view with the given callback
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>>;
 
     /// Replace the root view of a window with a new view.
@@ -265,8 +265,8 @@ pub trait VisualContext: AppContext {
     where
         V: 'static + Render;
 
-    /// Focus a model in the window, if it implements the [`Focusable`] trait.
-    fn focus<V>(&mut self, model: &Entity<V>) -> Self::Result<()>
+    /// Focus a entity in the window, if it implements the [`Focusable`] trait.
+    fn focus<V>(&mut self, entity: &Entity<V>) -> Self::Result<()>
     where
         V: Focusable;
 }
