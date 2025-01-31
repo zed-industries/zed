@@ -1416,15 +1416,38 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
+    fn clear_menu_notification(&self, cx: &mut App) {
+        let Some(data_collection) = self.data_collection.as_ref() else {
+            return;
+        };
+
+        if !data_collection.choice.read(cx).is_answered() {
+            self.zeta.update(cx, |zeta, cx| {
+                zeta.update_data_collection_choice(
+                    &data_collection.worktree_root_path,
+                    |_| DataCollectionChoice::Disabled,
+                    cx,
+                );
+            })
+        }
+    }
+
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
         let Some(data_collection) = self.data_collection.as_ref() else {
             return DataCollectionState::Unknown;
         };
 
-        if data_collection.choice.read(cx).is_enabled() {
-            DataCollectionState::Enabled
-        } else {
-            DataCollectionState::Disabled
+        match data_collection.choice.read(cx) {
+            DataCollectionChoice::Enabled => DataCollectionState::Enabled,
+            DataCollectionChoice::Disabled => DataCollectionState::Disabled,
+            DataCollectionChoice::NotAnswered => {
+                match self.zeta.read(cx).data_collection_preferences.latest_choice {
+                    DataCollectionChoice::NotAnswered | DataCollectionChoice::Enabled => {
+                        DataCollectionState::Notification
+                    }
+                    DataCollectionChoice::Disabled => DataCollectionState::Disabled,
+                }
+            }
         }
     }
 

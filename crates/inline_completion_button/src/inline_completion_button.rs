@@ -231,21 +231,22 @@ impl Render for InlineCompletionButton {
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
 
+                fn button(indicator: Option<Color>, cx: &App) -> ButtonLike {
+                    ButtonLike::new("zed-predict-pending-button").child(
+                        IconWithIndicator::new(
+                            Icon::new(IconName::ZedPredict),
+                            indicator.map(|color| Indicator::dot().color(color)),
+                        )
+                        .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                        .into_any_element(),
+                    )
+                }
+
                 if !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
 
                     return div().child(
-                        ButtonLike::new("zeta-pending-tos-icon")
-                            .child(
-                                IconWithIndicator::new(
-                                    Icon::new(IconName::ZedPredict),
-                                    Some(Indicator::dot().color(Color::Error)),
-                                )
-                                .indicator_border_color(Some(
-                                    cx.theme().colors().status_bar_background,
-                                ))
-                                .into_any_element(),
-                            )
+                        button(Some(Color::Error), cx)
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
@@ -269,14 +270,38 @@ impl Render for InlineCompletionButton {
                 }
 
                 let this = cx.entity().clone();
-                let button = IconButton::new("zeta", IconName::ZedPredict).when(
-                    !self.popover_menu_handle.is_deployed(),
-                    |button| {
-                        button.tooltip(|window, cx| {
-                            Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                        })
-                    },
-                );
+
+                let has_notification = self
+                    .inline_completion_provider
+                    .as_ref()
+                    .map_or(false, |provider| {
+                        provider.data_collection_state(cx).has_notification()
+                    });
+
+                let indicator = if has_notification {
+                    Some(Color::Accent)
+                } else {
+                    None
+                };
+
+                let button =
+                    button(indicator, cx).when(!self.popover_menu_handle.is_deployed(), |button| {
+                        if has_notification {
+                            button.tooltip(|window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    "Help Improve The Model",
+                                    window,
+                                    cx,
+                                )
+                            })
+                        } else {
+                            button.tooltip(|window, cx| {
+                                Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                            })
+                        }
+                    });
 
                 let is_refreshing = self
                     .inline_completion_provider
@@ -288,6 +313,16 @@ impl Render for InlineCompletionButton {
                         Some(this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx)))
                     })
                     .anchor(Corner::BottomRight)
+                    .when_some(
+                        self.inline_completion_provider.as_ref(),
+                        |element, provider| {
+                            let provider = provider.clone();
+
+                            element.on_open(std::rc::Rc::new(move |_window, cx| {
+                                provider.clear_menu_notification(cx);
+                            }))
+                        },
+                    )
                     .with_handle(self.popover_menu_handle.clone());
 
                 if is_refreshing {
@@ -297,7 +332,7 @@ impl Render for InlineCompletionButton {
                             Animation::new(Duration::from_secs(2))
                                 .repeat()
                                 .with_easing(pulsating_between(0.2, 1.0)),
-                            |icon_button, delta| icon_button.alpha(delta),
+                            |icon_button, delta| icon_button.opacity(delta),
                         ),
                     );
                 } else {
@@ -432,7 +467,8 @@ impl InlineCompletionButton {
 
             if data_collection.is_supported() {
                 let provider = provider.clone();
-                menu = menu.separator().item(
+                menu = menu.separator().header("Help Improve The Model");
+                menu = menu.item(
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .disabled(data_collection.is_unknown())

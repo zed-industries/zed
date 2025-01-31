@@ -27,6 +27,8 @@ pub enum DataCollectionState {
     Enabled,
     /// Data collection is disabled or unanswered.
     Disabled,
+    /// Shows a notification indicator in the status menu button.
+    Notification,
 }
 
 impl DataCollectionState {
@@ -40,6 +42,10 @@ impl DataCollectionState {
 
     pub fn is_enabled(&self) -> bool {
         matches!(self, DataCollectionState::Enabled)
+    }
+
+    pub fn has_notification(&self) -> bool {
+        matches!(self, DataCollectionState::Notification)
     }
 }
 
@@ -55,6 +61,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         DataCollectionState::Unsupported
     }
     fn toggle_data_collection(&mut self, _cx: &mut App) {}
+    fn clear_menu_notification(&self, _cx: &mut App) {}
     fn is_enabled(
         &self,
         buffer: &Entity<Buffer>,
@@ -103,6 +110,7 @@ pub trait InlineCompletionProviderHandle {
     fn show_tab_accept_marker(&self) -> bool;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn toggle_data_collection(&self, cx: &mut App);
+    fn clear_menu_notification(&self, _cx: &mut App);
     fn needs_terms_acceptance(&self, cx: &App) -> bool;
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
@@ -159,6 +167,10 @@ where
 
     fn toggle_data_collection(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.toggle_data_collection(cx))
+    }
+
+    fn clear_menu_notification(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.clear_menu_notification(cx))
     }
 
     fn is_enabled(
