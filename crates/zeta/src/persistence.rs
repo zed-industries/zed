@@ -12,6 +12,10 @@ define_connection!(
                 accepted_data_collection INTEGER
             ) STRICT;
         ),
+        sql!(
+            ALTER TABLE zeta_preferences ADD COLUMN updated_at TEXT;
+            UPDATE zeta_preferences SET updated_at = CURRENT_TIMESTAMP;
+        )
     ];
 );
 
@@ -19,6 +23,7 @@ impl ZetaDb {
     query! {
         pub fn get_all_data_collection_preferences() -> Result<Vec<(PathBuf, bool)>> {
             SELECT worktree_path, accepted_data_collection FROM zeta_preferences
+            ORDER BY updated_at ASC
         }
     }
 
@@ -36,7 +41,8 @@ impl ZetaDb {
             VALUES
                 (?1, ?2)
             ON CONFLICT (worktree_path) DO UPDATE SET
-                accepted_data_collection = ?2
+                accepted_data_collection = ?2,
+                updated_at = CURRENT_TIMESTAMP
         }
     }
 

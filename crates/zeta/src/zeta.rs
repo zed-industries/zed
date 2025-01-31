@@ -9,7 +9,6 @@ pub use rate_completion_modal::*;
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
-use collections::hash_map::Entry;
 use collections::{HashMap, HashSet, VecDeque};
 use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
@@ -899,21 +898,39 @@ and then another
     /// Creates a `Entity<DataCollectionChoice>` for each unique worktree abs path it sees.
     pub fn data_collection_choice_at(
         &mut self,
-        worktree_abs_path: PathBuf,
+        worktree_abs_path: &Path,
         cx: &mut Context<Self>,
     ) -> Entity<DataCollectionChoice> {
         match self
             .data_collection_preferences
             .per_worktree
-            .entry(worktree_abs_path)
+            .get(worktree_abs_path)
         {
-            Entry::Vacant(entry) => {
+            Some(choice) => choice.clone(),
+            None => {
                 let choice = cx.new(|_| DataCollectionChoice::NotAnswered);
-                entry.insert(choice.clone());
+                self.data_collection_preferences
+                    .per_worktree
+                    .insert(worktree_abs_path.to_path_buf(), choice.clone());
                 choice
             }
-            Entry::Occupied(entry) => entry.get().clone(),
         }
+    }
+
+    fn toggle_data_collection_choice(&mut self, worktree_abs_path: &Path, cx: &mut Context<Self>) {
+        let choice = self
+            .data_collection_choice_at(worktree_abs_path, cx)
+            .update(cx, |choice, _cx| {
+                *choice = choice.toggle();
+                *choice
+            });
+
+        let worktree_path = worktree_abs_path.to_path_buf();
+        db::write_and_log(cx, move || {
+            persistence::DB.save_data_collection_choice(worktree_path, choice.is_enabled())
+        });
+
+        self.data_collection_preferences.latest_choice = choice;
     }
 
     fn load_data_collection_preferences(cx: &mut Context<Self>) -> DataCollectionPreferences {
@@ -924,19 +941,29 @@ and then another
             return DataCollectionPreferences::default();
         }
 
-        let preferences_per_worktree = persistence::DB
+        let Some(preferences) = persistence::DB
             .get_all_data_collection_preferences()
             .log_err()
+        else {
+            return DataCollectionPreferences::default();
+        };
+
+        let latest_choice = preferences
+            .last()
+            .map(|(_, choice)| (*choice).into())
+            .unwrap_or_default();
+
+        let preferences_per_worktree = preferences
             .into_iter()
-            .flatten()
             .map(|(path, choice)| {
-                let choice = cx.new(|_| DataCollectionChoice::from(choice));
+                let choice = cx.new(|_| choice.into());
                 (path, choice)
             })
             .collect();
 
         DataCollectionPreferences {
             per_worktree: preferences_per_worktree,
+            latest_choice,
         }
     }
 }
@@ -947,6 +974,10 @@ struct DataCollectionPreferences {
     ///
     /// This is filled when loading from database, or when querying if no matching path is found.
     per_worktree: HashMap<PathBuf, Entity<DataCollectionChoice>>,
+    /// The latest choice made.
+    ///
+    /// Used to decided whether to show status bar notification circle.
+    latest_choice: DataCollectionChoice,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -1252,8 +1283,9 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum DataCollectionChoice {
+    #[default]
     NotAnswered,
     Enabled,
     Disabled,
@@ -1329,27 +1361,13 @@ impl ProviderDataCollection {
         })?;
 
         let choice = zeta.update(cx, |zeta, cx| {
-            zeta.data_collection_choice_at(worktree_root_path.clone(), cx)
+            zeta.data_collection_choice_at(&worktree_root_path, cx)
         });
 
         Some(ProviderDataCollection {
             worktree_root_path,
             choice,
         })
-    }
-
-    fn set_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
-        self.choice.update(cx, |this, _| *this = choice);
-
-        let worktree_root_path = self.worktree_root_path.clone();
-
-        db::write_and_log(cx, move || {
-            persistence::DB.save_data_collection_choice(worktree_root_path, choice.is_enabled())
-        });
-    }
-
-    fn toggle_choice(&mut self, cx: &mut App) {
-        self.set_choice(self.choice.read(cx).toggle(), cx);
     }
 }
 
@@ -1402,7 +1420,9 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
         if let Some(data_collection) = self.data_collection.as_mut() {
-            data_collection.toggle_choice(cx);
+            self.zeta.update(cx, |zeta, cx| {
+                zeta.toggle_data_collection_choice(&data_collection.worktree_root_path, cx)
+            });
         }
     }
 
