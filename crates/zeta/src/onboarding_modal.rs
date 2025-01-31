@@ -71,6 +71,11 @@ impl ZedPredictModal {
         cx.notify();
     }
 
+    fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
+        cx.notify();
+    }
+
     fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .user_store
@@ -272,12 +277,22 @@ impl Render for ZedPredictModal {
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
                 h_flex()
                     .gap_2()
-                    .child(
-                        Icon::new(IconName::Check)
-                            .size(IconSize::XSmall)
-                            .color(Color::Disabled),
-                    )
+                    .child(Icon::new(IconName::Check).size(IconSize::XSmall))
                     .child(Label::new(label_text).color(Color::Muted))
+            }
+
+            fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
+                label_element: E1,
+                label_element_second: E2,
+            ) -> impl Element {
+                v_flex()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(Icon::new(IconName::Check).size(IconSize::XSmall))
+                            .child(Label::new(label_element).color(Color::Muted)),
+                    )
+                    .child(div().pl_5().child(label_element_second))
             }
 
             base.child(Label::new(copy).color(Color::Muted))
@@ -310,20 +325,25 @@ impl Render for ZedPredictModal {
                                         self.data_collection_opted_in.into(),
                                     )
                                     .fill()
-                                    .when(self.worktrees.is_empty(), |element|
-                                        element.disabled(true).tooltip(move |window, cx| Tooltip::with_meta(
-                                            "No Project Open",
-                                            None,
-                                            "Open a project to enable this option.",
-                                            window,
-                                            cx,
-                                        ))
-                                    )
+                                    .when(self.worktrees.is_empty(), |element| {
+                                        element.disabled(true).tooltip(move |window, cx| {
+                                            Tooltip::with_meta(
+                                                "No Project Open",
+                                                None,
+                                                "Open a project to enable this option.",
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                    })
                                     .label("Optionally share training data.")
-                                    .on_click(cx.listener(move |this, state, _window, cx| {
-                                        this.data_collection_opted_in = *state == ToggleState::Selected;
-                                        cx.notify()
-                                    })),
+                                    .on_click(cx.listener(
+                                        move |this, state, _window, cx| {
+                                            this.data_collection_opted_in =
+                                                *state == ToggleState::Selected;
+                                            cx.notify()
+                                        },
+                                    )),
                                 )
                                 // TODO: show each worktree if more than 1
                                 .child(
@@ -336,7 +356,8 @@ impl Render for ZedPredictModal {
                                         .icon_size(IconSize::Indicator)
                                         .icon_color(Color::Muted)
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.data_collection_expanded = !this.data_collection_expanded;
+                                            this.data_collection_expanded =
+                                                !this.data_collection_expanded;
                                             cx.notify()
                                         })),
                                 ),
@@ -353,13 +374,25 @@ impl Render for ZedPredictModal {
                                     .child(info_item(
                                         "Help fine-tune Zed's model to enable better predictions.",
                                     ))
+                                    .child(info_item(
+                                        "No data is ever captured while this setting is off.",
+                                    ))
                                     .child(info_item("This is a per-project setting."))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
-                                    .child(info_item(".env files are excluded by default."))
-                                    .child(info_item(
-                                        "Use the `disabled_globs` setting to exclude specific files.",
-                                    ))
-                                )
+                                    .child(multiline_info_item(
+                                        "Files that can contain sensitive data, like `env` are",
+                                        h_flex()
+                                            .child(
+                                                Label::new("excluded via the").color(Color::Muted),
+                                            )
+                                            .child(
+                                                Button::new("doc-link", "disabled_globs").on_click(
+                                                    cx.listener(Self::inline_completions_doc),
+                                                ),
+                                            )
+                                            .child(Label::new("setting.").color(Color::Muted)),
+                                    )),
+                            )
                         }),
                 )
                 .child(
