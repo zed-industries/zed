@@ -3439,7 +3439,7 @@ mod test {
             let range = editor.selections.newest_anchor().range();
             let inlay_text = "  field: int,\n  field2: string\n  field3: float";
             let inlay = Inlay::inline_completion(1, range.start, inlay_text);
-            editor.splice_inlays(vec![], vec![inlay], cx);
+            editor.splice_inlays(&[], vec![inlay], cx);
         });
 
         cx.simulate_keystrokes("j");
