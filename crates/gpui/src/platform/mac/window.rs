@@ -1692,17 +1692,7 @@ extern "C" fn first_rect_for_character_range(
     range: NSRange,
     _: id,
 ) -> NSRect {
-    let frame: NSRect = unsafe {
-        let state = get_window_state(this);
-        let lock = state.lock();
-        let mut frame = NSWindow::frame(lock.native_window);
-        let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
-        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
-        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
-            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
-        }
-        frame
-    };
+    let frame = get_frame(this);
     with_input_handler(this, |input_handler| {
         input_handler.bounds_for_range(range.to_range()?)
     })
@@ -1721,6 +1711,20 @@ extern "C" fn first_rect_for_character_range(
             )
         },
     )
+}
+
+fn get_frame(this: &Object) -> NSRect {
+    unsafe {
+        let state = get_window_state(this);
+        let lock = state.lock();
+        let mut frame = NSWindow::frame(lock.native_window);
+        let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
+        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
+        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        }
+        frame
+    }
 }
 
 extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
@@ -1837,16 +1841,21 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 }
 
 extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {
-    let window_height = unsafe {
-        let window_state = get_window_state(this);
-        let lock = window_state.as_ref().lock();
-        lock.content_size().height
-    };
-    let position = point(px(position.x as f32), window_height - px(position.y as f32));
+    let position = screen_point_to_gpui_point(this, position);
     with_input_handler(this, |input_handler| {
-        // "Character Index" -> Offset from start, probably in UTF16
         input_handler.character_index_for_point(position)
     })
+    .flatten()
+    .map(|index| index as u64)
+    .unwrap_or(NSNotFound as u64)
+}
+
+fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels> {
+    let frame = get_frame(this);
+    let window_x = position.x - frame.origin.x;
+    let window_y = frame.size.height - (position.y - frame.origin.y);
+    let position = point(px(window_x as f32), px(window_y as f32));
+    position
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {

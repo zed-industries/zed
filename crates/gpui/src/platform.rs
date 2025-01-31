@@ -792,6 +792,13 @@ impl PlatformInputHandler {
             cx,
         )
     }
+
+    pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
+        self.cx
+            .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
+            .ok()
+            .flatten()
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
@@ -882,11 +889,14 @@ pub trait InputHandler: 'static {
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
 
-    /// Returns UTF16 offset
+    /// Get the character offset for the given point in terms of UTF16 characters
+    ///
+    /// Corresponds to [characterIndexForPoint:](https://developer.apple.com/documentation/appkit/nstextinputclient/characterindex(for:))
     fn character_index_for_point(
         &mut self,
         point: Point<Pixels>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Option<usize>;
 
     /// Allows a given input context to opt into getting raw key repeats instead of
