@@ -5643,7 +5643,7 @@ impl EditorElement {
                     let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                     if pending_mouse_down.is_some() && position_map.text_hitbox.is_hovered(window) {
                         captured_mouse_down = pending_mouse_down.take();
-                        cx.notify();
+                        window.refresh();
                     }
                 }),
                 // Fire click handlers during the bubble phase.
