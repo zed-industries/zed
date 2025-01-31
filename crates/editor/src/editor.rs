@@ -662,7 +662,8 @@ pub struct Editor {
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_inline_completion: Option<InlineCompletionState>,
-    stale_inline_completion: Option<InlineCompletionState>,
+    /// Used to prevent flickering as the user types while the menu is open
+    stale_inline_completion_in_menu: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
     enable_inline_completions: bool,
@@ -1357,7 +1358,7 @@ impl Editor {
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
             active_inline_completion: None,
-            stale_inline_completion: None,
+            stale_inline_completion_in_menu: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -4948,7 +4949,7 @@ impl Editor {
 
         self.splice_inlays(&active_inline_completion.inlay_ids, Default::default(), cx);
         self.clear_highlights::<InlineCompletionHighlight>(cx);
-        self.stale_inline_completion = Some(active_inline_completion);
+        self.stale_inline_completion_in_menu = Some(active_inline_completion);
         true
     }
 
@@ -5108,7 +5109,7 @@ impl Editor {
                 multibuffer.line_len(MultiBufferRow(invalidation_row_range.end)),
             ));
 
-        self.stale_inline_completion = None;
+        self.stale_inline_completion_in_menu = None;
         self.active_inline_completion = Some(InlineCompletionState {
             inlay_ids,
             completion,
@@ -5407,7 +5408,7 @@ impl Editor {
             let completion = match self
                 .active_inline_completion
                 .as_ref()
-                .or(self.stale_inline_completion.as_ref())
+                .or(self.stale_inline_completion_in_menu.as_ref())
                 .map(|completion| &completion.completion)
             {
                 Some(InlineCompletion::Edit {
@@ -5554,6 +5555,7 @@ impl Editor {
         cx.notify();
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
+        self.stale_inline_completion_in_menu.take();
         if context_menu.is_some() {
             self.update_visible_inline_completion(window, cx);
         }
