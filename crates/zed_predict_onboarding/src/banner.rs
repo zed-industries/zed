@@ -163,6 +163,6 @@ impl Render for ZedPredictBanner {
                 ),
             );
 
-        div().pr_1().child(banner)
+        div().pr_2().child(banner)
     }
 }

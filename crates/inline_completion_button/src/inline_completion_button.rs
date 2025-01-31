@@ -448,7 +448,7 @@ impl InlineCompletionButton {
             if data_collection.is_supported() {
                 let provider = provider.clone();
                 menu = menu.separator().item(
-                    ContextMenuEntry::new("Data Collection")
+                    ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .disabled(data_collection.is_unknown())
                         .handler(move |_, cx| {

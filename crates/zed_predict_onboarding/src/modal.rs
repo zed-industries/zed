@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
 use feature_flags::FeatureFlagAppExt as _;
@@ -9,7 +9,7 @@ use gpui::{
 };
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
-use ui::{prelude::*, CheckboxWithLabel, TintColor};
+use ui::{prelude::*, Checkbox, TintColor, Tooltip};
 use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
 
 /// Introduces user to AI inline prediction feature and terms of service
@@ -20,6 +20,9 @@ pub struct ZedPredictModal {
     focus_handle: FocusHandle,
     sign_in_status: SignInStatus,
     terms_of_service: bool,
+    data_collection_expanded: bool,
+    data_collection_opted_in: bool,
+    worktree_root_path: Option<PathBuf>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -37,6 +40,7 @@ impl ZedPredictModal {
         user_store: Entity<UserStore>,
         client: Arc<Client>,
         fs: Arc<dyn Fs>,
+        worktree_root_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         ZedPredictModal {
@@ -46,6 +50,9 @@ impl ZedPredictModal {
             focus_handle: cx.focus_handle(),
             sign_in_status: SignInStatus::Idle,
             terms_of_service: false,
+            data_collection_expanded: false,
+            data_collection_opted_in: false,
+            worktree_root_path,
         }
     }
 
@@ -58,8 +65,18 @@ impl ZedPredictModal {
         cx: &mut App,
     ) {
         workspace.update(cx, |this, cx| {
+            let worktree_root_path =
+                this.recent_navigation_history_iter(cx)
+                    .next()
+                    .and_then(|(latest, _)| {
+                        Some(
+                            this.absolute_path_of_worktree(latest.worktree_id, cx)?
+                                .to_path_buf(),
+                        )
+                    });
+
             this.toggle_modal(window, cx, |_window, cx| {
-                ZedPredictModal::new(user_store, client, fs, cx)
+                ZedPredictModal::new(user_store, client, fs, worktree_root_path, cx)
             });
         });
     }
@@ -81,6 +98,8 @@ impl ZedPredictModal {
 
         cx.spawn(|this, mut cx| async move {
             task.await?;
+
+            // TODO az: persist data collection choice
 
             this.update(&mut cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
@@ -135,7 +154,7 @@ impl ModalView for ZedPredictModal {}
 impl Render for ZedPredictModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let base = v_flex()
-            .w(px(420.))
+            .w(px(440.))
             .p_4()
             .relative()
             .gap_2()
@@ -155,15 +174,15 @@ impl Render for ZedPredictModal {
                 div()
                     .p_1p5()
                     .absolute()
-                    .top_0()
-                    .left_0()
+                    .top_1()
+                    .left_1p5()
                     .right_0()
                     .h(px(200.))
                     .child(
                         svg()
                             .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(416.))
+                            .w(px(418.))
                             .h(px(128.))
                             .overflow_hidden(),
                     ),
@@ -249,24 +268,33 @@ impl Render for ZedPredictModal {
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
-                SignInStatus::Idle => "Get accurate and helpful edit predictions at every keystroke. To set Zed as your inline completions provider, ensure you:",
+                SignInStatus::Idle => "Get accurate and helpful edit predictions at every keystroke. Before setting Zed as your inline completions provider:",
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
 
+            fn info_item(label_text: impl Into<SharedString>) -> impl Element {
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::XSmall)
+                            .color(Color::Disabled),
+                    )
+                    .child(Label::new(label_text).color(Color::Muted))
+            }
+
             base.child(Label::new(copy).color(Color::Muted))
                 .child(
                     h_flex()
-                        .gap_0p5()
-                        .child(CheckboxWithLabel::new(
-                            "tos-checkbox",
-                            Label::new("Have read and accepted the").color(Color::Muted),
-                            self.terms_of_service.into(),
-                            cx.listener(move |this, state, _window, cx| {
-                                this.terms_of_service = *state == ToggleState::Selected;
-                                cx.notify()
-                            }),
-                        ))
+                        .child(
+                            Checkbox::new("tos-checkbox", self.terms_of_service.into())
+                                .label("Read and accept the")
+                                .on_click(cx.listener(move |this, state, _window, cx| {
+                                    this.terms_of_service = *state == ToggleState::Selected;
+                                    cx.notify()
+                                })),
+                        )
                         .child(
                             Button::new("view-tos", "Terms of Service")
                                 .icon(IconName::ArrowUpRight)
@@ -274,6 +302,67 @@ impl Render for ZedPredictModal {
                                 .icon_color(Color::Muted)
                                 .on_click(cx.listener(Self::view_terms)),
                         ),
+                )
+                .child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .child(
+                                    Checkbox::new(
+                                        "training-data-checkbox",
+                                        self.data_collection_opted_in.into(),
+                                    )
+                                    .disabled(self.worktree_root_path.is_none())
+                                    .when(self.worktree_root_path.is_none(), |element|
+                                        element.tooltip(move |window, cx| Tooltip::with_meta(
+                                            "No Project Open",
+                                            None,
+                                            "This is a per-project setting.",
+                                            window,
+                                            cx,
+                                        ))
+                                    )
+                                    .label("Optionally share training data.")
+                                    .on_click(cx.listener(move |this, state, _window, cx| {
+                                        this.data_collection_opted_in = *state == ToggleState::Selected;
+                                        cx.notify()
+                                    })),
+                                )
+                                .child(
+                                    Button::new("learn-more", "Learn More")
+                                        .icon(if self.data_collection_expanded {
+                                            IconName::ChevronUp
+                                        } else {
+                                            IconName::ChevronDown
+                                        })
+                                        .icon_size(IconSize::Indicator)
+                                        .icon_color(Color::Muted)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.data_collection_expanded = !this.data_collection_expanded;
+                                            cx.notify()
+                                        })),
+                                ),
+                        )
+                        .when(self.data_collection_expanded, |element| {
+                            element.child(
+                                v_flex()
+                                    .mt_2()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().editor_background.opacity(0.5))
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(info_item(
+                                        "Help fine-tune Zed's model to enable better predictions.",
+                                    ))
+                                    .child(info_item("This is a per-project setting."))
+                                    .child(info_item("Toggle it anytime via the status bar menu."))
+                                    .child(info_item(".env files are excluded by default."))
+                                    .child(info_item(
+                                        "Use the `disabled_globs` setting to exclude specific files.",
+                                    ))
+                                )
+                        }),
                 )
                 .child(
                     v_flex()
