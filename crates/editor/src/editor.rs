@@ -5428,6 +5428,7 @@ impl Editor {
                         return None;
                     };
 
+                    let len_total = highlighted_edits.text.len();
                     let first_line = highlighted_edits.text.slice_until('\n');
                     let first_line_len = first_line.len();
 
@@ -5439,21 +5440,23 @@ impl Editor {
                     let styled_text =
                         gpui::StyledText::new(first_line).with_highlights(&style.text, highlights);
 
-                    div().child(styled_text).map(|label| {
-                        if is_loading {
-                            label
-                                .with_animation(
-                                    "pulsating-stale-completion",
-                                    Animation::new(Duration::from_secs(2))
-                                        .repeat()
-                                        .with_easing(pulsating_between(0.4, 0.8)),
-                                    |label, delta| label.opacity(delta),
-                                )
-                                .into_any_element()
-                        } else {
-                            label.into_any_element()
-                        }
-                    })
+                    let base = h_flex()
+                        .gap_1()
+                        .child(styled_text)
+                        .when(len_total > first_line_len, |parent| parent.child("…"));
+
+                    if is_loading {
+                        base.with_animation(
+                            "pulsating-stale-completion",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 0.8)),
+                            |label, delta| label.opacity(delta),
+                        )
+                        .into_any_element()
+                    } else {
+                        base.into_any_element()
+                    }
                 }
                 Some(InlineCompletion::Move(_)) => {
                     // TODO handle
