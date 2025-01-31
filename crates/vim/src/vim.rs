@@ -50,10 +50,6 @@ use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
 
-/// An Action to Switch between modes
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-pub struct SwitchMode(pub Mode);
-
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -110,6 +106,13 @@ struct PushLiteral {
 actions!(
     vim,
     [
+        SwitchToNormalMode,
+        SwitchToInsertMode,
+        SwitchToReplaceMode,
+        SwitchToVisualMode,
+        SwitchToVisualLineMode,
+        SwitchToVisualBlockMode,
+        SwitchToHelixNormalMode,
         ClearOperators,
         Tab,
         Enter,
@@ -149,7 +152,6 @@ actions!(workspace, [ToggleVimMode,]);
 impl_actions!(
     vim,
     [
-        SwitchMode,
         Number,
         SelectRegister,
         PushObject,
@@ -418,9 +420,41 @@ impl Vim {
         });
 
         vim.update(cx, |_, cx| {
-            Vim::action(editor, cx, |vim, action: &SwitchMode, window, cx| {
-                vim.switch_mode(action.0, false, window, cx)
+            Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
+                vim.switch_mode(Mode::Normal, false, window, cx)
             });
+
+            Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
+                vim.switch_mode(Mode::Insert, false, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &SwitchToReplaceMode, window, cx| {
+                vim.switch_mode(Mode::Replace, false, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &SwitchToVisualMode, window, cx| {
+                vim.switch_mode(Mode::Visual, false, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &SwitchToVisualLineMode, window, cx| {
+                vim.switch_mode(Mode::VisualLine, false, window, cx)
+            });
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &SwitchToVisualBlockMode, window, cx| {
+                    vim.switch_mode(Mode::VisualBlock, false, window, cx)
+                },
+            );
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &SwitchToHelixNormalMode, window, cx| {
+                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                },
+            );
 
             Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
                 vim.push_operator(

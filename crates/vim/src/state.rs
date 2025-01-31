@@ -10,7 +10,6 @@ use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
 use language::Point;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::borrow::BorrowMut;
@@ -18,8 +17,7 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{Context, SharedString};
 use workspace::searchable::Direction;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Mode {
     Normal,
     Insert,
