@@ -736,6 +736,10 @@ impl EditorElement {
     fn mouse_up(
         editor: &mut Editor,
         event: &MouseUpEvent,
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "freebsd")),
+            allow(unused_variables)
+        )]
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         window: &mut Window,
@@ -748,18 +752,7 @@ impl EditorElement {
             editor.select(SelectPhase::End, window, cx);
         }
 
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.secondary(),
-            MultiCursorModifier::CmdOrCtrl => event.modifiers.alt,
-        };
-
-        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
-            let point = position_map.point_for_position(text_hitbox.bounds, event.position);
-            editor.handle_click_hovered_link(point, event.modifiers, window, cx);
-
-            cx.stop_propagation();
-        } else if end_selection && pending_nonempty_selections {
+        if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
@@ -788,6 +781,30 @@ impl EditorElement {
                 }
                 cx.stop_propagation()
             }
+        }
+    }
+
+    fn click(
+        editor: &mut Editor,
+        event: &ClickEvent,
+        position_map: &PositionMap,
+        text_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let multi_cursor_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => event.modifiers().secondary(),
+            MultiCursorModifier::CmdOrCtrl => event.modifiers().alt,
+        };
+
+        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
+            let point = position_map.point_for_position(text_hitbox.bounds, event.up.position);
+            editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+
+            cx.stop_propagation();
         }
     }
 
@@ -5305,6 +5322,13 @@ impl EditorElement {
                 if phase == DispatchPhase::Bubble {
                     match event.button {
                         MouseButton::Left => editor.update(cx, |editor, cx| {
+                            let pending_mouse_down = editor
+                                .pending_mouse_down
+                                .get_or_insert_with(Default::default)
+                                .clone();
+
+                            *pending_mouse_down.borrow_mut() = Some(event.clone());
+
                             Self::mouse_left_down(
                                 editor,
                                 event,
@@ -5356,6 +5380,43 @@ impl EditorElement {
                 }
             }
         });
+
+        window.on_mouse_event({
+            let editor = self.editor.clone();
+            let position_map = layout.position_map.clone();
+            let text_hitbox = layout.text_hitbox.clone();
+
+            let mut captured_mouse_down = None;
+
+            move |event: &MouseUpEvent, phase, window, cx| match phase {
+                // Clear the pending mouse down during the capture phase,
+                // so that it happens even if another event handler stops
+                // propagation.
+                DispatchPhase::Capture => editor.update(cx, |editor, _cx| {
+                    let pending_mouse_down = editor
+                        .pending_mouse_down
+                        .get_or_insert_with(Default::default)
+                        .clone();
+
+                    let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                    if pending_mouse_down.is_some() && text_hitbox.is_hovered(window) {
+                        captured_mouse_down = pending_mouse_down.take();
+                        window.refresh();
+                    }
+                }),
+                // Fire click handlers during the bubble phase.
+                DispatchPhase::Bubble => editor.update(cx, |editor, cx| {
+                    if let Some(mouse_down) = captured_mouse_down.take() {
+                        let event = ClickEvent {
+                            down: mouse_down,
+                            up: event.clone(),
+                        };
+                        Self::click(editor, &event, &position_map, &text_hitbox, window, cx);
+                    }
+                }),
+            }
+        });
+
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
