@@ -1,9 +1,14 @@
 mod completion_diff_element;
+mod init;
+mod onboarding_banner;
+mod onboarding_modal;
 mod persistence;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
+pub use init::*;
 use inline_completion::DataCollectionState;
+pub use onboarding_banner::*;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};

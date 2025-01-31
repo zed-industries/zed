@@ -69,7 +69,6 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_onboarding::ZedPredictModal;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -3957,20 +3956,7 @@ impl Editor {
     }
 
     fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
-            return;
-        };
-
-        let project = project.read(cx);
-
-        ZedPredictModal::toggle(
-            workspace,
-            project.user_store().clone(),
-            project.client().clone(),
-            project.fs().clone(),
-            window,
-            cx,
-        );
+        window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
     }
 
     fn do_completion(

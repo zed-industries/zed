@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{Client, UserStore};
+use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{actions::ShowInlineCompletion, scroll::Autoscroll, Editor};
 use feature_flags::{
@@ -29,7 +29,6 @@ use workspace::{
     Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zed_predict_onboarding::ZedPredictModal;
 use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
@@ -46,7 +45,6 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
-    client: Arc<Client>,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
@@ -234,11 +232,6 @@ impl Render for InlineCompletionButton {
                     self.user_store.read(cx).current_user_has_accepted_terms();
 
                 if !current_user_terms_accepted.unwrap_or(false) {
-                    let workspace = self.workspace.clone();
-                    let user_store = self.user_store.clone();
-                    let client = self.client.clone();
-                    let fs = self.fs.clone();
-
                     let signed_in = current_user_terms_accepted.is_some();
 
                     return div().child(
@@ -267,16 +260,10 @@ impl Render for InlineCompletionButton {
                                 )
                             })
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                if let Some(workspace) = workspace.upgrade() {
-                                    ZedPredictModal::toggle(
-                                        workspace,
-                                        user_store.clone(),
-                                        client.clone(),
-                                        fs.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                }
+                                window.dispatch_action(
+                                    zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                    cx,
+                                );
                             })),
                     );
                 }
@@ -328,7 +315,6 @@ impl InlineCompletionButton {
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
-        client: Arc<Client>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -348,7 +334,6 @@ impl InlineCompletionButton {
             inline_completion_provider: None,
             popover_menu_handle,
             workspace,
-            client,
             fs,
             user_store,
         }

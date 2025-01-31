@@ -19,6 +19,7 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -26,6 +27,7 @@ db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
+fs.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 indoc.workspace = true
@@ -46,6 +48,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

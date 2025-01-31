@@ -1,4 +1,6 @@
-use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled, Window};
+use gpui::{
+    div, hsla, prelude::*, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled, Window,
+};
 use std::sync::Arc;
 
 use crate::utils::is_light;
@@ -124,11 +126,11 @@ impl Checkbox {
 
     fn border_color(&self, cx: &App) -> Hsla {
         if self.disabled {
-            return cx.theme().colors().border_disabled;
+            return cx.theme().colors().border_variant;
         }
 
         match self.style.clone() {
-            ToggleStyle::Ghost => cx.theme().colors().border_variant,
+            ToggleStyle::Ghost => cx.theme().colors().border,
             ToggleStyle::ElevationBased(elevation) => elevation.on_elevation_bg(cx),
             ToggleStyle::Custom(color) => color.opacity(0.3),
         }
@@ -177,6 +179,12 @@ impl RenderOnce for Checkbox {
                     .bg(bg_color)
                     .border_1()
                     .border_color(border_color)
+                    .when(self.disabled, |this| {
+                        this.cursor(CursorStyle::OperationNotAllowed)
+                    })
+                    .when(self.disabled, |this| {
+                        this.bg(cx.theme().colors().element_disabled.opacity(0.6))
+                    })
                     .when(!self.disabled, |this| {
                         this.group_hover(group_id.clone(), |el| {
                             el.bg(cx.theme().colors().element_hover)
@@ -199,7 +207,9 @@ impl RenderOnce for Checkbox {
             )
             // TODO: Allow label size to be different from default.
             // TODO: Allow label color to be different from muted.
-            .when_some(self.label, |this, label| this.child(Label::new(label).color(Color::Muted)))
+            .when_some(self.label, |this, label| {
+                this.child(Label::new(label).color(Color::Muted))
+            })
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })

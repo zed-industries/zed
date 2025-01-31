@@ -152,7 +152,6 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
-    "crates/zed_predict_onboarding",
     "crates/zeta",
 
     #
@@ -348,7 +347,6 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
-zed_predict_onboarding = { path = "crates/zed_predict_onboarding" }
 zeta = { path = "crates/zeta" }
 
 #

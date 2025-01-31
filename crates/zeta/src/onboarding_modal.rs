@@ -36,14 +36,26 @@ enum SignInStatus {
 }
 
 impl ZedPredictModal {
-    fn new(
+    pub fn toggle(
+        workspace: &mut Workspace,
         user_store: Entity<UserStore>,
         client: Arc<Client>,
         fs: Arc<dyn Fs>,
-        worktree_root_path: Option<PathBuf>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        ZedPredictModal {
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let worktree_root_path = workspace
+            .recent_navigation_history_iter(cx)
+            .next()
+            .and_then(|(latest, _)| {
+                Some(
+                    workspace
+                        .absolute_path_of_worktree(latest.worktree_id, cx)?
+                        .to_path_buf(),
+                )
+            });
+
+        workspace.toggle_modal(window, cx, |_window, cx| Self {
             user_store,
             client,
             fs,
@@ -53,31 +65,6 @@ impl ZedPredictModal {
             data_collection_expanded: false,
             data_collection_opted_in: false,
             worktree_root_path,
-        }
-    }
-
-    pub fn toggle(
-        workspace: Entity<Workspace>,
-        user_store: Entity<UserStore>,
-        client: Arc<Client>,
-        fs: Arc<dyn Fs>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        workspace.update(cx, |this, cx| {
-            let worktree_root_path =
-                this.recent_navigation_history_iter(cx)
-                    .next()
-                    .and_then(|(latest, _)| {
-                        Some(
-                            this.absolute_path_of_worktree(latest.worktree_id, cx)?
-                                .to_path_buf(),
-                        )
-                    });
-
-            this.toggle_modal(window, cx, |_window, cx| {
-                ZedPredictModal::new(user_store, client, fs, worktree_root_path, cx)
-            });
         });
     }
 

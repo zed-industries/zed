@@ -5,17 +5,15 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use fs::Fs;
 use gpui::{AnyWindowHandle, App, AppContext, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use workspace::Workspace;
-use zed_predict_onboarding::ZedPredictModal;
 use zeta::ProviderDataCollection;
 
-pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, fs: Arc<dyn Fs>, cx: &mut App) {
+pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -96,7 +94,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, fs: Arc<dyn Fs>,
         let editors = editors.clone();
         let client = client.clone();
         let user_store = user_store.clone();
-        let fs = fs.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
             if new_provider != provider {
@@ -120,21 +117,10 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, fs: Arc<dyn Fs>,
                                 return;
                             };
 
-                            let Some(Some(workspace)) = window
-                                .update(cx, |_, window, _| window.root().flatten())
-                                .ok()
-                            else {
-                                return;
-                            };
-
                             window
                                 .update(cx, |_, window, cx| {
-                                    ZedPredictModal::toggle(
-                                        workspace,
-                                        user_store.clone(),
-                                        client.clone(),
-                                        fs.clone(),
-                                        window,
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::OpenZedPredictOnboarding),
                                         cx,
                                     );
                                 })
