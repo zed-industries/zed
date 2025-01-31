@@ -3,6 +3,7 @@ use std::any::{Any, TypeId};
 use anyhow::Result;
 use collections::HashMap;
 use editor::{Editor, EditorEvent};
+use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use gpui::{
     actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
@@ -20,7 +21,7 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
-actions!(project_diff, [Deploy]);
+actions!(git, [ShowUncommittedChanges]);
 
 pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
@@ -42,16 +43,19 @@ struct DiffBuffer {
 
 impl ProjectDiff {
     pub(crate) fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
+        _: &mut Workspace,
+        window: Option<&mut Window>,
+        cx: &mut Context<Workspace>,
     ) {
-        workspace.register_action(Self::deploy);
+        let Some(window) = window else { return };
+        cx.when_flag_enabled::<feature_flags::GitUiFeatureFlag>(window, |workspace, _, _cx| {
+            workspace.register_action(Self::deploy);
+        });
     }
 
     fn deploy(
         workspace: &mut Workspace,
-        _: &Deploy,
+        _: &ShowUncommittedChanges,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {

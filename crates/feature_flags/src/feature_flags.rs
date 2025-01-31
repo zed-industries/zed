@@ -1,6 +1,6 @@
 use futures::{channel::oneshot, FutureExt as _};
 use gpui::{App, Context, Global, Subscription, Window};
-use std::{future::Future, pin::Pin, task::Poll};
+use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc, task::Poll};
 
 #[derive(Default)]
 struct FeatureFlags {
@@ -11,6 +11,11 @@ struct FeatureFlags {
 impl FeatureFlags {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
         if self.staff && T::enabled_for_staff() {
+            return true;
+        }
+
+        #[cfg(debug_assertions)]
+        if T::enabled_in_development() {
             return true;
         }
 
@@ -32,6 +37,10 @@ pub trait FeatureFlag {
     /// Returns whether this feature flag is enabled for Zed staff.
     fn enabled_for_staff() -> bool {
         true
+    }
+
+    fn enabled_in_development() -> bool {
+        Self::enabled_for_staff()
     }
 }
 
@@ -95,6 +104,12 @@ pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
         F: Fn(bool, &mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static;
+
+    fn when_flag_enabled<T: FeatureFlag>(
+        &mut self,
+        window: &mut Window,
+        callback: impl Fn(&mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static,
+    );
 }
 
 impl<V> FeatureFlagViewExt<V> for Context<'_, V>
@@ -109,6 +124,35 @@ where
             let feature_flags = cx.global::<FeatureFlags>();
             callback(feature_flags.has_flag::<T>(), v, window, cx);
         })
+    }
+
+    fn when_flag_enabled<T: FeatureFlag>(
+        &mut self,
+        window: &mut Window,
+        callback: impl Fn(&mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static,
+    ) {
+        if self
+            .try_global::<FeatureFlags>()
+            .is_some_and(|f| f.has_flag::<T>())
+            || cfg!(debug_assertions) && T::enabled_in_development()
+        {
+            self.defer_in(window, move |view, window, cx| {
+                callback(view, window, cx);
+            });
+            return;
+        }
+        let subscription = Rc::new(RefCell::new(None));
+        let inner = self.observe_global_in::<FeatureFlags>(window, {
+            let subscription = subscription.clone();
+            move |v, window, cx| {
+                let feature_flags = cx.global::<FeatureFlags>();
+                if feature_flags.has_flag::<T>() {
+                    callback(v, window, cx);
+                    subscription.take();
+                }
+            }
+        });
+        subscription.borrow_mut().replace(inner);
     }
 }
 
