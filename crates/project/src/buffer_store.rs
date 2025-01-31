@@ -103,7 +103,7 @@ impl BufferChangeSetState {
         self.language = buffer.read(cx).language().cloned();
         self.index_changed = self.index_text.is_some();
         self.head_changed = self.head_text.is_some();
-        let _ = self.recalculate_diffs_internal(buffer.read(cx).text_snapshot(), cx);
+        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
     }
 
     fn unstaged_changes(&self) -> Option<Entity<BufferChangeSet>> {
@@ -138,85 +138,31 @@ impl BufferChangeSetState {
             },
         };
 
-        let _ = self.recalculate_diffs(buffer, Some(diff_bases_change), cx);
+        let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
     }
 
-    fn add_change_set(
-        &mut self,
-        buffer: Entity<Buffer>,
-        kind: ChangeSetKind,
-        text: Option<String>,
-        staged_text: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> impl Future<Output = Entity<BufferChangeSet>> {
-        let buffer_id = buffer.read(cx).remote_id();
-        self.buffer_subscription.get_or_insert_with(|| {
-            cx.subscribe(&buffer, |this, buffer, event, cx| match event {
-                BufferEvent::LanguageChanged => this.buffer_language_changed(buffer, cx),
-                _ => {}
-            })
-        });
-        let weak_change_set = match kind {
-            ChangeSetKind::Unstaged => &mut self.unstaged_changes,
-            ChangeSetKind::Uncommitted => &mut self.uncommitted_changes,
-        };
-
-        let change_set = cx.new(|cx| BufferChangeSet {
-            buffer_id,
-            base_text: None,
-            diff_to_buffer: BufferDiff::new(&buffer.read(cx).text_snapshot()),
-            staged_text: None,
-            staged_diff: None,
-        });
-        *weak_change_set = Some(change_set.downgrade());
-
-        let buffer = buffer.read(cx).text_snapshot();
-        let rx = self.recalculate_diffs(
-            buffer,
-            Some(match kind {
-                ChangeSetKind::Unstaged => DiffBasesChange::SetIndex(text),
-                ChangeSetKind::Uncommitted => {
-                    if text == staged_text {
-                        DiffBasesChange::SetBoth(text)
-                    } else {
-                        DiffBasesChange::SetEach {
-                            index: staged_text,
-                            head: text,
-                        }
-                    }
-                }
-            }),
-            cx,
-        );
-
-        async move {
-            rx.await.ok();
-            change_set
-        }
-    }
-
-    fn recalculate_diffs(
+    fn diff_bases_changed(
         &mut self,
         buffer: text::BufferSnapshot,
-        diff_bases_change: Option<DiffBasesChange>,
+        diff_bases_change: DiffBasesChange,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         match diff_bases_change {
-            Some(DiffBasesChange::SetIndex(index)) => {
+            DiffBasesChange::SetIndex(index) => {
                 self.index_text = index.map(|mut text| {
                     text::LineEnding::normalize(&mut text);
                     Arc::new(text)
                 });
                 self.index_changed = true;
             }
-            Some(DiffBasesChange::SetHead(head)) => {
+            DiffBasesChange::SetHead(head) => {
                 self.head_text = head.map(|mut text| {
                     text::LineEnding::normalize(&mut text);
                     Arc::new(text)
                 });
                 self.head_changed = true;
             }
-            Some(DiffBasesChange::SetBoth(mut text)) => {
+            DiffBasesChange::SetBoth(mut text) => {
                 if let Some(text) = text.as_mut() {
                     text::LineEnding::normalize(text);
                 }
@@ -225,7 +171,7 @@ impl BufferChangeSetState {
                 self.head_changed = true;
                 self.index_changed = true;
             }
-            Some(DiffBasesChange::SetEach { index, head }) => {
+            DiffBasesChange::SetEach { index, head } => {
                 self.index_text = index.map(|mut text| {
                     text::LineEnding::normalize(&mut text);
                     Arc::new(text)
@@ -237,16 +183,15 @@ impl BufferChangeSetState {
                 self.head_changed = true;
                 self.index_changed = true;
             }
-            None => {}
         }
 
-        self.recalculate_diffs_internal(buffer, cx)
+        self.recalculate_diffs(buffer, cx)
     }
 
-    fn recalculate_diffs_internal(
+    fn recalculate_diffs(
         &mut self,
         buffer: text::BufferSnapshot,
-        cx: &mut Context<'_, Self>,
+        cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (tx, rx) = oneshot::channel();
         self.diff_updated_futures.push(tx);
@@ -478,7 +423,7 @@ impl RemoteBufferStore {
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Task<Result<(Option<String>, Option<String>)>> {
+    ) -> Task<Result<DiffBasesChange>> {
         use proto::open_uncommitted_changes_response::Mode;
 
         let project_id = self.project_id;
@@ -492,8 +437,11 @@ impl RemoteBufferStore {
                 .await?;
             let mode = Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
             let bases = match mode {
-                Mode::IndexMatchesHead => (response.staged_text.clone(), response.staged_text),
-                Mode::IndexAndHead => (response.committed_text, response.staged_text),
+                Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.staged_text),
+                Mode::IndexAndHead => DiffBasesChange::SetEach {
+                    head: response.committed_text,
+                    index: response.staged_text,
+                },
             };
             Ok(bases)
         })
@@ -1045,9 +993,9 @@ impl LocalBufferStore {
                             client.send(message).log_err();
                         }
 
-                        let _ = change_set_state.recalculate_diffs(
+                        let _ = change_set_state.diff_bases_changed(
                             buffer_snapshot,
-                            Some(diff_bases_change),
+                            diff_bases_change,
                             cx,
                         );
                     });
@@ -1501,7 +1449,9 @@ impl BufferStore {
                             Self::open_change_set_internal(
                                 this,
                                 ChangeSetKind::Unstaged,
-                                staged_text.await.map(|staged_text| (staged_text, None)),
+                                staged_text
+                                    .await
+                                    .map(|staged_text| DiffBasesChange::SetIndex(staged_text)),
                                 buffer,
                                 cx,
                             )
@@ -1538,8 +1488,19 @@ impl BufferStore {
                     BufferStoreState::Local(this) => {
                         let committed_text = this.load_committed_text(&buffer, cx);
                         let staged_text = this.load_staged_text(&buffer, cx);
-                        cx.background_executor()
-                            .spawn(async move { Ok((committed_text.await?, staged_text.await?)) })
+                        cx.background_executor().spawn(async move {
+                            let committed_text = committed_text.await?;
+                            let staged_text = staged_text.await?;
+                            let diff_bases_change = if committed_text == staged_text {
+                                DiffBasesChange::SetBoth(committed_text)
+                            } else {
+                                DiffBasesChange::SetEach {
+                                    index: staged_text,
+                                    head: committed_text,
+                                }
+                            };
+                            Ok(diff_bases_change)
+                        })
                     }
                     BufferStoreState::Remote(this) => this.open_uncommitted_changes(buffer_id, cx),
                 };
@@ -1582,11 +1543,11 @@ impl BufferStore {
     async fn open_change_set_internal(
         this: WeakEntity<Self>,
         kind: ChangeSetKind,
-        texts: Result<(Option<String>, Option<String>)>,
+        texts: Result<DiffBasesChange>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Entity<BufferChangeSet>> {
-        let (base_text, staged_text) = match texts {
+        let diff_bases_change = match texts {
             Err(e) => {
                 this.update(&mut cx, |this, cx| {
                     let buffer_id = buffer.read(cx).remote_id();
@@ -1594,26 +1555,57 @@ impl BufferStore {
                 })?;
                 return Err(e);
             }
-            Ok(texts) => texts,
+            Ok(change) => change,
         };
 
-        Ok(this
-            .update(&mut cx, |this, cx| {
-                let buffer_id = buffer.read(cx).remote_id();
-                this.loading_change_sets.remove(&(buffer_id, kind));
-                if let Some(OpenBuffer::Complete {
-                    change_set_state, ..
-                }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
-                {
-                    let change_set = change_set_state.update(cx, |change_set_state, cx| {
-                        change_set_state.add_change_set(buffer, kind, base_text, staged_text, cx)
+        this.update(&mut cx, |this, cx| {
+            let buffer_id = buffer.read(cx).remote_id();
+            this.loading_change_sets.remove(&(buffer_id, kind));
+
+            if let Some(OpenBuffer::Complete {
+                change_set_state, ..
+            }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
+            {
+                change_set_state.update(cx, |change_set_state, cx| {
+                    let buffer_id = buffer.read(cx).remote_id();
+                    change_set_state.buffer_subscription.get_or_insert_with(|| {
+                        cx.subscribe(&buffer, |this, buffer, event, cx| match event {
+                            BufferEvent::LanguageChanged => {
+                                this.buffer_language_changed(buffer, cx)
+                            }
+                            _ => {}
+                        })
                     });
-                    Ok(change_set)
-                } else {
-                    Err(anyhow!("buffer was closed"))
-                }
-            })??
-            .await)
+
+                    let change_set = cx.new(|cx| BufferChangeSet {
+                        buffer_id,
+                        base_text: None,
+                        diff_to_buffer: BufferDiff::new(&buffer.read(cx).text_snapshot()),
+                        staged_text: None,
+                        staged_diff: None,
+                    });
+                    match kind {
+                        ChangeSetKind::Unstaged => {
+                            change_set_state.unstaged_changes = Some(change_set.downgrade())
+                        }
+                        ChangeSetKind::Uncommitted => {
+                            change_set_state.uncommitted_changes = Some(change_set.downgrade())
+                        }
+                    };
+
+                    let buffer = buffer.read(cx).text_snapshot();
+                    let rx = change_set_state.diff_bases_changed(buffer, diff_bases_change, cx);
+
+                    Ok(async move {
+                        rx.await.ok();
+                        Ok(change_set)
+                    })
+                })
+            } else {
+                Err(anyhow!("buffer was closed"))
+            }
+        })??
+        .await
     }
 
     pub fn create_buffer(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<Buffer>>> {
@@ -2058,7 +2050,7 @@ impl BufferStore {
             {
                 let buffer = buffer.read(cx).text_snapshot();
                 futures.push(change_set_state.update(cx, |change_set_state, cx| {
-                    change_set_state.recalculate_diffs(buffer, None, cx)
+                    change_set_state.recalculate_diffs(buffer, cx)
                 }));
             }
         }
