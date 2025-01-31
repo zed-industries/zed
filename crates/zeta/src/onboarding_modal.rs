@@ -380,10 +380,11 @@ impl Render for ZedPredictModal {
                                     .child(info_item("This is a per-project setting."))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "Files that can contain sensitive data, like `env` are",
+                                        "Files that can contain sensitive data, like `.env`, are",
                                         h_flex()
                                             .child(
-                                                Label::new("excluded via the").color(Color::Muted),
+                                                Label::new("excluded by default via the")
+                                                    .color(Color::Muted),
                                             )
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
