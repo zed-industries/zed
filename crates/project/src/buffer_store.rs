@@ -2877,7 +2877,9 @@ impl BufferChangeSet {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_with_base_text(base_text: &str, buffer: &Entity<Buffer>, cx: &mut App) -> Self {
-        let diff_to_buffer = BufferDiff::build(Some(base_text), &buffer.read(cx).text_snapshot());
+        let mut base_text = base_text.to_owned();
+        text::LineEnding::normalize(&mut base_text);
+        let diff_to_buffer = BufferDiff::build(Some(&base_text), &buffer.read(cx).text_snapshot());
         let base_text = language::Buffer::build_snapshot_sync(base_text.into(), None, None, cx);
         BufferChangeSet {
             buffer_id: buffer.read(cx).remote_id(),
@@ -2899,7 +2901,6 @@ impl BufferChangeSet {
             text::LineEnding::normalize(base_text);
         }
         let diff_to_buffer = BufferDiff::build(base_text.as_deref(), &snapshot);
-        eprintln!("recalculate_diff_sync base={base_text:?} diff={diff_to_buffer:?}");
         self.set_state(self.base_text.clone(), diff_to_buffer, &snapshot, cx);
     }
 }
