@@ -5634,7 +5634,7 @@ impl EditorElement {
                 // Clear the pending mouse down during the capture phase,
                 // so that it happens even if another event handler stops
                 // propagation.
-                DispatchPhase::Capture => editor.update(cx, |editor, cx| {
+                DispatchPhase::Capture => editor.update(cx, |editor, _cx| {
                     let pending_mouse_down = editor
                         .pending_mouse_down
                         .get_or_insert_with(Default::default)
