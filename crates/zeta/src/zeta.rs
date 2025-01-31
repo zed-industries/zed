@@ -1354,21 +1354,26 @@ impl ProviderDataCollection {
         buffer: Option<Entity<Buffer>>,
         cx: &mut App,
     ) -> Option<ProviderDataCollection> {
-        let worktree_root_path = buffer?.update(cx, |buffer, cx| {
-            let file = buffer.file()?;
+        let file = buffer?.read(cx).file()?;
 
-            if !file.is_local() || file.is_private() {
-                return None;
-            }
+        if !file.is_local() || file.is_private() {
+            return None;
+        }
 
-            workspace?.update(cx, |workspace, cx| {
-                Some(
-                    workspace
-                        .absolute_path_of_worktree(file.worktree_id(cx), cx)?
-                        .to_path_buf(),
-                )
-            })
-        })?;
+        let worktree_id = file.worktree_id(cx);
+
+        let worktree = workspace?
+            .read(cx)
+            .project()
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)?
+            .read(cx);
+
+        if !worktree.is_visible() {
+            return None;
+        }
+
+        let worktree_root_path = worktree.abs_path().to_path_buf();
 
         let choice = zeta.update(cx, |zeta, cx| {
             zeta.data_collection_choice_at(&worktree_root_path, cx)
