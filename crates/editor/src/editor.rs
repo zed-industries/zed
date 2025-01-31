@@ -96,7 +96,7 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedEdits, IndentKind, IndentSize,
+    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedText, IndentKind, IndentSize,
     Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
     TreeSitterOptions,
 };
@@ -488,7 +488,7 @@ impl InlineCompletionMenuHint {
 #[derive(Clone, Debug)]
 enum InlineCompletionText {
     Move(SharedString),
-    Edit(HighlightedEdits),
+    Edit(HighlightedText),
 }
 
 pub(crate) enum EditDisplayMode {
@@ -15850,7 +15850,7 @@ fn inline_completion_edit_text(
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
-) -> Option<HighlightedEdits> {
+) -> Option<HighlightedText> {
     let edits = edits
         .iter()
         .map(|(anchor, text)| {
