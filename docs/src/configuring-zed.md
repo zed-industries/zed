@@ -515,12 +515,6 @@ List of `string` values
 "cursor_shape": "hollow"
 ```
 
-**Options**
-
-1. Position the dock attached to the bottom of the workspace: `bottom`
-2. Position the dock to the right of the workspace like a side panel: `right`
-3. Position the dock full screen over the entire workspace: `expanded`
-
 ## Editor Scrollbar
 
 - Description: Whether or not to show the editor scrollbar and various elements in it.
