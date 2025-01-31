@@ -5435,110 +5435,139 @@ impl Editor {
     fn render_edit_prediction_cursor_popover(
         &self,
         style: &EditorStyle,
-        cx: &mut App,
+        cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        let is_loading = self
-            .inline_completion_provider
-            .as_ref()
-            .map_or(false, |provider| provider.provider.is_refreshing(cx));
-
-        let right_side = h_flex()
-            .gap_1()
-            .border_l_1()
-            .border_color(cx.theme().colors().border_variant)
-            .px_2()
-            .child(
-                #[cfg(not(target_os = "macos"))]
-                "alt",
-                #[cfg(target_os = "macos")]
-                Icon::new(IconName::Option),
-            )
-            .child("Preview")
-            .into_any_element();
-
-        let completion_preview = match self
-            .active_inline_completion
-            .as_ref()
-            .or(self.stale_inline_completion.as_ref())
-            .map(|completion| &completion.completion)
-        {
-            Some(InlineCompletion::Edit {
-                edits,
-                edit_preview,
-                snapshot,
-                display_mode: _,
-            }) => {
-                let Some(highlighted_edits) = edit_preview.as_ref().and_then(|edit_preview| {
-                    crate::inline_completion_edit_text(&snapshot, &edits, edit_preview, false, cx)
-                }) else {
-                    return None;
-                };
-
-                let first_line = highlighted_edits.text.slice_until('\n');
-                let first_line_len = first_line.len();
-
-                let highlights = highlighted_edits
-                    .highlights
-                    .into_iter()
-                    .take_until(|(range, _)| range.start > first_line_len);
-
-                let styled_text =
-                    gpui::StyledText::new(first_line).with_highlights(&style.text, highlights);
-
-                div().child(styled_text).map(|label| {
-                    if is_loading {
-                        label
-                            .with_animation(
-                                "pulsating-stale-completion",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.opacity(delta),
-                            )
-                            .into_any_element()
-                    } else {
-                        label.into_any_element()
-                    }
-                })
-            }
-            Some(InlineCompletion::Move(_)) => return None,
-            None => {
-                if is_loading {
-                    Label::new("...")
-                        .size(LabelSize::Small)
-                        .with_animation(
-                            "pulsating-prediction-ellipsis",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.4, 0.8)),
-                            |label, delta| label.alpha(delta),
-                        )
-                        .into_any_element()
-                } else {
-                    Label::new("No Prediction").into_any_element()
-                }
-            }
+        let Some(provider) = self.inline_completion_provider.as_ref() else {
+            return None;
         };
 
-        Some(
+        let content = if provider.provider.needs_terms_acceptance(cx) {
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
                 .flex_1()
                 .px_2()
                 .gap_3()
                 .elevation_2(cx)
-                // .opacity(if is_loading { 0.6 } else { 1.0 })
-                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                .id("accept-terms")
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    cx.stop_propagation();
+                    this.toggle_zed_predict_onboarding(window, cx)
+                }))
                 .child(
                     h_flex()
                         .w_full()
                         .gap_2()
                         .child(Icon::new(IconName::ZedPredict))
-                        .child(completion_preview),
+                        .child(Label::new("Accept Terms of Service"))
+                        .child(div().w_full())
+                        .child(Icon::new(IconName::ArrowUpRight))
+                        .into_any_element(),
                 )
-                .child(right_side)
-                .into_any(),
-        )
+                .into_any()
+        } else {
+            let is_loading = provider.provider.is_refreshing(cx);
+
+            let completion = match self
+                .active_inline_completion
+                .as_ref()
+                .or(self.stale_inline_completion.as_ref())
+                .map(|completion| &completion.completion)
+            {
+                Some(InlineCompletion::Edit {
+                    edits,
+                    edit_preview,
+                    snapshot,
+                    display_mode: _,
+                }) => {
+                    let Some(highlighted_edits) = edit_preview.as_ref().and_then(|edit_preview| {
+                        crate::inline_completion_edit_text(
+                            &snapshot,
+                            &edits,
+                            edit_preview,
+                            false,
+                            cx,
+                        )
+                    }) else {
+                        return None;
+                    };
+
+                    let first_line = highlighted_edits.text.slice_until('\n');
+                    let first_line_len = first_line.len();
+
+                    let highlights = highlighted_edits
+                        .highlights
+                        .into_iter()
+                        .take_until(|(range, _)| range.start > first_line_len);
+
+                    let styled_text =
+                        gpui::StyledText::new(first_line).with_highlights(&style.text, highlights);
+
+                    div().child(styled_text).map(|label| {
+                        if is_loading {
+                            label
+                                .with_animation(
+                                    "pulsating-stale-completion",
+                                    Animation::new(Duration::from_secs(2))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 0.8)),
+                                    |label, delta| label.opacity(delta),
+                                )
+                                .into_any_element()
+                        } else {
+                            label.into_any_element()
+                        }
+                    })
+                }
+                Some(InlineCompletion::Move(_)) => return None,
+                None => {
+                    if is_loading {
+                        Label::new("...")
+                            .size(LabelSize::Small)
+                            .with_animation(
+                                "pulsating-prediction-ellipsis",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        Label::new("No Prediction").into_any_element()
+                    }
+                }
+            };
+
+            h_flex()
+                .h(self.edit_prediction_cursor_popover_height())
+                .flex_1()
+                .px_2()
+                .gap_3()
+                .elevation_2(cx)
+                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .child(Icon::new(IconName::ZedPredict))
+                .child(completion)
+                .child(div().w_full())
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .px_2()
+                        .child(
+                            #[cfg(not(target_os = "macos"))]
+                            "alt",
+                            #[cfg(target_os = "macos")]
+                            Icon::new(IconName::Option),
+                        )
+                        .child("Preview"),
+                )
+                .into_any()
+        };
+
+        Some(content)
     }
 
     fn render_context_menu(
