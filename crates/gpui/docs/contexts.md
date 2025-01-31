@@ -10,7 +10,7 @@ The root context granting access to the application's global state. This context
 
 ## `Context<T>`
 
-A context provided when interacting with an `Entity<T>`, with additional methods related to that specific entity such as notifying observers and emiting events. This context dereferences into `App`, meaning any function which can take an `App` reference can also take a `Context<T>` reference, allowing you to access the application's global state.
+A context provided when interacting with an `Entity<T>`, with additional methods related to that specific entity such as notifying observers and emitting events. This context dereferences into `App`, meaning any function which can take an `App` reference can also take a `Context<T>` reference, allowing you to access the application's global state.
 
 ## `AsyncApp` and `AsyncWindowContext`
 
