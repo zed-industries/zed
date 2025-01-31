@@ -87,6 +87,12 @@ pub struct ToggleComments {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+pub struct ToggleSoftWrap {
+    #[serde(default)]
+    pub mode: Option<language::language_settings::SoftWrap>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldAt {
     #[serde(skip)]
     pub buffer_row: MultiBufferRow,
@@ -208,6 +214,7 @@ impl_actions!(
         ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
+        ToggleSoftWrap,
         UnfoldAt,
         FoldAtLevel,
     ]
@@ -381,7 +388,6 @@ gpui::actions!(
         SetMark,
         ToggleRelativeLineNumbers,
         ToggleSelectionMenu,
-        ToggleSoftWrap,
         ToggleTabBar,
         Transpose,
         Undo,

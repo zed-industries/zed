@@ -749,6 +749,18 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
+        VimCommand::new(
+            ("set wrap", ""),
+            editor::actions::ToggleSoftWrap {
+                mode: Some(language::language_settings::SoftWrap::EditorWidth),
+            },
+        ),
+        VimCommand::new(
+            ("set nowrap", ""),
+            editor::actions::ToggleSoftWrap {
+                mode: Some(language::language_settings::SoftWrap::None),
+            },
+        ),
     ]
 }
 

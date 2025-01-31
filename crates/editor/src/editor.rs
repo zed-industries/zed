@@ -12171,8 +12171,15 @@ impl Editor {
         self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
     }
 
-    pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
-        if self.soft_wrap_mode_override.is_some() {
+    pub fn toggle_soft_wrap(
+        &mut self,
+        action: &ToggleSoftWrap,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.mode.is_some() {
+            self.soft_wrap_mode_override = action.mode;
+        } else if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
         } else {
             let soft_wrap = match self.soft_wrap_mode(cx) {
