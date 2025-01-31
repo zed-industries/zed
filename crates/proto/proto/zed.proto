@@ -2700,14 +2700,16 @@ message Stage {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    repeated string paths = 4;
+    reserved 4;
+    repeated CrossPlatformPath paths = 5;
 }
 
 message Unstage {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    repeated string paths = 4;
+    reserved 4;
+    repeated CrossPlatformPath paths = 5;
 }
 
 message Commit {
