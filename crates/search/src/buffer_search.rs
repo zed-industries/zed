@@ -55,13 +55,21 @@ pub struct Deploy {
 
 impl_actions!(buffer_search, [Deploy]);
 
-actions!(buffer_search, [Dismiss, FocusEditor]);
+actions!(buffer_search, [DeployReplace, Dismiss, FocusEditor]);
 
 impl Deploy {
     pub fn find() -> Self {
         Self {
             focus: true,
             replace_enabled: false,
+            selection_search_enabled: false,
+        }
+    }
+
+    pub fn replace() -> Self {
+        Self {
+            focus: true,
+            replace_enabled: true,
             selection_search_enabled: false,
         }
     }
@@ -630,6 +638,13 @@ impl BufferSearchBar {
         // when the deploy action is triggered in the buffer.
         registrar.register_handler(ForDeployed(|this, deploy, window, cx| {
             this.deploy(deploy, window, cx);
+        }));
+        registrar.register_handler(ForDismissed(|this, _: &DeployReplace, window, cx| {
+            if this.supported_options(cx).find_in_results {
+                cx.propagate();
+            } else {
+                this.deploy(&Deploy::replace(), window, cx);
+            }
         }));
         registrar.register_handler(ForDismissed(|this, deploy, window, cx| {
             this.deploy(deploy, window, cx);
