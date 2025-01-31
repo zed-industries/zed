@@ -4991,8 +4991,8 @@ impl Editor {
             .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
 
         let event_type = match accepted {
-            true => "Inline Completion Accepted",
-            false => "Inline Completion Discarded",
+            true => "Edit Prediction Accepted",
+            false => "Edit Prediction Discarded",
         };
         telemetry::event!(
             event_type,

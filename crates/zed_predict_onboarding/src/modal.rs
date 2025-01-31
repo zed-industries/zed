@@ -249,7 +249,7 @@ impl Render for ZedPredictModal {
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
-                SignInStatus::Idle => "Get accurate and helpful edit predictions at every keystroke. To set Zed as your inline completions provider, ensure you:",
+                SignInStatus::Idle => "Get accurate and helpful edit predictions at every keystroke. To set Zed as your edit prediction provider, ensure you:",
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
@@ -291,7 +291,7 @@ impl Render for ZedPredictModal {
                 )
         } else {
             base.child(
-                Label::new("To set Zed as your inline completions provider, please sign in.")
+                Label::new("To set Zed as your edit prediction provider, please sign in.")
                     .color(Color::Muted),
             )
             .child(
