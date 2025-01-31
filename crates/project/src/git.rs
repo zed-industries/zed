@@ -67,8 +67,17 @@ impl PartialEq<RepositoryEntry> for RepositoryHandle {
 }
 
 enum Message {
-    StageAndCommit(GitRepo, Rope, Vec<RepoPath>),
-    Commit(GitRepo, Rope),
+    StageAndCommit {
+        git_repo: GitRepo,
+        paths: Vec<RepoPath>,
+        message: Rope,
+        name_and_email: Option<(String, String)>,
+    },
+    Commit {
+        git_repo: GitRepo,
+        message: Rope,
+        name_and_email: Option<(String, String)>,
+    },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
 }
@@ -95,11 +104,21 @@ impl GitState {
                     .background_executor()
                     .spawn(async move {
                         match msg {
-                            Message::StageAndCommit(repo, message, paths) => {
-                                match repo {
+                            Message::StageAndCommit {
+                                git_repo,
+                                message,
+                                name_and_email,
+                                paths,
+                            } => {
+                                match git_repo {
                                     GitRepo::Local(repo) => {
                                         repo.stage_paths(&paths)?;
-                                        repo.commit(&message.to_string())?;
+                                        repo.commit(
+                                            &message.to_string(),
+                                            name_and_email.as_ref().map(|(name, email)| {
+                                                (name.as_str(), email.as_str())
+                                            }),
+                                        )?;
                                     }
                                     GitRepo::Remote {
                                         project_id,
@@ -119,12 +138,15 @@ impl GitState {
                                             })
                                             .await
                                             .context("sending stage request")?;
+                                        let (name, email) = name_and_email.unzip();
                                         client
                                             .request(proto::Commit {
                                                 project_id: project_id.0,
                                                 worktree_id: worktree_id.to_proto(),
                                                 work_directory_id: work_directory_id.to_proto(),
                                                 message: message.to_string(),
+                                                name,
+                                                email,
                                             })
                                             .await
                                             .context("sending commit request")?;
@@ -183,15 +205,25 @@ impl GitState {
                                 }
                                 Ok(())
                             }
-                            Message::Commit(repo, message) => {
-                                match repo {
-                                    GitRepo::Local(repo) => repo.commit(&message.to_string())?,
+                            Message::Commit {
+                                git_repo,
+                                message,
+                                name_and_email,
+                            } => {
+                                match git_repo {
+                                    GitRepo::Local(repo) => repo.commit(
+                                        &message.to_string(),
+                                        name_and_email
+                                            .as_ref()
+                                            .map(|(name, email)| (name.as_str(), email.as_str())),
+                                    )?,
                                     GitRepo::Remote {
                                         project_id,
                                         client,
                                         worktree_id,
                                         work_directory_id,
                                     } => {
+                                        let (name, email) = name_and_email.unzip();
                                         client
                                             .request(proto::Commit {
                                                 project_id: project_id.0,
@@ -200,6 +232,8 @@ impl GitState {
                                                 // TODO implement collaborative commit message buffer instead and use it
                                                 // If it works, remove `commit_with_message` method.
                                                 message: message.to_string(),
+                                                name,
+                                                email,
                                             })
                                             .await
                                             .context("sending commit request")?;
@@ -458,9 +492,14 @@ impl RepositoryHandle {
             return;
         };
         let message = self.commit_message.read(cx).as_rope().clone();
-        let result = self
-            .update_sender
-            .unbounded_send((Message::Commit(git_repo, message), err_sender.clone()));
+        let result = self.update_sender.unbounded_send((
+            Message::Commit {
+                git_repo,
+                message,
+                name_and_email: todo!("TODO kb"),
+            },
+            err_sender.clone(),
+        ));
         if result.is_err() {
             cx.spawn(|_| async move {
                 err_sender
@@ -479,14 +518,20 @@ impl RepositoryHandle {
     pub fn commit_with_message(
         &self,
         message: String,
+        name_and_email: Option<(String, String)>,
         err_sender: mpsc::Sender<anyhow::Error>,
     ) -> anyhow::Result<()> {
         let Some(git_repo) = self.git_repo.clone() else {
             return Ok(());
         };
-        let result = self
-            .update_sender
-            .unbounded_send((Message::Commit(git_repo, message.into()), err_sender));
+        let result = self.update_sender.unbounded_send((
+            Message::Commit {
+                git_repo,
+                message: message.into(),
+                name_and_email,
+            },
+            err_sender,
+        ));
         anyhow::ensure!(result.is_ok(), "Failed to submit commit operation");
         Ok(())
     }
@@ -500,10 +545,15 @@ impl RepositoryHandle {
             .status()
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
-            .collect::<Vec<_>>();
+            .collect();
         let message = self.commit_message.read(cx).as_rope().clone();
         let result = self.update_sender.unbounded_send((
-            Message::StageAndCommit(git_repo, message, to_stage),
+            Message::StageAndCommit {
+                git_repo,
+                paths: to_stage,
+                message,
+                name_and_email: todo!("TODO kb"),
+            },
             err_sender.clone(),
         ));
         if result.is_err() {
