@@ -3490,8 +3490,10 @@ impl MultiBufferSnapshot {
                 if region.is_main_buffer {
                     buffer_start = region.buffer_range.start;
                     if query_range.start > region.range.start {
-                        buffer_start.add_assign(&(query_range.start - region.range.start));
+                        let overshoot = query_range.start - region.range.start;
+                        buffer_start.add_assign(&overshoot);
                     }
+                    buffer_start = buffer_start.min(region.buffer_range.end);
                 } else {
                     buffer_start = cursor.main_buffer_position()?;
                 };

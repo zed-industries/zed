@@ -5,7 +5,6 @@ use assistant_slash_commands::{
     selections_creases, DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs,
     FileSlashCommand,
 };
-use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
@@ -33,7 +32,7 @@ use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
 use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
-    LanguageModelToolUse, Role,
+    Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
@@ -171,7 +170,6 @@ pub struct ContextEditor {
     context: Entity<AssistantContext>,
     fs: Arc<dyn Fs>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    tools: Arc<ToolWorkingSet>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
@@ -182,7 +180,6 @@ pub struct ContextEditor {
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
     invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
-    pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
     active_patch: Option<Range<language::Anchor>>,
@@ -244,11 +241,9 @@ impl ContextEditor {
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands().clone();
-        let tools = context.read(cx).tools().clone();
         let mut this = Self {
             context,
             slash_commands,
-            tools,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -260,7 +255,6 @@ impl ContextEditor {
             project,
             pending_slash_command_creases: HashMap::default(),
             invoked_slash_command_creases: HashMap::default(),
-            pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             patches: HashMap::default(),
             active_patch: None,
@@ -580,87 +574,6 @@ impl ContextEditor {
                             cx,
                         );
                     }
-
-                    let new_tool_uses = self
-                        .context
-                        .read(cx)
-                        .pending_tool_uses()
-                        .into_iter()
-                        .filter(|tool_use| {
-                            !self
-                                .pending_tool_use_creases
-                                .contains_key(&tool_use.source_range)
-                        })
-                        .cloned()
-                        .collect::<Vec<_>>();
-
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
-                    let excerpt_id = *excerpt_id;
-
-                    let mut buffer_rows_to_fold = BTreeSet::new();
-
-                    let creases = new_tool_uses
-                        .iter()
-                        .map(|tool_use| {
-                            let placeholder = FoldPlaceholder {
-                                render: render_fold_icon_button(
-                                    cx.entity().downgrade(),
-                                    IconName::PocketKnife,
-                                    tool_use.name.clone().into(),
-                                ),
-                                ..Default::default()
-                            };
-                            let render_trailer =
-                                move |_row, _unfold, _window: &mut Window, _cx: &mut App| {
-                                    Empty.into_any()
-                                };
-
-                            let start = buffer
-                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.start)
-                                .unwrap();
-                            let end = buffer
-                                .anchor_in_excerpt(excerpt_id, tool_use.source_range.end)
-                                .unwrap();
-
-                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
-                            buffer_rows_to_fold.insert(buffer_row);
-
-                            self.context.update(cx, |context, cx| {
-                                context.insert_content(
-                                    Content::ToolUse {
-                                        range: tool_use.source_range.clone(),
-                                        tool_use: LanguageModelToolUse {
-                                            id: tool_use.id.clone(),
-                                            name: tool_use.name.clone(),
-                                            input: tool_use.input.clone(),
-                                        },
-                                    },
-                                    cx,
-                                );
-                            });
-
-                            Crease::inline(
-                                start..end,
-                                placeholder,
-                                fold_toggle("tool-use"),
-                                render_trailer,
-                            )
-                        })
-                        .collect::<Vec<_>>();
-
-                    let crease_ids = editor.insert_creases(creases, cx);
-
-                    for buffer_row in buffer_rows_to_fold.into_iter().rev() {
-                        editor.fold_at(&FoldAt { buffer_row }, window, cx);
-                    }
-
-                    self.pending_tool_use_creases.extend(
-                        new_tool_uses
-                            .iter()
-                            .map(|tool_use| tool_use.source_range.clone())
-                            .zip(crease_ids),
-                    );
                 });
             }
             ContextEvent::PatchesUpdated { removed, updated } => {
@@ -757,66 +670,6 @@ impl ContextEditor {
             }
             ContextEvent::SlashCommandOutputSectionAdded { section } => {
                 self.insert_slash_command_output_sections([section.clone()], false, window, cx);
-            }
-            ContextEvent::UsePendingTools => {
-                let pending_tool_uses = self
-                    .context
-                    .read(cx)
-                    .pending_tool_uses()
-                    .into_iter()
-                    .filter(|tool_use| tool_use.status.is_idle())
-                    .cloned()
-                    .collect::<Vec<_>>();
-
-                for tool_use in pending_tool_uses {
-                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
-                        let task = tool.run(tool_use.input, self.workspace.clone(), window, cx);
-
-                        self.context.update(cx, |context, cx| {
-                            context.insert_tool_output(tool_use.id.clone(), task, cx);
-                        });
-                    }
-                }
-            }
-            ContextEvent::ToolFinished {
-                tool_use_id,
-                output_range,
-            } => {
-                self.editor.update(cx, |editor, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
-                    let excerpt_id = *excerpt_id;
-
-                    let placeholder = FoldPlaceholder {
-                        render: render_fold_icon_button(
-                            cx.entity().downgrade(),
-                            IconName::PocketKnife,
-                            format!("Tool Result: {tool_use_id}").into(),
-                        ),
-                        ..Default::default()
-                    };
-                    let render_trailer =
-                        move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
-
-                    let start = buffer
-                        .anchor_in_excerpt(excerpt_id, output_range.start)
-                        .unwrap();
-                    let end = buffer
-                        .anchor_in_excerpt(excerpt_id, output_range.end)
-                        .unwrap();
-
-                    let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
-
-                    let crease = Crease::inline(
-                        start..end,
-                        placeholder,
-                        fold_toggle("tool-use"),
-                        render_trailer,
-                    );
-
-                    editor.insert_creases([crease], cx);
-                    editor.fold_at(&FoldAt { buffer_row }, window, cx);
-                });
             }
             ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
@@ -2112,18 +1965,13 @@ impl ContextEditor {
                 .context
                 .read(cx)
                 .contents(cx)
-                .filter_map(|content| {
-                    if let Content::Image {
-                        anchor,
-                        render_image,
-                        ..
-                    } = content
-                    {
-                        Some((anchor, render_image))
-                    } else {
-                        None
-                    }
-                })
+                .map(
+                    |Content::Image {
+                         anchor,
+                         render_image,
+                         ..
+                     }| (anchor, render_image),
+                )
                 .filter_map(|(anchor, render_image)| {
                     const MAX_HEIGHT_IN_LINES: u32 = 8;
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();

@@ -14,7 +14,15 @@ pub(super) fn render_nav_button(
         icon,
     )
     .shape(IconButtonShape::Square)
-    .on_click(|_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
+    .on_click({
+        let focus_handle = focus_handle.clone();
+        move |_, window, cx| {
+            if !focus_handle.is_focused(&window) {
+                window.focus(&focus_handle);
+            }
+            window.dispatch_action(action.boxed_clone(), cx)
+        }
+    })
     .tooltip(move |window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, window, cx))
     .disabled(!active)
 }

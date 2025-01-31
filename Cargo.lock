@@ -506,14 +506,12 @@ dependencies = [
  "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
- "assistant_tool",
  "chrono",
  "client",
  "clock",
  "collections",
  "context_server",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -2720,7 +2718,6 @@ dependencies = [
  "envy",
  "extension",
  "file_finder",
- "fireworks",
  "fs",
  "futures 0.3.31",
  "git",
@@ -4023,7 +4020,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "zed_predict_tos",
+ "zed_predict_onboarding",
 ]
 
 [[package]]
@@ -4657,17 +4654,6 @@ dependencies = [
  "libc",
  "libredox",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "fireworks"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -6417,7 +6403,7 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
- "zed_predict_tos",
+ "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -9985,7 +9971,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "once_cell",
  "parking_lot",
  "pathdiff",
  "paths",
@@ -11439,6 +11424,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f29ebaa345f945cec9fbbc532eb307f0fdad8161f281b6369539c8d84876b3d"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "schema_generator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger 0.11.6",
+ "schemars",
+ "serde",
+ "serde_json",
+ "theme",
 ]
 
 [[package]]
@@ -13281,7 +13279,6 @@ dependencies = [
  "log",
  "palette",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -13543,6 +13540,7 @@ dependencies = [
  "windows 0.58.0",
  "workspace",
  "zed_actions",
+ "zed_predict_onboarding",
 ]
 
 [[package]]
@@ -16559,7 +16557,7 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
- "zed_predict_tos",
+ "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -16674,21 +16672,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_predict_tos"
+name = "zed_predict_onboarding"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "client",
+ "db",
+ "feature_flags",
+ "fs",
  "gpui",
+ "language",
  "menu",
+ "settings",
+ "theme",
  "ui",
+ "util",
  "workspace",
-]
-
-[[package]]
-name = "zed_prisma"
-version = "0.0.4"
-dependencies = [
- "zed_extension_api 0.1.0",
 ]
 
 [[package]]
@@ -16881,6 +16880,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "ctor",
+ "db",
  "editor",
  "env_logger 0.11.6",
  "feature_flags",
@@ -16895,6 +16895,7 @@ dependencies = [
  "menu",
  "reqwest_client",
  "rpc",
+ "serde",
  "serde_json",
  "settings",
  "similar",

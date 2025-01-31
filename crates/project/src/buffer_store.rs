@@ -101,7 +101,9 @@ enum DiffBasesChange {
 impl BufferChangeSetState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
-        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), None, cx);
+        self.index_changed = self.index_text.is_some();
+        self.head_changed = self.head_text.is_some();
+        let _ = self.recalculate_diffs_internal(buffer.read(cx).text_snapshot(), cx);
     }
 
     fn unstaged_changes(&self) -> Option<Entity<BufferChangeSet>> {
@@ -199,16 +201,6 @@ impl BufferChangeSetState {
         diff_bases_change: Option<DiffBasesChange>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
-        let (tx, rx) = oneshot::channel();
-        self.diff_updated_futures.push(tx);
-
-        let unstaged_changes = self.unstaged_changes();
-        let uncommitted_changes = self.uncommitted_changes();
-        let language = self.language.clone();
-        let language_registry = self.language_registry.clone();
-
-        eprintln!("recalculate diff with {diff_bases_change:?}");
-
         match diff_bases_change {
             Some(DiffBasesChange::SetIndex(index)) => {
                 self.index_text = index.map(|mut text| {
@@ -248,6 +240,21 @@ impl BufferChangeSetState {
             None => {}
         }
 
+        self.recalculate_diffs_internal(buffer, cx)
+    }
+
+    fn recalculate_diffs_internal(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<'_, Self>,
+    ) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+
+        let language = self.language.clone();
+        let language_registry = self.language_registry.clone();
+        let unstaged_changes = self.unstaged_changes();
+        let uncommitted_changes = self.uncommitted_changes();
         let head = self.head_text.clone();
         let index = self.index_text.clone();
         let index_changed = self.index_changed;

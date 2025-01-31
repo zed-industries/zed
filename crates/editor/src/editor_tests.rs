@@ -5236,11 +5236,27 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+
+    // Test left-to-right selections
+    cx.set_state("abc\n«abcˇ»\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ»\n«abcˇ»");
+
+    // Test right-to-left selections
+    cx.set_state("abc\n«ˇabc»\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«ˇabc»\n«ˇabc»\n«ˇabc»");
 }
 
 #[gpui::test]
@@ -11111,6 +11127,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         0,
         "Should not restart LSP server on an unrelated LSP settings change"
     );
+
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -11282,7 +11299,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
     cx.simulate_keystroke(".");
 
     let item1 = lsp::CompletionItem {
-        label: "id".to_string(),
+        label: "method id()".to_string(),
         filter_text: Some("id".to_string()),
         detail: None,
         documentation: None,
@@ -11332,7 +11349,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
                         .iter()
                         .map(|completion| &completion.label.text)
                         .collect::<Vec<_>>(),
-                    vec!["id", "other"]
+                    vec!["method id()", "other"]
                 )
             }
             CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
@@ -11387,7 +11404,7 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
                         .iter()
                         .map(|completion| &completion.label.text)
                         .collect::<Vec<_>>(),
-                    vec!["method id()", "other"],
+                    vec!["method id() Now resolved!", "other"],
                     "Should update first completion label, but not second as the filter text did not match."
                 );
             }
