@@ -927,11 +927,6 @@ impl GitPanel {
                                     )
                                 }
                             })
-                            .key_binding(ui::KeyBinding::for_action_in(
-                                &UnstageAll,
-                                &focus_handle,
-                                window,
-                            ))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.unstage_all(&UnstageAll, window, cx)
                             }))
@@ -949,11 +944,6 @@ impl GitPanel {
                                     )
                                 }
                             })
-                            .key_binding(ui::KeyBinding::for_action_in(
-                                &StageAll,
-                                &focus_handle,
-                                window,
-                            ))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.stage_all(&StageAll, window, cx)
                             }))
