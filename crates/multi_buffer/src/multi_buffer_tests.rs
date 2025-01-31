@@ -1830,20 +1830,6 @@ impl ReferenceMultibuffer {
         }
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
-            let hunk_precedes_excerpt = hunk
-                .buffer_range
-                .end
-                .cmp(&excerpt.range.start, &buffer)
-                .is_lt();
-            let hunk_follows_excerpt = hunk
-                .buffer_range
-                .start
-                .cmp(&excerpt.range.end, &buffer)
-                .is_ge();
-            if hunk_precedes_excerpt || hunk_follows_excerpt {
-                continue;
-            }
-
             if let Err(ix) = excerpt
                 .expanded_diff_hunks
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))

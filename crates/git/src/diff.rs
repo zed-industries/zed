@@ -114,11 +114,14 @@ impl BufferDiff {
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let range = range.to_offset(buffer);
+
         let mut cursor = self
             .tree
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
-                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+                let summary_range = summary.buffer_range.to_offset(buffer);
+                let before_start = summary_range.end < range.start;
+                let after_end = summary_range.start > range.end;
                 !before_start && !after_end
             });
 
