@@ -3118,6 +3118,31 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     );
 }
 
+#[gpui::test]
+async fn test_rainbow_brackets(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    static BUFFER_TEXT: &str = r#"
+    use crate::{bar};
+    "#;
+
+    let rust_lang = Arc::new(rust_lang().with_highlights_query("").unwrap());
+    rust_lang.set_theme(&SyntaxTheme {
+        highlights: vec![("foo".to_string(), HighlightStyle::default())],
+    });
+    let buffer = cx.new(|cx| Buffer::local(BUFFER_TEXT, cx).with_language(rust_lang, cx));
+    buffer.update(cx, |buffer, cx| {
+        let snapshot = buffer.snapshot();
+        let chunks = snapshot
+            .chunks(0..BUFFER_TEXT.len(), true)
+            .collect::<Vec<_>>();
+        dbg!(&chunks);
+    });
+}
+
 fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {

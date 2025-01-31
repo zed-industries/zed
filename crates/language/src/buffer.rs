@@ -66,7 +66,6 @@ pub use text::{
     Transaction, TransactionId, Unclipped,
 };
 use theme::{ActiveTheme as _, SyntaxTheme};
-use tree_sitter::QueryMatches;
 
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
@@ -483,15 +482,16 @@ struct BufferChunkHighlights<'a> {
 trait Highlighter<'a>: 'a {
     fn narrow(&mut self, range: Range<usize>);
     // Return starting offset of the next capture.
-    fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize;
-    fn current_capture(&self) -> Option<(usize, HighlightId)>;
+    fn seek_next_capture_offset(&mut self, current_offset: usize);
+    fn current_capture(&self) -> Option<(Range<usize>, HighlightId)>;
+    fn advance(&mut self);
     fn set_byte_range(&mut self, range: Range<usize>);
 }
 
 struct TreeSitterHighlights<'a> {
     captures: SyntaxMapCaptures<'a>,
     next_capture: Option<SyntaxMapCapture<'a>>,
-    stack: Vec<(usize, HighlightId)>,
+    stack: Vec<(Range<usize>, HighlightId)>,
     highlight_maps: Vec<HighlightMap>,
 }
 
@@ -510,13 +510,14 @@ impl<'a> Highlighter<'a> for TreeSitterHighlights<'a> {
     /// Preserve the existing highlights only if they fall within a provided range.
     fn narrow(&mut self, range: Range<usize>) {
         self.stack
-            .retain(|(end_offset, _)| *end_offset > range.start);
+            .retain(|(offset_range, _)| offset_range.end > range.start);
         if let Some(capture) = &self.next_capture {
-            if range.start >= capture.node.start_byte() {
+            let next_capture_start = capture.node.start_byte();
+            if range.start >= next_capture_start {
                 let next_capture_end = capture.node.end_byte();
                 if range.start < next_capture_end {
                     self.stack.push((
-                        next_capture_end,
+                        next_capture_start..next_capture_end,
                         self.highlight_maps[capture.grammar_index].get(capture.index),
                     ));
                 }
@@ -525,10 +526,9 @@ impl<'a> Highlighter<'a> for TreeSitterHighlights<'a> {
         }
     }
 
-    fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize {
-        let mut next_capture_start = usize::MAX;
-        while let Some((parent_capture_end, _)) = self.stack.last() {
-            if *parent_capture_end <= current_offset {
+    fn seek_next_capture_offset(&mut self, current_offset: usize) {
+        while let Some((parent_range, _)) = self.stack.last() {
+            if parent_range.end <= current_offset {
                 self.stack.pop();
             } else {
                 break;
@@ -542,21 +542,23 @@ impl<'a> Highlighter<'a> for TreeSitterHighlights<'a> {
         while let Some(capture) = self.next_capture.as_ref() {
             let start_byte = capture.node.start_byte();
             if current_offset < start_byte {
-                next_capture_start = start_byte;
                 break;
             } else {
                 let highlight_id = self.highlight_maps[capture.grammar_index].get(capture.index);
-                self.stack.push((capture.node.end_byte(), highlight_id));
+                self.stack
+                    .push((start_byte..capture.node.end_byte(), highlight_id));
                 self.next_capture = self.captures.next();
             }
         }
-        next_capture_start
     }
     fn set_byte_range(&mut self, range: Range<usize>) {
         self.captures.set_byte_range(range);
     }
-    fn current_capture(&self) -> Option<(usize, HighlightId)> {
-        self.stack.last().copied()
+    fn current_capture(&self) -> Option<(Range<usize>, HighlightId)> {
+        self.stack.last().cloned()
+    }
+    fn advance(&mut self) {
+        self.stack.pop();
     }
 }
 
@@ -566,26 +568,27 @@ struct RainbowBracketsHighlighter<'a> {
 
     colors: BTreeMap<OrdRange, HighlightId>,
     /// Index of next color to use.
-    palette_index: u32,
-    palette: HighlightMap,
+    palette_index: usize,
+    palette: Vec<HighlightId>,
 }
 
 impl<'a> RainbowBracketsHighlighter<'a> {
-    fn new(palette: HighlightMap, matches: SyntaxMapMatches<'a>) -> Option<Self> {
-        if palette.is_empty() {
-            return None;
-        }
+    fn new(_palette: HighlightMap, matches: SyntaxMapMatches<'a>) -> Option<Self> {
+        // if palette.is_empty() {
+        //     return None;
+        // }
+        // let palette = HighlightMap::new()
         Some(RainbowBracketsHighlighter {
             matches,
             colors: BTreeMap::new(),
             palette_index: 0,
-            palette,
+            palette: vec![HighlightId(0), HighlightId(1)],
         })
     }
-    fn next_highlight_id(palette: &HighlightMap, palette_index: &mut u32) -> HighlightId {
+    fn next_highlight_id(palette: &[HighlightId], palette_index: &mut usize) -> HighlightId {
         let next_highlight_id = palette.get(*palette_index);
-        *palette_index = (*palette_index + 1) % palette.len() as u32;
-        next_highlight_id
+        *palette_index = (*palette_index + 1) % palette.len();
+        *(next_highlight_id.unwrap())
     }
 }
 impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
@@ -606,15 +609,17 @@ impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
         // }
     }
 
-    fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize {
+    fn seek_next_capture_offset(&mut self, current_offset: usize) {
         // First let's fetch captures up until the opening brace is past the current_offset
         // The ending brace might fall within visible range.
-        let mut next_capture_start = usize::MAX;
+
         if self
             .colors
             .iter()
             .next()
-            .map_or(true, |((start_byte, _), _)| *start_byte < current_offset)
+            .map_or(true, |((start_byte, _), _)| {
+                dbg!(*start_byte) < dbg!(current_offset)
+            })
         {
             while let Some(matches) = self.matches.peek() {
                 let [start, end] = matches.captures else {
@@ -629,7 +634,7 @@ impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
                 }
                 let Range { start, end } = end.node.byte_range();
                 self.colors.insert((start, end), highlight_id);
-                if !self.matches.advance() {
+                if !dbg!(self.matches.advance()) {
                     break;
                 }
                 if start_byte > current_offset {
@@ -641,19 +646,22 @@ impl<'a> Highlighter<'a> for RainbowBracketsHighlighter<'a> {
         // Now let's throw away anything that starts before current_offset
         self.colors
             .retain(|(start, end), _| *start > current_offset || *end > current_offset);
-        if let Some(((start_offset, _), _)) = self.colors.iter().next() {
-            next_capture_start = *start_offset.max(&current_offset);
-        }
-        next_capture_start
     }
     fn set_byte_range(&mut self, range: Range<usize>) {
         self.matches.set_byte_range(range);
     }
-    fn current_capture(&self) -> Option<(usize, HighlightId)> {
+
+    fn current_capture(&self) -> Option<(Range<usize>, HighlightId)> {
+        dbg!(&self.colors);
         self.colors
             .iter()
             .next()
-            .map(|((_, end_offset), highlight_id)| (*end_offset, *highlight_id))
+            .map(|((start_offset, end_offset), highlight_id)| {
+                (*start_offset..*end_offset, *highlight_id)
+            })
+    }
+    fn advance(&mut self) {
+        self.colors.pop_first();
     }
 }
 
@@ -674,24 +682,27 @@ impl<'a> BufferChunkHighlights<'a> {
         });
     }
 
-    fn seek_next_capture_offset(&mut self, current_offset: usize) -> usize {
-        let mut next_capture_start = usize::MAX;
-
+    fn seek_next_capture_offset(&mut self, current_offset: usize) {
         for highlighter in &mut self.highlighters {
-            let next_start = highlighter.seek_next_capture_offset(current_offset);
-            next_capture_start = next_capture_start.min(next_start);
+            highlighter.seek_next_capture_offset(current_offset);
         }
-        next_capture_start
     }
-    fn current_capture(&self) -> Option<(usize, HighlightId)> {
+    fn current_capture(&mut self) -> Option<(Range<usize>, HighlightId)> {
         self.highlighters
-            .iter()
+            .iter_mut()
             .min_by_key(|highlighter| {
                 highlighter
                     .current_capture()
-                    .map_or(usize::MAX, |(offset, _)| offset)
+                    .map_or((usize::MAX, usize::MAX), |(range, _)| {
+                        (range.start, range.end)
+                    })
             })
-            .and_then(|highlighter| highlighter.current_capture())
+            .and_then(|highlighter| {
+                let ret = highlighter.current_capture();
+                highlighter.advance();
+                dbg!(&ret);
+                ret
+            })
     }
 }
 
@@ -948,11 +959,13 @@ impl EditPreview {
             .iter()
             .map(|grammar| grammar.highlight_map())
             .collect();
-
+        let matches = syntax_snapshot.matches(range.clone(), snapshot, |grammar| {
+            grammar.brackets_config.as_ref().map(|config| &config.query)
+        });
         BufferChunks::new(
             snapshot.as_rope(),
             range,
-            Some((captures, highlight_maps)),
+            Some((captures, highlight_maps, matches)),
             false,
             None,
         )
@@ -4442,8 +4455,14 @@ impl<'a> Iterator for BufferChunks<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_diagnostic_endpoint = usize::MAX;
         let mut next_capture_start = usize::MAX;
+        let mut current_capture = None;
         if let Some(highlights) = self.highlights.as_mut() {
-            next_capture_start = highlights.seek_next_capture_offset(self.range.start);
+            highlights.seek_next_capture_offset(self.range.start);
+            current_capture = highlights.current_capture();
+            dbg!(&current_capture, &self.range);
+            if let Some(next_capture) = &current_capture {
+                next_capture_start = next_capture.0.start;
+            }
         }
 
         let mut diagnostic_endpoints = std::mem::take(&mut self.diagnostic_endpoints);
@@ -4467,12 +4486,10 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
-            if let Some(highlights) = self.highlights.as_ref() {
-                if let Some((parent_capture_end, parent_highlight_id)) =
-                    highlights.current_capture()
-                {
-                    chunk_end = chunk_end.min(parent_capture_end);
-                    highlight_id = Some(parent_highlight_id);
+            if let Some(highlights) = self.highlights.as_mut() {
+                if let Some((parent_range, parent_highlight_id)) = &current_capture {
+                    chunk_end = chunk_end.min(parent_range.end);
+                    highlight_id = Some(*parent_highlight_id);
                 }
             }
 
