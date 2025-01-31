@@ -2751,6 +2751,8 @@ impl Snapshot {
         self.entry_for_path("")
     }
 
+    /// TODO: what's the difference between `root_dir` and `abs_path`?
+    /// is there any? if so, document it.
     pub fn root_dir(&self) -> Option<Arc<Path>> {
         self.root_entry()
             .filter(|entry| entry.is_dir())

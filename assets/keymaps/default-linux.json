@@ -823,5 +823,12 @@
       "shift-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode"
     }
+  },
+  {
+    "context": "ZedPredictModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
+    }
   }
 ]

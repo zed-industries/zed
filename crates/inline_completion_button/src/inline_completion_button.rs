@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::UserStore;
+use client::{Client, UserStore};
 use copilot::{Copilot, Status};
 use editor::{actions::ShowInlineCompletion, scroll::Autoscroll, Editor};
 use feature_flags::{
@@ -20,18 +20,16 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
-use ui::{prelude::*, ButtonLike, Color, Icon, IconWithIndicator, Indicator, PopoverMenuHandle};
+use ui::{
+    prelude::*, ButtonLike, Clickable, ContextMenu, ContextMenuEntry, IconButton,
+    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip,
+};
 use workspace::{
-    create_and_open_local_file,
-    item::ItemHandle,
-    notifications::NotificationId,
-    ui::{
-        ButtonCommon, Clickable, ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip,
-    },
-    StatusItemView, Toast, Workspace,
+    create_and_open_local_file, item::ItemHandle, notifications::NotificationId, StatusItemView,
+    Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictModal;
 use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
@@ -48,6 +46,7 @@ pub struct InlineCompletionButton {
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
+    client: Arc<Client>,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
@@ -231,14 +230,16 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                if !self
-                    .user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false)
-                {
+                let current_user_terms_accepted =
+                    self.user_store.read(cx).current_user_has_accepted_terms();
+
+                if !current_user_terms_accepted.unwrap_or(false) {
                     let workspace = self.workspace.clone();
                     let user_store = self.user_store.clone();
+                    let client = self.client.clone();
+                    let fs = self.fs.clone();
+
+                    let signed_in = current_user_terms_accepted.is_some();
 
                     return div().child(
                         ButtonLike::new("zeta-pending-tos-icon")
@@ -252,20 +253,29 @@ impl Render for InlineCompletionButton {
                                 ))
                                 .into_any_element(),
                             )
-                            .tooltip(|window, cx| {
+                            .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
-                                    "Read Terms of Service",
+                                    if signed_in {
+                                        "Read Terms of Service"
+                                    } else {
+                                        "Sign in to use"
+                                    },
                                     window,
                                     cx,
                                 )
                             })
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                let user_store = user_store.clone();
-
                                 if let Some(workspace) = workspace.upgrade() {
-                                    ZedPredictTos::toggle(workspace, user_store, window, cx);
+                                    ZedPredictModal::toggle(
+                                        workspace,
+                                        user_store.clone(),
+                                        client.clone(),
+                                        fs.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     );
@@ -318,6 +328,7 @@ impl InlineCompletionButton {
         workspace: WeakEntity<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
+        client: Arc<Client>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -337,6 +348,7 @@ impl InlineCompletionButton {
             inline_completion_provider: None,
             popover_menu_handle,
             workspace,
+            client,
             fs,
             user_store,
         }
@@ -429,6 +441,22 @@ impl InlineCompletionButton {
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
+
+        if let Some(provider) = &self.inline_completion_provider {
+            let data_collection = provider.data_collection_state(cx);
+
+            if data_collection.is_supported() {
+                let provider = provider.clone();
+                menu = menu.separator().item(
+                    ContextMenuEntry::new("Data Collection")
+                        .toggleable(IconPosition::Start, data_collection.is_enabled())
+                        .disabled(data_collection.is_unknown())
+                        .handler(move |_, cx| {
+                            provider.toggle_data_collection(cx);
+                        }),
+                );
+            }
+        }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             menu = menu

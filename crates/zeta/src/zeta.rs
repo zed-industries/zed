@@ -1,7 +1,10 @@
 mod completion_diff_element;
+mod persistence;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
+use db::kvp::KEY_VALUE_STORE;
+use inline_completion::DataCollectionState;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -12,6 +15,7 @@ use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
 use gpui::{
     actions, App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, Subscription, Task,
+    WeakEntity,
 };
 use http_client::{HttpClient, Method};
 use language::{
@@ -20,26 +24,33 @@ use language::{
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
-    cmp,
+    cmp, env,
     fmt::Write,
     future::Future,
     mem,
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
+use workspace::{
+    notifications::{simple_message_notification::MessageNotification, NotificationId},
+    Workspace,
+};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
+const ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY: &'static str =
+    "zed_predict_data_collection_never_ask_again";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
 
@@ -47,11 +58,19 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 /// intentionally low to err on the side of underestimating limits.
 const BYTES_PER_TOKEN_GUESS: usize = 3;
 
-/// This is based on the output token limit `max_tokens: 2048` in `crates/collab/src/llm.rs`. Number
-/// of output tokens is relevant to the size of the input excerpt because the model is tasked with
-/// outputting a modified excerpt. `2/3` is chosen so that there are some output tokens remaining
-/// for the model to specify insertions.
-const BUFFER_EXCERPT_BYTE_LIMIT: usize = (2048 * 2 / 3) * BYTES_PER_TOKEN_GUESS;
+/// Output token limit, used to inform the size of the input. A copy of this constant is also in
+/// `crates/collab/src/llm.rs`.
+const MAX_OUTPUT_TOKENS: usize = 2048;
+
+/// Total bytes limit for editable region of buffer excerpt.
+///
+/// The number of output tokens is relevant to the size of the input excerpt because the model is
+/// tasked with outputting a modified excerpt. `2/3` is chosen so that there are some output tokens
+/// remaining for the model to specify insertions.
+const BUFFER_EXCERPT_BYTE_LIMIT: usize = (MAX_OUTPUT_TOKENS * 2 / 3) * BYTES_PER_TOKEN_GUESS;
+
+/// Total line limit for editable region of buffer excerpt.
+const BUFFER_EXCERPT_LINE_LIMIT: u32 = 64;
 
 /// Note that this is not the limit for the overall prompt, just for the inputs to the template
 /// instantiated in `crates/collab/src/llm.rs`.
@@ -187,6 +206,7 @@ pub struct Zeta {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
+    data_collection_preferences: DataCollectionPreferences,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     tos_accepted: bool, // Terms of service accepted
@@ -216,13 +236,13 @@ impl Zeta {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
-
         Self {
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
+            data_collection_preferences: Self::load_data_collection_preferences(cx),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -240,11 +260,16 @@ impl Zeta {
                 .read(cx)
                 .current_user_has_accepted_terms()
                 .unwrap_or(false),
-            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
-                client::user::Event::TermsStatusUpdated { accepted } => {
-                    this.tos_accepted = *accepted;
+            _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
+                match event {
+                    client::user::Event::PrivateUserInfoUpdated => {
+                        this.tos_accepted = user_store
+                            .read(cx)
+                            .current_user_has_accepted_terms()
+                            .unwrap_or(false);
+                    }
+                    _ => {}
                 }
-                _ => {}
             }),
         }
     }
@@ -308,11 +333,8 @@ impl Zeta {
         event: &language::BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        match event {
-            language::BufferEvent::Edited => {
-                self.report_changes_for_buffer(&buffer, cx);
-            }
-            _ => {}
+        if let language::BufferEvent::Edited = event {
+            self.report_changes_for_buffer(&buffer, cx);
         }
     }
 
@@ -320,6 +342,7 @@ impl Zeta {
         &mut self,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
@@ -327,12 +350,11 @@ impl Zeta {
         F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
-        let buffer = buffer.clone();
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let events = self.events.clone();
-        let path = snapshot
+        let path: Arc<Path> = snapshot
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
@@ -341,25 +363,40 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let is_staff = cx.is_staff();
 
+        let buffer = buffer.clone();
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
-            let (input_events, input_excerpt, input_outline, excerpt_range) = cx
+            let (input_events, input_excerpt, excerpt_range, input_outline) = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
+                    let path = path.clone();
                     async move {
-                        let (input_excerpt, excerpt_range) =
-                            prompt_for_excerpt(&snapshot, cursor_point, cursor_offset)?;
+                        let path = path.to_string_lossy();
+                        let (excerpt_range, excerpt_len_guess) = excerpt_range_for_position(
+                            cursor_point,
+                            BUFFER_EXCERPT_BYTE_LIMIT,
+                            BUFFER_EXCERPT_LINE_LIMIT,
+                            &path,
+                            &snapshot,
+                        )?;
+                        let input_excerpt = prompt_for_excerpt(
+                            cursor_offset,
+                            &excerpt_range,
+                            excerpt_len_guess,
+                            &path,
+                            &snapshot,
+                        );
 
-                        let chars_remaining = TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.len());
-                        let input_events = prompt_for_events(events.iter(), chars_remaining);
+                        let bytes_remaining = TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.len());
+                        let input_events = prompt_for_events(events.iter(), bytes_remaining);
 
                         // Note that input_outline is not currently used in prompt generation and so
                         // is not counted towards TOTAL_BYTE_LIMIT.
                         let input_outline = prompt_for_outline(&snapshot);
 
-                        anyhow::Ok((input_events, input_excerpt, input_outline, excerpt_range))
+                        anyhow::Ok((input_events, input_excerpt, excerpt_range, input_outline))
                     }
                 })
                 .await?;
@@ -370,6 +407,7 @@ impl Zeta {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
+                can_collect_data,
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
@@ -540,16 +578,25 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(buffer, position, cx, |_, _, _, _| ready(Ok(response)))
+        self.request_completion_impl(buffer, position, false, cx, |_, _, _, _| {
+            ready(Ok(response))
+        })
     }
 
     pub fn request_completion(
         &mut self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
-        self.request_completion_impl(buffer, position, cx, Self::perform_predict_edits)
+        self.request_completion_impl(
+            buffer,
+            position,
+            can_collect_data,
+            cx,
+            Self::perform_predict_edits,
+        )
     }
 
     fn perform_predict_edits(
@@ -862,6 +909,80 @@ and then another
 
         new_snapshot
     }
+
+    pub fn data_collection_choice_at(&self, path: &Path) -> DataCollectionChoice {
+        match self.data_collection_preferences.per_worktree.get(path) {
+            Some(true) => DataCollectionChoice::Enabled,
+            Some(false) => DataCollectionChoice::Disabled,
+            None => DataCollectionChoice::NotAnswered,
+        }
+    }
+
+    fn update_data_collection_choice_for_worktree(
+        &mut self,
+        absolute_path_of_project_worktree: PathBuf,
+        can_collect_data: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.data_collection_preferences
+            .per_worktree
+            .insert(absolute_path_of_project_worktree.clone(), can_collect_data);
+
+        db::write_and_log(cx, move || {
+            persistence::DB
+                .save_accepted_data_collection(absolute_path_of_project_worktree, can_collect_data)
+        });
+    }
+
+    fn set_never_ask_again_for_data_collection(&mut self, cx: &mut Context<Self>) {
+        self.data_collection_preferences.never_ask_again = true;
+
+        // persist choice
+        db::write_and_log(cx, move || {
+            KEY_VALUE_STORE.write_kvp(
+                ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into(),
+                "true".to_string(),
+            )
+        });
+    }
+
+    fn load_data_collection_preferences(cx: &mut Context<Self>) -> DataCollectionPreferences {
+        if env::var("ZED_PREDICT_CLEAR_DATA_COLLECTION_PREFERENCES").is_ok() {
+            db::write_and_log(cx, move || async move {
+                KEY_VALUE_STORE
+                    .delete_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY.into())
+                    .await
+                    .log_err();
+
+                persistence::DB.clear_all_zeta_preferences().await
+            });
+            return DataCollectionPreferences::default();
+        }
+
+        let never_ask_again = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_NEVER_ASK_AGAIN_KEY)
+            .log_err()
+            .flatten()
+            .map(|value| value == "true")
+            .unwrap_or(false);
+
+        let preferences_per_project = persistence::DB
+            .get_all_zeta_preferences()
+            .log_err()
+            .unwrap_or_else(HashMap::default);
+
+        DataCollectionPreferences {
+            never_ask_again,
+            per_worktree: preferences_per_project,
+        }
+    }
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DataCollectionPreferences {
+    /// Set when a user clicks on "Never Ask Again", can never be unset.
+    never_ask_again: bool,
+    per_worktree: HashMap<PathBuf, bool>,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -899,201 +1020,137 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     input_outline
 }
 
-#[derive(Debug, Default)]
-struct ExcerptPromptBuilder<'a> {
-    file_path: Cow<'a, str>,
-    include_start_of_file_marker: bool,
-    before_editable_region: Option<ReversedStringChunks<'a>>,
-    before_cursor: ReversedStringChunks<'a>,
-    after_cursor: StringChunks<'a>,
-    after_editable_region: Option<StringChunks<'a>>,
-}
-
-impl<'a> ExcerptPromptBuilder<'a> {
-    pub fn len(&self) -> usize {
-        let mut length = 0;
-        length += "```".len();
-        length += self.file_path.len();
-        length += 1;
-        if self.include_start_of_file_marker {
-            length += START_OF_FILE_MARKER.len();
-            length += 1;
-        }
-        if let Some(before_editable_region) = &self.before_editable_region {
-            length += before_editable_region.len();
-            length += 1;
-        }
-        length += EDITABLE_REGION_START_MARKER.len();
-        length += 1;
-        length += self.before_cursor.len();
-        length += CURSOR_MARKER.len();
-        length += self.after_cursor.len();
-        length += 1;
-        length += EDITABLE_REGION_END_MARKER.len();
-        length += 1;
-        if let Some(after_editable_region) = &self.after_editable_region {
-            length += after_editable_region.len();
-            length += 1;
-        }
-        length += "```".len();
-        length
-    }
-
-    pub fn to_string(&self) -> String {
-        let length = self.len();
-        let mut result = String::with_capacity(length);
-        result.push_str("```");
-        result.push_str(&self.file_path);
-        result.push('\n');
-        if self.include_start_of_file_marker {
-            result.push_str(START_OF_FILE_MARKER);
-            result.push('\n');
-        }
-        if let Some(before_editable_region) = &self.before_editable_region {
-            before_editable_region.add_to_string(&mut result);
-            result.push('\n');
-        }
-        result.push_str(EDITABLE_REGION_START_MARKER);
-        result.push('\n');
-        self.before_cursor.add_to_string(&mut result);
-        result.push_str(CURSOR_MARKER);
-        self.after_cursor.add_to_string(&mut result);
-        result.push('\n');
-        result.push_str(EDITABLE_REGION_END_MARKER);
-        result.push('\n');
-        if let Some(after_editable_region) = &self.after_editable_region {
-            after_editable_region.add_to_string(&mut result);
-            result.push('\n');
-        }
-        result.push_str("```");
-        debug_assert!(
-            result.len() == length,
-            "Expected length: {}, Actual length: {}",
-            length,
-            result.len()
-        );
-        result
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct StringChunks<'a> {
-    chunks: Vec<&'a str>,
-    length: usize,
-}
-
-#[derive(Debug, Default)]
-pub struct ReversedStringChunks<'a>(StringChunks<'a>);
-
-impl<'a> StringChunks<'a> {
-    pub fn len(&self) -> usize {
-        self.length
-    }
-
-    pub fn extend(&mut self, new_chunks: impl Iterator<Item = &'a str>) {
-        self.chunks
-            .extend(new_chunks.inspect(|chunk| self.length += chunk.len()));
-    }
-
-    pub fn append_from_buffer<T: ToOffset>(
-        &mut self,
-        snapshot: &'a BufferSnapshot,
-        range: Range<T>,
-    ) {
-        self.extend(snapshot.text_for_range(range));
-    }
-
-    pub fn add_to_string(&self, string: &mut String) {
-        for chunk in self.chunks.iter() {
-            string.push_str(chunk);
-        }
-    }
-}
-
-impl<'a> ReversedStringChunks<'a> {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn prepend_from_buffer<T: ToOffset>(
-        &mut self,
-        snapshot: &'a BufferSnapshot,
-        range: Range<T>,
-    ) {
-        self.0.extend(snapshot.reversed_chunks_in_range(range));
-    }
-
-    pub fn add_to_string(&self, string: &mut String) {
-        for chunk in self.0.chunks.iter().rev() {
-            string.push_str(chunk);
-        }
-    }
-}
-
-/// Computes a prompt for the excerpt of the buffer around the cursor. This always includes complete
-/// lines and the result length will be `<= MAX_INPUT_EXCERPT_BYTES`.
 fn prompt_for_excerpt(
+    offset: usize,
+    excerpt_range: &Range<usize>,
+    mut len_guess: usize,
+    path: &str,
     snapshot: &BufferSnapshot,
+) -> String {
+    let point_range = excerpt_range.to_point(snapshot);
+
+    // Include one line of extra context before and after editable range, if those lines are non-empty.
+    let extra_context_before_range =
+        if point_range.start.row > 0 && !snapshot.is_line_blank(point_range.start.row - 1) {
+            let range =
+                (Point::new(point_range.start.row - 1, 0)..point_range.start).to_offset(snapshot);
+            len_guess += range.end - range.start;
+            Some(range)
+        } else {
+            None
+        };
+    let extra_context_after_range = if point_range.end.row < snapshot.max_point().row
+        && !snapshot.is_line_blank(point_range.end.row + 1)
+    {
+        let range = (point_range.end
+            ..Point::new(
+                point_range.end.row + 1,
+                snapshot.line_len(point_range.end.row + 1),
+            ))
+            .to_offset(snapshot);
+        len_guess += range.end - range.start;
+        Some(range)
+    } else {
+        None
+    };
+
+    let mut prompt_excerpt = String::with_capacity(len_guess);
+    writeln!(prompt_excerpt, "```{}", path).unwrap();
+
+    if excerpt_range.start == 0 {
+        writeln!(prompt_excerpt, "{START_OF_FILE_MARKER}").unwrap();
+    }
+
+    if let Some(extra_context_before_range) = extra_context_before_range {
+        for chunk in snapshot.text_for_range(extra_context_before_range) {
+            prompt_excerpt.push_str(chunk);
+        }
+    }
+    writeln!(prompt_excerpt, "{EDITABLE_REGION_START_MARKER}").unwrap();
+    for chunk in snapshot.text_for_range(excerpt_range.start..offset) {
+        prompt_excerpt.push_str(chunk);
+    }
+    prompt_excerpt.push_str(CURSOR_MARKER);
+    for chunk in snapshot.text_for_range(offset..excerpt_range.end) {
+        prompt_excerpt.push_str(chunk);
+    }
+    write!(prompt_excerpt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
+
+    if let Some(extra_context_after_range) = extra_context_after_range {
+        for chunk in snapshot.text_for_range(extra_context_after_range) {
+            prompt_excerpt.push_str(chunk);
+        }
+    }
+
+    write!(prompt_excerpt, "\n```").unwrap();
+    debug_assert!(
+        prompt_excerpt.len() <= len_guess,
+        "Excerpt length {} exceeds estimated length {}",
+        prompt_excerpt.len(),
+        len_guess
+    );
+    prompt_excerpt
+}
+
+fn excerpt_range_for_position(
     cursor_point: Point,
-    cursor_offset: usize,
-) -> Result<(String, Range<usize>)> {
-    let mut builder = ExcerptPromptBuilder::default();
-    builder.file_path = snapshot.file().map_or(Cow::Borrowed("untitled"), |file| {
-        file.path().to_string_lossy()
-    });
-
+    byte_limit: usize,
+    line_limit: u32,
+    path: &str,
+    snapshot: &BufferSnapshot,
+) -> Result<(Range<usize>, usize)> {
     let cursor_row = cursor_point.row;
-    let cursor_line_start_offset = Point::new(cursor_row, 0).to_offset(snapshot);
-    let cursor_line_end_offset =
-        Point::new(cursor_row, snapshot.line_len(cursor_row)).to_offset(snapshot);
-    builder
-        .before_cursor
-        .prepend_from_buffer(snapshot, cursor_line_start_offset..cursor_offset);
-    builder
-        .after_cursor
-        .append_from_buffer(snapshot, cursor_offset..cursor_line_end_offset);
+    let last_buffer_row = snapshot.max_point().row;
 
-    if builder.len() > BUFFER_EXCERPT_BYTE_LIMIT {
+    // This is an overestimate because it includes parts of prompt_for_excerpt which are
+    // conditionally skipped.
+    let mut len_guess = 0;
+    len_guess += "```".len() + path.len() + 1;
+    len_guess += START_OF_FILE_MARKER.len() + 1;
+    len_guess += EDITABLE_REGION_START_MARKER.len() + 1;
+    len_guess += CURSOR_MARKER.len();
+    len_guess += EDITABLE_REGION_END_MARKER.len() + 1;
+    len_guess += "```".len() + 1;
+
+    len_guess += usize::try_from(snapshot.line_len(cursor_row) + 1).unwrap();
+
+    if len_guess > byte_limit {
         return Err(anyhow!("Current line too long to send to model."));
     }
 
-    let last_buffer_row = snapshot.max_point().row;
-
-    // Figure out how many lines of the buffer to include in the prompt, walking outwards from the
-    // cursor. Even if a line before or after the cursor causes the byte limit to be exceeded,
-    // continues walking in the other direction.
-    let mut first_included_row = cursor_row;
-    let mut last_included_row = cursor_row;
+    let mut excerpt_start_row = cursor_row;
+    let mut excerpt_end_row = cursor_row;
     let mut no_more_before = cursor_row == 0;
     let mut no_more_after = cursor_row >= last_buffer_row;
-    let mut output_len = builder.len();
     let mut row_delta = 1;
     loop {
         if !no_more_before {
             let row = cursor_point.row - row_delta;
-            let line_len: usize = (snapshot.line_len(row) + 1).try_into().unwrap();
-            let mut new_output_len = output_len + line_len;
+            let line_len: usize = usize::try_from(snapshot.line_len(row) + 1).unwrap();
+            let mut new_len_guess = len_guess + line_len;
             if row == 0 {
-                new_output_len += START_OF_FILE_MARKER.len() + 1;
+                new_len_guess += START_OF_FILE_MARKER.len() + 1;
             }
-            if new_output_len <= BUFFER_EXCERPT_BYTE_LIMIT {
-                output_len = new_output_len;
-                first_included_row = row;
+            if new_len_guess <= byte_limit {
+                len_guess = new_len_guess;
+                excerpt_start_row = row;
                 if row == 0 {
-                    builder.include_start_of_file_marker = true;
                     no_more_before = true;
                 }
             } else {
                 no_more_before = true;
             }
         }
+        if excerpt_end_row - excerpt_start_row >= line_limit {
+            break;
+        }
         if !no_more_after {
             let row = cursor_point.row + row_delta;
-            let line_len: usize = (snapshot.line_len(row) + 1).try_into().unwrap();
-            let new_output_len = output_len + line_len;
-            if new_output_len <= BUFFER_EXCERPT_BYTE_LIMIT {
-                output_len = new_output_len;
-                last_included_row = row;
+            let line_len: usize = usize::try_from(snapshot.line_len(row) + 1).unwrap();
+            let new_len_guess = len_guess + line_len;
+            if new_len_guess <= byte_limit {
+                len_guess = new_len_guess;
+                excerpt_end_row = row;
                 if row >= last_buffer_row {
                     no_more_after = true;
                 }
@@ -1101,66 +1158,21 @@ fn prompt_for_excerpt(
                 no_more_after = true;
             }
         }
+        if excerpt_end_row - excerpt_start_row >= line_limit {
+            break;
+        }
         if no_more_before && no_more_after {
             break;
         }
         row_delta += 1;
     }
 
-    // Include a line of context outside the editable region, but only if it is not the first line
-    // (otherwise the first line of the file would never be uneditable).
-    let first_editable_row = if first_included_row != 0
-        && first_included_row < cursor_row
-        && !snapshot.is_line_blank(first_included_row)
-    {
-        let mut before_editable_region = ReversedStringChunks::default();
-        before_editable_region.prepend_from_buffer(
-            snapshot,
-            Point::new(first_included_row, 0)
-                ..Point::new(first_included_row, snapshot.line_len(first_included_row)),
-        );
-        builder.before_editable_region = Some(before_editable_region);
-        first_included_row + 1
-    } else {
-        first_included_row
-    };
-
-    // Include a line of context outside the editable region, but only if it is not the last line
-    // (otherwise the first line of the file would never be uneditable).
-    let last_editable_row = if last_included_row < last_buffer_row
-        && last_included_row > cursor_row
-        && !snapshot.is_line_blank(last_included_row)
-    {
-        let mut after_editable_region = StringChunks::default();
-        after_editable_region.append_from_buffer(
-            snapshot,
-            Point::new(last_included_row, 0)
-                ..Point::new(last_included_row, snapshot.line_len(last_included_row)),
-        );
-        builder.after_editable_region = Some(after_editable_region);
-        last_included_row + 1
-    } else {
-        last_included_row
-    };
-
-    let editable_range = (Point::new(first_editable_row, 0)
-        ..Point::new(last_editable_row, snapshot.line_len(last_editable_row)))
-        .to_offset(snapshot);
-
-    let before_cursor_row = editable_range.start..cursor_line_start_offset;
-    let after_cursor_row = cursor_line_end_offset..editable_range.end;
-    if !before_cursor_row.is_empty() {
-        builder
-            .before_cursor
-            .prepend_from_buffer(snapshot, before_cursor_row);
-    }
-    if !after_cursor_row.is_empty() {
-        builder
-            .after_cursor
-            .append_from_buffer(snapshot, after_cursor_row);
-    }
-
-    anyhow::Ok((builder.to_string(), editable_range))
+    let excerpt_start = Point::new(excerpt_start_row, 0);
+    let excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
+    Ok((
+        excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot),
+        len_guess,
+    ))
 }
 
 fn prompt_for_events<'a>(
@@ -1276,22 +1288,120 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
+#[derive(Clone, Copy)]
+pub enum DataCollectionChoice {
+    NotAnswered,
+    Enabled,
+    Disabled,
+}
+
+impl DataCollectionChoice {
+    pub fn is_enabled(&self) -> bool {
+        match self {
+            Self::Enabled => true,
+            Self::NotAnswered | Self::Disabled => false,
+        }
+    }
+
+    pub fn is_answered(&self) -> bool {
+        match self {
+            Self::Enabled | Self::Disabled => true,
+            Self::NotAnswered => false,
+        }
+    }
+
+    pub fn toggle(&self) -> DataCollectionChoice {
+        match self {
+            Self::Enabled => Self::Disabled,
+            Self::Disabled => Self::Enabled,
+            Self::NotAnswered => Self::Enabled,
+        }
+    }
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
+    data_collection: Option<ProviderDataCollection>,
+}
+
+pub struct ProviderDataCollection {
+    workspace: WeakEntity<Workspace>,
+    worktree_root_path: PathBuf,
+    choice: DataCollectionChoice,
+}
+
+impl ProviderDataCollection {
+    pub fn new(
+        zeta: Entity<Zeta>,
+        workspace: Option<Entity<Workspace>>,
+        buffer: Option<Entity<Buffer>>,
+        cx: &mut App,
+    ) -> Option<ProviderDataCollection> {
+        let workspace = workspace?;
+
+        let worktree_root_path = buffer?.update(cx, |buffer, cx| {
+            let file = buffer.file()?;
+
+            if !file.is_local() || file.is_private() {
+                return None;
+            }
+
+            workspace.update(cx, |workspace, cx| {
+                Some(
+                    workspace
+                        .absolute_path_of_worktree(file.worktree_id(cx), cx)?
+                        .to_path_buf(),
+                )
+            })
+        })?;
+
+        let choice = zeta.read(cx).data_collection_choice_at(&worktree_root_path);
+
+        Some(ProviderDataCollection {
+            workspace: workspace.downgrade(),
+            worktree_root_path,
+            choice,
+        })
+    }
+
+    fn set_choice(&mut self, choice: DataCollectionChoice, zeta: &Entity<Zeta>, cx: &mut App) {
+        self.choice = choice;
+
+        let worktree_root_path = self.worktree_root_path.clone();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.update_data_collection_choice_for_worktree(
+                worktree_root_path,
+                choice.is_enabled(),
+                cx,
+            )
+        });
+    }
+
+    fn toggle_choice(&mut self, zeta: &Entity<Zeta>, cx: &mut App) {
+        self.set_choice(self.choice.toggle(), zeta, cx);
+    }
 }
 
 impl ZetaInlineCompletionProvider {
     pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
 
-    pub fn new(zeta: Entity<Zeta>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, data_collection: Option<ProviderDataCollection>) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
+            data_collection,
+        }
+    }
+
+    fn set_data_collection_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
+        if let Some(data_collection) = self.data_collection.as_mut() {
+            data_collection.set_choice(choice, &self.zeta, cx);
         }
     }
 }
@@ -1302,7 +1412,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn display_name() -> &'static str {
-        "Zed Predict"
+        "Zed's Edit Predictions"
     }
 
     fn show_completions_in_menu() -> bool {
@@ -1315,6 +1425,24 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn show_tab_accept_marker() -> bool {
         true
+    }
+
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        let Some(data_collection) = self.data_collection.as_ref() else {
+            return DataCollectionState::Unknown;
+        };
+
+        if data_collection.choice.is_enabled() {
+            DataCollectionState::Enabled
+        } else {
+            DataCollectionState::Disabled
+        }
+    }
+
+    fn toggle_data_collection(&mut self, cx: &mut App) {
+        if let Some(data_collection) = self.data_collection.as_mut() {
+            data_collection.toggle_choice(&self.zeta, cx);
+        }
     }
 
     fn is_enabled(
@@ -1362,6 +1490,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
+        let can_collect_data = self
+            .data_collection
+            .as_ref()
+            .map_or(false, |data_collection| data_collection.choice.is_enabled());
 
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {
@@ -1370,7 +1502,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, cx)
+                    zeta.request_completion(&buffer, position, can_collect_data, cx)
                 })
             });
 
@@ -1447,8 +1579,80 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
         self.pending_completions.clear();
+
+        let Some(data_collection) = self.data_collection.as_mut() else {
+            return;
+        };
+
+        if data_collection.choice.is_answered()
+            || self
+                .zeta
+                .read(cx)
+                .data_collection_preferences
+                .never_ask_again
+        {
+            return;
+        }
+
+        struct ZetaDataCollectionNotification;
+        let notification_id = NotificationId::unique::<ZetaDataCollectionNotification>();
+
+        const DATA_COLLECTION_INFO_URL: &str = "https://zed.dev/terms-of-service"; // TODO: Replace for a link that's dedicated to Edit Predictions data collection
+
+        let this = cx.entity();
+        data_collection
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace.show_notification(notification_id, cx, |cx| {
+                    let zeta = self.zeta.clone();
+
+                    cx.new(move |_cx| {
+                        let message =
+                            "To allow Zed to suggest better edits, turn on data collection. You \
+                            can turn off at any time via the status bar menu.";
+                        MessageNotification::new(message)
+                            .with_title("Per-Project Data Collection Program")
+                            .show_close_button(false)
+                            .with_click_message("Turn On")
+                            .on_click({
+                                let this = this.clone();
+                                move |_window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.set_data_collection_choice(
+                                            DataCollectionChoice::Enabled,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            })
+                            .with_secondary_click_message("Turn Off")
+                            .on_secondary_click({
+                                move |_window, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.set_data_collection_choice(
+                                            DataCollectionChoice::Disabled,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            })
+                            .with_tertiary_click_message("Never Ask Again")
+                            .on_tertiary_click({
+                                let zeta = zeta.clone();
+                                move |_window, cx| {
+                                    zeta.update(cx, |zeta, cx| {
+                                        zeta.set_never_ask_again_for_data_collection(cx);
+                                    });
+                                }
+                            })
+                            .more_info_message("Learn More")
+                            .more_info_url(DATA_COLLECTION_INFO_URL)
+                    })
+                });
+            })
+            .log_err();
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
@@ -1688,8 +1892,9 @@ mod tests {
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
-        let completion_task =
-            zeta.update(cx, |zeta, cx| zeta.request_completion(&buffer, cursor, cx));
+        let completion_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_completion(&buffer, cursor, false, cx)
+        });
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(

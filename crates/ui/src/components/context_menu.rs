@@ -64,6 +64,11 @@ impl ContextMenuEntry {
         }
     }
 
+    pub fn toggleable(mut self, toggle_position: IconPosition, toggled: bool) -> Self {
+        self.toggle = Some((toggle_position, toggled));
+        self
+    }
+
     pub fn icon(mut self, icon: IconName) -> Self {
         self.icon = Some(icon);
         self

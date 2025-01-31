@@ -77,6 +77,20 @@ pub mod theme_selector {
     impl_actions!(theme_selector, [Toggle]);
 }
 
+pub mod icon_theme_selector {
+    use gpui::impl_actions;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    pub struct Toggle {
+        /// A list of icon theme names to filter the theme selector down to.
+        pub themes_filter: Option<Vec<String>>,
+    }
+
+    impl_actions!(icon_theme_selector, [Toggle]);
+}
+
 pub mod assistant {
     use gpui::{actions, impl_actions};
     use schemars::JsonSchema;

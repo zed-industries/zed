@@ -134,7 +134,6 @@ impl AssistantPanel {
                         project,
                         prompt_builder.clone(),
                         slash_commands,
-                        tools.clone(),
                         cx,
                     )
                 })?
