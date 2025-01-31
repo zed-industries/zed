@@ -2656,4 +2656,6 @@ message Commit {
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
     string message = 4;
+    optional string name = 5;
+    optional string email = 6;
 }
