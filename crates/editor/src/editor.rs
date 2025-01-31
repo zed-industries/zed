@@ -164,7 +164,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
+use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
@@ -5458,7 +5458,11 @@ impl Editor {
         px(32.)
     }
 
-    fn render_edit_prediction_cursor_popover(&self, cx: &mut App) -> AnyElement {
+    fn render_edit_prediction_cursor_popover(
+        &self,
+        style: &EditorStyle,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
         let is_loading = self
             .inline_completion_provider
             .as_ref()
@@ -5482,10 +5486,32 @@ impl Editor {
             .active_inline_completion
             .as_ref()
             .or(self.stale_inline_completion.as_ref())
+            .map(|completion| &completion.completion)
         {
-            Some(completion) => Label::new("display_info()")
-                .size(LabelSize::Small)
-                .map(|label| {
+            Some(InlineCompletion::Edit {
+                edits,
+                edit_preview,
+                snapshot,
+                display_mode: _,
+            }) => {
+                let Some(highlighted_edits) = edit_preview.as_ref().and_then(|edit_preview| {
+                    crate::inline_completion_edit_text(&snapshot, &edits, edit_preview, false, cx)
+                }) else {
+                    return None;
+                };
+
+                let first_line = highlighted_edits.text.slice_until('\n');
+                let first_line_len = first_line.len();
+
+                let highlights = highlighted_edits
+                    .highlights
+                    .into_iter()
+                    .take_until(|(range, _)| range.start > first_line_len);
+
+                let styled_text =
+                    gpui::StyledText::new(first_line).with_highlights(&style.text, highlights);
+
+                div().child(styled_text).map(|label| {
                     if is_loading {
                         label
                             .with_animation(
@@ -5493,13 +5519,15 @@ impl Editor {
                                 Animation::new(Duration::from_secs(2))
                                     .repeat()
                                     .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.alpha(delta),
+                                |label, delta| label.opacity(delta),
                             )
                             .into_any_element()
                     } else {
                         label.into_any_element()
                     }
-                }),
+                })
+            }
+            Some(InlineCompletion::Move(_)) => return None,
             None => {
                 if is_loading {
                     Label::new("...")
@@ -5518,23 +5546,25 @@ impl Editor {
             }
         };
 
-        h_flex()
-            .h(self.edit_prediction_cursor_popover_height())
-            .flex_1()
-            .px_2()
-            .gap_3()
-            .elevation_2(cx)
-            // .opacity(if is_loading { 0.6 } else { 1.0 })
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(Icon::new(IconName::ZedPredict))
-                    .child(completion_preview),
-            )
-            .child(right_side)
-            .into_any()
+        Some(
+            h_flex()
+                .h(self.edit_prediction_cursor_popover_height())
+                .flex_1()
+                .px_2()
+                .gap_3()
+                .elevation_2(cx)
+                // .opacity(if is_loading { 0.6 } else { 1.0 })
+                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(Icon::new(IconName::ZedPredict))
+                        .child(completion_preview),
+                )
+                .child(right_side)
+                .into_any(),
+        )
     }
 
     fn render_context_menu(

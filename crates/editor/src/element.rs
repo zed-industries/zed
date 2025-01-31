@@ -3168,6 +3168,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
         cursor: DisplayPoint,
+        style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -3238,8 +3239,8 @@ impl EditorElement {
                             .gap(MENU_GAP)
                             .when(y_flipped, |parent| parent.flex_col_reverse())
                             .when(edit_prediction_popover_visible, |parent| {
-                                parent.child(self.editor.update(cx, |editor, cx| {
-                                    editor.render_edit_prediction_cursor_popover(cx)
+                                parent.children(self.editor.update(cx, |editor, cx| {
+                                    editor.render_edit_prediction_cursor_popover(style, cx)
                                 }))
                             })
                             .when(context_menu_visible, |parent| {
@@ -7199,6 +7200,7 @@ impl Element for EditorElement {
                                 scroll_pixel_position,
                                 &line_layouts,
                                 newest_selection_head,
+                                &style,
                                 window,
                                 cx,
                             );

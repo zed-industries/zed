@@ -20,6 +20,29 @@ impl SharedString {
     pub fn new(str: impl Into<Arc<str>>) -> Self {
         SharedString(ArcCow::Owned(str.into()))
     }
+
+    /// Returns the slice of a SharedString up until (but not including) the requested character,
+    /// e.g. to get the first line of the string, do:
+    ///
+    /// ```
+    /// let first_line = shared_string.slice_until('\n')
+    /// ```
+    pub fn slice_until(self, pat: char) -> SharedString {
+        match self.0 {
+            ArcCow::Borrowed(str) => {
+                let str_ref = str;
+                let len = str_ref.find(pat).unwrap_or(str_ref.len());
+
+                Self(ArcCow::Borrowed(&str_ref[..len]))
+            }
+            ArcCow::Owned(owned) => {
+                let str_ref = owned.as_ref();
+                let len = str_ref.find(pat).unwrap_or(str_ref.len());
+
+                Self(ArcCow::Owned(str_ref[..len].into()))
+            }
+        }
+    }
 }
 
 impl JsonSchema for SharedString {

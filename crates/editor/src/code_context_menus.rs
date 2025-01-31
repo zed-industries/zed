@@ -25,7 +25,6 @@ use workspace::Workspace;
 
 use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
-    display_map::DisplayPoint,
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
