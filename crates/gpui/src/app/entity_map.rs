@@ -428,8 +428,8 @@ impl<T: 'static> Entity<T> {
     /// Updates the entity referenced by this handle with the given function.
     ///
     /// The update function receives a context appropriate for its environment.
-    /// When updating in an `AppContext`, it receives a `ModelContext`.
-    /// When updating in a `WindowContext`, it receives a `ViewContext`.
+    /// When updating in an `App`, it receives a `Context`.
+    /// When updating in a `Window`, it receives a `Window` and a `Context`.
     pub fn update<C, R>(
         &self,
         cx: &mut C,

@@ -12,22 +12,22 @@
 //! gpui = { git = "https://github.com/zed-industries/zed" }
 //! ```
 //!
-//! Everything in GPUI starts with an [`App`]. You can create one with [`App::new`], and
-//! kick off your application by passing a callback to [`App::run`]. Inside this callback,
-//! you can create a new window with [`AppContext::open_window`], and register your first root
+//! Everything in GPUI starts with an [`Application`]. You can create one with [`Application::new`], and
+//! kick off your application by passing a callback to [`Application::run`]. Inside this callback,
+//! you can create a new window with [`App::open_window`], and register your first root
 //! view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
 //!
 //! ## The Big Picture
 //!
 //! GPUI offers three different [registers](https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
 //!
-//! - State management and communication with Models. Whenever you need to store application state
+//! - State management and communication with `Entity`'s. Whenever you need to store application state
 //!   that communicates between different parts of your application, you'll want to use GPUI's
-//!   models. Models are owned by GPUI and are only accessible through an owned smart pointer
-//!   similar to an [`Rc`]. See the [`app::model_context`] module for more information.
+//!   entities. Entities are owned by GPUI and are only accessible through an owned smart pointer
+//!   similar to an [`Rc`]. See the [`app::entity_context`] module for more information.
 //!
-//! - High level, declarative UI with Views. All UI in GPUI starts with a View. A view is simply
-//!   a model that can be rendered, via the [`Render`] trait. At the start of each frame, GPUI
+//! - High level, declarative UI with views. All UI in GPUI starts with a view. A view is simply
+//!   a [`Entity`] that can be rendered, by implementing the [`Render`] trait. At the start of each frame, GPUI
 //!   will call this render method on the root view of a given window. Views build a tree of
 //!   `elements`, lay them out and style them with a tailwind-style API, and then give them to
 //!   GPUI to turn into pixels. See the [`elements::Div`] element for an all purpose swiss-army
@@ -49,7 +49,7 @@
 //!
 //! - Actions are user-defined structs that are used for converting keystrokes into logical operations in your UI.
 //!   Use this for implementing keyboard shortcuts, such as cmd-q. See the [`action`] module for more information.
-//! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::AppContext`].
+//! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::App`].
 //! - An async executor that is integrated with the platform's event loop. See the [`executor`] module for more information.,
 //! - The [gpui::test] macro provides a convenient way to write tests for your GPUI applications. Tests also have their
 //!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`app::test_context`]

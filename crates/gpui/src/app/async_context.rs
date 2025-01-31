@@ -10,9 +10,9 @@ use std::{future::Future, rc::Weak};
 
 use super::Context;
 
-/// An async-friendly version of [AppContext] with a static lifetime so it can be held across `await` points in async code.
-/// You're provided with an instance when calling [AppContext::spawn], and you can also create one with [AppContext::to_async].
-/// Internally, this holds a weak reference to an `AppContext`, so its methods are fallible to protect against cases where the [AppContext] is dropped.
+/// An async-friendly version of [App] with a static lifetime so it can be held across `await` points in async code.
+/// You're provided with an instance when calling [App::spawn], and you can also create one with [App::to_async].
+/// Internally, this holds a weak reference to an `App`, so its methods are fallible to protect against cases where the [App] is dropped.
 #[derive(Clone)]
 pub struct AsyncApp {
     pub(crate) app: Weak<AppCell>,
@@ -165,7 +165,7 @@ impl AsyncApp {
     }
 
     /// Determine whether global state of the specified type has been assigned.
-    /// Returns an error if the `AppContext` has been dropped.
+    /// Returns an error if the `App` has been dropped.
     pub fn has_global<G: Global>(&self) -> Result<bool> {
         let app = self
             .app
@@ -178,7 +178,7 @@ impl AsyncApp {
     /// Reads the global state of the specified type, passing it to the given callback.
     ///
     /// Panics if no global state of the specified type has been assigned.
-    /// Returns an error if the `AppContext` has been dropped.
+    /// Returns an error if the `App` has been dropped.
     pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Result<R> {
         let app = self
             .app
@@ -193,14 +193,14 @@ impl AsyncApp {
     /// Similar to [`AsyncApp::read_global`], but returns an error instead of panicking
     /// if no state of the specified type has been assigned.
     ///
-    /// Returns an error if no state of the specified type has been assigned the `AppContext` has been dropped.
+    /// Returns an error if no state of the specified type has been assigned the `App` has been dropped.
     pub fn try_read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Option<R> {
         let app = self.app.upgrade()?;
         let app = app.borrow_mut();
         Some(read(app.try_global()?, &app))
     }
 
-    /// A convenience method for [AppContext::update_global]
+    /// A convenience method for [App::update_global]
     /// for updating the global state of the specified type.
     pub fn update_global<G: Global, R>(
         &self,
@@ -235,13 +235,13 @@ impl AsyncWindowContext {
         self.window
     }
 
-    /// A convenience method for [`AppContext::update_window`].
+    /// A convenience method for [`App::update_window`].
     pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> Result<R> {
         self.app
             .update_window(self.window, |_, window, cx| update(window, cx))
     }
 
-    /// A convenience method for [`AppContext::update_window`].
+    /// A convenience method for [`App::update_window`].
     pub fn update_root<R>(
         &mut self,
         update: impl FnOnce(AnyView, &mut Window, &mut App) -> R,
@@ -256,7 +256,7 @@ impl AsyncWindowContext {
             .ok();
     }
 
-    /// A convenience method for [`AppContext::global`].
+    /// A convenience method for [`App::global`].
     pub fn read_global<G: Global, R>(
         &mut self,
         read: impl FnOnce(&G, &Window, &App) -> R,
@@ -265,7 +265,7 @@ impl AsyncWindowContext {
             .update(self, |_, window, cx| read(cx.global(), window, cx))
     }
 
-    /// A convenience method for [`AppContext::update_global`].
+    /// A convenience method for [`App::update_global`].
     /// for updating the global state of the specified type.
     pub fn update_global<G, R>(
         &mut self,

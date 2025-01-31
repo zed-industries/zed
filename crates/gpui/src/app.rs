@@ -46,10 +46,10 @@ mod entity_context;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
-/// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
+/// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// Temporary(?) wrapper around [`RefCell<AppContext>`] to help us debug any double borrows.
+/// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
 #[doc(hidden)]
 pub struct AppCell {
@@ -222,8 +222,8 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
-/// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
-/// You need a reference to an `AppContext` to access the state of a [Entity].
+/// Other [Context] derefs to this type.
+/// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
@@ -359,7 +359,7 @@ impl App {
         app
     }
 
-    /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
+    /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given 100ms to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
@@ -588,7 +588,7 @@ impl App {
     }
 
     /// Opens a new window with the given option and the root view returned by the given function.
-    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
+    /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
     pub fn open_window<V: 'static + Render>(
         &mut self,
@@ -823,7 +823,7 @@ impl App {
         self.pending_effects.push_back(effect);
     }
 
-    /// Called at the end of [`AppContext::update`] to complete any side effects
+    /// Called at the end of [`App::update`] to complete any side effects
     /// such as notifying observers, emitting events, etc. Effects can themselves
     /// cause effects, so we continue looping until all effects are processed.
     fn flush_effects(&mut self) {
@@ -1577,7 +1577,7 @@ impl AppContext for App {
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `ModelContext` and must return an object representing the entity. A `Entity` handle will be returned,
+    /// a `Context` and must return an object representing the entity. A `Entity` handle will be returned,
     /// which can be used to access the entity in a context.
     fn new<T: 'static>(
         &mut self,
@@ -1616,7 +1616,7 @@ impl AppContext for App {
     }
 
     /// Updates the entity referenced by the given handle. The function is passed a mutable reference to the
-    /// entity along with a `ModelContext` for the entity.
+    /// entity along with a `Context` for the entity.
     fn update_entity<T: 'static, R>(
         &mut self,
         handle: &Entity<T>,

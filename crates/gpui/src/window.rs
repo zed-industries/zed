@@ -189,7 +189,7 @@ impl WindowFocusEvent {
     }
 }
 
-/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+/// This is provided when subscribing for `Context::on_focus_out` events.
 pub struct FocusOutEvent {
     /// A weak focus handle representing what was blurred.
     pub blurred: WeakFocusHandle,
@@ -1912,7 +1912,7 @@ impl Window {
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
-    /// Use [`AppContext::text_style`] to get the current, combined text style. This method
+    /// Use [`Window::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where

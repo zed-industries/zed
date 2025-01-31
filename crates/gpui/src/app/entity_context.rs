@@ -46,8 +46,8 @@ impl<'a, T: 'static> Context<'a, T> {
         self.entity_state.clone()
     }
 
-    /// Arranges for the given function to be called whenever [`ModelContext::notify`] or
-    /// [`ViewContext::notify`](crate::ViewContext::notify) is called with the given entity.
+    /// Arranges for the given function to be called whenever [`Context::notify`] is
+    /// called with the given entity.
     pub fn observe<W>(
         &mut self,
         entity: &Entity<W>,
@@ -195,7 +195,7 @@ impl<'a, T: 'static> Context<'a, T> {
 
     /// Convenience method for accessing view state in an event callback.
     ///
-    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut AppContext)`,
+    /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut App)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
     pub fn listener<E: ?Sized>(
@@ -238,7 +238,7 @@ impl<'a, T: 'static> Context<'a, T> {
         });
     }
 
-    /// Observe another entity for changes to its state, as tracked by [`ModelContext::notify`].
+    /// Observe another entity for changes to its state, as tracked by [`Context::notify`].
     pub fn observe_in<V2>(
         &mut self,
         observed: &Entity<V2>,

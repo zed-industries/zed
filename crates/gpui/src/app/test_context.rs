@@ -163,13 +163,13 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
-    /// Gives you an `&mut AppContext` for the duration of the closure
+    /// Gives you an `&mut App` for the duration of the closure
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
         let mut cx = self.app.borrow_mut();
         cx.update(f)
     }
 
-    /// Gives you an `&AppContext` for the duration of the closure
+    /// Gives you an `&App` for the duration of the closure
     pub fn read<R>(&self, f: impl FnOnce(&App) -> R) -> R {
         let cx = self.app.borrow();
         f(&cx)
