@@ -667,7 +667,7 @@ impl DapStore {
     fn start_client_internal(
         &mut self,
         session_id: DebugSessionId,
-        delegate: Arc<dyn DapDelegate>,
+        delegate: DapAdapterDelegate,
         config: DebugAdapterConfig,
         cx: &mut Context<Self>,
     ) -> Task<Result<Arc<DebugAdapterClient>>> {
@@ -694,7 +694,7 @@ impl DapStore {
             })?;
 
             let (adapter, binary) = match adapter
-                .get_binary(delegate.as_ref(), &config, binary, &mut cx)
+                .get_binary(&delegate, &config, binary, &mut cx)
                 .await
             {
                 Err(error) => {
@@ -755,7 +755,7 @@ impl DapStore {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
         };
 
-        let delegate = Arc::new(DapAdapterDelegate::new(
+        let delegate = DapAdapterDelegate::new(
             local_store.fs.clone(),
             worktree.read(cx).id(),
             local_store.node_runtime.clone(),
@@ -766,7 +766,7 @@ impl DapStore {
                 let worktree = worktree.read(cx);
                 env.get_environment(Some(worktree.id()), Some(worktree.abs_path()), cx)
             }),
-        ));
+        );
 
         let session_id = local_store.next_session_id();
         let start_client_task =
@@ -2406,7 +2406,7 @@ impl DapAdapterDelegate {
 #[async_trait(?Send)]
 impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn worktree_id(&self) -> WorktreeId {
-        self.worktree_id.clone()
+        self.worktree_id
     }
 
     fn http_client(&self) -> Arc<dyn HttpClient> {
