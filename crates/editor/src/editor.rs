@@ -15129,13 +15129,14 @@ impl EditorSnapshot {
                 .map(|max_author_length| {
                     const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
 
-                    // Length of the author name, but also space for the commit hash,
-                    // the spacing and the timestamp.
+                    /// The number of characters to dedicate to gaps and margins.
+                    const SPACING_WIDTH: usize = 4;
+
                     let max_char_count = max_author_length
                         .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
-                        + 7 // length of commit sha
+                        + ::git::SHORT_SHA_LENGTH
                         + MAX_RELATIVE_TIMESTAMP.len()
-                        + 4; // gaps and margins
+                        + SPACING_WIDTH;
 
                     em_advance * max_char_count
                 });
