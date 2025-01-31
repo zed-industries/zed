@@ -21,15 +21,15 @@
 //!
 //! GPUI offers three different [registers](https://en.wikipedia.org/wiki/Register_(sociolinguistics)) depending on your needs:
 //!
-//! - State management and communication with `Entity`'s. Whenever you need to store application state
+//! - State management and communication with [`Entity`]'s. Whenever you need to store application state
 //!   that communicates between different parts of your application, you'll want to use GPUI's
 //!   entities. Entities are owned by GPUI and are only accessible through an owned smart pointer
-//!   similar to an [`Rc`]. See the [`app::entity_context`] module for more information.
+//!   similar to an [`std::rc::Rc`]. See the [`app::context`] module for more information.
 //!
 //! - High level, declarative UI with views. All UI in GPUI starts with a view. A view is simply
 //!   a [`Entity`] that can be rendered, by implementing the [`Render`] trait. At the start of each frame, GPUI
 //!   will call this render method on the root view of a given window. Views build a tree of
-//!   `elements`, lay them out and style them with a tailwind-style API, and then give them to
+//!   [`Element`]s, lay them out and style them with a tailwind-style API, and then give them to
 //!   GPUI to turn into pixels. See the [`elements::Div`] element for an all purpose swiss-army
 //!   knife for UI.
 //!
