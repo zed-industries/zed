@@ -117,7 +117,7 @@ enum ClientOperation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 enum GitOperation {
-    WriteGitHead {
+    WriteGitIndex {
         repo_path: PathBuf,
         contents: Vec<(PathBuf, String)>,
     },
@@ -930,7 +930,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             }
 
             ClientOperation::GitOperation { operation } => match operation {
-                GitOperation::WriteGitHead {
+                GitOperation::WriteGitIndex {
                     repo_path,
                     contents,
                 } => {
@@ -945,7 +945,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     }
 
                     log::info!(
-                        "{}: writing git HEAD for repo {:?}: {:?}",
+                        "{}: writing git index for repo {:?}: {:?}",
                         client.username,
                         repo_path,
                         contents
@@ -1440,7 +1440,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
                 .map(|path| (path, Alphanumeric.sample_string(rng, 16)))
                 .collect();
 
-            GitOperation::WriteGitHead {
+            GitOperation::WriteGitIndex {
                 repo_path,
                 contents,
             }

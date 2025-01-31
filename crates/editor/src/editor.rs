@@ -1291,7 +1291,7 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            get_uncommitted_changes_for_buffers(
+            get_unstaged_changes_for_buffers(
                 &project,
                 buffer.read(cx).all_buffers(),
                 buffer.clone(),
@@ -13346,7 +13346,7 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).change_set_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_changes_for_buffers(
+                        get_unstaged_changes_for_buffers(
                             project,
                             [buffer.clone()],
                             self.buffer.clone(),
@@ -14111,7 +14111,7 @@ impl Editor {
     }
 }
 
-fn get_uncommitted_changes_for_buffers(
+fn get_unstaged_changes_for_buffers(
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,

@@ -2650,7 +2650,7 @@ async fn test_git_diff_base_change(
         );
     });
 
-    // Open uncommitted changes on thte, without opening them on the host irst
+    // Open uncommitted changes on the guest, without opening them on the host first
     let remote_uncommitted_changes_a = project_remote
         .update(cx_b, |p, cx| {
             p.open_uncommitted_changes(buffer_remote_a.clone(), cx)
@@ -2799,7 +2799,7 @@ async fn test_git_diff_base_change(
         );
     });
 
-    // Update HEAD
+    // Updatet the staged text
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
         &[("b.txt".into(), new_staged_text.clone())],
