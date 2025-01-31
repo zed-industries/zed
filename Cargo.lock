@@ -4657,17 +4657,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fireworks"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
