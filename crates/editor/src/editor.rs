@@ -5416,7 +5416,6 @@ impl Editor {
             }))
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn context_menu_visible(&self) -> bool {
         self.context_menu
             .borrow()
@@ -5441,11 +5440,95 @@ impl Editor {
     }
     */
 
-    fn context_menu_origin(&self, cursor_position: DisplayPoint) -> Option<ContextMenuOrigin> {
+    fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
         self.context_menu
             .borrow()
             .as_ref()
-            .map(|menu| menu.origin(cursor_position))
+            .map(|menu| menu.origin())
+    }
+
+    fn edit_prediction_cursor_popover_height(&self) -> Pixels {
+        // todo! base this off of the font.
+        px(32.)
+    }
+
+    fn render_edit_prediction_cursor_popover(&self, cx: &mut App) -> AnyElement {
+        let is_loading = self
+            .inline_completion_provider
+            .as_ref()
+            .map_or(false, |provider| provider.provider.is_refreshing(cx));
+
+        let right_side = h_flex()
+            .gap_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border_variant)
+            .px_2()
+            .child(
+                #[cfg(not(target_os = "macos"))]
+                "alt",
+                #[cfg(target_os = "macos")]
+                Icon::new(IconName::Option),
+            )
+            .child("Preview")
+            .into_any_element();
+
+        let completion_preview = match self
+            .active_inline_completion
+            .as_ref()
+            .or(self.stale_inline_completion.as_ref())
+        {
+            Some(completion) => Label::new("display_info()")
+                .size(LabelSize::Small)
+                .map(|label| {
+                    if is_loading {
+                        label
+                            .with_animation(
+                                "pulsating-stale-completion",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else {
+                        label.into_any_element()
+                    }
+                }),
+            None => {
+                if is_loading {
+                    Label::new("...")
+                        .size(LabelSize::Small)
+                        .with_animation(
+                            "pulsating-prediction-ellipsis",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 0.8)),
+                            |label, delta| label.alpha(delta),
+                        )
+                        .into_any_element()
+                } else {
+                    Label::new("No Prediction").into_any_element()
+                }
+            }
+        };
+
+        h_flex()
+            .h(self.edit_prediction_cursor_popover_height())
+            .flex_1()
+            .px_2()
+            .gap_3()
+            .elevation_2(cx)
+            // .opacity(if is_loading { 0.6 } else { 1.0 })
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(Icon::new(IconName::ZedPredict))
+                    .child(completion_preview),
+            )
+            .child(right_side)
+            .into_any()
     }
 
     fn render_context_menu(
@@ -5455,114 +5538,13 @@ impl Editor {
         y_flipped: bool,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<(Pixels, AnyElement)> {
+    ) -> Option<AnyElement> {
         let menu = self.context_menu.borrow();
         let menu = menu.as_ref()?;
         if !menu.visible() {
             return None;
         };
-
-        let menu = menu.render(style, max_height_in_lines, y_flipped, window, cx);
-
-        if self.has_active_completions_menu() && self.show_inline_completions_in_menu(cx) {
-            let zeta_popover_height = rems_from_px(32.);
-            let zeta_and_menu_gap = rems_from_px(4.);
-
-            let y_offset = if y_flipped {
-                px(0.)
-            } else {
-                (zeta_popover_height + zeta_and_menu_gap).to_pixels(window.rem_size())
-            };
-
-            let is_loading = self
-                .inline_completion_provider
-                .as_ref()
-                .map_or(false, |provider| provider.provider.is_refreshing(cx));
-
-            let right_side = h_flex()
-                .gap_1()
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
-                .px_2()
-                .child(
-                    #[cfg(not(target_os = "macos"))]
-                    "alt",
-                    #[cfg(target_os = "macos")]
-                    Icon::new(IconName::Option),
-                )
-                .child("Preview")
-                .into_any_element();
-
-            let completion_preview = match self
-                .active_inline_completion
-                .as_ref()
-                .or(self.stale_inline_completion.as_ref())
-            {
-                Some(completion) => {
-                    Label::new("display_info()")
-                        .size(LabelSize::Small)
-                        .map(|label| {
-                            if is_loading {
-                                label
-                                    .with_animation(
-                                        "pulsating-stale-completion",
-                                        Animation::new(Duration::from_secs(2))
-                                            .repeat()
-                                            .with_easing(pulsating_between(0.4, 0.8)),
-                                        |label, delta| label.alpha(delta),
-                                    )
-                                    .into_any_element()
-                            } else {
-                                label.into_any_element()
-                            }
-                        })
-                }
-                None => {
-                    if is_loading {
-                        Label::new("...")
-                            .size(LabelSize::Small)
-                            .with_animation(
-                                "pulsating-prediction-ellipsis",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any_element()
-                    } else {
-                        Label::new("No Prediction").into_any_element()
-                    }
-                }
-            };
-
-            let container = v_flex()
-                .gap(zeta_and_menu_gap)
-                .when(y_flipped, |parent| parent.flex_col_reverse())
-                .child(
-                    h_flex()
-                        .h(zeta_popover_height)
-                        .flex_1()
-                        .px_2()
-                        .gap_3()
-                        .elevation_2(cx)
-                        // .opacity(if is_loading { 0.6 } else { 1.0 })
-                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .child(Icon::new(IconName::ZedPredict))
-                                .child(completion_preview),
-                        )
-                        .child(right_side),
-                )
-                .child(menu)
-                .into_any();
-
-            Some((y_offset, container))
-        } else {
-            Some((px(0.), menu))
-        }
+        Some(menu.render(style, max_height_in_lines, y_flipped, window, cx))
     }
 
     fn render_context_menu_aside(

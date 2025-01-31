@@ -112,10 +112,10 @@ impl CodeContextMenu {
         }
     }
 
-    pub fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
+    pub fn origin(&self) -> ContextMenuOrigin {
         match self {
-            CodeContextMenu::Completions(menu) => menu.origin(cursor_position),
-            CodeContextMenu::CodeActions(menu) => menu.origin(cursor_position),
+            CodeContextMenu::Completions(menu) => menu.origin(),
+            CodeContextMenu::CodeActions(menu) => menu.origin(),
         }
     }
 
@@ -152,7 +152,7 @@ impl CodeContextMenu {
 }
 
 pub enum ContextMenuOrigin {
-    EditorPoint(DisplayPoint),
+    Cursor,
     GutterIndicator(DisplayRow),
 }
 
@@ -419,8 +419,8 @@ impl CompletionsMenu {
         !self.is_empty() && !self.previewing_inline_completion
     }
 
-    fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
-        ContextMenuOrigin::EditorPoint(cursor_position)
+    fn origin(&self) -> ContextMenuOrigin {
+        ContextMenuOrigin::Cursor
     }
 
     fn render(
@@ -904,11 +904,11 @@ impl CodeActionsMenu {
         !self.actions.is_empty()
     }
 
-    fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
+    fn origin(&self) -> ContextMenuOrigin {
         if let Some(row) = self.deployed_from_indicator {
             ContextMenuOrigin::GutterIndicator(row)
         } else {
-            ContextMenuOrigin::EditorPoint(cursor_position)
+            ContextMenuOrigin::Cursor
         }
     }
 
