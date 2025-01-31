@@ -6549,8 +6549,7 @@ impl Element for EditorElement {
                         EditorSettings::get_global(cx),
                     );
 
-                    let scroll_range_bounds = scrollbar_range_data.scroll_range;
-                    let mut scroll_width = scroll_range_bounds.size.width;
+                    let mut scroll_width = scrollbar_range_data.scroll_range.width;
 
                     let sticky_header_excerpt = if snapshot.buffer_snapshot.show_headers() {
                         snapshot.sticky_header_excerpt(start_row)
@@ -7123,7 +7122,7 @@ pub(super) fn gutter_bounds(
 
 struct ScrollbarRangeData {
     scrollbar_bounds: Bounds<Pixels>,
-    scroll_range: Bounds<Pixels>,
+    scroll_range: Size<Pixels>,
     letter_size: Size<Pixels>,
 }
 
@@ -7149,10 +7148,7 @@ impl ScrollbarRangeData {
             vertical_overscroll,
         );
 
-        let scroll_range = Bounds {
-            origin: scrollbar_bounds.origin,
-            size: text_bounds_size + overscroll,
-        };
+        let scroll_range = text_bounds_size + overscroll;
 
         ScrollbarRangeData {
             scrollbar_bounds,
@@ -7256,8 +7252,13 @@ impl EditorScrollbars {
         show_scrollbars: bool,
         window: &mut Window,
     ) -> Self {
-        let scrollbar_bounds = |editor_text_bounds: &Bounds<Pixels>, axis: ScrollbarAxis| match axis
-        {
+        let ScrollbarRangeData {
+            scrollbar_bounds: editor_text_bounds,
+            scroll_range,
+            letter_size,
+        } = scrollbar_range_data;
+
+        let scrollbar_bounds_for = |axis: ScrollbarAxis| match axis {
             ScrollbarAxis::Horizontal => Bounds::from_corner_and_size(
                 Corner::BottomLeft,
                 editor_text_bounds.bottom_left(),
@@ -7281,15 +7282,28 @@ impl EditorScrollbars {
             settings_visibility
                 .along(axis)
                 .then(|| {
-                    ScrollbarLayout::new(
-                        scrollbar_range_data,
-                        scroll_position,
-                        &scrollbar_bounds,
-                        axis,
-                        window,
+                    (
+                        editor_text_bounds.size.along(axis),
+                        scroll_range.along(axis),
                     )
                 })
-                .flatten()
+                .filter(|(editor_size, scroll_range)| {
+                    // The scrollbar should only be rendered if the content does
+                    // not entirely fit into the editor
+                    // However, this only applies to the horizontal scrollbar, as information about the
+                    // vertical scrollbar layout is always needed for scrollbar diagnostics.
+                    axis != ScrollbarAxis::Horizontal || editor_size < scroll_range
+                })
+                .map(|(editor_size, scroll_range)| {
+                    ScrollbarLayout::new(
+                        window.insert_hitbox(scrollbar_bounds_for(axis), false),
+                        editor_size,
+                        scroll_range,
+                        letter_size.along(axis),
+                        scroll_position.along(axis),
+                        axis,
+                    )
+                })
         };
 
         Self {
@@ -7332,55 +7346,33 @@ impl ScrollbarLayout {
     const MIN_THUMB_SIZE: Pixels = px(20.0);
 
     fn new(
-        scrollbar_range_data: &ScrollbarRangeData,
-        scroll_position: gpui::Point<f32>,
-        scrollbar_bounds_fn: impl FnOnce(&Bounds<Pixels>, ScrollbarAxis) -> Bounds<Pixels>,
+        scrollbar_track_hitbox: Hitbox,
+        editor_size: Pixels,
+        scroll_range: Pixels,
+        letter_size: Pixels,
+        scroll_position: f32,
         axis: ScrollbarAxis,
-        window: &mut Window,
-    ) -> Option<ScrollbarLayout> {
-        let ScrollbarRangeData {
-            scrollbar_bounds,
-            scroll_range,
-            letter_size,
-        } = scrollbar_range_data;
-
-        let scroll_range = scroll_range.size.along(axis);
-        let editor_bounds = scrollbar_bounds.size.along(axis);
-
-        // If the content fits on the current page, there is no need to render a scrollbar
-        // nor any elements related to it.
-        // However, this only applies to the horizontal scrollbar, as information about the
-        // vertical scrollbar layout is always needed for scrollbar diagnostics.
-        if axis == ScrollbarAxis::Horizontal && editor_bounds >= scroll_range {
-            return None;
-        }
-
-        let letter_size = letter_size.along(axis);
-        let scroll_position = scroll_position.along(axis);
-        let text_units_per_page = editor_bounds / letter_size;
-
-        let visible_range = scroll_position..scroll_position + text_units_per_page;
-
-        let scrollbar_track_bounds = scrollbar_bounds_fn(scrollbar_bounds, axis);
+    ) -> Self {
+        let scrollbar_track_bounds = scrollbar_track_hitbox.bounds;
         let scrollbar_track_length = scrollbar_track_bounds.size.along(axis);
 
+        let text_units_per_page = editor_size / letter_size;
+        let visible_range = scroll_position..scroll_position + text_units_per_page;
         let total_text_units = scroll_range / letter_size;
 
         let thumb_percentage = text_units_per_page / total_text_units;
-
         let thumb_size =
             (scrollbar_track_length * thumb_percentage).max(ScrollbarLayout::MIN_THUMB_SIZE);
-
         let text_unit_size = (scrollbar_track_length - thumb_size)
             / (total_text_units - text_units_per_page).max(0.);
 
-        Some(ScrollbarLayout {
-            hitbox: window.insert_hitbox(scrollbar_track_bounds, false),
+        ScrollbarLayout {
+            hitbox: scrollbar_track_hitbox,
             visible_range,
             text_unit_size,
             thumb_size,
             axis,
-        })
+        }
     }
 
     fn thumb_bounds(&self) -> Bounds<Pixels> {
