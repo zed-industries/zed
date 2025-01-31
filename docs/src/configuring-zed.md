@@ -382,11 +382,16 @@ There are two options to choose from:
 - Default:
 
 ```json
-"inline_completions": {
-  "disabled_globs": [
-    ".env"
-  ]
-}
+  "inline_completions": {
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/secrets.yml"
+    ]
+  }
 ```
 
 **Options**
