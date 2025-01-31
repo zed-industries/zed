@@ -85,12 +85,19 @@ actions!(
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(
-    workspace,
-    [ToggleVimMode, ResizeRight, ResizeLeft, ResizeUp, ResizeDown]
-);
+actions!(workspace, [ToggleVimMode,]);
 
 impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
+
+actions!(
+    vim,
+    [
+        ResizePaneRight,
+        ResizePaneLeft,
+        ResizePaneUp,
+        ResizePaneDown
+    ]
+);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
@@ -138,7 +145,7 @@ pub fn init(cx: &mut App) {
             workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, window, cx)
         });
 
-        workspace.register_action(|workspace, _: &ResizeRight, window, cx| {
+        workspace.register_action(|workspace, _: &ResizePaneRight, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
@@ -153,7 +160,7 @@ pub fn init(cx: &mut App) {
             workspace.resize_pane(Axis::Horizontal, width.width * count, cx);
         });
 
-        workspace.register_action(|workspace, _: &ResizeLeft, window, cx| {
+        workspace.register_action(|workspace, _: &ResizePaneLeft, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
@@ -168,14 +175,14 @@ pub fn init(cx: &mut App) {
             workspace.resize_pane(Axis::Horizontal, -width.width * count, cx);
         });
 
-        workspace.register_action(|workspace, _: &ResizeUp, _, cx| {
+        workspace.register_action(|workspace, _: &ResizePaneUp, _, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size() * theme.buffer_line_height.value();
             workspace.resize_pane(Axis::Vertical, height * count, cx);
         });
 
-        workspace.register_action(|workspace, _: &ResizeDown, _, cx| {
+        workspace.register_action(|workspace, _: &ResizePaneDown, _, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size() * theme.buffer_line_height.value();
