@@ -1,12 +1,21 @@
-use futures::{channel::oneshot, FutureExt as _};
-use gpui::{App, Context, Global, Subscription, Window};
-use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc, task::Poll};
+use futures::channel::oneshot;
+use futures::{select_biased, FutureExt};
+use gpui::{App, Context, Global, Subscription, Task, Window};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::LazyLock;
+use std::time::Duration;
+use std::{future::Future, pin::Pin, task::Poll};
 
 #[derive(Default)]
 struct FeatureFlags {
     flags: Vec<String>,
     staff: bool,
 }
+
+pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
+    dbg!(std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0"))
+});
 
 impl FeatureFlags {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
@@ -40,7 +49,7 @@ pub trait FeatureFlag {
     }
 
     fn enabled_in_development() -> bool {
-        Self::enabled_for_staff()
+        Self::enabled_for_staff() && !dbg!(*ZED_DISABLE_STAFF)
     }
 }
 
@@ -158,6 +167,10 @@ where
 
 pub trait FeatureFlagAppExt {
     fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag;
+
+    /// Waits for the specified feature flag to resolve, up to the given timeout.
+    fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool>;
+
     fn update_flags(&mut self, staff: bool, flags: Vec<String>);
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
@@ -223,6 +236,20 @@ impl FeatureFlagAppExt for App {
         }
 
         WaitForFlag(rx, subscription)
+    }
+
+    fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
+        let wait_for_flag = self.wait_for_flag::<T>();
+
+        self.spawn(|_cx| async move {
+            let mut wait_for_flag = wait_for_flag.fuse();
+            let mut timeout = FutureExt::fuse(smol::Timer::after(timeout));
+
+            select_biased! {
+                is_enabled = wait_for_flag => is_enabled,
+                _ = timeout => false,
+            }
+        })
     }
 }
 

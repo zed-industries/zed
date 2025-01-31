@@ -5,15 +5,15 @@ use std::{
 };
 
 use anyhow::Result;
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use gpui::{
-    actions, AnyElement, AnyView, AnyWindowHandle, App, AppContext, AsyncWindowContext, Entity,
-    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
+    actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
+    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt};
 use multi_buffer::MultiBuffer;
 use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
