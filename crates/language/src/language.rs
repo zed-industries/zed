@@ -256,7 +256,7 @@ impl CachedLspAdapter {
 
     pub fn language_id(&self, language_name: &LanguageName) -> String {
         self.language_ids
-            .get(language_name.0.as_ref())
+            .get(language_name.as_ref())
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
@@ -1462,7 +1462,7 @@ impl Language {
         self.config
             .code_fence_block_name
             .clone()
-            .unwrap_or_else(|| self.config.name.0.to_lowercase().into())
+            .unwrap_or_else(|| self.config.name.as_ref().to_lowercase().into())
     }
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
@@ -1702,6 +1702,58 @@ impl Grammar {
 }
 
 impl CodeLabel {
+    pub fn fallback_for_completion(
+        item: &lsp::CompletionItem,
+        language: Option<&Language>,
+    ) -> Self {
+        let highlight_id = item.kind.and_then(|kind| {
+            let grammar = language?.grammar()?;
+            use lsp::CompletionItemKind as Kind;
+            match kind {
+                Kind::CLASS => grammar.highlight_id_for_name("type"),
+                Kind::CONSTANT => grammar.highlight_id_for_name("constant"),
+                Kind::CONSTRUCTOR => grammar.highlight_id_for_name("constructor"),
+                Kind::ENUM => grammar
+                    .highlight_id_for_name("enum")
+                    .or_else(|| grammar.highlight_id_for_name("type")),
+                Kind::FIELD => grammar.highlight_id_for_name("property"),
+                Kind::FUNCTION => grammar.highlight_id_for_name("function"),
+                Kind::INTERFACE => grammar.highlight_id_for_name("type"),
+                Kind::METHOD => grammar
+                    .highlight_id_for_name("function.method")
+                    .or_else(|| grammar.highlight_id_for_name("function")),
+                Kind::OPERATOR => grammar.highlight_id_for_name("operator"),
+                Kind::PROPERTY => grammar.highlight_id_for_name("property"),
+                Kind::STRUCT => grammar.highlight_id_for_name("type"),
+                Kind::VARIABLE => grammar.highlight_id_for_name("variable"),
+                Kind::KEYWORD => grammar.highlight_id_for_name("keyword"),
+                _ => None,
+            }
+        });
+
+        let label = &item.label;
+        let label_length = label.len();
+        let runs = highlight_id
+            .map(|highlight_id| vec![(0..label_length, highlight_id)])
+            .unwrap_or_default();
+        let text = if let Some(detail) = &item.detail {
+            format!("{label} {detail}")
+        } else if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{label} {description}")
+        } else {
+            label.clone()
+        };
+        Self {
+            text,
+            runs,
+            filter_range: 0..label_length,
+        }
+    }
+
     pub fn plain(text: String, filter_text: Option<&str>) -> Self {
         let mut result = Self {
             runs: Vec::new(),

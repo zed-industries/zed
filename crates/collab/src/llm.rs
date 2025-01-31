@@ -42,6 +42,11 @@ use util::ResultExt;
 
 pub use token::*;
 
+const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
+
+/// Output token limit. A copy of this constant is also in `crates/zeta/src/zeta.rs`.
+const MAX_OUTPUT_TOKENS: u32 = 2048;
+
 pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
@@ -51,8 +56,6 @@ pub struct LlmState {
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
 }
-
-const ACTIVE_USER_COUNT_CACHE_DURATION: Duration = Duration::seconds(30);
 
 impl LlmState {
     pub async fn new(config: Config, executor: Executor) -> Result<Arc<Self>> {
@@ -447,7 +450,7 @@ async fn predict_edits(
         ));
     }
 
-    let sample_input_output = claims.is_staff && rand::random::<f32>() < 0.1;
+    let should_sample = claims.is_staff || params.can_collect_data;
 
     let api_url = state
         .config
@@ -488,7 +491,7 @@ async fn predict_edits(
         fireworks::CompletionRequest {
             model: model.to_string(),
             prompt: prompt.clone(),
-            max_tokens: 2048,
+            max_tokens: MAX_OUTPUT_TOKENS,
             temperature: 0.,
             prediction: Some(fireworks::Prediction::Content {
                 content: params.input_excerpt.clone(),
@@ -541,7 +544,7 @@ async fn predict_edits(
                 let output = choice.text.clone();
 
                 async move {
-                    let properties = if sample_input_output {
+                    let properties = if should_sample {
                         json!({
                             "model": model.to_string(),
                             "headers": response.headers,

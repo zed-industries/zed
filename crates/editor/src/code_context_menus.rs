@@ -493,7 +493,6 @@ impl CompletionsMenu {
                                     // Ignore font weight for syntax highlighting, as we'll use it
                                     // for fuzzy matches.
                                     highlight.font_weight = None;
-
                                     if completion.lsp_completion.deprecated.unwrap_or(false) {
                                         highlight.strikethrough = Some(StrikethroughStyle {
                                             thickness: 1.0.into(),

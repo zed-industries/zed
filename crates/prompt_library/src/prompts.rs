@@ -224,7 +224,7 @@ impl PromptBuilder {
         buffer: BufferSnapshot,
         range: Range<usize>,
     ) -> Result<String, RenderError> {
-        let content_type = match language_name.as_ref().map(|l| l.0.as_ref()) {
+        let content_type = match language_name.as_ref().map(|l| l.as_ref()) {
             None | Some("Markdown" | "Plain Text") => "text",
             Some(_) => "code",
         };

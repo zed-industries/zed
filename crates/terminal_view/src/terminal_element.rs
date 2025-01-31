@@ -674,11 +674,9 @@ impl Element for TerminalElement {
                     line_height: line_height.into(),
                     background_color: Some(theme.colors().terminal_ansi_background),
                     white_space: WhiteSpace::Normal,
-                    truncate: None,
                     // These are going to be overridden per-cell
-                    underline: None,
-                    strikethrough: None,
                     color: theme.colors().terminal_foreground,
+                    ..Default::default()
                 };
 
                 let text_system = cx.text_system();

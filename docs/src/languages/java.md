@@ -41,10 +41,6 @@ You can add these customizations to your Zed Settings by launching {#action zed:
 {
   "lsp": {
     "jdtls": {
-      "settings": {
-        "version": "1.40.0", // jdtls version to download and use
-        "classpath": "/path/to/classes.jar:/path/to/more/classes/"
-      },
       "initialization_options": {}
     }
   }
@@ -108,6 +104,13 @@ There are also many more options you can pass directly to the language server, f
                 "**/META-INF/maven/**",
                 "/**/test/**"
               ]
+            },
+            "jdt": {
+              "ls": {
+                "lombokSupport": {
+                  "enabled": false // Set this to true to enable lombok support
+                }
+              }
             },
             "referencesCodeLens": {
               "enabled": false

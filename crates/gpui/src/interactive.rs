@@ -147,6 +147,20 @@ pub struct ClickEvent {
     pub up: MouseUpEvent,
 }
 
+impl ClickEvent {
+    /// Returns the modifiers that were held down during both the
+    /// mouse down and mouse up events
+    pub fn modifiers(&self) -> Modifiers {
+        Modifiers {
+            control: self.up.modifiers.control && self.down.modifiers.control,
+            alt: self.up.modifiers.alt && self.down.modifiers.alt,
+            shift: self.up.modifiers.shift && self.down.modifiers.shift,
+            platform: self.up.modifiers.platform && self.down.modifiers.platform,
+            function: self.up.modifiers.function && self.down.modifiers.function,
+        }
+    }
+}
+
 /// An enum representing the mouse button that was pressed.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
 pub enum MouseButton {

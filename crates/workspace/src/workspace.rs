@@ -58,7 +58,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
+use project::{
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -365,7 +367,6 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     init_settings(cx);
-    notifications::init(cx);
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -2199,6 +2200,18 @@ impl Workspace {
             }
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, window, cx),
         }
+    }
+
+    pub fn absolute_path_of_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        self.project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            // TODO: use `abs_path` or `root_dir`
+            .map(|wt| wt.read(cx).abs_path().as_ref().to_path_buf())
     }
 
     fn add_folder_to_project(
@@ -5944,6 +5957,19 @@ pub fn open_paths(
                 .all(|file| !file.is_dir)
             {
                 cx.update(|cx| {
+                    if let Some(window) = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                    {
+                        if let Ok(workspace) = window.read(cx) {
+                            let project = workspace.project().read(cx);
+                            if project.is_local() && !project.is_via_collab() {
+                                existing = Some(window);
+                                open_visible = OpenVisible::None;
+                                return;
+                            }
+                        }
+                    }
                     for window in local_workspace_windows(cx) {
                         if let Ok(workspace) = window.read(cx) {
                             let project = workspace.project().read(cx);
