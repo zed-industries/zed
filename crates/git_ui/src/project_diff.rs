@@ -1,15 +1,19 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    path::Path,
+    sync::Arc,
+};
 
 use anyhow::Result;
-use collections::HashMap;
-use editor::{Editor, EditorEvent};
+use collections::{HashMap, HashSet};
+use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
 use gpui::{
-    actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
-    FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
+    actions, AnyElement, AnyView, AnyWindowHandle, App, AppContext, AsyncWindowContext, Entity,
+    EventEmitter, FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::MultiBuffer;
 use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
@@ -31,12 +35,14 @@ pub(crate) struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
+    pending_scroll: Option<Arc<Path>>,
 
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
 
 struct DiffBuffer {
+    abs_path: Arc<Path>,
     buffer: Entity<Buffer>,
     change_set: Entity<BufferChangeSet>,
 }
@@ -59,13 +65,35 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if let Some(existing) = workspace.item_of_type::<Self>(cx) {
+        Self::deploy_at(workspace, None, window, cx)
+    }
+
+    fn deploy_at(
+        workspace: &mut Workspace,
+        path: Option<Arc<Path>>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project_diff = if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
+            existing
         } else {
             let workspace_handle = cx.entity().downgrade();
             let project_diff =
                 cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx);
+            workspace.add_item_to_active_pane(
+                Box::new(project_diff.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            project_diff
+        };
+        if let Some(path) = path {
+            project_diff.update(cx, |project_diff, cx| {
+                project_diff.scroll_to(path, window, cx);
+            })
         }
     }
 
@@ -116,9 +144,22 @@ impl ProjectDiff {
             focus_handle,
             editor,
             multibuffer,
+            pending_scroll: None,
             update_needed: send,
             _task: worker,
             _subscription: git_state_subscription,
+        }
+    }
+
+    pub fn scroll_to(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path, cx) {
+            self.editor.update(cx, |editor, cx| {
+                editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
+                    s.select_ranges([position..position]);
+                })
+            })
+        } else {
+            self.pending_scroll = Some(path);
         }
     }
 
@@ -130,21 +171,7 @@ impl ProjectDiff {
             return vec![];
         };
 
-        let mut previous_buffers = self
-            .multibuffer
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .filter_map(|buffer| {
-                let file = buffer.read(cx).file()?;
-                let project_path = ProjectPath {
-                    worktree_id: file.worktree_id(cx),
-                    path: file.path().clone(),
-                };
-
-                Some((project_path, buffer.clone()))
-            })
-            .collect::<HashMap<_, _>>();
+        let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         let mut result = vec![];
         for entry in repo.status() {
@@ -154,8 +181,12 @@ impl ProjectDiff {
             let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
                 continue;
             };
+            let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+                continue;
+            };
+            let abs_path = Arc::from(abs_path);
 
-            previous_buffers.remove(&project_path);
+            previous_paths.remove(&abs_path);
             let load_buffer = self
                 .project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx));
@@ -169,20 +200,27 @@ impl ProjectDiff {
                     })?
                     .await?;
                 Ok(DiffBuffer {
+                    abs_path,
                     buffer,
                     change_set: changes,
                 })
             }));
         }
         self.multibuffer.update(cx, |multibuffer, cx| {
-            for (_, buffer) in previous_buffers {
-                multibuffer.remove_excerpts_for_buffer(buffer, cx);
+            for path in previous_paths {
+                multibuffer.remove_excerpts_for_path(path, cx);
             }
         });
         result
     }
 
-    fn register_buffer(&mut self, diff_buffer: DiffBuffer, cx: &mut App) {
+    fn register_buffer(
+        &mut self,
+        diff_buffer: DiffBuffer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let abs_path = diff_buffer.abs_path;
         let buffer = diff_buffer.buffer;
         let change_set = diff_buffer.change_set;
 
@@ -194,13 +232,18 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
 
         self.multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.set_excerpts_for_buffer(
+            dbg!(&abs_path);
+            multibuffer.set_excerpts_for_path(
+                abs_path.clone(),
                 buffer,
                 diff_hunk_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
-        })
+        });
+        if self.pending_scroll.as_ref() == Some(&abs_path) {
+            self.scroll_to(abs_path, window, cx);
+        }
     }
 
     pub async fn handle_status_updates(
@@ -212,9 +255,13 @@ impl ProjectDiff {
             let buffers_to_load = this.update(&mut cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
-                    this.update(&mut cx, |this, cx| this.register_buffer(buffer, cx))?;
+                    cx.update(|window, cx| {
+                        this.update(cx, |this, cx| this.register_buffer(buffer, window, cx))
+                            .ok();
+                    })?;
                 }
             }
+            this.update(&mut cx, |this, _| this.pending_scroll.take())?;
         }
 
         Ok(())

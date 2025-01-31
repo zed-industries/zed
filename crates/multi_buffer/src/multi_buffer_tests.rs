@@ -6,7 +6,7 @@ use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
-use std::env;
+use std::{env, path::PathBuf};
 use util::test::sample_text;
 
 #[ctor::ctor]
@@ -315,7 +315,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-        let (buffer_2_excerpt_id, _) = multibuffer.excerpts_for_buffer(&buffer_2, cx)[0].clone();
+        let (buffer_2_excerpt_id, _) =
+            multibuffer.excerpts_for_buffer(buffer_2.read(cx).remote_id(), cx)[0].clone();
         multibuffer.remove_excerpts([buffer_2_excerpt_id], cx);
         multibuffer.snapshot(cx)
     });
@@ -1545,6 +1546,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
+    let path1: Arc<Path> = Arc::from(PathBuf::from("path1"));
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1563,10 +1565,17 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
+    let path2: Arc<Path> = Arc::from(PathBuf::from("path1"));
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(buf1.clone(), vec![Point::row_range(0..1)], 2, cx);
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1)],
+            2,
+            cx,
+        );
     });
 
     assert_excerpts_match(
@@ -1583,13 +1592,14 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(buf1.clone(), vec![], 2, cx);
+        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
     });
 
     assert_excerpts_match(&multibuffer, cx, "");
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
             buf1.clone(),
             vec![Point::row_range(0..1), Point::row_range(7..8)],
             2,
@@ -1613,7 +1623,8 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
             buf1.clone(),
             vec![Point::row_range(0..1), Point::row_range(5..6)],
             2,
@@ -1637,7 +1648,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(buf2.clone(), vec![Point::row_range(2..3)], 2, cx);
+        multibuffer.set_excerpts_for_path(buf2.clone(), vec![Point::row_range(2..3)], 2, cx);
     });
 
     assert_excerpts_match(
@@ -1663,11 +1674,17 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(buf1.clone(), vec![], 2, cx);
+        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
     });
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(buf1.clone(), vec![Point::row_range(3..4)], 2, cx);
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(3..4)],
+            2,
+            cx,
+        );
     });
 
     assert_excerpts_match(
@@ -1691,7 +1708,13 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_buffer(buf1.clone(), vec![Point::row_range(3..4)], 2, cx);
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(3..4)],
+            2,
+            cx,
+        );
     });
 }
 

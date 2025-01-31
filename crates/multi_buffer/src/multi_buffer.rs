@@ -35,7 +35,7 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Range, RangeBounds, Sub},
-    path::{Path, PathBuf},
+    path::Path,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -1394,18 +1394,26 @@ impl MultiBuffer {
         anchor_ranges
     }
 
-    pub fn set_excerpts_for_buffer(
+    pub fn location_for_path(&self, path: &Arc<Path>, cx: &App) -> Option<Anchor> {
+        let excerpt_id = self.buffers_by_path.get(path)?.first()?;
+        let snapshot = self.snapshot(cx);
+        let excerpt = snapshot.excerpt(*excerpt_id)?;
+        Some(Anchor::in_buffer(
+            *excerpt_id,
+            excerpt.buffer_id,
+            excerpt.range.context.start,
+        ))
+    }
+
+    pub fn set_excerpts_for_path(
         &mut self,
+        path: Arc<Path>,
         buffer: Entity<Buffer>,
         ranges: Vec<Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-        let path = buffer_snapshot
-            .resolve_file_path(cx, true)
-            // sort untitled files first in buffer-id order
-            .unwrap_or_else(|| PathBuf::from(format!("\x00/{}", buffer_snapshot.remote_id())));
         let key: Arc<Path> = Arc::from(path);
         let (mut insert_after, excerpt_ids) = if let Some(existing) = self.buffers_by_path.get(&key)
         {
@@ -1450,7 +1458,11 @@ impl MultiBuffer {
             let locator = snapshot.excerpt_locator_for_id(*existing);
             excerpts_cursor.seek_forward(&Some(locator), Bias::Left, &());
             let existing_excerpt = excerpts_cursor.item().unwrap();
-            debug_assert_eq!(existing_excerpt.buffer_id, buffer_snapshot.remote_id());
+            if existing_excerpt.buffer_id != buffer_snapshot.remote_id() {
+                to_remove.push(existing_iter.next().unwrap());
+                to_insert.push(new_iter.next().unwrap());
+                continue;
+            }
 
             let existing_start = existing_excerpt
                 .range
@@ -1502,6 +1514,16 @@ impl MultiBuffer {
             self.buffers_by_path.remove(&key);
         } else {
             self.buffers_by_path.insert(key, new_excerpt_ids);
+        }
+    }
+
+    pub fn paths(&self) -> impl Iterator<Item = Arc<Path>> + '_ {
+        self.buffers_by_path.keys().cloned()
+    }
+
+    pub fn remove_excerpts_for_path(&mut self, path: Arc<Path>, cx: &mut Context<Self>) {
+        if let Some(to_remove) = self.buffers_by_path.remove(&path) {
+            self.remove_excerpts(to_remove, cx)
         }
     }
 
@@ -1771,7 +1793,7 @@ impl MultiBuffer {
 
     pub fn excerpts_for_buffer(
         &self,
-        buffer: &Entity<Buffer>,
+        buffer_id: BufferId,
         cx: &App,
     ) -> Vec<(ExcerptId, ExcerptRange<text::Anchor>)> {
         let mut excerpts = Vec::new();
@@ -1779,7 +1801,7 @@ impl MultiBuffer {
         let buffers = self.buffers.borrow();
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
         for locator in buffers
-            .get(&buffer.read(cx).remote_id())
+            .get(&buffer_id)
             .map(|state| &state.excerpts)
             .into_iter()
             .flatten()
@@ -1793,10 +1815,6 @@ impl MultiBuffer {
         }
 
         excerpts
-    }
-
-    pub fn remove_excerpts_for_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.set_excerpts_for_buffer(buffer, Vec::default(), 0, cx);
     }
 
     pub fn excerpt_ranges_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Vec<Range<Point>> {
@@ -1933,7 +1951,7 @@ impl MultiBuffer {
     ) -> Option<Anchor> {
         let mut found = None;
         let snapshot = buffer.read(cx).snapshot();
-        for (excerpt_id, range) in self.excerpts_for_buffer(buffer, cx) {
+        for (excerpt_id, range) in self.excerpts_for_buffer(snapshot.remote_id(), cx) {
             let start = range.context.start.to_point(&snapshot);
             let end = range.context.end.to_point(&snapshot);
             if start <= point && point < end {
