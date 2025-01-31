@@ -71,12 +71,12 @@ enum Message {
         git_repo: GitRepo,
         paths: Vec<RepoPath>,
         message: Rope,
-        name_and_email: Option<(String, String)>,
+        name_and_email: Option<(SharedString, SharedString)>,
     },
     Commit {
         git_repo: GitRepo,
         message: Rope,
-        name_and_email: Option<(String, String)>,
+        name_and_email: Option<(SharedString, SharedString)>,
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
@@ -116,7 +116,7 @@ impl GitState {
                                         repo.commit(
                                             &message.to_string(),
                                             name_and_email.as_ref().map(|(name, email)| {
-                                                (name.as_str(), email.as_str())
+                                                (name.as_ref(), email.as_ref())
                                             }),
                                         )?;
                                     }
@@ -145,8 +145,8 @@ impl GitState {
                                                 worktree_id: worktree_id.to_proto(),
                                                 work_directory_id: work_directory_id.to_proto(),
                                                 message: message.to_string(),
-                                                name,
-                                                email,
+                                                name: name.map(String::from),
+                                                email: email.map(String::from),
                                             })
                                             .await
                                             .context("sending commit request")?;
@@ -215,7 +215,7 @@ impl GitState {
                                         &message.to_string(),
                                         name_and_email
                                             .as_ref()
-                                            .map(|(name, email)| (name.as_str(), email.as_str())),
+                                            .map(|(name, email)| (name.as_ref(), email.as_ref())),
                                     )?,
                                     GitRepo::Remote {
                                         project_id,
@@ -232,8 +232,8 @@ impl GitState {
                                                 // TODO implement collaborative commit message buffer instead and use it
                                                 // If it works, remove `commit_with_message` method.
                                                 message: message.to_string(),
-                                                name,
-                                                email,
+                                                name: name.map(String::from),
+                                                email: email.map(String::from),
                                             })
                                             .await
                                             .context("sending commit request")?;
@@ -487,7 +487,12 @@ impl RepositoryHandle {
             && (commit_all || self.have_staged_changes());
     }
 
-    pub fn commit(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+    pub fn commit(
+        &self,
+        name_and_email: Option<(SharedString, SharedString)>,
+        mut err_sender: mpsc::Sender<anyhow::Error>,
+        cx: &mut App,
+    ) {
         let Some(git_repo) = self.git_repo.clone() else {
             return;
         };
@@ -496,7 +501,7 @@ impl RepositoryHandle {
             Message::Commit {
                 git_repo,
                 message,
-                name_and_email: todo!("TODO kb"),
+                name_and_email,
             },
             err_sender.clone(),
         ));
@@ -518,7 +523,7 @@ impl RepositoryHandle {
     pub fn commit_with_message(
         &self,
         message: String,
-        name_and_email: Option<(String, String)>,
+        name_and_email: Option<(SharedString, SharedString)>,
         err_sender: mpsc::Sender<anyhow::Error>,
     ) -> anyhow::Result<()> {
         let Some(git_repo) = self.git_repo.clone() else {
@@ -536,7 +541,12 @@ impl RepositoryHandle {
         Ok(())
     }
 
-    pub fn commit_all(&self, mut err_sender: mpsc::Sender<anyhow::Error>, cx: &mut App) {
+    pub fn commit_all(
+        &self,
+        name_and_email: Option<(SharedString, SharedString)>,
+        mut err_sender: mpsc::Sender<anyhow::Error>,
+        cx: &mut App,
+    ) {
         let Some(git_repo) = self.git_repo.clone() else {
             return;
         };
@@ -552,7 +562,7 @@ impl RepositoryHandle {
                 git_repo,
                 paths: to_stage,
                 message,
-                name_and_email: todo!("TODO kb"),
+                name_and_email,
             },
             err_sender.clone(),
         ));
