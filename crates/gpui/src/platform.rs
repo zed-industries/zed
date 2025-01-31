@@ -793,6 +793,7 @@ impl PlatformInputHandler {
         )
     }
 
+    #[allow(unused)]
     pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
         self.cx
             .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
