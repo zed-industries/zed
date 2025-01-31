@@ -808,15 +808,6 @@ impl SplitDirection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ResizeIntent {
-    Lengthen,
-    Shorten,
-    Widen,
-    Narrow,
-}
-
 mod element {
     use std::mem;
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};

@@ -45,13 +45,9 @@ use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{px, IntoElement, SharedString};
 use vim_mode_setting::VimModeSetting;
-use workspace::{self, Pane, ResizeIntent, Workspace};
+use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
-
-/// Used to resize the current pane
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-pub struct ResizePane(pub ResizeIntent);
 
 /// An Action to Switch between modes
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -89,12 +85,12 @@ actions!(
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(workspace, [ToggleVimMode]);
-
-impl_actions!(
-    vim,
-    [ResizePane, SwitchMode, PushOperator, Number, SelectRegister]
+actions!(
+    workspace,
+    [ToggleVimMode, ResizeRight, ResizeLeft, ResizeUp, ResizeDown]
 );
+
+impl_actions!(vim, [SwitchMode, PushOperator, Number, SelectRegister]);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
@@ -142,7 +138,7 @@ pub fn init(cx: &mut App) {
             workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, window, cx)
         });
 
-        workspace.register_action(|workspace, action: &ResizePane, window, cx| {
+        workspace.register_action(|workspace, _: &ResizeRight, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
@@ -154,16 +150,36 @@ pub fn init(cx: &mut App) {
             else {
                 return;
             };
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            workspace.resize_pane(Axis::Horizontal, width.width * count, cx);
+        });
 
-            let (axis, amount) = match action.0 {
-                ResizeIntent::Lengthen => (Axis::Vertical, height),
-                ResizeIntent::Shorten => (Axis::Vertical, height * -1.),
-                ResizeIntent::Widen => (Axis::Horizontal, width.width),
-                ResizeIntent::Narrow => (Axis::Horizontal, width.width * -1.),
+        workspace.register_action(|workspace, _: &ResizeLeft, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            let theme = ThemeSettings::get_global(cx);
+            let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
+                return;
             };
+            let Ok(width) = window
+                .text_system()
+                .advance(font_id, theme.buffer_font_size(), 'm')
+            else {
+                return;
+            };
+            workspace.resize_pane(Axis::Horizontal, -width.width * count, cx);
+        });
 
-            workspace.resize_pane(axis, amount * count, window, cx);
+        workspace.register_action(|workspace, _: &ResizeUp, _, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            let theme = ThemeSettings::get_global(cx);
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            workspace.resize_pane(Axis::Vertical, height * count, cx);
+        });
+
+        workspace.register_action(|workspace, _: &ResizeDown, _, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1) as f32;
+            let theme = ThemeSettings::get_global(cx);
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            workspace.resize_pane(Axis::Vertical, -height * count, cx);
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {

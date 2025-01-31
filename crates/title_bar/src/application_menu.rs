@@ -4,13 +4,17 @@ use serde::Deserialize;
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
+#[cfg(not(target_os = "macos"))]
 impl_actions!(app_menu, [OpenApplicationMenu]);
 
+#[cfg(not(target_os = "macos"))]
 actions!(app_menu, [ActivateMenuRight, ActivateMenuLeft]);
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct OpenApplicationMenu(String);
 
+#[cfg(not(target_os = "macos"))]
 pub enum ActivateDirection {
     Left,
     Right,
