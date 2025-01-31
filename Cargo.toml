@@ -108,6 +108,7 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
+    "crates/schema_generator",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",

@@ -11439,6 +11439,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "schema_generator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger 0.11.6",
+ "schemars",
+ "serde",
+ "serde_json",
+ "theme",
+]
+
+[[package]]
 name = "schemars"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13278,7 +13291,6 @@ dependencies = [
  "log",
  "palette",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",

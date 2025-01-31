@@ -444,6 +444,23 @@ impl ExtensionStore {
             .filter_map(|(name, theme)| theme.extension.as_ref().eq(extension_id).then_some(name))
     }
 
+    /// Returns the names of icon themes provided by extensions.
+    pub fn extension_icon_themes<'a>(
+        &'a self,
+        extension_id: &'a str,
+    ) -> impl Iterator<Item = &'a Arc<str>> {
+        self.extension_index
+            .icon_themes
+            .iter()
+            .filter_map(|(name, icon_theme)| {
+                icon_theme
+                    .extension
+                    .as_ref()
+                    .eq(extension_id)
+                    .then_some(name)
+            })
+    }
+
     pub fn fetch_extensions(
         &self,
         search: Option<&str>,

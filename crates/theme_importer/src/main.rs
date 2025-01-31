@@ -7,14 +7,13 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use indexmap::IndexMap;
 use log::LevelFilter;
-use schemars::schema_for;
 use serde::Deserialize;
 use simplelog::ColorChoice;
 use simplelog::{TermLogger, TerminalMode};
-use theme::{Appearance, AppearanceContent, ThemeFamilyContent};
+use theme::{Appearance, AppearanceContent};
 
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
@@ -71,53 +70,25 @@ pub struct ThemeMetadata {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    #[command(subcommand)]
-    command: Command,
-}
+    /// The path to the theme to import.
+    theme_path: PathBuf,
 
-#[derive(PartialEq, Subcommand)]
-enum Command {
-    /// Prints the JSON schema for a theme.
-    PrintSchema,
-    /// Converts a VSCode theme to Zed format [default]
-    Convert {
-        /// The path to the theme to import.
-        theme_path: PathBuf,
+    /// Whether to warn when values are missing from the theme.
+    #[arg(long)]
+    warn_on_missing: bool,
 
-        /// Whether to warn when values are missing from the theme.
-        #[arg(long)]
-        warn_on_missing: bool,
-
-        /// The path to write the output to.
-        #[arg(long, short)]
-        output: Option<PathBuf>,
-    },
+    /// The path to write the output to.
+    #[arg(long, short)]
+    output: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    match args.command {
-        Command::PrintSchema => {
-            let theme_family_schema = schema_for!(ThemeFamilyContent);
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&theme_family_schema).unwrap()
-            );
-            Ok(())
-        }
-        Command::Convert {
-            theme_path,
-            warn_on_missing,
-            output,
-        } => convert(theme_path, output, warn_on_missing),
-    }
-}
-
-fn convert(theme_file_path: PathBuf, output: Option<PathBuf>, warn_on_missing: bool) -> Result<()> {
     let log_config = {
         let mut config = simplelog::ConfigBuilder::new();
-        if !warn_on_missing {
+
+        if !args.warn_on_missing {
             config.add_filter_ignore_str("theme_printer");
         }
 
@@ -132,11 +103,13 @@ fn convert(theme_file_path: PathBuf, output: Option<PathBuf>, warn_on_missing: b
     )
     .expect("could not initialize logger");
 
+    let theme_file_path = args.theme_path;
+
     let theme_file = match File::open(&theme_file_path) {
         Ok(file) => file,
         Err(err) => {
             log::info!("Failed to open file at path: {:?}", theme_file_path);
-            return Err(err.into());
+            return Err(err)?;
         }
     };
 
@@ -159,7 +132,7 @@ fn convert(theme_file_path: PathBuf, output: Option<PathBuf>, warn_on_missing: b
     );
     let theme_json = serde_json::to_string_pretty(&theme).unwrap();
 
-    if let Some(output) = output {
+    if let Some(output) = args.output {
         let mut file = File::create(output)?;
         file.write_all(theme_json.as_bytes())?;
     } else {
