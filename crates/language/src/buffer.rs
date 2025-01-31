@@ -596,7 +596,7 @@ pub struct EditPreview {
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct HighlightedEdits {
+pub struct HighlightedText {
     pub text: SharedString,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
 }
@@ -608,9 +608,9 @@ impl EditPreview {
         edits: &[(Range<Anchor>, String)],
         include_deletions: bool,
         cx: &App,
-    ) -> HighlightedEdits {
+    ) -> HighlightedText {
         let Some(visible_range_in_preview_snapshot) = self.compute_visible_range(edits) else {
-            return HighlightedEdits::default();
+            return HighlightedText::default();
         };
 
         let mut text = String::new();
@@ -686,7 +686,7 @@ impl EditPreview {
             cx,
         );
 
-        HighlightedEdits {
+        HighlightedText {
             text: text.into(),
             highlights,
         }
