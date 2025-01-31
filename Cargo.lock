@@ -2718,7 +2718,6 @@ dependencies = [
  "envy",
  "extension",
  "file_finder",
- "fireworks",
  "fs",
  "futures 0.3.31",
  "git",
@@ -4655,17 +4654,6 @@ dependencies = [
  "libc",
  "libredox",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "fireworks"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "serde",
- "serde_json",
 ]
 
 [[package]]

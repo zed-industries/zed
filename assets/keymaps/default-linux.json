@@ -136,7 +136,7 @@
       "ctrl-k z": "editor::ToggleSoftWrap",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
-      "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "ctrl-h": "buffer_search::DeployReplace",
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",

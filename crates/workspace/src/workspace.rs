@@ -1284,7 +1284,10 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, _| window.activate_window())
+                .update(&mut cx, |_, window, cx| {
+                    window.activate_window();
+                    cx.activate(true);
+                })
                 .log_err();
             Ok((window, opened_items))
         })

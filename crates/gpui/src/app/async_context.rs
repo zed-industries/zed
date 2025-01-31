@@ -104,6 +104,22 @@ impl AppContext for AsyncApp {
         let lock = app.borrow();
         lock.read_window(window, read)
     }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.background_executor.spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: Global,
+    {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut lock = app.borrow_mut();
+        Ok(lock.update(|this| this.read_global(callback)))
+    }
 }
 
 impl AsyncApp {
@@ -366,6 +382,20 @@ impl AppContext for AsyncWindowContext {
         T: 'static,
     {
         self.app.read_window(window, read)
+    }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.app.background_executor.spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Result<R>
+    where
+        G: Global,
+    {
+        self.app.read_global(callback)
     }
 }
 

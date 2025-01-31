@@ -2761,6 +2761,8 @@ mod test {
     };
     use editor::display_map::Inlay;
     use indoc::indoc;
+    use language::Point;
+    use multi_buffer::MultiBufferRow;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3428,10 +3430,10 @@ mod test {
 
         cx.set_state(
             indoc! {"
-            struct Foo {
-            ˇ
-            }
-        "},
+                struct Foo {
+                ˇ
+                }
+            "},
             Mode::Normal,
         );
 
@@ -3445,9 +3447,40 @@ mod test {
         cx.simulate_keystrokes("j");
         cx.assert_state(
             indoc! {"
-            struct Foo {
+                struct Foo {
 
-            ˇ}
+                ˇ}
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clipping_with_inlay_hints_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            ˇstruct Foo {
+
+            }
+        "},
+            Mode::Normal,
+        );
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let end_of_line =
+                snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
+            let inlay_text = " hint";
+            let inlay = Inlay::inline_completion(1, end_of_line, inlay_text);
+            editor.splice_inlays(vec![], vec![inlay], cx);
+        });
+        cx.simulate_keystrokes("$");
+        cx.assert_state(
+            indoc! {"
+            struct Foo ˇ{
+
+            }
         "},
             Mode::Normal,
         );

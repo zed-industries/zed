@@ -155,7 +155,7 @@ pub use util::arc_cow::ArcCow;
 pub use view::*;
 pub use window::*;
 
-use std::{any::Any, borrow::BorrowMut};
+use std::{any::Any, borrow::BorrowMut, future::Future};
 use taffy::TaffyLayoutEngine;
 
 /// The context trait, allows the different contexts in GPUI to be used
@@ -215,6 +215,16 @@ pub trait AppContext {
     ) -> Result<R>
     where
         T: 'static;
+
+    /// Spawn a future on a background thread
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static;
+
+    /// Read a global from this app context
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: Global;
 }
 
 /// Returned by [Context::reserve_entity] to later be passed to [Context::insert_model].
