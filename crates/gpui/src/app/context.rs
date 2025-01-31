@@ -15,39 +15,39 @@ use std::{
 
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
-/// The app context, with specialized behavior for the given model.
+/// The app context, with specialized behavior for the given entity.
 #[derive(Deref, DerefMut)]
 pub struct Context<'a, T> {
     #[deref]
     #[deref_mut]
     app: &'a mut App,
-    model_state: WeakEntity<T>,
+    entity_state: WeakEntity<T>,
 }
 
 impl<'a, T: 'static> Context<'a, T> {
-    pub(crate) fn new_context(app: &'a mut App, model_state: WeakEntity<T>) -> Self {
-        Self { app, model_state }
+    pub(crate) fn new_context(app: &'a mut App, entity_state: WeakEntity<T>) -> Self {
+        Self { app, entity_state }
     }
 
-    /// The entity id of the model backing this context.
+    /// The entity id of the entity backing this context.
     pub fn entity_id(&self) -> EntityId {
-        self.model_state.entity_id
+        self.entity_state.entity_id
     }
 
-    /// Returns a handle to the model belonging to this context.
+    /// Returns a handle to the entity belonging to this context.
     pub fn entity(&self) -> Entity<T> {
         self.weak_entity()
             .upgrade()
-            .expect("The entity must be alive if we have a model context")
+            .expect("The entity must be alive if we have a entity context")
     }
 
-    /// Returns a weak handle to the model belonging to this context.
+    /// Returns a weak handle to the entity belonging to this context.
     pub fn weak_entity(&self) -> WeakEntity<T> {
-        self.model_state.clone()
+        self.entity_state.clone()
     }
 
-    /// Arranges for the given function to be called whenever [`ModelContext::notify`] or
-    /// [`ViewContext::notify`](crate::ViewContext::notify) is called with the given model or view.
+    /// Arranges for the given function to be called whenever [`Context::notify`] is
+    /// called with the given entity.
     pub fn observe<W>(
         &mut self,
         entity: &Entity<W>,
@@ -68,7 +68,7 @@ impl<'a, T: 'static> Context<'a, T> {
         })
     }
 
-    /// Subscribe to an event type from another model or view
+    /// Subscribe to an event type from another entity
     pub fn subscribe<T2, Evt>(
         &mut self,
         entity: &Entity<T2>,
@@ -90,13 +90,13 @@ impl<'a, T: 'static> Context<'a, T> {
         })
     }
 
-    /// Register a callback to be invoked when GPUI releases this model.
+    /// Register a callback to be invoked when GPUI releases this entity.
     pub fn on_release(&self, on_release: impl FnOnce(&mut T, &mut App) + 'static) -> Subscription
     where
         T: 'static,
     {
         let (subscription, activate) = self.app.release_listeners.insert(
-            self.model_state.entity_id,
+            self.entity_state.entity_id,
             Box::new(move |this, cx| {
                 let this = this.downcast_mut().expect("invalid entity type");
                 on_release(this, cx);
@@ -106,7 +106,7 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
-    /// Register a callback to be run on the release of another model or view
+    /// Register a callback to be run on the release of another entity
     pub fn observe_release<T2>(
         &self,
         entity: &Entity<T2>,
@@ -175,13 +175,13 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
-    /// Tell GPUI that this model has changed and observers of it should be notified.
+    /// Tell GPUI that this entity has changed and observers of it should be notified.
     pub fn notify(&mut self) {
-        self.app.notify(self.model_state.entity_id);
+        self.app.notify(self.entity_state.entity_id);
     }
 
     /// Spawn the future returned by the given function.
-    /// The function is provided a weak handle to the model owned by this context and a context that can be held across await points.
+    /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> Task<R>
     where
@@ -238,7 +238,7 @@ impl<'a, T: 'static> Context<'a, T> {
         });
     }
 
-    /// Observe another model or view for changes to its state, as tracked by [`ModelContext::notify`].
+    /// Observe another entity for changes to its state, as tracked by [`Context::notify`].
     pub fn observe_in<V2>(
         &mut self,
         observed: &Entity<V2>,
@@ -274,9 +274,9 @@ impl<'a, T: 'static> Context<'a, T> {
         )
     }
 
-    /// Subscribe to events emitted by another model or view.
+    /// Subscribe to events emitted by another entity.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    /// The callback will be invoked with a reference to the current view, a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a view context for the current view.
+    /// The callback will be invoked with a reference to the current view, a handle to the emitting `Entity`, the event, a mutable reference to the `Window`, and the context for the entity.
     pub fn subscribe_in<Emitter, Evt>(
         &mut self,
         emitter: &Entity<Emitter>,
@@ -329,7 +329,7 @@ impl<'a, T: 'static> Context<'a, T> {
         self.app.observe_release_in(&entity, window, on_release)
     }
 
-    /// Register a callback to be invoked when the given Model or View is released.
+    /// Register a callback to be invoked when the given Entity is released.
     pub fn observe_release_in<T2>(
         &self,
         observed: &Entity<T2>,
@@ -580,7 +580,7 @@ impl<'a, T: 'static> Context<'a, T> {
     }
 
     /// Schedule a future to be run asynchronously.
-    /// The given callback is invoked with a [`WeakModel<V>`] to avoid leaking the view for a long-running process.
+    /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the view for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
     pub fn spawn_in<Fut, R>(
@@ -655,7 +655,7 @@ impl<'a, T> Context<'a, T> {
         Evt: 'static,
     {
         self.app.pending_effects.push_back(Effect::Emit {
-            emitter: self.model_state.entity_id,
+            emitter: self.entity_state.entity_id,
             event_type: TypeId::of::<Evt>(),
             event: Box::new(event),
         });
@@ -665,8 +665,11 @@ impl<'a, T> Context<'a, T> {
 impl<'a, T> AppContext for Context<'a, T> {
     type Result<U> = U;
 
-    fn new<U: 'static>(&mut self, build_model: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U> {
-        self.app.new(build_model)
+    fn new<U: 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
+    ) -> Entity<U> {
+        self.app.new(build_entity)
     }
 
     fn reserve_entity<U: 'static>(&mut self) -> Reservation<U> {
@@ -676,9 +679,9 @@ impl<'a, T> AppContext for Context<'a, T> {
     fn insert_entity<U: 'static>(
         &mut self,
         reservation: Reservation<U>,
-        build_model: impl FnOnce(&mut Context<'_, U>) -> U,
+        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
     ) -> Self::Result<Entity<U>> {
-        self.app.insert_entity(reservation, build_model)
+        self.app.insert_entity(reservation, build_entity)
     }
 
     fn update_entity<U: 'static, R>(

@@ -46,10 +46,10 @@ mod entity_map;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
-/// The duration for which futures returned from [AppContext::on_app_context] or [ModelContext::on_app_quit] can run before the application fully quits.
+/// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// Temporary(?) wrapper around [`RefCell<AppContext>`] to help us debug any double borrows.
+/// Temporary(?) wrapper around [`RefCell<App>`] to help us debug any double borrows.
 /// Strongly consider removing after stabilization.
 #[doc(hidden)]
 pub struct AppCell {
@@ -219,11 +219,11 @@ pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
-type NewModelListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
+type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
-/// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
-/// You need a reference to an `AppContext` to access the state of a [Model].
+/// Other [Context] derefs to this type.
+/// You need a reference to an `App` to access the state of a [Entity].
 pub struct App {
     pub(crate) this: Weak<AppCell>,
     pub(crate) platform: Rc<dyn Platform>,
@@ -241,7 +241,7 @@ pub struct App {
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
     pub(crate) window_update_stack: Vec<WindowId>,
-    pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
+    pub(crate) new_entity_observers: SubscriberSet<TypeId, NewEntityListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
@@ -305,7 +305,7 @@ impl App {
                 http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
-                new_model_observers: SubscriberSet::new(),
+                new_entity_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
                 window_update_stack: Vec::new(),
                 window_handles: FxHashMap::default(),
@@ -359,7 +359,7 @@ impl App {
         app
     }
 
-    /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
+    /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
     /// will be given 100ms to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
@@ -426,7 +426,7 @@ impl App {
         result
     }
 
-    /// Arrange a callback to be invoked when the given model or view calls `notify` on its respective context.
+    /// Arrange a callback to be invoked when the given entity calls `notify` on its respective context.
     pub fn observe<W>(
         &mut self,
         entity: &Entity<W>,
@@ -510,7 +510,7 @@ impl App {
         )
     }
 
-    /// Arrange for the given callback to be invoked whenever the given model or view emits an event of a given type.
+    /// Arrange for the given callback to be invoked whenever the given entity emits an event of a given type.
     /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
     pub fn subscribe<T, Event>(
         &mut self,
@@ -588,7 +588,7 @@ impl App {
     }
 
     /// Opens a new window with the given option and the root view returned by the given function.
-    /// The function is invoked with a `WindowContext`, which can be used to interact with window-specific
+    /// The function is invoked with a `Window`, which can be used to interact with window-specific
     /// functionality.
     pub fn open_window<V: 'static + Render>(
         &mut self,
@@ -823,7 +823,7 @@ impl App {
         self.pending_effects.push_back(effect);
     }
 
-    /// Called at the end of [`AppContext::update`] to complete any side effects
+    /// Called at the end of [`App::update`] to complete any side effects
     /// such as notifying observers, emitting events, etc. Effects can themselves
     /// cause effects, so we continue looping until all effects are processed.
     fn flush_effects(&mut self) {
@@ -854,12 +854,12 @@ impl App {
                     Effect::Defer { callback } => {
                         self.apply_defer_effect(callback);
                     }
-                    Effect::ModelCreated {
+                    Effect::EntityCreated {
                         entity,
                         tid,
                         window,
                     } => {
-                        self.apply_model_created_effect(entity, tid, window);
+                        self.apply_entity_created_effect(entity, tid, window);
                     }
                 }
             } else {
@@ -967,13 +967,13 @@ impl App {
         callback(self);
     }
 
-    fn apply_model_created_effect(
+    fn apply_entity_created_effect(
         &mut self,
         entity: AnyEntity,
         tid: TypeId,
         window: Option<WindowId>,
     ) {
-        self.new_model_observers.clone().retain(&tid, |observer| {
+        self.new_entity_observers.clone().retain(&tid, |observer| {
             if let Some(id) = window {
                 self.update_window_id(id, {
                     let entity = entity.clone();
@@ -1172,8 +1172,12 @@ impl App {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
-        let (subscription, activate) = self.new_model_observers.insert(key, value);
+    pub(crate) fn new_entity_observer(
+        &self,
+        key: TypeId,
+        value: NewEntityListener,
+    ) -> Subscription {
+        let (subscription, activate) = self.new_entity_observers.insert(key, value);
         activate();
         subscription
     }
@@ -1184,18 +1188,18 @@ impl App {
         &self,
         on_new: impl 'static + Fn(&mut T, Option<&mut Window>, &mut Context<T>),
     ) -> Subscription {
-        self.new_model_observer(
+        self.new_entity_observer(
             TypeId::of::<T>(),
             Box::new(
-                move |any_model: AnyEntity, window: &mut Option<&mut Window>, cx: &mut App| {
-                    any_model
+                move |any_entity: AnyEntity, window: &mut Option<&mut Window>, cx: &mut App| {
+                    any_entity
                         .downcast::<T>()
                         .unwrap()
-                        .update(cx, |model_state, cx| {
+                        .update(cx, |entity_state, cx| {
                             if let Some(window) = window {
-                                on_new(model_state, Some(window), cx);
+                                on_new(entity_state, Some(window), cx);
                             } else {
-                                on_new(model_state, None, cx);
+                                on_new(entity_state, None, cx);
                             }
                         })
                 },
@@ -1203,7 +1207,7 @@ impl App {
         )
     }
 
-    /// Observe the release of a model or view. The callback is invoked after the model or view
+    /// Observe the release of a entity. The callback is invoked after the entity
     /// has no more strong references but before it has been dropped.
     pub fn observe_release<T>(
         &self,
@@ -1224,7 +1228,7 @@ impl App {
         subscription
     }
 
-    /// Observe the release of a model or view. The callback is invoked after the model or view
+    /// Observe the release of a entity. The callback is invoked after the entity
     /// has no more strong references but before it has been dropped.
     pub fn observe_release_in<T>(
         &self,
@@ -1573,22 +1577,25 @@ impl AppContext for App {
     type Result<T> = T;
 
     /// Build an entity that is owned by the application. The given function will be invoked with
-    /// a `ModelContext` and must return an object representing the entity. A `Model` handle will be returned,
+    /// a `Context` and must return an object representing the entity. A `Entity` handle will be returned,
     /// which can be used to access the entity in a context.
-    fn new<T: 'static>(&mut self, build_model: impl FnOnce(&mut Context<'_, T>) -> T) -> Entity<T> {
+    fn new<T: 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
+    ) -> Entity<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
-            let model = slot.clone();
-            let entity = build_model(&mut Context::new_context(cx, slot.downgrade()));
+            let handle = slot.clone();
+            let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
 
-            cx.push_effect(Effect::ModelCreated {
-                entity: model.clone().into_any(),
+            cx.push_effect(Effect::EntityCreated {
+                entity: handle.clone().into_any(),
                 tid: TypeId::of::<T>(),
                 window: cx.window_update_stack.last().cloned(),
             });
 
             cx.entities.insert(slot, entity);
-            model
+            handle
         })
     }
 
@@ -1599,27 +1606,27 @@ impl AppContext for App {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.update(|cx| {
             let slot = reservation.0;
-            let entity = build_model(&mut Context::new_context(cx, slot.downgrade()));
+            let entity = build_entity(&mut Context::new_context(cx, slot.downgrade()));
             cx.entities.insert(slot, entity)
         })
     }
 
-    /// Updates the entity referenced by the given model. The function is passed a mutable reference to the
-    /// entity along with a `ModelContext` for the entity.
+    /// Updates the entity referenced by the given handle. The function is passed a mutable reference to the
+    /// entity along with a `Context` for the entity.
     fn update_entity<T: 'static, R>(
         &mut self,
-        model: &Entity<T>,
+        handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<'_, T>) -> R,
     ) -> R {
         self.update(|cx| {
-            let mut entity = cx.entities.lease(model);
+            let mut entity = cx.entities.lease(handle);
             let result = update(
                 &mut entity,
-                &mut Context::new_context(cx, model.downgrade()),
+                &mut Context::new_context(cx, handle.downgrade()),
             );
             cx.entities.end_lease(entity);
             result
@@ -1701,7 +1708,7 @@ pub(crate) enum Effect {
     Defer {
         callback: Box<dyn FnOnce(&mut App) + 'static>,
     },
-    ModelCreated {
+    EntityCreated {
         entity: AnyEntity,
         tid: TypeId,
         window: Option<WindowId>,
@@ -1718,7 +1725,7 @@ impl std::fmt::Debug for Effect {
                 write!(f, "NotifyGlobalObservers({:?})", global_type)
             }
             Effect::Defer { .. } => write!(f, "Defer(..)"),
-            Effect::ModelCreated { entity, .. } => write!(f, "ModelCreated({:?})", entity),
+            Effect::EntityCreated { entity, .. } => write!(f, "EntityCreated({:?})", entity),
         }
     }
 }

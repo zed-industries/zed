@@ -25,9 +25,9 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
 
             fn new<T: 'static>(
                 &mut self,
-                build_model: impl FnOnce(&mut gpui::Context<'_, T>) -> T,
+                build_entity: impl FnOnce(&mut gpui::Context<'_, T>) -> T,
             ) -> Self::Result<gpui::Entity<T>> {
-                self.#app_variable.new(build_model)
+                self.#app_variable.new(build_entity)
             }
 
             fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
@@ -37,9 +37,9 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
             fn insert_entity<T: 'static>(
                 &mut self,
                 reservation: gpui::Reservation<T>,
-                build_model: impl FnOnce(&mut gpui::Context<'_, T>) -> T,
+                build_entity: impl FnOnce(&mut gpui::Context<'_, T>) -> T,
             ) -> Self::Result<gpui::Entity<T>> {
-                self.#app_variable.insert_entity(reservation, build_model)
+                self.#app_variable.insert_entity(reservation, build_entity)
             }
 
             fn update_entity<T, R>(
