@@ -1040,10 +1040,10 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, |mut cx| {
                 let project = project.clone();
                 async move {
-                    let language = if let Some(language_name) = language {
-                        let language_registry =
-                            project.update(&mut cx, |project, _| project.languages().clone())?;
+                    let language_registry =
+                        project.update(&mut cx, |project, _| project.languages().clone())?;
 
+                    let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
                         // than fail to restore the buffer.
                         language_registry
@@ -1061,6 +1061,7 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
                             buffer.set_language(Some(language), cx);
                         }
