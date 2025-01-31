@@ -218,18 +218,30 @@ impl BufferChangeSetState {
                 self.index_changed = true;
             }
             Some(DiffBasesChange::SetHead(head)) => {
-                self.head_text = head.map(Arc::new);
-                self.head_changed = true
+                self.head_text = head.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::new(text)
+                });
+                self.head_changed = true;
             }
-            Some(DiffBasesChange::SetBoth(text)) => {
+            Some(DiffBasesChange::SetBoth(mut text)) => {
+                if let Some(text) = text.as_mut() {
+                    text::LineEnding::normalize(text);
+                }
                 self.head_text = text.map(Arc::new);
                 self.index_text = self.head_text.clone();
                 self.head_changed = true;
                 self.index_changed = true;
             }
             Some(DiffBasesChange::SetEach { index, head }) => {
-                self.head_text = head.map(Arc::new);
-                self.index_text = index.map(Arc::new);
+                self.index_text = index.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::new(text)
+                });
+                self.head_text = head.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::new(text)
+                });
                 self.head_changed = true;
                 self.index_changed = true;
             }
@@ -378,6 +390,18 @@ pub struct BufferChangeSet {
     pub staged_text: Option<language::BufferSnapshot>,
     // For an uncommitted changeset, this is the diff between HEAD and the index.
     pub staged_diff: Option<BufferDiff>,
+}
+
+impl std::fmt::Debug for BufferChangeSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferChangeSet")
+            .field("buffer_id", &self.buffer_id)
+            .field("base_text", &self.base_text.as_ref().map(|s| s.text()))
+            .field("diff_to_buffer", &self.diff_to_buffer)
+            .field("staged_text", &self.staged_text.as_ref().map(|s| s.text()))
+            .field("staged_diff", &self.staged_diff)
+            .finish()
+    }
 }
 
 pub enum BufferChangeSetEvent {
@@ -2871,9 +2895,12 @@ impl BufferChangeSet {
         snapshot: text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        let base_text = self.base_text.as_ref().map(|buffer| buffer.text());
-        let base_text = base_text.as_deref();
-        let diff_to_buffer = BufferDiff::build(base_text, &snapshot);
+        let mut base_text = self.base_text.as_ref().map(|buffer| buffer.text());
+        if let Some(base_text) = base_text.as_mut() {
+            text::LineEnding::normalize(base_text);
+        }
+        let diff_to_buffer = BufferDiff::build(base_text.as_deref(), &snapshot);
+        eprintln!("recalculate_diff_sync base={base_text:?} diff={diff_to_buffer:?}");
         self.set_state(self.base_text.clone(), diff_to_buffer, &snapshot, cx);
     }
 }

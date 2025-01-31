@@ -1877,13 +1877,14 @@ impl ReferenceMultibuffer {
                 .hunks_intersecting_range(excerpt.range.clone(), buffer)
                 .peekable();
 
-            while let Some(hunk) = hunks.next() {
-                if !hunk.buffer_range.start.is_valid(&buffer) {
-                    continue;
-                }
+            dbg!(&buffer_range);
 
+            while let Some(hunk) = hunks.next() {
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
+
+                dbg!(&hunk_range);
+
                 hunk_range.end = hunk_range.end.min(buffer_range.end);
                 if hunk_range.start > buffer_range.end
                     || hunk_range.end < buffer_range.start
@@ -1896,6 +1897,11 @@ impl ReferenceMultibuffer {
                     expanded_anchor.to_offset(&buffer).max(buffer_range.start)
                         == hunk_range.start.max(buffer_range.start)
                 }) {
+                    continue;
+                }
+
+                if !hunk.buffer_range.start.is_valid(&buffer) {
+                    log::trace!("skipping hunk with deleted start: {:?}", hunk.row_range);
                     continue;
                 }
 
@@ -2056,6 +2062,14 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 buffer.update(cx, |buf, cx| {
                     let edit_count = rng.gen_range(1..5);
                     buf.randomly_edit(&mut rng, edit_count, cx);
+                    log::info!("buffer text:\n{}", buf.text());
+                    let change_set = multibuffer
+                        .read_with(cx, |multibuffer, _| {
+                            multibuffer.change_set_for(buf.remote_id())
+                        })
+                        .unwrap();
+                    log::debug!("change set: {:#?}", change_set.read(cx));
+
                     needs_diff_calculation = true;
                 });
                 cx.update(|cx| reference.diffs_updated(cx));
@@ -2270,8 +2284,8 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             "line count: {}",
             actual_text.split('\n').count()
         );
-        pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
+        pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
 
         for _ in 0..5 {

@@ -2761,16 +2761,23 @@ impl MultiBuffer {
                 let edit_buffer_end =
                     excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
                 let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
+                dbg!(edit_buffer_start..edit_buffer_end);
                 let edit_anchor_range =
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
                 for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
+                    let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
+                    dbg!(&hunk_buffer_range);
+
                     let hunk_anchor = (excerpt.id, hunk.buffer_range.start);
-                    if !hunk_anchor.1.is_valid(buffer) {
+                    if !dbg!(hunk_anchor.1.is_valid(buffer)) {
+                        log::trace!(
+                            "skipping hunk with deleted beginning {:?}",
+                            hunk.row_range,
+                        );
                         continue;
                     }
 
-                    let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
                     let hunk_excerpt_start = excerpt_start
                         + ExcerptOffset::new(
                             hunk_buffer_range.start.saturating_sub(excerpt_buffer_start),
