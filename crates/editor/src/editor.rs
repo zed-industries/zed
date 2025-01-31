@@ -3598,10 +3598,11 @@ impl Editor {
                 } else {
                     self.inlay_hint_cache.clear();
                     self.splice_inlays(
-                        self.visible_inlay_hints(cx)
+                        &self
+                            .visible_inlay_hints(cx)
                             .iter()
                             .map(|inlay| inlay.id)
-                            .collect(),
+                            .collect::<Vec<InlayId>>(),
                         Vec::new(),
                         cx,
                     );
@@ -3619,7 +3620,7 @@ impl Editor {
                         to_remove,
                         to_insert,
                     })) => {
-                        self.splice_inlays(to_remove, to_insert, cx);
+                        self.splice_inlays(&to_remove, to_insert, cx);
                         return;
                     }
                     ControlFlow::Break(None) => return,
@@ -3632,7 +3633,7 @@ impl Editor {
                     to_insert,
                 }) = self.inlay_hint_cache.remove_excerpts(excerpts_removed)
                 {
-                    self.splice_inlays(to_remove, to_insert, cx);
+                    self.splice_inlays(&to_remove, to_insert, cx);
                 }
                 return;
             }
@@ -3655,7 +3656,7 @@ impl Editor {
             ignore_debounce,
             cx,
         ) {
-            self.splice_inlays(to_remove, to_insert, cx);
+            self.splice_inlays(&to_remove, to_insert, cx);
         }
     }
 
@@ -3735,7 +3736,7 @@ impl Editor {
 
     pub fn splice_inlays(
         &self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
         cx: &mut Context<Self>,
     ) {
@@ -4989,7 +4990,7 @@ impl Editor {
             return false;
         };
 
-        self.splice_inlays(active_inline_completion.inlay_ids, Default::default(), cx);
+        self.splice_inlays(&active_inline_completion.inlay_ids, Default::default(), cx);
         self.clear_highlights::<InlineCompletionHighlight>(cx);
         self.stale_inline_completion = Some(active_inline_completion);
         true
@@ -5108,7 +5109,7 @@ impl Editor {
                         inlays.push(inlay);
                     }
 
-                    self.splice_inlays(vec![], inlays, cx);
+                    self.splice_inlays(&[], inlays, cx);
                 } else {
                     let background_color = cx.theme().status().deleted_background;
                     self.highlight_text::<InlineCompletionHighlight>(
