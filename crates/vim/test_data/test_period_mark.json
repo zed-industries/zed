@@ -8,7 +8,7 @@
 {"Key":"j"}
 {"Key":"'"}
 {"Key":"."}
-{"Get":{"state":"Line one\nLine two\nˇLike three\nLine four\nLine five\n","mode":"normal"}}
+{"Get":{"state":"Line one\nLine two\nˇLike three\nLine four\nLine five\n","mode":"Normal"}}
 {"Key":"`"}
 {"Key":"."}
-{"Get":{"state":"Line one\nLine two\nLiˇke three\nLine four\nLine five\n","mode":"normal"}}
+{"Get":{"state":"Line one\nLine two\nLiˇke three\nLine four\nLine five\n","mode":"Normal"}}

@@ -3,4 +3,4 @@
 {"Put":{"state":"twelve ˇchar twelve char\ntwelve char"}}
 {"Key":"d"}
 {"Key":"w"}
-{"Get":{"state":"twelve ˇtwelve char\ntwelve char","mode":"normal"}}
+{"Get":{"state":"twelve ˇtwelve char\ntwelve char","mode":"Normal"}}
