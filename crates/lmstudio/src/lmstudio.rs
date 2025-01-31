@@ -192,7 +192,7 @@ pub struct ModelEntry {
     pub publisher: String,
     pub arch: Option<String>,
     pub compatibility_type: CompatibilityType,
-    pub quantization: String,
+    pub quantization: Option<String>,
     pub state: ModelState,
     pub max_context_length: Option<u32>,
     pub loaded_context_length: Option<u32>,
