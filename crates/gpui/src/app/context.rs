@@ -665,7 +665,10 @@ impl<'a, T> Context<'a, T> {
 impl<'a, T> AppContext for Context<'a, T> {
     type Result<U> = U;
 
-    fn new<U: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<'_, U>) -> U) -> Entity<U> {
+    fn new<U: 'static>(
+        &mut self,
+        build_entity: impl FnOnce(&mut Context<'_, U>) -> U,
+    ) -> Entity<U> {
         self.app.new(build_entity)
     }
 

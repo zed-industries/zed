@@ -231,7 +231,7 @@ impl TestAppContext {
     }
 
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
-    /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
+    /// as a `Window` and `App` for the rest of the test. Typically you would shadow this context with
     /// the returned one. `let (view, cx) = cx.add_window_view(...);`
     pub fn add_window_view<F, V>(
         &mut self,
@@ -639,8 +639,8 @@ use derive_more::{Deref, DerefMut};
 
 use super::{Context, Entity};
 #[derive(Deref, DerefMut, Clone)]
-/// A VisualTestContext is the test-equivalent of a `WindowContext`. It allows you to
-/// run window-specific test code.
+/// A VisualTestContext is the test-equivalent of a `Window` and `App`. It allows you to
+/// run window-specific test code. It can be dereferenced to a `TextAppContext`.
 pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
@@ -650,7 +650,7 @@ pub struct VisualTestContext {
 }
 
 impl VisualTestContext {
-    /// Provides the `WindowContext` for the duration of the closure.
+    /// Provides a `Window` and `App` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> R {
         self.cx
             .update_window(self.window, |_, window, cx| f(window, cx))
@@ -680,7 +680,7 @@ impl VisualTestContext {
         self.cx.dispatch_action(self.window, action)
     }
 
-    /// Read the title off the window (set by `WindowContext#set_window_title`)
+    /// Read the title off the window (set by `Window#set_window_title`)
     pub fn window_title(&mut self) -> Option<String> {
         self.cx.test_window(self.window).0.lock().title.clone()
     }

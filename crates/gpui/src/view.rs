@@ -68,7 +68,7 @@ impl<V: Render> Element for Entity<V> {
     }
 }
 
-/// A dynamically-typed handle to a view, which can be downcast to a [View] for a specific type.
+/// A dynamically-typed handle to a view, which can be downcast to a [Entity] for a specific type.
 #[derive(Clone, Debug)]
 pub struct AnyView {
     entity: AnyEntity,
@@ -103,7 +103,7 @@ impl AnyView {
         }
     }
 
-    /// Convert this to a [View] of a specific type.
+    /// Convert this to a [Entity] of a specific type.
     /// If this handle does not contain a view of the specified type, returns itself in an `Err` variant.
     pub fn downcast<T: 'static>(self) -> Result<Entity<T>, Self> {
         match self.entity.downcast() {
