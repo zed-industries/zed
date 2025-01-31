@@ -14124,13 +14124,7 @@ impl Editor {
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
-
-        let em_width = window
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
         gpui::Point::new(em_width, line_height)
     }
