@@ -145,7 +145,7 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-k z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
-      "cmd-alt-f": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "cmd-alt-f": "buffer_search::DeployReplace",
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "cmd->": "assistant::QuoteSelection",

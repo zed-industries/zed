@@ -728,6 +728,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1426,6 +1427,7 @@ impl Editor {
             ],
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
+            in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
@@ -1701,6 +1703,10 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+        self.in_project_search = in_project_search;
     }
 
     pub fn set_custom_context_menu(

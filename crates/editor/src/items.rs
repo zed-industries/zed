@@ -38,8 +38,11 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, IconDecorationKind, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
+use workspace::{
+    item::{BreadcrumbText, FollowEvent},
+    searchable::SearchOptions,
+};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -1321,6 +1324,28 @@ impl SearchableItem for Editor {
             self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
             self.set_search_within_ranges(&previous_search_ranges, cx)
+        }
+    }
+
+    fn supported_options(&self) -> SearchOptions {
+        if self.in_project_search {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: false,
+                selection: false,
+                find_in_results: true,
+            }
+        } else {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: true,
+                selection: true,
+                find_in_results: false,
+            }
         }
     }
 
