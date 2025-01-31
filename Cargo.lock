@@ -13291,7 +13291,6 @@ dependencies = [
  "log",
  "palette",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
