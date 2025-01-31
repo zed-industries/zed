@@ -69,7 +69,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictModal;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -81,9 +81,9 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
-    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
+    Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -96,8 +96,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
-    Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedEdits, IndentKind, IndentSize,
+    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
+    TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -116,6 +117,7 @@ use lsp::{
     LanguageServerId, LanguageServerName,
 };
 
+use language::BufferSnapshot;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
@@ -486,10 +488,7 @@ impl InlineCompletionMenuHint {
 #[derive(Clone, Debug)]
 enum InlineCompletionText {
     Move(SharedString),
-    Edit {
-        text: SharedString,
-        highlights: Vec<(Range<usize>, HighlightStyle)>,
-    },
+    Edit(HighlightedEdits),
 }
 
 pub(crate) enum EditDisplayMode {
@@ -501,7 +500,9 @@ pub(crate) enum EditDisplayMode {
 enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
+        edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
+        snapshot: BufferSnapshot,
     },
     Move(Anchor),
 }
@@ -680,6 +681,7 @@ pub struct Editor {
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
@@ -726,6 +728,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1374,6 +1377,7 @@ impl Editor {
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
+            pending_mouse_down: None,
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
             active_inline_completion: None,
@@ -1423,6 +1427,7 @@ impl Editor {
             ],
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
+            in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
@@ -1698,6 +1703,10 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+        self.in_project_search = in_project_search;
     }
 
     pub fn set_custom_context_menu(
@@ -3947,12 +3956,21 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
     }
 
-    fn toggle_zed_predict_tos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
             return;
         };
 
-        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), window, cx);
+        let project = project.read(cx);
+
+        ZedPredictModal::toggle(
+            workspace,
+            project.user_store().clone(),
+            project.client().clone(),
+            project.fs().clone(),
+            window,
+            cx,
+        );
     }
 
     fn do_completion(
@@ -3984,7 +4002,7 @@ impl Editor {
                     )) => {
                         drop(entries);
                         drop(context_menu);
-                        self.toggle_zed_predict_tos(window, cx);
+                        self.toggle_zed_predict_onboarding(window, cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -4847,10 +4865,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit {
-                edits,
-                display_mode: _,
-            } => {
+            InlineCompletion::Edit { edits, .. } => {
                 if let Some(provider) = self.inline_completion_provider() {
                     provider.accept(cx);
                 }
@@ -4898,10 +4913,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit {
-                edits,
-                display_mode: _,
-            } => {
+            InlineCompletion::Edit { edits, .. } => {
                 // Find an insertion that starts at the cursor position.
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let cursor_offset = self.selections.newest::<usize>(cx).head();
@@ -5040,8 +5052,8 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        let completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
-        let edits = completion
+        let inline_completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
+        let edits = inline_completion
             .edits
             .into_iter()
             .flat_map(|(range, new_text)| {
@@ -5066,13 +5078,12 @@ impl Editor {
 
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
-        let completion;
-        if cursor_row < edit_start_row {
+        let completion = if cursor_row < edit_start_row {
             invalidation_row_range = cursor_row..edit_end_row;
-            completion = InlineCompletion::Move(first_edit_start);
+            InlineCompletion::Move(first_edit_start)
         } else if cursor_row > edit_end_row {
             invalidation_row_range = edit_start_row..cursor_row;
-            completion = InlineCompletion::Move(first_edit_start);
+            InlineCompletion::Move(first_edit_start)
         } else {
             if edits
                 .iter()
@@ -5117,10 +5128,14 @@ impl Editor {
                 EditDisplayMode::DiffPopover
             };
 
-            completion = InlineCompletion::Edit {
+            let snapshot = multibuffer.buffer_for_excerpt(excerpt_id).cloned()?;
+
+            InlineCompletion::Edit {
                 edits,
+                edit_preview: inline_completion.edit_preview,
                 display_mode,
-            };
+                snapshot,
+            }
         };
 
         let invalidation_range = multibuffer
@@ -5164,19 +5179,26 @@ impl Editor {
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit {
                     edits,
+                    edit_preview,
                     display_mode: _,
-                } => inline_completion_edit_text(&editor_snapshot, edits, true, cx),
+                    snapshot,
+                } => edit_preview
+                    .as_ref()
+                    .and_then(|edit_preview| {
+                        inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
+                    })
+                    .map(InlineCompletionText::Edit),
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
                     let target_line = target_point.row + 1;
-                    InlineCompletionText::Move(
+                    Some(InlineCompletionText::Move(
                         format!("Jump to edit in line {}", target_line).into(),
-                    )
+                    ))
                 }
             };
 
-            Some(InlineCompletionMenuHint::Loaded { text })
+            Some(InlineCompletionMenuHint::Loaded { text: text? })
         } else if provider.is_refreshing(cx) {
             Some(InlineCompletionMenuHint::Loading)
         } else if provider.needs_terms_acceptance(cx) {
@@ -8811,6 +8833,12 @@ impl Editor {
             }
         }
 
+        let reversed = self.selections.oldest::<usize>(cx).reversed;
+
+        for selection in new_selections.iter_mut() {
+            selection.reversed = reversed;
+        }
+
         select_next_state.done = true;
         self.unfold_ranges(
             &new_selections
@@ -12137,6 +12165,10 @@ impl Editor {
     pub(crate) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    pub fn set_soft_wrap(&mut self) {
+        self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
     }
 
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
@@ -15819,74 +15851,23 @@ pub fn diagnostic_block_renderer(
 }
 
 fn inline_completion_edit_text(
-    editor_snapshot: &EditorSnapshot,
-    edits: &Vec<(Range<Anchor>, String)>,
+    current_snapshot: &BufferSnapshot,
+    edits: &[(Range<Anchor>, String)],
+    edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
-) -> InlineCompletionText {
-    let edit_start = edits
-        .first()
-        .unwrap()
-        .0
-        .start
-        .to_display_point(editor_snapshot);
+) -> Option<HighlightedEdits> {
+    let edits = edits
+        .iter()
+        .map(|(anchor, text)| {
+            (
+                anchor.start.text_anchor..anchor.end.text_anchor,
+                text.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
 
-    let mut text = String::new();
-    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
-    let mut highlights = Vec::new();
-    for (old_range, new_text) in edits {
-        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
-        text.extend(
-            editor_snapshot
-                .buffer_snapshot
-                .chunks(offset..old_offset_range.start, false)
-                .map(|chunk| chunk.text),
-        );
-        offset = old_offset_range.end;
-
-        let start = text.len();
-        let color = if include_deletions && new_text.is_empty() {
-            text.extend(
-                editor_snapshot
-                    .buffer_snapshot
-                    .chunks(old_offset_range.start..offset, false)
-                    .map(|chunk| chunk.text),
-            );
-            cx.theme().status().deleted_background
-        } else {
-            text.push_str(new_text);
-            cx.theme().status().created_background
-        };
-        let end = text.len();
-
-        highlights.push((
-            start..end,
-            HighlightStyle {
-                background_color: Some(color),
-                ..Default::default()
-            },
-        ));
-    }
-
-    let edit_end = edits
-        .last()
-        .unwrap()
-        .0
-        .end
-        .to_display_point(editor_snapshot);
-    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
-        .to_offset(editor_snapshot, Bias::Right);
-    text.extend(
-        editor_snapshot
-            .buffer_snapshot
-            .chunks(offset..end_of_line, false)
-            .map(|chunk| chunk.text),
-    );
-
-    InlineCompletionText::Edit {
-        text: text.into(),
-        highlights,
-    }
+    Some(edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx))
 }
 
 pub fn highlight_diagnostic_message(

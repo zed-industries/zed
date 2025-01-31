@@ -736,6 +736,10 @@ impl EditorElement {
     fn mouse_up(
         editor: &mut Editor,
         event: &MouseUpEvent,
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "freebsd")),
+            allow(unused_variables)
+        )]
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         window: &mut Window,
@@ -748,18 +752,7 @@ impl EditorElement {
             editor.select(SelectPhase::End, window, cx);
         }
 
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.secondary(),
-            MultiCursorModifier::CmdOrCtrl => event.modifiers.alt,
-        };
-
-        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
-            let point = position_map.point_for_position(text_hitbox.bounds, event.position);
-            editor.handle_click_hovered_link(point, event.modifiers, window, cx);
-
-            cx.stop_propagation();
-        } else if end_selection && pending_nonempty_selections {
+        if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
@@ -788,6 +781,30 @@ impl EditorElement {
                 }
                 cx.stop_propagation()
             }
+        }
+    }
+
+    fn click(
+        editor: &mut Editor,
+        event: &ClickEvent,
+        position_map: &PositionMap,
+        text_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let multi_cursor_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => event.modifiers().secondary(),
+            MultiCursorModifier::CmdOrCtrl => event.modifiers().alt,
+        };
+
+        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
+            let point = position_map.point_for_position(text_hitbox.bounds, event.up.position);
+            editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+
+            cx.stop_propagation();
         }
     }
 
@@ -3410,6 +3427,7 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
+        newest_selection_head: Option<DisplayPoint>,
         editor_width: Pixels,
         style: &EditorStyle,
         window: &mut Window,
@@ -3467,7 +3485,9 @@ impl EditorElement {
             }
             InlineCompletion::Edit {
                 edits,
+                edit_preview,
                 display_mode,
+                snapshot,
             } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
@@ -3520,13 +3540,11 @@ impl EditorElement {
                     EditDisplayMode::DiffPopover => {}
                 }
 
-                let crate::InlineCompletionText::Edit { text, highlights } =
-                    crate::inline_completion_edit_text(editor_snapshot, edits, false, cx)
-                else {
-                    return None;
-                };
+                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
+                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
+                })?;
 
-                let line_count = text.lines().count() + 1;
+                let line_count = highlighted_edits.text.lines().count();
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3545,37 +3563,69 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text =
-                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
-                    .px_1()
                     .child(styled_text)
                     .into_any();
 
+                let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
+                    .extend(Edges {
+                        right: -Self::SCROLLBAR_WIDTH,
+                        ..Default::default()
+                    });
+
+                let x_after_longest =
+                    text_bounds.origin.x + longest_line_width + PADDING_X - scroll_pixel_position.x;
+
                 let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let is_fully_visible =
-                    editor_width >= longest_line_width + PADDING_X + element_bounds.width;
+
+                // Fully visible if it can be displayed within the window (allow overlapping other
+                // panes). However, this is only allowed if the popover starts within text_bounds.
+                let is_fully_visible = x_after_longest < text_bounds.right()
+                    && x_after_longest + element_bounds.width < viewport_bounds.right();
 
                 let origin = if is_fully_visible {
-                    text_bounds.origin
-                        + point(
-                            longest_line_width + PADDING_X - scroll_pixel_position.x,
-                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
-                        )
+                    point(
+                        x_after_longest,
+                        text_bounds.origin.y + edit_start.row().as_f32() * line_height
+                            - scroll_pixel_position.y,
+                    )
                 } else {
-                    let target_above =
-                        DisplayRow(edit_start.row().0.saturating_sub(line_count as u32));
-                    let row_target = if visible_row_range
-                        .contains(&DisplayRow(target_above.0.saturating_sub(1)))
-                    {
-                        target_above
+                    // Avoid overlapping both the edited rows and the user's cursor.
+                    let target_above = DisplayRow(
+                        edit_start
+                            .row()
+                            .0
+                            .min(
+                                newest_selection_head
+                                    .map_or(u32::MAX, |cursor_row| cursor_row.row().0),
+                            )
+                            .saturating_sub(line_count as u32),
+                    );
+                    let mut row_target;
+                    if visible_row_range.contains(&DisplayRow(target_above.0.saturating_sub(1))) {
+                        row_target = target_above;
                     } else {
-                        DisplayRow(edit_end.row().0 + 1)
+                        row_target = DisplayRow(
+                            edit_end.row().0.max(
+                                newest_selection_head.map_or(0, |cursor_row| cursor_row.row().0),
+                            ) + 1,
+                        );
+                        if !visible_row_range.contains(&row_target) {
+                            // Not visible, so fallback on displaying immediately below the cursor.
+                            if let Some(cursor) = newest_selection_head {
+                                row_target = DisplayRow(cursor.row().0 + 1);
+                            } else {
+                                // Not visible and no cursor visible, so fallback on displaying at the top of the editor.
+                                row_target = DisplayRow(0);
+                            }
+                        }
                     };
 
                     text_bounds.origin
@@ -3585,8 +3635,10 @@ impl EditorElement {
                         )
                 };
 
-                element.prepaint_as_root(origin, element_bounds.into(), window, cx);
-                Some(element)
+                window.defer_draw(element, origin, 1);
+
+                // Do not return an element, since it will already be drawn due to defer_draw.
+                None
             }
         }
     }
@@ -5270,6 +5322,13 @@ impl EditorElement {
                 if phase == DispatchPhase::Bubble {
                     match event.button {
                         MouseButton::Left => editor.update(cx, |editor, cx| {
+                            let pending_mouse_down = editor
+                                .pending_mouse_down
+                                .get_or_insert_with(Default::default)
+                                .clone();
+
+                            *pending_mouse_down.borrow_mut() = Some(event.clone());
+
                             Self::mouse_left_down(
                                 editor,
                                 event,
@@ -5321,6 +5380,43 @@ impl EditorElement {
                 }
             }
         });
+
+        window.on_mouse_event({
+            let editor = self.editor.clone();
+            let position_map = layout.position_map.clone();
+            let text_hitbox = layout.text_hitbox.clone();
+
+            let mut captured_mouse_down = None;
+
+            move |event: &MouseUpEvent, phase, window, cx| match phase {
+                // Clear the pending mouse down during the capture phase,
+                // so that it happens even if another event handler stops
+                // propagation.
+                DispatchPhase::Capture => editor.update(cx, |editor, _cx| {
+                    let pending_mouse_down = editor
+                        .pending_mouse_down
+                        .get_or_insert_with(Default::default)
+                        .clone();
+
+                    let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                    if pending_mouse_down.is_some() && text_hitbox.is_hovered(window) {
+                        captured_mouse_down = pending_mouse_down.take();
+                        window.refresh();
+                    }
+                }),
+                // Fire click handlers during the bubble phase.
+                DispatchPhase::Bubble => editor.update(cx, |editor, cx| {
+                    if let Some(mouse_down) = captured_mouse_down.take() {
+                        let event = ClickEvent {
+                            down: mouse_down,
+                            up: event.clone(),
+                        };
+                        Self::click(editor, &event, &position_map, &text_hitbox, window, cx);
+                    }
+                }),
+            }
+        });
+
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
@@ -7089,6 +7185,7 @@ impl Element for EditorElement {
                         &line_layouts,
                         line_height,
                         scroll_pixel_position,
+                        newest_selection_head,
                         editor_width,
                         &style,
                         window,
@@ -7837,8 +7934,8 @@ impl HighlightedRange {
         };
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-        let mut path = gpui::Path::new(first_top_right - top_curve_width);
-        path.curve_to(first_top_right + curve_height, first_top_right);
+        let mut builder = gpui::PathBuilder::fill();
+        builder.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();
         while let Some((ix, line)) = iter.next() {
@@ -7849,42 +7946,42 @@ impl HighlightedRange {
 
                 match next_top_right.x.partial_cmp(&bottom_right.x).unwrap() {
                     Ordering::Equal => {
-                        path.line_to(bottom_right);
+                        builder.line_to(bottom_right);
                     }
                     Ordering::Less => {
                         let curve_width = curve_width(next_top_right.x, bottom_right.x);
-                        path.line_to(bottom_right - curve_height);
+                        builder.line_to(bottom_right - curve_height);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(bottom_right - curve_width, bottom_right);
+                            builder.curve_to(bottom_right - curve_width, bottom_right);
                         }
-                        path.line_to(next_top_right + curve_width);
+                        builder.line_to(next_top_right + curve_width);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(next_top_right + curve_height, next_top_right);
+                            builder.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                     Ordering::Greater => {
                         let curve_width = curve_width(bottom_right.x, next_top_right.x);
-                        path.line_to(bottom_right - curve_height);
+                        builder.line_to(bottom_right - curve_height);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(bottom_right + curve_width, bottom_right);
+                            builder.curve_to(bottom_right + curve_width, bottom_right);
                         }
-                        path.line_to(next_top_right - curve_width);
+                        builder.line_to(next_top_right - curve_width);
                         if self.corner_radius > Pixels::ZERO {
-                            path.curve_to(next_top_right + curve_height, next_top_right);
+                            builder.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                 }
             } else {
                 let curve_width = curve_width(line.start_x, line.end_x);
-                path.line_to(bottom_right - curve_height);
+                builder.line_to(bottom_right - curve_height);
                 if self.corner_radius > Pixels::ZERO {
-                    path.curve_to(bottom_right - curve_width, bottom_right);
+                    builder.curve_to(bottom_right - curve_width, bottom_right);
                 }
 
                 let bottom_left = point(line.start_x, bottom_right.y);
-                path.line_to(bottom_left + curve_width);
+                builder.line_to(bottom_left + curve_width);
                 if self.corner_radius > Pixels::ZERO {
-                    path.curve_to(bottom_left - curve_height, bottom_left);
+                    builder.curve_to(bottom_left - curve_height, bottom_left);
                 }
             }
         }
@@ -7892,24 +7989,26 @@ impl HighlightedRange {
         if first_line.start_x > last_line.start_x {
             let curve_width = curve_width(last_line.start_x, first_line.start_x);
             let second_top_left = point(last_line.start_x, start_y + self.line_height);
-            path.line_to(second_top_left + curve_height);
+            builder.line_to(second_top_left + curve_height);
             if self.corner_radius > Pixels::ZERO {
-                path.curve_to(second_top_left + curve_width, second_top_left);
+                builder.curve_to(second_top_left + curve_width, second_top_left);
             }
             let first_bottom_left = point(first_line.start_x, second_top_left.y);
-            path.line_to(first_bottom_left - curve_width);
+            builder.line_to(first_bottom_left - curve_width);
             if self.corner_radius > Pixels::ZERO {
-                path.curve_to(first_bottom_left - curve_height, first_bottom_left);
+                builder.curve_to(first_bottom_left - curve_height, first_bottom_left);
             }
         }
 
-        path.line_to(first_top_left + curve_height);
+        builder.line_to(first_top_left + curve_height);
         if self.corner_radius > Pixels::ZERO {
-            path.curve_to(first_top_left + top_curve_width, first_top_left);
+            builder.curve_to(first_top_left + top_curve_width, first_top_left);
         }
-        path.line_to(first_top_right - top_curve_width);
+        builder.line_to(first_top_right - top_curve_width);
 
-        window.paint_path(path, self.color);
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, self.color);
+        }
     }
 }
 

@@ -6,8 +6,8 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
-use gpui::TestAppContext;
 use gpui::{App, AppContext as _, BorrowAppContext, Entity};
+use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
@@ -23,6 +23,7 @@ use syntax_map::TreeSitterOptions;
 use text::network::Network;
 use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
+use theme::ActiveTheme;
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
@@ -2625,6 +2626,143 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     });
     base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+}
+
+#[gpui::test]
+async fn test_preview_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let insertion_style = HighlightStyle {
+        background_color: Some(cx.read(|cx| cx.theme().status().created_background)),
+        ..Default::default()
+    };
+    let deletion_style = HighlightStyle {
+        background_color: Some(cx.read(|cx| cx.theme().status().deleted_background)),
+        ..Default::default()
+    };
+
+    // no edits
+    assert_preview_edits(
+        indoc! {"
+        fn test_empty() -> bool {
+            false
+        }"
+        },
+        vec![],
+        true,
+        cx,
+        |hl| {
+            assert!(hl.text.is_empty());
+            assert!(hl.highlights.is_empty());
+        },
+    )
+    .await;
+
+    // only insertions
+    assert_preview_edits(
+        indoc! {"
+        fn calculate_area(: f64) -> f64 {
+            std::f64::consts::PI * .powi(2)
+        }"
+        },
+        vec![
+            (Point::new(0, 18)..Point::new(0, 18), "radius"),
+            (Point::new(1, 27)..Point::new(1, 27), "radius"),
+        ],
+        true,
+        cx,
+        |hl| {
+            assert_eq!(
+                hl.text,
+                indoc! {"
+                fn calculate_area(radius: f64) -> f64 {
+                    std::f64::consts::PI * radius.powi(2)"
+                }
+            );
+
+            assert_eq!(hl.highlights.len(), 2);
+            assert_eq!(hl.highlights[0], ((18..24), insertion_style));
+            assert_eq!(hl.highlights[1], ((67..73), insertion_style));
+        },
+    )
+    .await;
+
+    // insertions & deletions
+    assert_preview_edits(
+        indoc! {"
+        struct Person {
+            first_name: String,
+        }
+
+        impl Person {
+            fn first_name(&self) -> &String {
+                &self.first_name
+            }
+        }"
+        },
+        vec![
+            (Point::new(1, 4)..Point::new(1, 9), "last"),
+            (Point::new(5, 7)..Point::new(5, 12), "last"),
+            (Point::new(6, 14)..Point::new(6, 19), "last"),
+        ],
+        true,
+        cx,
+        |hl| {
+            assert_eq!(
+                hl.text,
+                indoc! {"
+                        firstlast_name: String,
+                    }
+
+                    impl Person {
+                        fn firstlast_name(&self) -> &String {
+                            &self.firstlast_name"
+                }
+            );
+
+            assert_eq!(hl.highlights.len(), 6);
+            assert_eq!(hl.highlights[0], ((4..9), deletion_style));
+            assert_eq!(hl.highlights[1], ((9..13), insertion_style));
+            assert_eq!(hl.highlights[2], ((52..57), deletion_style));
+            assert_eq!(hl.highlights[3], ((57..61), insertion_style));
+            assert_eq!(hl.highlights[4], ((101..106), deletion_style));
+            assert_eq!(hl.highlights[5], ((106..110), insertion_style));
+        },
+    )
+    .await;
+
+    async fn assert_preview_edits(
+        text: &str,
+        edits: Vec<(Range<Point>, &str)>,
+        include_deletions: bool,
+        cx: &mut TestAppContext,
+        assert_fn: impl Fn(HighlightedEdits),
+    ) {
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+        let edits = buffer.read_with(cx, |buffer, _| {
+            edits
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
+                        text.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        let edit_preview = buffer
+            .read_with(cx, |buffer, cx| {
+                buffer.preview_edits(edits.clone().into(), cx)
+            })
+            .await;
+        let highlighted_edits = cx.read(|cx| {
+            edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, include_deletions, cx)
+        });
+        assert_fn(highlighted_edits);
+    }
 }
 
 #[gpui::test(iterations = 100)]

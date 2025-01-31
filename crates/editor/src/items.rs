@@ -38,8 +38,11 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, IconDecorationKind, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
+use workspace::{
+    item::{BreadcrumbText, FollowEvent},
+    searchable::SearchOptions,
+};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -1040,10 +1043,10 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, |mut cx| {
                 let project = project.clone();
                 async move {
-                    let language = if let Some(language_name) = language {
-                        let language_registry =
-                            project.update(&mut cx, |project, _| project.languages().clone())?;
+                    let language_registry =
+                        project.update(&mut cx, |project, _| project.languages().clone())?;
 
+                    let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
                         // than fail to restore the buffer.
                         language_registry
@@ -1061,6 +1064,7 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
                             buffer.set_language(Some(language), cx);
                         }
@@ -1320,6 +1324,28 @@ impl SearchableItem for Editor {
             self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
             self.set_search_within_ranges(&previous_search_ranges, cx)
+        }
+    }
+
+    fn supported_options(&self) -> SearchOptions {
+        if self.in_project_search {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: false,
+                selection: false,
+                find_in_results: true,
+            }
+        } else {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: true,
+                selection: true,
+                find_in_results: false,
+            }
         }
     }
 
