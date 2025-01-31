@@ -10,6 +10,7 @@ pub use rate_completion_modal::*;
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
 use client::{Client, UserStore};
+use collections::hash_map::Entry;
 use collections::{HashMap, HashSet, VecDeque};
 use feature_flags::FeatureFlagAppExt as _;
 use futures::AsyncReadExt;
@@ -24,7 +25,6 @@ use language::{
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
-use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     cmp, env,
@@ -903,28 +903,24 @@ and then another
         new_snapshot
     }
 
-    pub fn data_collection_choice_at(&self, path: &Path) -> DataCollectionChoice {
-        match self.data_collection_preferences.per_worktree.get(path) {
-            Some(true) => DataCollectionChoice::Enabled,
-            Some(false) => DataCollectionChoice::Disabled,
-            None => DataCollectionChoice::NotAnswered,
-        }
-    }
-
-    fn update_data_collection_choice_for_worktree(
+    /// Creates a `Entity<DataCollectionChoice>` for each unique worktree abs path it sees.
+    pub fn data_collection_choice_at(
         &mut self,
-        absolute_path_of_project_worktree: PathBuf,
-        can_collect_data: bool,
+        worktree_abs_path: PathBuf,
         cx: &mut Context<Self>,
-    ) {
-        self.data_collection_preferences
+    ) -> Entity<DataCollectionChoice> {
+        match self
+            .data_collection_preferences
             .per_worktree
-            .insert(absolute_path_of_project_worktree.clone(), can_collect_data);
-
-        db::write_and_log(cx, move || {
-            persistence::DB
-                .save_accepted_data_collection(absolute_path_of_project_worktree, can_collect_data)
-        });
+            .entry(worktree_abs_path)
+        {
+            Entry::Vacant(entry) => {
+                let choice = cx.new(|_| DataCollectionChoice::NotAnswered);
+                entry.insert(choice.clone());
+                choice
+            }
+            Entry::Occupied(entry) => entry.get().clone(),
+        }
     }
 
     fn set_never_ask_again_for_data_collection(&mut self, cx: &mut Context<Self>) {
@@ -959,23 +955,32 @@ and then another
             .map(|value| value == "true")
             .unwrap_or(false);
 
-        let preferences_per_project = persistence::DB
-            .get_all_zeta_preferences()
+        let preferences_per_worktree = persistence::DB
+            .get_all_data_collection_preferences()
             .log_err()
-            .unwrap_or_else(HashMap::default);
+            .into_iter()
+            .flatten()
+            .map(|(path, choice)| {
+                let choice = cx.new(|_| DataCollectionChoice::from(choice));
+                (path, choice)
+            })
+            .collect();
 
         DataCollectionPreferences {
             never_ask_again,
-            per_worktree: preferences_per_project,
+            per_worktree: preferences_per_worktree,
         }
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug)]
 struct DataCollectionPreferences {
     /// Set when a user clicks on "Never Ask Again", can never be unset.
     never_ask_again: bool,
-    per_worktree: HashMap<PathBuf, bool>,
+    /// The choices for each worktree.
+    ///
+    /// This is filled when loading from database, or when querying if no matching path is found.
+    per_worktree: HashMap<PathBuf, Entity<DataCollectionChoice>>,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -1281,7 +1286,7 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum DataCollectionChoice {
     NotAnswered,
     Enabled,
@@ -1289,25 +1294,34 @@ pub enum DataCollectionChoice {
 }
 
 impl DataCollectionChoice {
-    pub fn is_enabled(&self) -> bool {
+    pub fn is_enabled(self) -> bool {
         match self {
             Self::Enabled => true,
             Self::NotAnswered | Self::Disabled => false,
         }
     }
 
-    pub fn is_answered(&self) -> bool {
+    pub fn is_answered(self) -> bool {
         match self {
             Self::Enabled | Self::Disabled => true,
             Self::NotAnswered => false,
         }
     }
 
-    pub fn toggle(&self) -> DataCollectionChoice {
+    pub fn toggle(self) -> DataCollectionChoice {
         match self {
             Self::Enabled => Self::Disabled,
             Self::Disabled => Self::Enabled,
             Self::NotAnswered => Self::Enabled,
+        }
+    }
+}
+
+impl From<bool> for DataCollectionChoice {
+    fn from(value: bool) -> Self {
+        match value {
+            true => DataCollectionChoice::Enabled,
+            false => DataCollectionChoice::Disabled,
         }
     }
 }
@@ -1323,7 +1337,7 @@ pub struct ZetaInlineCompletionProvider {
 pub struct ProviderDataCollection {
     workspace: WeakEntity<Workspace>,
     worktree_root_path: PathBuf,
-    choice: DataCollectionChoice,
+    choice: Entity<DataCollectionChoice>,
 }
 
 impl ProviderDataCollection {
@@ -1351,7 +1365,9 @@ impl ProviderDataCollection {
             })
         })?;
 
-        let choice = zeta.read(cx).data_collection_choice_at(&worktree_root_path);
+        let choice = zeta.update(cx, |zeta, cx| {
+            zeta.data_collection_choice_at(worktree_root_path.clone(), cx)
+        });
 
         Some(ProviderDataCollection {
             workspace: workspace.downgrade(),
@@ -1360,22 +1376,18 @@ impl ProviderDataCollection {
         })
     }
 
-    fn set_choice(&mut self, choice: DataCollectionChoice, zeta: &Entity<Zeta>, cx: &mut App) {
-        self.choice = choice;
+    fn set_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
+        self.choice.update(cx, |this, _| *this = choice);
 
         let worktree_root_path = self.worktree_root_path.clone();
 
-        zeta.update(cx, |zeta, cx| {
-            zeta.update_data_collection_choice_for_worktree(
-                worktree_root_path,
-                choice.is_enabled(),
-                cx,
-            )
+        db::write_and_log(cx, move || {
+            persistence::DB.save_data_collection_choice(worktree_root_path, choice.is_enabled())
         });
     }
 
-    fn toggle_choice(&mut self, zeta: &Entity<Zeta>, cx: &mut App) {
-        self.set_choice(self.choice.toggle(), zeta, cx);
+    fn toggle_choice(&mut self, cx: &mut App) {
+        self.set_choice(self.choice.read(cx).toggle(), cx);
     }
 }
 
@@ -1394,7 +1406,7 @@ impl ZetaInlineCompletionProvider {
 
     fn set_data_collection_choice(&mut self, choice: DataCollectionChoice, cx: &mut App) {
         if let Some(data_collection) = self.data_collection.as_mut() {
-            data_collection.set_choice(choice, &self.zeta, cx);
+            data_collection.set_choice(choice, cx);
         }
     }
 }
@@ -1420,12 +1432,12 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
-    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
         let Some(data_collection) = self.data_collection.as_ref() else {
             return DataCollectionState::Unknown;
         };
 
-        if data_collection.choice.is_enabled() {
+        if data_collection.choice.read(cx).is_enabled() {
             DataCollectionState::Enabled
         } else {
             DataCollectionState::Disabled
@@ -1434,7 +1446,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
         if let Some(data_collection) = self.data_collection.as_mut() {
-            data_collection.toggle_choice(&self.zeta, cx);
+            data_collection.toggle_choice(cx);
         }
     }
 
@@ -1486,7 +1498,9 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         let can_collect_data = self
             .data_collection
             .as_ref()
-            .map_or(false, |data_collection| data_collection.choice.is_enabled());
+            .map_or(false, |data_collection| {
+                data_collection.choice.read(cx).is_enabled()
+            });
 
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {
@@ -1579,7 +1593,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             return;
         };
 
-        if data_collection.choice.is_answered()
+        if data_collection.choice.read(cx).is_answered()
             || self
                 .zeta
                 .read(cx)
@@ -1633,7 +1647,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                             })
                             .with_tertiary_click_message("Never Ask Again")
                             .on_tertiary_click({
-                                let zeta = zeta.clone();
                                 move |_window, cx| {
                                     zeta.update(cx, |zeta, cx| {
                                         zeta.set_never_ask_again_for_data_collection(cx);

@@ -1,5 +1,3 @@
-use anyhow::Result;
-use collections::HashMap;
 use std::path::{Path, PathBuf};
 use workspace::WorkspaceDb;
 
@@ -18,12 +16,8 @@ define_connection!(
 );
 
 impl ZetaDb {
-    pub fn get_all_zeta_preferences(&self) -> Result<HashMap<PathBuf, bool>> {
-        Ok(self.get_all_zeta_preferences_query()?.into_iter().collect())
-    }
-
     query! {
-        fn get_all_zeta_preferences_query() -> Result<Vec<(PathBuf, bool)>> {
+        pub fn get_all_data_collection_preferences() -> Result<Vec<(PathBuf, bool)>> {
             SELECT worktree_path, accepted_data_collection FROM zeta_preferences
         }
     }
@@ -36,7 +30,7 @@ impl ZetaDb {
     }
 
     query! {
-        pub async fn save_accepted_data_collection(worktree_path: PathBuf, accepted_data_collection: bool) -> Result<()> {
+        pub async fn save_data_collection_choice(worktree_path: PathBuf, accepted_data_collection: bool) -> Result<()> {
             INSERT INTO zeta_preferences
                 (worktree_path, accepted_data_collection)
             VALUES
