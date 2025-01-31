@@ -742,7 +742,6 @@ impl BlockMap {
 
         std::iter::from_fn(move || {
             let excerpt_boundary = boundaries.next()?;
-            dbg!(&excerpt_boundary);
             let wrap_row = if excerpt_boundary.next.is_some() {
                 wrap_snapshot.make_wrap_point(Point::new(excerpt_boundary.row.0, 0), Bias::Left)
             } else {

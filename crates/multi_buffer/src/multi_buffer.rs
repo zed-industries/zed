@@ -4929,7 +4929,7 @@ impl MultiBufferSnapshot {
         cursor.next_excerpt();
 
         let mut visited_end = false;
-        iter::from_fn(move || {
+        iter::from_fn(move || loop {
             if self.singleton {
                 return None;
             }
@@ -4939,7 +4939,8 @@ impl MultiBufferSnapshot {
 
             let next_region_start = if let Some(region) = &next_region {
                 if !bounds.contains(&region.range.start.key) {
-                    return None;
+                    prev_region = next_region;
+                    continue;
                 }
                 region.range.start.value.unwrap()
             } else {
@@ -4986,7 +4987,7 @@ impl MultiBufferSnapshot {
 
             prev_region = next_region;
 
-            Some(ExcerptBoundary { row, prev, next })
+            return Some(ExcerptBoundary { row, prev, next });
         })
     }
 

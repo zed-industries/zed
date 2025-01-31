@@ -232,7 +232,6 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
 
         self.multibuffer.update(cx, |multibuffer, cx| {
-            dbg!(&abs_path);
             multibuffer.set_excerpts_for_path(
                 abs_path.clone(),
                 buffer,
