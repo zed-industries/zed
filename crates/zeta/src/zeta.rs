@@ -602,7 +602,7 @@ and then another
     fn perform_predict_edits(
         client: Arc<Client>,
         llm_token: LlmApiToken,
-        is_staff: bool,
+        _is_staff: bool,
         body: PredictEditsParams,
     ) -> impl Future<Output = Result<PredictEditsResponse>> {
         async move {
@@ -611,18 +611,11 @@ and then another
             let mut did_retry = false;
 
             loop {
-                let request_builder = http_client::Request::builder().method(Method::POST);
-                let request_builder = if is_staff {
-                    request_builder.uri(
-                        "https://llm-worker-production.zed-industries.workers.dev/predict_edits",
-                    )
-                } else {
-                    request_builder.uri(
-                        http_client
-                            .build_zed_llm_url("/predict_edits", &[])?
-                            .as_ref(),
-                    )
-                };
+                let request_builder = http_client::Request::builder().method(Method::POST).uri(
+                    http_client
+                        .build_zed_llm_url("/predict_edits", &[])?
+                        .as_ref(),
+                );
                 let request = request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
