@@ -11,6 +11,10 @@ var s_sprite: sampler;
 const M_PI_F: f32 = 3.1415926;
 const GRAYSCALE_FACTORS: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
+fn fmod(x: f32, y: f32) -> f32 {
+    return x - y * floor(x / y);
+}
+
 struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
