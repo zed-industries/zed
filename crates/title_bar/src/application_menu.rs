@@ -1,23 +1,17 @@
-use gpui::{impl_actions, Entity, OwnedMenu, OwnedMenuItem};
+use gpui::{actions, impl_actions, Entity, OwnedMenu, OwnedMenuItem};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
-impl_actions!(
-    app_menu,
-    [OpenApplicationMenu, NavigateApplicationMenuInDirection]
-);
+impl_actions!(app_menu, [OpenApplicationMenu]);
+
+actions!(app_menu, [ActivateMenuRight, ActivateMenuLeft]);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct OpenApplicationMenu(String);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-pub struct NavigateApplicationMenuInDirection(NavigationDirection);
-
-#[derive(Clone, Copy, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "snake_case")]
-enum NavigationDirection {
+pub enum ActivateDirection {
     Left,
     Right,
 }
@@ -197,7 +191,7 @@ impl ApplicationMenu {
     #[cfg(not(target_os = "macos"))]
     pub fn navigate_menus_in_direction(
         &mut self,
-        action: &NavigateApplicationMenuInDirection,
+        direction: ActivateDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -209,15 +203,15 @@ impl ApplicationMenu {
             return;
         };
 
-        let next_index = match action.0 {
-            NavigationDirection::Left => {
+        let next_index = match direction {
+            ActivateDirection::Left => {
                 if current_index == 0 {
                     self.entries.len() - 1
                 } else {
                     current_index - 1
                 }
             }
-            NavigationDirection::Right => {
+            ActivateDirection::Right => {
                 if current_index == self.entries.len() - 1 {
                     0
                 } else {

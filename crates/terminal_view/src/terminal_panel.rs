@@ -35,10 +35,11 @@ use workspace::{
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
-    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane,
-    DraggedSelection, DraggedTab, ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal,
-    Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp,
-    SwapPaneInDirection, ToggleZoom, Workspace,
+    ActivateNextPane, ActivatePane, ActivatePaneDown, ActivatePaneLeft, ActivatePaneRight,
+    ActivatePaneUp, ActivatePreviousPane, DraggedSelection, DraggedTab, ItemId, MoveItemToPane,
+    MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup, SplitDirection, SplitDown, SplitLeft,
+    SplitRight, SplitUp, SwapPaneDown, SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom,
+    Workspace,
 };
 
 use anyhow::{anyhow, Context as _, Result};
@@ -889,6 +890,37 @@ impl TerminalPanel {
             is_enabled_in_workspace(workspace.read(cx), cx)
         })
     }
+
+    fn activate_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(pane) = self
+            .center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+        {
+            window.focus(&pane.focus_handle(cx));
+        } else {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.activate_pane_in_direction(direction, window, cx)
+                })
+                .ok();
+        }
+    }
+
+    fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if let Some(to) = self
+            .center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+            .cloned()
+        {
+            self.center.swap(&self.active_pane, &to);
+            cx.notify();
+        }
+    }
 }
 
 fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
@@ -1145,24 +1177,28 @@ impl Render for TerminalPanel {
             .ok()
             .map(|div| {
                 div.on_action({
-                    cx.listener(
-                        |terminal_panel, action: &ActivatePaneInDirection, window, cx| {
-                            if let Some(pane) = terminal_panel.center.find_pane_in_direction(
-                                &terminal_panel.active_pane,
-                                action.0,
-                                cx,
-                            ) {
-                                window.focus(&pane.focus_handle(cx));
-                            } else {
-                                terminal_panel
-                                    .workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace.activate_pane_in_direction(action.0, window, cx)
-                                    })
-                                    .ok();
-                            }
-                        },
-                    )
+                    cx.listener(|terminal_panel, _: &ActivatePaneLeft, window, cx| {
+                        terminal_panel.activate_pane_in_direction(SplitDirection::Left, window, cx);
+                    })
+                })
+                .on_action({
+                    cx.listener(|terminal_panel, _: &ActivatePaneRight, window, cx| {
+                        terminal_panel.activate_pane_in_direction(
+                            SplitDirection::Right,
+                            window,
+                            cx,
+                        );
+                    })
+                })
+                .on_action({
+                    cx.listener(|terminal_panel, _: &ActivatePaneUp, window, cx| {
+                        terminal_panel.activate_pane_in_direction(SplitDirection::Up, window, cx);
+                    })
+                })
+                .on_action({
+                    cx.listener(|terminal_panel, _: &ActivatePaneDown, window, cx| {
+                        terminal_panel.activate_pane_in_direction(SplitDirection::Down, window, cx);
+                    })
                 })
                 .on_action(
                     cx.listener(|terminal_panel, _action: &ActivateNextPane, window, cx| {
@@ -1210,18 +1246,18 @@ impl Render for TerminalPanel {
                         }
                     }),
                 )
-                .on_action(
-                    cx.listener(|terminal_panel, action: &SwapPaneInDirection, _, cx| {
-                        if let Some(to) = terminal_panel
-                            .center
-                            .find_pane_in_direction(&terminal_panel.active_pane, action.0, cx)
-                            .cloned()
-                        {
-                            terminal_panel.center.swap(&terminal_panel.active_pane, &to);
-                            cx.notify();
-                        }
-                    }),
-                )
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneLeft, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Left, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneRight, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Right, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneUp, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Up, cx);
+                }))
+                .on_action(cx.listener(|terminal_panel, _: &SwapPaneDown, _, cx| {
+                    terminal_panel.swap_pane_in_direction(SplitDirection::Down, cx);
+                }))
                 .on_action(
                     cx.listener(|terminal_panel, action: &MoveItemToPane, window, cx| {
                         let Some(&target_pane) =

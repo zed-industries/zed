@@ -432,14 +432,14 @@
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
-      "ctrl-k ctrl-left": ["workspace::ActivatePaneInDirection", "left"],
-      "ctrl-k ctrl-right": ["workspace::ActivatePaneInDirection", "right"],
-      "ctrl-k ctrl-up": ["workspace::ActivatePaneInDirection", "up"],
-      "ctrl-k ctrl-down": ["workspace::ActivatePaneInDirection", "down"],
-      "ctrl-k shift-left": ["workspace::SwapPaneInDirection", "left"],
-      "ctrl-k shift-right": ["workspace::SwapPaneInDirection", "right"],
-      "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "up"],
-      "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "down"],
+      "ctrl-k ctrl-left": "workspace::ActivatePaneLeft",
+      "ctrl-k ctrl-right": "workspace::ActivatePaneRight",
+      "ctrl-k ctrl-up": "workspace::ActivatePaneUp",
+      "ctrl-k ctrl-down": "workspace::ActivatePaneDown",
+      "ctrl-k shift-left": "workspace::SwapPaneLeft",
+      "ctrl-k shift-right": "workspace::SwapPaneRight",
+      "ctrl-k shift-up": "workspace::SwapPaneUp",
+      "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
       "ctrl-shift-r": "task::Rerun",
       "ctrl-alt-r": "task::Rerun",
@@ -453,8 +453,8 @@
   {
     "context": "ApplicationMenu",
     "bindings": {
-      "left": ["app_menu::NavigateApplicationMenuInDirection", "left"],
-      "right": ["app_menu::NavigateApplicationMenuInDirection", "right"]
+      "left": "app_menu::ActivateMenuLeft",
+      "right": "app_menu::ActivateMenuRight"
     }
   },
   // Bindings from Sublime Text
