@@ -1,6 +1,13 @@
-use gpui::{actions, impl_actions, Entity, OwnedMenu, OwnedMenuItem};
+use gpui::{Entity, OwnedMenu, OwnedMenuItem};
+
+#[cfg(not(target_os = "macos"))]
+use gpui::{actions, impl_actions};
+
+#[cfg(not(target_os = "macos"))]
 use schemars::JsonSchema;
+#[cfg(not(target_os = "macos"))]
 use serde::Deserialize;
+
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
