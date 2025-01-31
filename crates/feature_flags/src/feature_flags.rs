@@ -14,7 +14,7 @@ struct FeatureFlags {
 }
 
 pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
-    dbg!(std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0"))
+    std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
 });
 
 impl FeatureFlags {
@@ -49,7 +49,7 @@ pub trait FeatureFlag {
     }
 
     fn enabled_in_development() -> bool {
-        Self::enabled_for_staff() && !dbg!(*ZED_DISABLE_STAFF)
+        Self::enabled_for_staff() && !*ZED_DISABLE_STAFF
     }
 }
 
