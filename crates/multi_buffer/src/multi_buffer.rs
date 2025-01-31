@@ -654,8 +654,8 @@ impl MultiBuffer {
         self.read(cx).len()
     }
 
-    pub fn is_empty(&self, cx: &App) -> bool {
-        self.len(cx) != 0
+    pub fn is_empty(&self) -> bool {
+        self.buffers.borrow().is_empty()
     }
 
     pub fn symbols_containing<T: ToOffset>(
@@ -1795,9 +1795,8 @@ impl MultiBuffer {
         excerpts
     }
 
-    pub fn remove_excerpts_for_buffer(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
-        let excerpts = self.excerpts_for_buffer(buffer, cx);
-        self.remove_excerpts(excerpts.iter().map(|(excerpt_id, _)| *excerpt_id), cx)
+    pub fn remove_excerpts_for_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.set_excerpts_for_buffer(buffer, Vec::default(), 0, cx);
     }
 
     pub fn excerpt_ranges_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Vec<Range<Point>> {

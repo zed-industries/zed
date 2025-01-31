@@ -100,9 +100,9 @@ impl ProjectDiff {
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
             let this = cx.weak_entity();
-            |cx| Self::worker(this, recv, cx)
+            |cx| Self::handle_status_updates(this, recv, cx)
         });
-        // Kick off the worker
+        // Kick of a refresh immediately
         *send.borrow_mut() = ();
 
         Self {
@@ -118,7 +118,7 @@ impl ProjectDiff {
         }
     }
 
-    fn buffers_to_load(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
+    fn load_buffers(&mut self, cx: &mut Context<Self>) -> Vec<Task<Result<DiffBuffer>>> {
         let Some(repo) = self.git_state.read(cx).active_repository() else {
             self.multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
@@ -126,7 +126,7 @@ impl ProjectDiff {
             return vec![];
         };
 
-        let mut loaded_buffers = self
+        let mut previous_buffers = self
             .multibuffer
             .read(cx)
             .all_buffers()
@@ -151,7 +151,7 @@ impl ProjectDiff {
                 continue;
             };
 
-            loaded_buffers.remove(&project_path);
+            previous_buffers.remove(&project_path);
             let load_buffer = self
                 .project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx));
@@ -164,7 +164,6 @@ impl ProjectDiff {
                         project.open_unstaged_changes(buffer.clone(), cx)
                     })?
                     .await?;
-
                 Ok(DiffBuffer {
                     buffer,
                     change_set: changes,
@@ -172,8 +171,8 @@ impl ProjectDiff {
             }));
         }
         self.multibuffer.update(cx, |multibuffer, cx| {
-            for (_, buffer) in loaded_buffers {
-                multibuffer.remove_excerpts_for_buffer(&buffer, cx);
+            for (_, buffer) in previous_buffers {
+                multibuffer.remove_excerpts_for_buffer(buffer, cx);
             }
         });
         result
@@ -200,13 +199,13 @@ impl ProjectDiff {
         })
     }
 
-    pub async fn worker(
+    pub async fn handle_status_updates(
         this: WeakEntity<Self>,
         mut recv: postage::watch::Receiver<()>,
         mut cx: AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            let buffers_to_load = this.update(&mut cx, |this, cx| this.buffers_to_load(cx))?;
+            let buffers_to_load = this.update(&mut cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
                     this.update(&mut cx, |this, cx| this.register_buffer(buffer, cx))?;
@@ -385,12 +384,23 @@ impl Item for ProjectDiff {
 
 impl Render for ProjectDiff {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .bg(cx.theme().colors().editor_background)
-            .flex()
-            .items_center()
-            .justify_center()
-            .size_full()
-            .child(self.editor.clone())
+        let is_empty = self.multibuffer.read(cx).is_empty();
+        if is_empty {
+            div()
+                .bg(cx.theme().colors().editor_background)
+                .flex()
+                .items_center()
+                .justify_center()
+                .size_full()
+                .child(Label::new("No uncommitted changes"))
+        } else {
+            div()
+                .bg(cx.theme().colors().editor_background)
+                .flex()
+                .items_center()
+                .justify_center()
+                .size_full()
+                .child(self.editor.clone())
+        }
     }
 }
