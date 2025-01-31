@@ -12167,6 +12167,10 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn set_soft_wrap(&mut self) {
+        self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
+    }
+
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
         if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
