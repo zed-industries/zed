@@ -35,6 +35,7 @@ use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
+use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -49,12 +50,6 @@ use workspace::{self, Pane, Workspace};
 
 use crate::state::ReplayableAction;
 
-/// PushOperator is used to put vim into a "minor" mode,
-/// where it's waiting for a specific next set of keystrokes.
-/// For example 'd' needs a motion to complete.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-pub struct PushOperator(pub Operator);
-
 /// An Action to Switch between modes
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct SwitchMode(pub Mode);
@@ -66,6 +61,51 @@ struct Number(usize);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 struct SelectRegister(String);
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushObject {
+    around: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushFindForward {
+    before: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushFindBackward {
+    after: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushSneak {
+    first_char: Option<char>,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushSneakBackward {
+    first_char: Option<char>,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushChangeSurrounds {
+    target: Option<Object>,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushJump {
+    line: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushDigraph {
+    first_char: Option<char>,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct PushLiteral {
+    prefix: Option<String>,
+}
 
 actions!(
     vim,
@@ -81,32 +121,48 @@ actions!(
         ResizePaneLeft,
         ResizePaneUp,
         ResizePaneDown,
-        Change,
-        Delete,
-        Yank,
-        Replace,
-        AddSurrounds,
-        DeleteSurrounds,
-        Mark,
-        Indent,
-        Outdent,
-        AutoIndent,
-        Rewrap,
-        ShellCommand,
-        Lowercase,
-        Uppercase,
-        OppositeCase,
-        Register,
-        RecordRegister,
-        ReplayRegister,
-        ToggleComments,
+        PushChange,
+        PushDelete,
+        PushYank,
+        PushReplace,
+        PushAddSurrounds,
+        PushDeleteSurrounds,
+        PushMark,
+        PushIndent,
+        PushOutdent,
+        PushAutoIndent,
+        PushRewrap,
+        PushShellCommand,
+        PushLowercase,
+        PushUppercase,
+        PushOppositeCase,
+        PushRegister,
+        PushRecordRegister,
+        PushReplayRegister,
+        PushToggleComments,
     ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
 actions!(workspace, [ToggleVimMode,]);
 
-impl_actions!(vim, [SwitchMode, Number, PushOperator, SelectRegister]);
+impl_actions!(
+    vim,
+    [
+        SwitchMode,
+        Number,
+        SelectRegister,
+        PushObject,
+        PushFindForward,
+        PushFindBackward,
+        PushSneak,
+        PushSneakBackward,
+        PushChangeSurrounds,
+        PushJump,
+        PushDigraph,
+        PushLiteral
+    ]
+);
 
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
@@ -366,83 +422,167 @@ impl Vim {
                 vim.switch_mode(action.0, false, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, action: &PushOperator, window, cx| {
-                vim.push_operator(action.0.clone(), window, cx)
+            Vim::action(editor, cx, |vim, action: &PushObject, window, cx| {
+                vim.push_operator(
+                    Operator::Object {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                )
             });
 
-            Vim::action(editor, cx, |vim, _: &Change, window, cx| {
+            Vim::action(editor, cx, |vim, action: &PushFindForward, window, cx| {
+                vim.push_operator(
+                    Operator::FindForward {
+                        before: action.before,
+                    },
+                    window,
+                    cx,
+                )
+            });
+
+            Vim::action(editor, cx, |vim, action: &PushFindBackward, window, cx| {
+                vim.push_operator(
+                    Operator::FindBackward {
+                        after: action.after,
+                    },
+                    window,
+                    cx,
+                )
+            });
+
+            Vim::action(editor, cx, |vim, action: &PushSneak, window, cx| {
+                vim.push_operator(
+                    Operator::Sneak {
+                        first_char: action.first_char,
+                    },
+                    window,
+                    cx,
+                )
+            });
+
+            Vim::action(editor, cx, |vim, action: &PushSneakBackward, window, cx| {
+                vim.push_operator(
+                    Operator::SneakBackward {
+                        first_char: action.first_char,
+                    },
+                    window,
+                    cx,
+                )
+            });
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, action: &PushChangeSurrounds, window, cx| {
+                    vim.push_operator(
+                        Operator::ChangeSurrounds {
+                            target: action.target,
+                        },
+                        window,
+                        cx,
+                    )
+                },
+            );
+
+            Vim::action(editor, cx, |vim, action: &PushJump, window, cx| {
+                vim.push_operator(Operator::Jump { line: action.line }, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, action: &PushDigraph, window, cx| {
+                vim.push_operator(
+                    Operator::Digraph {
+                        first_char: action.first_char,
+                    },
+                    window,
+                    cx,
+                )
+            });
+
+            Vim::action(editor, cx, |vim, action: &PushLiteral, window, cx| {
+                vim.push_operator(
+                    Operator::Literal {
+                        prefix: action.prefix.clone(),
+                    },
+                    window,
+                    cx,
+                )
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushChange, window, cx| {
                 vim.push_operator(Operator::Change, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Delete, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushDelete, window, cx| {
                 vim.push_operator(Operator::Delete, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Yank, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushYank, window, cx| {
                 vim.push_operator(Operator::Yank, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Replace, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushReplace, window, cx| {
                 vim.push_operator(Operator::Replace, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &AddSurrounds, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushAddSurrounds, window, cx| {
                 vim.push_operator(Operator::AddSurrounds { target: None }, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &DeleteSurrounds, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushDeleteSurrounds, window, cx| {
                 vim.push_operator(Operator::DeleteSurrounds, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Mark, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushMark, window, cx| {
                 vim.push_operator(Operator::Mark, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushIndent, window, cx| {
                 vim.push_operator(Operator::Indent, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Outdent, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushOutdent, window, cx| {
                 vim.push_operator(Operator::Outdent, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &AutoIndent, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushAutoIndent, window, cx| {
                 vim.push_operator(Operator::AutoIndent, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Rewrap, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushRewrap, window, cx| {
                 vim.push_operator(Operator::Rewrap, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushShellCommand, window, cx| {
                 vim.push_operator(Operator::ShellCommand, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Lowercase, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushLowercase, window, cx| {
                 vim.push_operator(Operator::Lowercase, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Uppercase, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushUppercase, window, cx| {
                 vim.push_operator(Operator::Uppercase, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &OppositeCase, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushOppositeCase, window, cx| {
                 vim.push_operator(Operator::OppositeCase, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &Register, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushRegister, window, cx| {
                 vim.push_operator(Operator::Register, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &RecordRegister, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushRecordRegister, window, cx| {
                 vim.push_operator(Operator::RecordRegister, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &ReplayRegister, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushReplayRegister, window, cx| {
                 vim.push_operator(Operator::ReplayRegister, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &ToggleComments, window, cx| {
+            Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
 

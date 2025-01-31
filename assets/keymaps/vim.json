@@ -2,8 +2,8 @@
   {
     "context": "VimControl && !menu",
     "bindings": {
-      "i": ["vim::PushOperator", { "object": { "around": false } }],
-      "a": ["vim::PushOperator", { "object": { "around": true } }],
+      "i": ["vim::PushObject", { "around": false }],
+      "a": ["vim::PushObject", { "around": true }],
       "left": "vim::Left",
       "h": "vim::Left",
       "backspace": "vim::Backspace",
@@ -70,13 +70,13 @@
       "[ {": ["vim::UnmatchedBackward", { "char": "{" }],
       "] )": ["vim::UnmatchedForward", { "char": ")" }],
       "[ (": ["vim::UnmatchedBackward", { "char": "(" }],
-      "f": ["vim::PushOperator", { "find_forward": { "before": false } }],
-      "t": ["vim::PushOperator", { "find_forward": { "before": true } }],
-      "shift-f": ["vim::PushOperator", { "find_backward": { "after": false } }],
-      "shift-t": ["vim::PushOperator", { "find_backward": { "after": true } }],
-      "m": "vim::Mark",
-      "'": ["vim::PushOperator", { "jump": { "line": true } }],
-      "`": ["vim::PushOperator", { "jump": { "line": false } }],
+      "f": ["vim::PushFindForward", { "before": false }],
+      "t": ["vim::PushFindForward", { "before": true }],
+      "shift-f": ["vim::PushFindBackward", { "after": false }],
+      "shift-t": ["vim::PushFindBackward", { "after": true }],
+      "m": "vim::PushMark",
+      "'": ["vim::PushJump", { "line": true }],
+      "`": ["vim::PushJump", { "line": false }],
       ";": "vim::RepeatFind",
       ",": "vim::RepeatFindReversed",
       "ctrl-o": "pane::GoBack",
@@ -147,7 +147,7 @@
       "shift-l": "vim::WindowBottom",
       "q": "vim::ToggleRecord",
       "shift-q": "vim::ReplayLastRecording",
-      "@": "vim::ReplayRegister",
+      "@": "vim::PushReplayRegister",
       // z commands
       "z enter": ["workspace::SendKeystrokes", "z t ^"],
       "z -": ["workspace::SendKeystrokes", "z b ^"],
@@ -194,13 +194,13 @@
       "escape": "editor::Cancel",
       ":": "command_palette::Toggle",
       ".": "vim::Repeat",
-      "c": "vim::Change",
+      "c": "vim::PushChange",
       "shift-c": "vim::ChangeToEndOfLine",
-      "d": "vim::Delete",
+      "d": "vim::PushDelete",
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "g shift-j": "vim::JoinLinesNoWhitespace",
-      "y": "vim::Yank",
+      "y": "vim::PushYank",
       "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
@@ -217,19 +217,19 @@
       "shift-p": ["vim::Paste", { "before": true }],
       "u": "vim::Undo",
       "ctrl-r": "vim::Redo",
-      "r": "vim::Replace",
+      "r": "vim::PushReplace",
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
-      ">": "vim::Indent",
-      "<": "vim::Outdent",
-      "=": "vim::AutoIndent",
-      "!": "vim::ShellCommand",
-      "g u": "vim::Lowercase",
-      "g shift-u": "vim::Uppercase",
-      "g ~": "vim::OppositeCase",
-      "\"": "vim::Register",
-      "g w": "vim::Rewrap",
-      "g q": "vim::Rewrap",
+      ">": "vim::PushIndent",
+      "<": "vim::PushOutdent",
+      "=": "vim::PushAutoIndent",
+      "!": "vim::PushShellCommand",
+      "g u": "vim::PushLowercase",
+      "g shift-u": "vim::PushUppercase",
+      "g ~": "vim::PushOppositeCase",
+      "\"": "vim::PushRegister",
+      "g w": "vim::PushRewrap",
+      "g q": "vim::PushRewrap",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       "insert": "vim::InsertBefore",
@@ -240,7 +240,7 @@
       "[ d": "editor::GoToPrevDiagnostic",
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPrevHunk",
-      "g c": "vim::ToggleComments"
+      "g c": "vim::PushToggleComments"
     }
   },
   {
@@ -283,7 +283,7 @@
       "g shift-a": "vim::VisualInsertEndOfLine",
       "shift-j": "vim::JoinLines",
       "g shift-j": "vim::JoinLinesNoWhitespace",
-      "r": "vim::Replace",
+      "r": "vim::PushReplace",
       "ctrl-c": ["vim::SwitchMode", "normal"],
       "ctrl-[": ["vim::SwitchMode", "normal"],
       "escape": ["vim::SwitchMode", "normal"],
@@ -291,11 +291,11 @@
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "!": "vim::ShellCommand",
-      "i": ["vim::PushOperator", { "object": { "around": false } }],
-      "a": ["vim::PushOperator", { "object": { "around": true } }],
+      "i": ["vim::PushObject", { "around": false }],
+      "a": ["vim::PushObject", { "around": true }],
       "g c": "vim::ToggleComments",
       "g q": "vim::Rewrap",
-      "\"": "vim::Register",
+      "\"": "vim::PushRegister",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode"
@@ -317,12 +317,12 @@
       "ctrl-u": "editor::DeleteToBeginningOfLine",
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
-      "ctrl-k": ["vim::PushOperator", { "digraph": {} }],
-      "ctrl-v": ["vim::PushOperator", { "literal": {} }],
+      "ctrl-k": ["vim::PushDigraph", {}],
+      "ctrl-v": ["vim::PushLiteral", {}],
       "ctrl-shift-v": "editor::Paste", // note: this is *very* similar to ctrl-v in vim, but ctrl-shift-v on linux is the typical shortcut for paste when ctrl-v is already in use.
-      "ctrl-q": ["vim::PushOperator", { "literal": {} }],
-      "ctrl-shift-q": ["vim::PushOperator", { "literal": {} }],
-      "ctrl-r": "vim::Register",
+      "ctrl-q": ["vim::PushLiteral", {}],
+      "ctrl-shift-q": ["vim::PushLiteral", {}],
+      "ctrl-r": "vim::PushRegister",
       "insert": "vim::ToggleReplace",
       "ctrl-o": "vim::TemporaryNormal"
     }
@@ -357,11 +357,11 @@
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
       "escape": "vim::NormalBefore",
-      "ctrl-k": ["vim::PushOperator", { "digraph": {} }],
-      "ctrl-v": ["vim::PushOperator", { "literal": {} }],
+      "ctrl-k": ["vim::PushDigraph", {}],
+      "ctrl-v": ["vim::PushLiteral", {}],
       "ctrl-shift-v": "editor::Paste", // note: this is *very* similar to ctrl-v in vim, but ctrl-shift-v on linux is the typical shortcut for paste when ctrl-v is already in use.
-      "ctrl-q": ["vim::PushOperator", { "literal": {} }],
-      "ctrl-shift-q": ["vim::PushOperator", { "literal": {} }],
+      "ctrl-q": ["vim::PushLiteral", {}],
+      "ctrl-shift-q": ["vim::PushLiteral", {}],
       "backspace": "vim::UndoReplace",
       "tab": "vim::Tab",
       "enter": "vim::Enter",
@@ -376,9 +376,9 @@
       "ctrl-c": "vim::ClearOperators",
       "ctrl-[": "vim::ClearOperators",
       "escape": "vim::ClearOperators",
-      "ctrl-k": ["vim::PushOperator", { "digraph": {} }],
-      "ctrl-v": ["vim::PushOperator", { "literal": {} }],
-      "ctrl-q": ["vim::PushOperator", { "literal": {} }]
+      "ctrl-k": ["vim::PushDigraph", {}],
+      "ctrl-v": ["vim::PushLiteral", {}],
+      "ctrl-q": ["vim::PushLiteral", {}]
     }
   },
   {
@@ -431,14 +431,14 @@
     "bindings": {
       "c": "vim::CurrentLine",
       "d": "editor::Rename", // zed specific
-      "s": ["vim::PushOperator", { "change_surrounds": {} }]
+      "s": ["vim::PushChangeSurrounds", {}]
     }
   },
   {
     "context": "vim_operator == d",
     "bindings": {
       "d": "vim::CurrentLine",
-      "s": "vim::DeleteSurrounds",
+      "s": "vim::PushDeleteSurrounds",
       "o": "editor::ToggleSelectedDiffHunks", // "d o"
       "p": "editor::RevertSelectedHunks" // "d p"
     }
@@ -477,7 +477,7 @@
     "context": "vim_operator == y",
     "bindings": {
       "y": "vim::CurrentLine",
-      "s": ["vim::PushOperator", { "add_surrounds": {} }]
+      "s": ["vim::PushAddSurrounds", {}]
     }
   },
   {

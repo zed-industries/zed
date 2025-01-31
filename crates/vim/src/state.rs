@@ -60,8 +60,7 @@ impl Default for Mode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operator {
     Change,
     Delete,
@@ -84,7 +83,6 @@ pub enum Operator {
     },
     AddSurrounds {
         // Typically no need to configure this as `SendKeystrokes` can be used - see #23088.
-        #[serde(skip)]
         target: Option<SurroundsType>,
     },
     ChangeSurrounds {
