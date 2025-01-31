@@ -33,7 +33,7 @@ impl Vim {
         }) else {
             return;
         };
-        self.marks.insert(text.to_string(), anchors);
+        self.set_mark(text.to_string(), anchors);
         self.clear_operator(window, cx);
     }
 
@@ -71,8 +71,8 @@ impl Vim {
             }
         });
 
-        self.marks.insert("<".to_string(), starts);
-        self.marks.insert(">".to_string(), ends);
+        self.set_mark("<".to_string(), starts);
+        self.set_mark(">".to_string(), ends);
         self.stored_visual_mode.replace((mode, reversed));
     }
 
