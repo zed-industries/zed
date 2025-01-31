@@ -5237,7 +5237,7 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    // Test carrot-only selections
+    // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
