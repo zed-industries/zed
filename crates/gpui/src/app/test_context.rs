@@ -94,6 +94,21 @@ impl AppContext for TestAppContext {
         let app = self.app.borrow();
         app.read_window(window, read)
     }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.background_executor.spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: Global,
+    {
+        let app = self.app.borrow();
+        app.read_global(callback)
+    }
 }
 
 impl TestAppContext {
@@ -905,6 +920,20 @@ impl AppContext for VisualTestContext {
         T: 'static,
     {
         self.cx.read_window(window, read)
+    }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.cx.background_spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: Global,
+    {
+        self.cx.read_global(callback)
     }
 }
 

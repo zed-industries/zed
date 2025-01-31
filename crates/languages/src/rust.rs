@@ -74,23 +74,6 @@ impl LspAdapter for RustLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
-    fn find_project_root(
-        &self,
-        path: &Path,
-        ancestor_depth: usize,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> Option<Arc<Path>> {
-        let mut outermost_cargo_toml = None;
-        for path in path.ancestors().take(ancestor_depth) {
-            let p = path.join("Cargo.toml");
-            if delegate.exists(&p, Some(false)) {
-                outermost_cargo_toml = Some(Arc::from(path));
-            }
-        }
-
-        outermost_cargo_toml
-    }
-
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,

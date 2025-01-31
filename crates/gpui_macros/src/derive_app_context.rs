@@ -81,6 +81,20 @@ pub fn derive_app_context(input: TokenStream) -> TokenStream {
             {
                 self.#app_variable.read_window(window, read)
             }
+
+            fn background_spawn<R>(&self, future: impl std::future::Future<Output = R> + Send + 'static) -> gpui::Task<R>
+            where
+                R: Send + 'static,
+            {
+                self.#app_variable.background_spawn(future)
+            }
+
+            fn read_global<G, R>(&self, callback: impl FnOnce(&G, &gpui::App) -> R) -> Self::Result<R>
+            where
+                G: gpui::Global,
+            {
+                self.#app_variable.read_global(callback)
+            }
         }
     };
 

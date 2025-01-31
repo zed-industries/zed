@@ -878,6 +878,8 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
+        platform_window.map_window().unwrap();
+
         Ok(Window {
             handle,
             invalidator,
