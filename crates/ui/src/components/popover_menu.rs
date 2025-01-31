@@ -251,7 +251,10 @@ fn show_menu<M: ManagedView>(
     window.focus(&new_menu.focus_handle(cx));
     *menu.borrow_mut() = Some(new_menu);
     window.refresh();
-    on_open.map(|f| f(window, cx));
+
+    if let Some(on_open) = on_open {
+        on_open(window, cx);
+    }
 }
 
 pub struct PopoverMenuElementState<M> {
