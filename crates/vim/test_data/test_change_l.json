@@ -1,8 +1,8 @@
 {"Put":{"state":"Teˇst"}}
 {"Key":"c"}
 {"Key":"l"}
-{"Get":{"state":"Teˇt","mode":"insert"}}
+{"Get":{"state":"Teˇt","mode":"Insert"}}
 {"Put":{"state":"Tesˇt"}}
 {"Key":"c"}
 {"Key":"l"}
-{"Get":{"state":"Tesˇ","mode":"insert"}}
+{"Get":{"state":"Tesˇ","mode":"Insert"}}

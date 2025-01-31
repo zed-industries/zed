@@ -1,5 +1,5 @@
 {"Key":"i"}
-{"Get":{"state":"ˇ","mode":"insert"}}
+{"Get":{"state":"ˇ","mode":"Insert"}}
 {"Key":"shift-t"}
 {"Key":"e"}
 {"Key":"s"}
@@ -13,4 +13,4 @@
 {"Key":"0"}
 {"Key":"d"}
 {"Key":"w"}
-{"Get":{"state":"ˇtest","mode":"normal"}}
+{"Get":{"state":"ˇtest","mode":"Normal"}}

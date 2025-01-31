@@ -5,7 +5,7 @@
 {"Key":"d"}
 {"Key":"o"}
 {"Key":"g"}
-{"Get":{"state":"🐶ˇ","mode":"insert"}}
+{"Get":{"state":"🐶ˇ","mode":"Insert"}}
 {"Put":{"state":"ˇ"}}
 {"Key":"i"}
 {"Key":"d"}
@@ -13,7 +13,7 @@
 {"Key":"d"}
 {"Key":"o"}
 {"Key":"g"}
-{"Get":{"state":"do🐶ˇ","mode":"insert"}}
+{"Get":{"state":"do🐶ˇ","mode":"Insert"}}
 {"Put":{"state":"ˇ"}}
 {"Key":"i"}
 {"Key":"d"}
@@ -21,4 +21,4 @@
 {"Key":"c"}
 {"Key":"a"}
 {"Key":"t"}
-{"Get":{"state":"do🐱ˇ","mode":"insert"}}
+{"Get":{"state":"do🐱ˇ","mode":"Insert"}}

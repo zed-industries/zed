@@ -2,9 +2,9 @@
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"\""}
-{"Get":{"state":"h\"«e\\\"llo \\\"worldˇ»\"!","mode":"visual"}}
+{"Get":{"state":"h\"«e\\\"llo \\\"worldˇ»\"!","mode":"Visual"}}
 {"Put":{"state":"hello \"teˇst \\\"inside\\\" world\""}}
 {"Key":"v"}
 {"Key":"i"}
 {"Key":"\""}
-{"Get":{"state":"hello \"«test \\\"inside\\\" worldˇ»\"","mode":"visual"}}
+{"Get":{"state":"hello \"«test \\\"inside\\\" worldˇ»\"","mode":"Visual"}}

@@ -3,9 +3,9 @@
 {"Key":"/"}
 {"Key":"b"}
 {"Key":"enter"}
-{"Get":{"state":"a\nˇb\na\nc","mode":"normal"}}
+{"Get":{"state":"a\nˇb\na\nc","mode":"Normal"}}
 {"Key":":"}
 {"Key":"?"}
 {"Key":"a"}
 {"Key":"enter"}
-{"Get":{"state":"ˇa\nb\na\nc","mode":"normal"}}
+{"Get":{"state":"ˇa\nb\na\nc","mode":"Normal"}}

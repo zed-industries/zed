@@ -2,4 +2,4 @@
 {"Key":"ctrl-v"}
 {"Key":"right"}
 {"Key":"down"}
-{"Get":{"state":"The «quˇ»ick brown\nfox «juˇ»mps over\nthe lazy dog\n","mode":"visual_block"}}
+{"Get":{"state":"The «quˇ»ick brown\nfox «juˇ»mps over\nthe lazy dog\n","mode":"VisualBlock"}}

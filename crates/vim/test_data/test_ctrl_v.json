@@ -4,15 +4,15 @@
 {"Key":"0"}
 {"Key":"0"}
 {"Key":"0"}
-{"Get":{"state":"\u0000ˇ","mode":"insert"}}
+{"Get":{"state":"\u0000ˇ","mode":"Insert"}}
 {"Key":"ctrl-v"}
 {"Key":"j"}
-{"Get":{"state":"\u0000jˇ","mode":"insert"}}
+{"Get":{"state":"\u0000jˇ","mode":"Insert"}}
 {"Key":"ctrl-v"}
 {"Key":"x"}
 {"Key":"6"}
 {"Key":"5"}
-{"Get":{"state":"\u0000jeˇ","mode":"insert"}}
+{"Get":{"state":"\u0000jeˇ","mode":"Insert"}}
 {"Key":"ctrl-v"}
 {"Key":"U"}
 {"Key":"1"}
@@ -21,4 +21,4 @@
 {"Key":"4"}
 {"Key":"0"}
 {"Key":"space"}
-{"Get":{"state":"\u0000je🙀 ˇ","mode":"insert"}}
+{"Get":{"state":"\u0000je🙀 ˇ","mode":"Insert"}}

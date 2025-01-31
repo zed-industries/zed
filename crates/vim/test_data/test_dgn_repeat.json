@@ -3,12 +3,12 @@
 {"Key":"a"}
 {"Key":"a"}
 {"Key":"enter"}
-{"Get":{"state":"aa ˇaa aa aa aa","mode":"normal"}}
+{"Get":{"state":"aa ˇaa aa aa aa","mode":"Normal"}}
 {"Key":"d"}
 {"Key":"g"}
 {"Key":"n"}
-{"Get":{"state":"aa ˇ aa aa aa","mode":"normal"}}
+{"Get":{"state":"aa ˇ aa aa aa","mode":"Normal"}}
 {"Key":"."}
-{"Get":{"state":"aa  ˇ aa aa","mode":"normal"}}
+{"Get":{"state":"aa  ˇ aa aa","mode":"Normal"}}
 {"Key":"."}
-{"Get":{"state":"aa   ˇ aa","mode":"normal"}}
+{"Get":{"state":"aa   ˇ aa","mode":"Normal"}}

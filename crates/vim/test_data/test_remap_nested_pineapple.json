@@ -6,14 +6,14 @@
 {"Key":"p"}
 {"Key":"i"}
 {"Key":"n"}
-{"Get":{"state":"📌ˇ","mode":"insert"}}
+{"Get":{"state":"📌ˇ","mode":"Insert"}}
 {"Put":{"state":"ˇ"}}
 {"Key":"i"}
 {"Key":"p"}
 {"Key":"i"}
 {"Key":"n"}
 {"Key":"e"}
-{"Get":{"state":"🌲ˇ","mode":"insert"}}
+{"Get":{"state":"🌲ˇ","mode":"Insert"}}
 {"Put":{"state":"ˇ"}}
 {"Key":"i"}
 {"Key":"p"}
@@ -25,4 +25,4 @@
 {"Key":"p"}
 {"Key":"l"}
 {"Key":"e"}
-{"Get":{"state":"🍍ˇ","mode":"insert"}}
+{"Get":{"state":"🍍ˇ","mode":"Insert"}}

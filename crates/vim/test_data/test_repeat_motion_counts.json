@@ -3,11 +3,11 @@
 {"Key":"d"}
 {"Key":"3"}
 {"Key":"l"}
-{"Get":{"state":"ˇ brown\nfox jumps over\nthe lazy dog","mode":"normal"}}
+{"Get":{"state":"ˇ brown\nfox jumps over\nthe lazy dog","mode":"Normal"}}
 {"Key":"j"}
 {"Key":"."}
-{"Get":{"state":" brown\nˇ over\nthe lazy dog","mode":"normal"}}
+{"Get":{"state":" brown\nˇ over\nthe lazy dog","mode":"Normal"}}
 {"Key":"j"}
 {"Key":"2"}
 {"Key":"."}
-{"Get":{"state":" brown\n over\nˇe lazy dog","mode":"normal"}}
+{"Get":{"state":" brown\n over\nˇe lazy dog","mode":"Normal"}}

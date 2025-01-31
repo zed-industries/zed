@@ -2,9 +2,9 @@
 {"Key":"d"}
 {"Key":"t"}
 {"Key":"x"}
-{"Get":{"state":"ˇx","mode":"normal"}}
+{"Get":{"state":"ˇx","mode":"Normal"}}
 {"Put":{"state":"aˇx"}}
 {"Key":"d"}
 {"Key":"t"}
 {"Key":"x"}
-{"Get":{"state":"aˇx","mode":"normal"}}
+{"Get":{"state":"aˇx","mode":"Normal"}}

@@ -6,9 +6,9 @@
 {"Key":"/"}
 {"Key":"d"}
 {"Key":"enter"}
-{"Get":{"state":"b\nb\nˇ","mode":"normal"}}
+{"Get":{"state":"b\nb\nˇ","mode":"Normal"}}
 {"Key":"u"}
-{"Get":{"state":"ˇa\nb\na\nb\na\n","mode":"normal"}}
+{"Get":{"state":"ˇa\nb\na\nb\na\n","mode":"Normal"}}
 {"Key":":"}
 {"Key":"v"}
 {"Key":"/"}
@@ -16,4 +16,4 @@
 {"Key":"/"}
 {"Key":"d"}
 {"Key":"enter"}
-{"Get":{"state":"a\na\nˇa","mode":"normal"}}
+{"Get":{"state":"a\na\nˇa","mode":"Normal"}}

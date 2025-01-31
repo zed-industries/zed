@@ -5,4 +5,4 @@
 {"Key":"k"}
 {"Key":"`"}
 {"Key":"."}
-{"Get":{"state":"one two\nthree fˇor","mode":"normal"}}
+{"Get":{"state":"one two\nthree fˇor","mode":"Normal"}}

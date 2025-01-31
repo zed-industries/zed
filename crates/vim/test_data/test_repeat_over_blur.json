@@ -4,8 +4,8 @@
 {"Key":"o"}
 {"Key":"x"}
 {"Key":"escape"}
-{"Get":{"state":"ˇx hello hello\n","mode":"normal"}}
+{"Get":{"state":"ˇx hello hello\n","mode":"Normal"}}
 {"Key":":"}
 {"Key":"escape"}
 {"Key":"."}
-{"Get":{"state":"ˇx hello\n","mode":"normal"}}
+{"Get":{"state":"ˇx hello\n","mode":"Normal"}}

@@ -1,16 +1,16 @@
 {"Put":{"state":"The quick\nbrown ˇfox\njumps over"}}
 {"Key":"c"}
 {"Key":"j"}
-{"Get":{"state":"The quick\nˇ","mode":"insert"}}
+{"Get":{"state":"The quick\nˇ","mode":"Insert"}}
 {"Put":{"state":"The quick\nbrown fox\njumps ˇover"}}
 {"Key":"c"}
 {"Key":"j"}
-{"Get":{"state":"The quick\nbrown fox\njumps ˇover","mode":"normal"}}
+{"Get":{"state":"The quick\nbrown fox\njumps ˇover","mode":"Normal"}}
 {"Put":{"state":"The qˇuick\nbrown fox\njumps over"}}
 {"Key":"c"}
 {"Key":"j"}
-{"Get":{"state":"ˇ\njumps over","mode":"insert"}}
+{"Get":{"state":"ˇ\njumps over","mode":"Insert"}}
 {"Put":{"state":"The quick\nbrown fox\nˇ"}}
 {"Key":"c"}
 {"Key":"j"}
-{"Get":{"state":"The quick\nbrown fox\nˇ","mode":"normal"}}
+{"Get":{"state":"The quick\nbrown fox\nˇ","mode":"Normal"}}
