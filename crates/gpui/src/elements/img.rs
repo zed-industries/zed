@@ -114,9 +114,9 @@ impl From<Arc<Image>> for ImageSource {
     }
 }
 
-impl<
-        F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static,
-    > From<F> for ImageSource
+impl<F> From<F> for ImageSource
+where
+    F: Fn(&mut Window, &mut App) -> Option<Result<Arc<RenderImage>, ImageCacheError>> + 'static,
 {
     fn from(value: F) -> Self {
         Self::Custom(Arc::new(value))

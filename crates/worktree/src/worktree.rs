@@ -1530,11 +1530,6 @@ impl LocalWorktree {
         self.settings.clone()
     }
 
-    pub fn local_git_repo(&self, path: &Path) -> Option<Arc<dyn GitRepository>> {
-        self.local_repo_for_path(path)
-            .map(|local_repo| local_repo.repo_ptr.clone())
-    }
-
     pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
         self.git_repositories.get(&repo.work_directory_id)
     }
@@ -2756,6 +2751,8 @@ impl Snapshot {
         self.entry_for_path("")
     }
 
+    /// TODO: what's the difference between `root_dir` and `abs_path`?
+    /// is there any? if so, document it.
     pub fn root_dir(&self) -> Option<Arc<Path>> {
         self.root_entry()
             .filter(|entry| entry.is_dir())

@@ -1,7 +1,7 @@
 use crate::{
-    AnyView, AnyWindowHandle, App, AppContext, AsyncApp, DispatchPhase, Effect, EntityId,
-    EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation, SubscriberSet,
+    Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
 };
 
-use super::{AsyncWindowContext, Entity, KeystrokeEvent};
+use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
 /// The app context, with specialized behavior for the given model.
 #[derive(Deref, DerefMut)]
@@ -716,6 +716,20 @@ impl<'a, T> AppContext for Context<'a, T> {
         U: 'static,
     {
         self.app.read_window(window, read)
+    }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.app.background_executor.spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: Global,
+    {
+        self.app.read_global(callback)
     }
 }
 

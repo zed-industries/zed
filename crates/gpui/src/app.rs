@@ -22,9 +22,9 @@ use slotmap::SlotMap;
 
 pub use async_context::*;
 use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
+pub use context::*;
 pub use entity_map::*;
 use http_client::HttpClient;
-pub use model_context::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -41,8 +41,8 @@ use crate::{
 };
 
 mod async_context;
+mod context;
 mod entity_map;
-mod model_context;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
 
@@ -1666,6 +1666,21 @@ impl AppContext for App {
             .map_err(|_| anyhow!("root view's type has changed"))?;
 
         Ok(read(view, self))
+    }
+
+    fn background_spawn<R>(&self, future: impl Future<Output = R> + Send + 'static) -> Task<R>
+    where
+        R: Send + 'static,
+    {
+        self.background_executor.spawn(future)
+    }
+
+    fn read_global<G, R>(&self, callback: impl FnOnce(&G, &App) -> R) -> Self::Result<R>
+    where
+        G: Global,
+    {
+        let mut g = self.global::<G>();
+        callback(&g, self)
     }
 }
 

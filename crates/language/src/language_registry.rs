@@ -14,7 +14,7 @@ use futures::{
     Future,
 };
 use globset::GlobSet;
-use gpui::{App, BackgroundExecutor};
+use gpui::{App, BackgroundExecutor, SharedString};
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -36,15 +36,15 @@ use util::{maybe, paths::PathExt, post_inc, ResultExt};
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
-pub struct LanguageName(pub Arc<str>);
+pub struct LanguageName(SharedString);
 
 impl LanguageName {
     pub fn new(s: &str) -> Self {
-        Self(Arc::from(s))
+        Self(SharedString::new(s))
     }
 
     pub fn from_proto(s: String) -> Self {
-        Self(Arc::from(s))
+        Self(SharedString::from(s))
     }
     pub fn to_proto(self) -> String {
         self.0.to_string()
@@ -54,6 +54,18 @@ impl LanguageName {
             "Plain Text" => "plaintext".to_string(),
             language_name => language_name.to_lowercase(),
         }
+    }
+}
+
+impl From<LanguageName> for SharedString {
+    fn from(value: LanguageName) -> Self {
+        value.0
+    }
+}
+
+impl AsRef<str> for LanguageName {
+    fn as_ref(&self) -> &str {
+        self.0.as_ref()
     }
 }
 
@@ -71,7 +83,7 @@ impl std::fmt::Display for LanguageName {
 
 impl<'a> From<&'a str> for LanguageName {
     fn from(str: &'a str) -> LanguageName {
-        LanguageName(str.into())
+        LanguageName(SharedString::new(str))
     }
 }
 
@@ -657,7 +669,7 @@ impl LanguageRegistry {
                 .iter()
                 .any(|suffix| path_suffixes.contains(&Some(suffix.as_str())));
             let custom_suffixes = user_file_types
-                .and_then(|types| types.get(&language_name.0))
+                .and_then(|types| types.get(language_name.as_ref()))
                 .unwrap_or(&empty);
             let path_matches_custom_suffix = path_suffixes
                 .iter()
