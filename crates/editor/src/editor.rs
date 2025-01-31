@@ -8827,6 +8827,12 @@ impl Editor {
             }
         }
 
+        let reversed = self.selections.oldest::<usize>(cx).reversed;
+
+        for selection in new_selections.iter_mut() {
+            selection.reversed = reversed;
+        }
+
         select_next_state.done = true;
         self.unfold_ranges(
             &new_selections
