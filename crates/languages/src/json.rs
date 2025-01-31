@@ -153,7 +153,7 @@ impl LspAdapter for JsonLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate
             .which("vscode-json-language-server".as_ref())
