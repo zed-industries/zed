@@ -776,7 +776,14 @@
   "load_direnv": "direct",
   "inline_completions": {
     // A list of globs representing files that inline completions should be disabled for.
-    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/secrets.yml"
+    ]
   },
   // Settings specific to journaling
   "journal": {
