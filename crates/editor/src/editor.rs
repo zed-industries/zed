@@ -3955,36 +3955,6 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
-        /* todo! address these cases in new design
-        {
-            let context_menu = self.context_menu.borrow();
-            if let CodeContextMenu::Completions(menu) = context_menu.as_ref()? {
-                let entries = menu.entries.borrow();
-                let entry = entries.get(item_ix.unwrap_or(menu.selected_item));
-                match entry {
-                    Some(CompletionEntry::InlineCompletionHint(
-                        InlineCompletionMenuHint::Loading,
-                    )) => return Some(Task::ready(Ok(()))),
-                    Some(CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::None)) => {
-                        drop(entries);
-                        drop(context_menu);
-                        self.context_menu_next(&Default::default(), window, cx);
-                        return Some(Task::ready(Ok(())));
-                    }
-                    Some(CompletionEntry::InlineCompletionHint(
-                        InlineCompletionMenuHint::PendingTermsAcceptance,
-                    )) => {
-                        drop(entries);
-                        drop(context_menu);
-                        self.toggle_zed_predict_onboarding(window, cx);
-                        return Some(Task::ready(Ok(())));
-                    }
-                    _ => {}
-                }
-            }
-        }
-        */
-
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(window, cx)? {
                 menu
@@ -5145,19 +5115,6 @@ impl Editor {
             invalidation_range,
         });
 
-        /* todo!
-        if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
-            if let Some(hint) = self.inline_completion_menu_hint(window, cx) {
-                match self.context_menu.borrow_mut().as_mut() {
-                    Some(CodeContextMenu::Completions(menu)) => {
-                        menu.show_inline_completion_hint(hint);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        */
-
         cx.notify();
 
         Some(())
@@ -5167,7 +5124,7 @@ impl Editor {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }
 
-    // todo! remove?
+    // todo! rename?
     fn show_inline_completions_in_menu(&self, cx: &App) -> bool {
         let by_provider = matches!(
             self.menu_inline_completions_policy,
@@ -5397,23 +5354,6 @@ impl Editor {
             .as_ref()
             .map_or(false, |menu| menu.visible())
     }
-
-    /* todo!
-    #[cfg(feature = "test-support")]
-    pub fn context_menu_contains_inline_completion(&self) -> bool {
-        self.context_menu
-            .borrow()
-            .as_ref()
-            .map_or(false, |menu| match menu {
-                CodeContextMenu::Completions(menu) => {
-                    menu.entries.borrow().first().map_or(false, |entry| {
-                        matches!(entry, CompletionEntry::InlineCompletionHint(_))
-                    })
-                }
-                CodeContextMenu::CodeActions(_) => false,
-            })
-    }
-    */
 
     fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
         self.context_menu
