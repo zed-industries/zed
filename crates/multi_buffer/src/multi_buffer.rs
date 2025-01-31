@@ -3484,7 +3484,8 @@ impl MultiBufferSnapshot {
                 let region = cursor.region()?;
                 let buffer_start = if region.is_main_buffer {
                     let start_overshoot = range.start.saturating_sub(region.range.start.key);
-                    region.buffer_range.start.key + start_overshoot
+                    (region.buffer_range.start.key + start_overshoot)
+                        .min(region.buffer_range.end.key)
                 } else {
                     cursor.main_buffer_position()?.key
                 };

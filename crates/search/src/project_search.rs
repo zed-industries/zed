@@ -421,6 +421,9 @@ impl Item for ProjectSearchView {
             None
         }
     }
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.results_editor.clone()))
+    }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.results_editor
@@ -736,6 +739,7 @@ impl ProjectSearchView {
             let mut editor =
                 Editor::for_multibuffer(excerpts, Some(project.clone()), true, window, cx);
             editor.set_searchable(false);
+            editor.set_in_project_search(true);
             editor
         });
         subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));

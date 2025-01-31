@@ -167,6 +167,38 @@ async fn copy_extension_resources(
         }
     }
 
+    if !manifest.icon_themes.is_empty() {
+        let output_icon_themes_dir = output_dir.join("icon_themes");
+        fs::create_dir_all(&output_icon_themes_dir)?;
+        for icon_theme_path in &manifest.icon_themes {
+            fs::copy(
+                extension_path.join(icon_theme_path),
+                output_icon_themes_dir.join(
+                    icon_theme_path
+                        .file_name()
+                        .ok_or_else(|| anyhow!("invalid icon theme path"))?,
+                ),
+            )
+            .with_context(|| {
+                format!("failed to copy icon theme '{}'", icon_theme_path.display())
+            })?;
+        }
+
+        let output_icons_dir = output_dir.join("icons");
+        fs::create_dir_all(&output_icons_dir)?;
+        copy_recursive(
+            fs.as_ref(),
+            &extension_path.join("icons"),
+            &output_icons_dir,
+            CopyOptions {
+                overwrite: true,
+                ignore_if_exists: false,
+            },
+        )
+        .await
+        .with_context(|| "failed to copy icons")?;
+    }
+
     if !manifest.languages.is_empty() {
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;

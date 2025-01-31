@@ -69,7 +69,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictModal;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -81,9 +81,9 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
-    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
+    Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -681,6 +681,7 @@ pub struct Editor {
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
@@ -727,6 +728,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1375,6 +1377,7 @@ impl Editor {
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
+            pending_mouse_down: None,
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
             active_inline_completion: None,
@@ -1424,6 +1427,7 @@ impl Editor {
             ],
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
+            in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
@@ -1699,6 +1703,10 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+        self.in_project_search = in_project_search;
     }
 
     pub fn set_custom_context_menu(
@@ -3948,12 +3956,21 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
     }
 
-    fn toggle_zed_predict_tos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
             return;
         };
 
-        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), window, cx);
+        let project = project.read(cx);
+
+        ZedPredictModal::toggle(
+            workspace,
+            project.user_store().clone(),
+            project.client().clone(),
+            project.fs().clone(),
+            window,
+            cx,
+        );
     }
 
     fn do_completion(
@@ -3985,7 +4002,7 @@ impl Editor {
                     )) => {
                         drop(entries);
                         drop(context_menu);
-                        self.toggle_zed_predict_tos(window, cx);
+                        self.toggle_zed_predict_onboarding(window, cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -8816,6 +8833,12 @@ impl Editor {
             }
         }
 
+        let reversed = self.selections.oldest::<usize>(cx).reversed;
+
+        for selection in new_selections.iter_mut() {
+            selection.reversed = reversed;
+        }
+
         select_next_state.done = true;
         self.unfold_ranges(
             &new_selections
@@ -12142,6 +12165,10 @@ impl Editor {
     pub(crate) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
+    }
+
+    pub fn set_soft_wrap(&mut self) {
+        self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
     }
 
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
