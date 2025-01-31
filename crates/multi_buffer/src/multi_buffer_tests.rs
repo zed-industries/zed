@@ -1835,13 +1835,16 @@ impl ReferenceMultibuffer {
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))
             {
                 log::info!(
-                    "expanding diff hunk {:?}. excerpt: {:?}",
+                    "expanding diff hunk {:?}. excerpt:{:?}, excerpt range:{:?}",
                     hunk_range,
+                    excerpt_id,
                     excerpt_range
                 );
                 excerpt
                     .expanded_diff_hunks
                     .insert(ix, hunk.buffer_range.start);
+            } else {
+                log::trace!("hunk {hunk_range:?} already expanded in excerpt {excerpt_id:?}");
             }
         }
     }
@@ -1863,19 +1866,16 @@ impl ReferenceMultibuffer {
                 .hunks_intersecting_range(excerpt.range.clone(), buffer)
                 .peekable();
 
-            dbg!(&buffer_range);
-
             while let Some(hunk) = hunks.next() {
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
-
-                dbg!(&hunk_range);
 
                 hunk_range.end = hunk_range.end.min(buffer_range.end);
                 if hunk_range.start > buffer_range.end
                     || hunk_range.end < buffer_range.start
                     || buffer_range.is_empty()
                 {
+                    log::trace!("skipping hunk outside excerpt range");
                     continue;
                 }
 
@@ -1883,6 +1883,7 @@ impl ReferenceMultibuffer {
                     expanded_anchor.to_offset(&buffer).max(buffer_range.start)
                         == hunk_range.start.max(buffer_range.start)
                 }) {
+                    log::trace!("skipping a hunk that's not marked as expanded");
                     continue;
                 }
 
@@ -2148,7 +2149,11 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
                         ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
 
-                    log::info!("expanding diff hunks for excerpt {:?}", excerpt_ix);
+                    log::info!(
+                        "expanding diff hunks in range {:?} (excerpt id {:?}) index {excerpt_ix:?})",
+                        range.to_offset(&snapshot),
+                        excerpt.id
+                    );
                     reference.expand_diff_hunks(excerpt.id, start..end, cx);
                     multibuffer.expand_diff_hunks(vec![range], cx);
                 });

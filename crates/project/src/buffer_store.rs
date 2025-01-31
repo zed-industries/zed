@@ -2865,7 +2865,6 @@ impl BufferChangeSet {
         self.base_text.as_ref().map(|buffer| buffer.text())
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn new(buffer: &Entity<Buffer>, cx: &mut App) -> Self {
         BufferChangeSet {
             buffer_id: buffer.read(cx).remote_id(),

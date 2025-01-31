@@ -143,9 +143,13 @@ impl BufferDiff {
         });
 
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
-        iter::from_fn(move || {
+        iter::from_fn(move || loop {
             let (start_point, (start_anchor, start_base)) = summaries.next()?;
             let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
+
+            if !start_anchor.is_valid(buffer) {
+                continue;
+            }
 
             if end_point.column > 0 {
                 end_point.row += 1;
@@ -153,11 +157,11 @@ impl BufferDiff {
                 end_anchor = buffer.anchor_before(end_point);
             }
 
-            Some(DiffHunk {
+            return Some(DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
-            })
+            });
         })
     }
 
