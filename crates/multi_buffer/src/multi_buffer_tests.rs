@@ -2270,9 +2270,9 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             "line count: {}",
             actual_text.split('\n').count()
         );
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
         pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
+        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
 
         for _ in 0..5 {
             let start_row = rng.gen_range(0..=expected_row_infos.len());
