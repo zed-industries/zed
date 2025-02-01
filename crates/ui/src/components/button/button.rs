@@ -349,8 +349,8 @@ impl ButtonCommon for Button {
     /// Sets a tooltip for the button.
     ///
     /// This method allows a tooltip to be set for the button. The tooltip is a function that
-    /// takes a mutable reference to a [`WindowContext`] and returns an [`AnyView`]. The tooltip
-    /// is displayed when the user hovers over the button.
+    /// takes a mutable references to [`Window`] and [`App`], and returns an [`AnyView`]. The
+    /// tooltip is displayed when the user hovers over the button.
     ///
     /// # Examples
     ///

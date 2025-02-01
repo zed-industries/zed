@@ -31,7 +31,7 @@ pub struct ContentGroup {
 }
 
 impl ContentGroup {
-    /// Creates a new [ContentBox].
+    /// Creates a new [`ContentGroup`].
     pub fn new() -> Self {
         Self {
             base: div(),
@@ -41,13 +41,13 @@ impl ContentGroup {
         }
     }
 
-    /// Removes the border from the [ContentBox].
+    /// Removes the border from the [`ContentGroup`].
     pub fn borderless(mut self) -> Self {
         self.border = false;
         self
     }
 
-    /// Removes the background fill from the [ContentBox].
+    /// Removes the background fill from the [`ContentGroup`].
     pub fn unfilled(mut self) -> Self {
         self.fill = false;
         self
