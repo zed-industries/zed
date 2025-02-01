@@ -33,7 +33,7 @@ impl Vim {
         }) else {
             return;
         };
-        self.set_mark(text.to_string(), anchors);
+        self.set_mark(text.to_string(), anchors, cx);
         self.clear_operator(window, cx);
     }
 
@@ -71,8 +71,8 @@ impl Vim {
             }
         });
 
-        self.set_mark("<".to_string(), starts);
-        self.set_mark(">".to_string(), ends);
+        self.set_mark("<".to_string(), starts, cx);
+        self.set_mark(">".to_string(), ends, cx);
         self.stored_visual_mode.replace((mode, reversed));
     }
 
@@ -102,7 +102,7 @@ impl Vim {
                     .collect::<Vec<Anchor>>()
             }),
             "." => self.change_list.last().cloned(),
-            _ => self.marks.get(&*text).cloned(),
+            _ => self.get_mark(text.to_string(), window, cx), //self.marks.get(&*text).cloned(),
         };
 
         let Some(anchors) = anchors else { return };
