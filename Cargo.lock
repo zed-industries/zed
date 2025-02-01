@@ -13520,7 +13520,6 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
- "git_ui",
  "gpui",
  "http_client",
  "notifications",
