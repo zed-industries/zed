@@ -201,7 +201,7 @@ pub fn initialize_workspace(
         let active_toolchain_language =
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
-        let image_metadata = cx.new(|cx| ImageInfo::new(workspace, cx));
+        let image_metadata = cx.new(|_cx| ImageInfo::new(workspace));
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -443,6 +443,7 @@ fn initialize_panels(
         };
 
         let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+            log::info!("[assistant2-debug] initializing Assistant2");
             let assistant2_panel = assistant2::AssistantPanel::load(
                 workspace_handle.clone(),
                 prompt_builder,

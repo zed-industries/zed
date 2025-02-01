@@ -8,6 +8,7 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
+use image_info::ImageViewerSettings;
 use persistence::IMAGE_VIEWER;
 use std::path::PathBuf;
 use theme::Theme;
@@ -38,12 +39,11 @@ impl ImageView {
         cx.subscribe(&image_item, Self::on_image_event).detach();
 
         if image_item.read(cx).image_meta.is_none() {
-            let image_item_clone = image_item.downgrade();
-            let project_clone = project.downgrade();
+            let image_item = image_item.downgrade();
+            let project = project.downgrade();
 
             cx.spawn(|view, mut cx| async move {
-                if let (Some(image_item), Some(project)) =
-                    (image_item_clone.upgrade(), project_clone.upgrade())
+                if let (Some(image_item), Some(project)) = (image_item.upgrade(), project.upgrade())
                 {
                     let metadata =
                         ImageItem::image_info(image_item.clone(), project, &mut cx).await?;
@@ -382,7 +382,8 @@ impl ProjectItem for ImageView {
 
 pub fn init(cx: &mut App) {
     workspace::register_project_item::<ImageView>(cx);
-    workspace::register_serializable_item::<ImageView>(cx)
+    workspace::register_serializable_item::<ImageView>(cx);
+    ImageViewerSettings::register(cx);
 }
 
 mod persistence {

@@ -50,7 +50,7 @@ pub enum ImageStoreEvent {
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
 #[derive(Clone, Debug)]
-pub struct ImageItemMeta {
+pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
@@ -63,7 +63,7 @@ pub struct ImageItem {
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
-    pub image_meta: Option<ImageItemMeta>,
+    pub image_meta: Option<ImageMetadata>,
 }
 
 fn image_color_type_description(color_type: ExtendedColorType) -> String {
@@ -97,28 +97,19 @@ impl ImageItem {
         image: Entity<ImageItem>,
         project: Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> Result<ImageItemMeta> {
-        let project_path = cx
-            .update(|cx| image.read(cx).project_path(cx))
-            .context("Failed to get project path")?;
+    ) -> Result<ImageMetadata> {
+        let project_path = cx.update(|cx| image.read(cx).project_path(cx))?;
 
         let worktree = cx
             .update(|cx| {
                 project
                     .read(cx)
                     .worktree_for_id(project_path.worktree_id, cx)
-            })
-            .context("Failed to get worktree")?
+            })?
             .ok_or_else(|| anyhow::anyhow!("Worktree not found"))?;
 
-        let worktree_root = cx
-            .update(|cx| worktree.read(cx).abs_path())
-            .context("Failed to get worktree root path")?;
-
-        let image_path = cx
-            .update(|cx| image.read(cx).path().clone())
-            .context("Failed to get image path")?;
-
+        let worktree_root = cx.update(|cx| worktree.read(cx).abs_path())?;
+        let image_path = cx.update(|cx| image.read(cx).path().clone())?;
         let path = if image_path.is_absolute() {
             image_path.to_path_buf()
         } else {
@@ -128,16 +119,10 @@ impl ImageItem {
         if !path.exists() {
             anyhow::bail!("File does not exist at path: {:?}", path);
         }
+        let fs = project.update(cx, |project, _| project.fs().clone())?;
 
-        let fs = project
-            .update(cx, |project, _| project.fs().clone())
-            .context("Failed to get filesystem")?;
-
-        let img_bytes = fs
-            .load_bytes(&path)
-            .await
-            .context("Could not load image bytes")?;
-        let img_format = image::guess_format(&img_bytes).context("Could not guess image format")?;
+        let img_bytes = fs.load_bytes(&path).await?;
+        let img_format = image::guess_format(&img_bytes)?;
 
         let img_format_str = match img_format {
             ImageFormat::Png => "PNG",
@@ -172,12 +157,11 @@ impl ImageItem {
 
         let file_metadata = fs
             .metadata(path.as_path())
-            .await
-            .context("Failed to access image data")?
+            .await?
             .ok_or_else(|| anyhow::anyhow!("No metadata found"))?;
         let file_size = file_metadata.len;
 
-        Ok(ImageItemMeta {
+        Ok(ImageMetadata {
             width,
             height,
             file_size,

@@ -33,5 +33,5 @@ serde_derive.workspace = true
 [features]
 test-support = ["gpui/test-support"]
 
-[package.metadata.cargo-machete]
-ignored = ["fs", "serde_derive", "image"]
+# [package.metadata.cargo-machete]
+# ignored = ["fs", "serde_derive", "image"]
