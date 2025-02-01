@@ -752,7 +752,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
-    tasks_pull_diagnostics_task: Option<Task<()>>,
+    tasks_pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1482,7 +1482,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
-            tasks_pull_diagnostics_task: None,
+            tasks_pull_diagnostics_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -12839,7 +12839,8 @@ impl Editor {
     }
 
     fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) -> Option<()> {
-        let project = self.project.as_ref().map(Entity::downgrade);
+        let project = self.project.as_ref()?.downgrade();
+
         let buffer = self.buffer.read(cx);
         let cursor_position = self.selections.newest_anchor().clone();
         let (cursor_buffer, _) = buffer.text_anchor_for_position(cursor_position.start, cx)?;
@@ -12849,24 +12850,12 @@ impl Editor {
             return None;
         }
 
-        if self.tasks_pull_diagnostics_task.is_some() {
-            log::warn!(
-                "Attempted to start diagnostics pull task, but an instance is already running."
-            );
-            return None;
-        }
-
-        self.tasks_pull_diagnostics_task = Some(cx.spawn(|this, mut cx| async move {
+        self.tasks_pull_diagnostics_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let Some(project) = project.and_then(|p| p.upgrade()) else {
-                this.update(&mut cx, |editor, cx| {
-                    editor.tasks_pull_diagnostics_task = None;
-                    cx.notify();
-                })
-                .log_err();
+            let Some(project) = project.upgrade() else {
                 return;
             };
 
@@ -12890,13 +12879,7 @@ impl Editor {
                 })
                 .log_err();
             }
-
-            this.update(&mut cx, |editor, cx| {
-                editor.tasks_pull_diagnostics_task = None;
-                cx.notify();
-            })
-            .log_err();
-        }));
+        });
         None
     }
 
