@@ -52,18 +52,6 @@ use crate::state::ReplayableAction;
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct ResizePane(pub ResizeIntent);
 
-/// Used to resize bottom dock
-#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
-struct ResizeBottomDock(pub ResizeIntent);
-
-/// Used to resize left dock
-#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
-struct ResizeLeftDock(pub ResizeIntent);
-
-/// Used to resize right dock
-#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
-struct ResizeRightDock(pub ResizeIntent);
-
 /// An Action to Switch between modes
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct SwitchMode(pub Mode);
@@ -104,16 +92,7 @@ actions!(workspace, [ToggleVimMode]);
 
 impl_actions!(
     vim,
-    [
-        ResizePane,
-        ResizeBottomDock,
-        ResizeLeftDock,
-        ResizeRightDock,
-        SwitchMode,
-        PushOperator,
-        Number,
-        SelectRegister
-    ]
+    [ResizePane, SwitchMode, PushOperator, Number, SelectRegister]
 );
 
 /// Initializes the `vim` crate.
@@ -145,7 +124,7 @@ pub fn init(cx: &mut App) {
             workspace.reset_pane_sizes(cx);
         });
 
-        workspace.register_action(|workspace, _: &MaximizePane, _, cx| {
+        workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
             let pane = workspace.active_pane();
             let Some(size) = workspace.bounding_box_for_pane(&pane) else {
                 return;
@@ -159,7 +138,7 @@ pub fn init(cx: &mut App) {
             } else {
                 px(10000.)
             };
-            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, cx)
+            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, window, cx)
         });
 
         workspace.register_action(|workspace, action: &ResizePane, window, cx| {
@@ -183,80 +162,80 @@ pub fn init(cx: &mut App) {
                 ResizeIntent::Narrow => (Axis::Horizontal, width.width * -1.),
             };
 
-            workspace.resize_pane(axis, amount * count, cx);
+            workspace.resize_pane(axis, amount * count, window, cx);
         });
 
-        workspace.register_action(|workspace, action: &ResizeBottomDock, window, cx| {
-            let count = Vim::take_count(cx).unwrap_or(1) as f32;
-            let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
-            let Some(panel_size) = workspace
-                .bottom_dock()
-                .read(cx)
-                .active_panel_size(window, cx)
-            else {
-                return;
-            };
-            let new_size = match action.0 {
-                ResizeIntent::Lengthen => panel_size - count * height,
-                ResizeIntent::Shorten => panel_size + count * height,
-                _ => return,
-            };
-            workspace::resize_bottom_dock(new_size, workspace, window, cx);
-        });
+        // workspace.register_action(|workspace, action: &ResizeBottomDock, window, cx| {
+        //     let count = Vim::take_count(cx).unwrap_or(1) as f32;
+        //     let theme = ThemeSettings::get_global(cx);
+        //     let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+        //     let Some(panel_size) = workspace
+        //         .bottom_dock()
+        //         .read(cx)
+        //         .active_panel_size(window, cx)
+        //     else {
+        //         return;
+        //     };
+        //     let new_size = match action.0 {
+        //         ResizeIntent::Lengthen => panel_size - count * height,
+        //         ResizeIntent::Shorten => panel_size + count * height,
+        //         _ => return,
+        //     };
+        //     workspace::resize_bottom_dock(new_size, workspace, window, cx);
+        // });
 
-        workspace.register_action(|workspace, action: &ResizeLeftDock, window, cx| {
-            let count = Vim::take_count(cx).unwrap_or(1) as f32;
-            let theme = ThemeSettings::get_global(cx);
-            let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
-                return;
-            };
-            let Ok(width) = cx
-                .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
-            else {
-                return;
-            };
+        // workspace.register_action(|workspace, action: &ResizeLeftDock, window, cx| {
+        //     let count = Vim::take_count(cx).unwrap_or(1) as f32;
+        //     let theme = ThemeSettings::get_global(cx);
+        //     let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
+        //         return;
+        //     };
+        //     let Ok(width) = cx
+        //         .text_system()
+        //         .advance(font_id, theme.buffer_font_size(), 'm')
+        //     else {
+        //         return;
+        //     };
 
-            let Some(panel_size) = workspace.left_dock().read(cx).active_panel_size(window, cx)
-            else {
-                return;
-            };
-            let new_size = match action.0 {
-                ResizeIntent::Widen => panel_size + count * width.width,
-                ResizeIntent::Narrow => panel_size - count * width.width,
-                _ => return,
-            };
-            workspace::resize_left_dock(new_size, workspace, window, cx);
-        });
+        //     let Some(panel_size) = workspace.left_dock().read(cx).active_panel_size(window, cx)
+        //     else {
+        //         return;
+        //     };
+        //     let new_size = match action.0 {
+        //         ResizeIntent::Widen => panel_size + count * width.width,
+        //         ResizeIntent::Narrow => panel_size - count * width.width,
+        //         _ => return,
+        //     };
+        //     workspace::resize_left_dock(new_size, workspace, window, cx);
+        // });
 
-        workspace.register_action(|workspace, action: &ResizeRightDock, window, cx| {
-            let count = Vim::take_count(cx).unwrap_or(1) as f32;
-            let theme = ThemeSettings::get_global(cx);
-            let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
-                return;
-            };
-            let Ok(width) = cx
-                .text_system()
-                .advance(font_id, theme.buffer_font_size(), 'm')
-            else {
-                return;
-            };
+        // workspace.register_action(|workspace, action: &ResizeRightDock, window, cx| {
+        //     let count = Vim::take_count(cx).unwrap_or(1) as f32;
+        //     let theme = ThemeSettings::get_global(cx);
+        //     let Ok(font_id) = cx.text_system().font_id(&theme.buffer_font) else {
+        //         return;
+        //     };
+        //     let Ok(width) = cx
+        //         .text_system()
+        //         .advance(font_id, theme.buffer_font_size(), 'm')
+        //     else {
+        //         return;
+        //     };
 
-            let Some(panel_size) = workspace
-                .right_dock()
-                .read(cx)
-                .active_panel_size(window, cx)
-            else {
-                return;
-            };
-            let new_size = match action.0 {
-                ResizeIntent::Widen => panel_size - count * width.width,
-                ResizeIntent::Narrow => panel_size + count * width.width,
-                _ => return,
-            };
-            workspace::resize_right_dock(new_size, workspace, window, cx);
-        });
+        //     let Some(panel_size) = workspace
+        //         .right_dock()
+        //         .read(cx)
+        //         .active_panel_size(window, cx)
+        //     else {
+        //         return;
+        //     };
+        //     let new_size = match action.0 {
+        //         ResizeIntent::Widen => panel_size - count * width.width,
+        //         ResizeIntent::Narrow => panel_size + count * width.width,
+        //         _ => return,
+        //     };
+        //     workspace::resize_right_dock(new_size, workspace, window, cx);
+        // });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {
             let vim = workspace
