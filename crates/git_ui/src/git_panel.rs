@@ -1,5 +1,8 @@
 use crate::git_panel_settings::StatusStyle;
-use crate::{git_panel_settings::GitPanelSettings, git_status_icon};
+use crate::repository_selector::RepositorySelectorPopoverMenu;
+use crate::{
+    git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
+};
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
@@ -19,7 +22,8 @@ use settings::Settings as _;
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, ListItem,
+    ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
@@ -91,6 +95,7 @@ pub struct GitPanel {
     selected_entry: Option<usize>,
     show_scrollbar: bool,
     update_visible_entries_task: Task<()>,
+    repository_selector: Entity<RepositorySelector>,
     commit_editor: Entity<Editor>,
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
@@ -185,6 +190,9 @@ impl GitPanel {
                 .detach();
             }
 
+            let repository_selector =
+                cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
+
             let mut git_panel = Self {
                 focus_handle: cx.focus_handle(),
                 pending_serialization: Task::ready(None),
@@ -194,6 +202,7 @@ impl GitPanel {
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone())
                     .parent_model(&cx.entity()),
+                repository_selector,
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
@@ -828,11 +837,16 @@ impl GitPanel {
 
     pub fn render_panel_header(
         &self,
-        window: &mut Window,
-        has_write_access: bool,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
+        let all_repositories = self
+            .project
+            .read(cx)
+            .git_state()
+            .map(|state| state.read(cx).all_repositories())
+            .unwrap_or_default();
         let entry_count = self
             .active_repository
             .as_ref()
@@ -844,123 +858,102 @@ impl GitPanel {
             n => format!("{} changes", n),
         };
 
-        // for our use case treat None as false
-        let all_staged = self.all_staged.unwrap_or(false);
-
         h_flex()
             .h(px(32.))
             .items_center()
             .px_2()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(
-                h_flex()
-                    .gap_2()
+            .child(h_flex().gap_2().child(if all_repositories.len() <= 1 {
+                div()
+                    .id("changes-label")
+                    .text_buffer(cx)
+                    .text_ui_sm(cx)
                     .child(
-                        Checkbox::new(
-                            "all-changes",
-                            if entry_count == 0 {
-                                ToggleState::Selected
-                            } else {
-                                self.all_staged
-                                    .map_or(ToggleState::Indeterminate, ToggleState::from)
-                            },
-                        )
-                        .fill()
-                        .elevation(ElevationIndex::Surface)
-                        .tooltip(if all_staged {
-                            Tooltip::text("Unstage all changes")
-                        } else {
-                            Tooltip::text("Stage all changes")
-                        })
-                        .disabled(!has_write_access || entry_count == 0)
-                        .on_click(cx.listener(
-                            move |git_panel, _, window, cx| match all_staged {
-                                true => git_panel.unstage_all(&UnstageAll, window, cx),
-                                false => git_panel.stage_all(&StageAll, window, cx),
-                            },
-                        )),
+                        Label::new(changes_string)
+                            .single_line()
+                            .size(LabelSize::Small),
                     )
-                    .child(
-                        div()
-                            .id("changes-checkbox-label")
-                            .text_buffer(cx)
-                            .text_ui_sm(cx)
-                            .child(changes_string)
-                            .on_click(cx.listener(
-                                move |git_panel, _, window, cx| match all_staged {
-                                    true => git_panel.unstage_all(&UnstageAll, window, cx),
-                                    false => git_panel.stage_all(&StageAll, window, cx),
-                                },
-                            )),
-                    ),
-            )
+                    .into_any_element()
+            } else {
+                self.render_repository_selector(cx).into_any_element()
+            }))
             .child(div().flex_grow())
-            .child(
-                h_flex()
-                    .gap_2()
-                    // TODO: Re-add once revert all is added
-                    // .child(
-                    //     IconButton::new("discard-changes", IconName::Undo)
-                    //         .tooltip({
-                    //             let focus_handle = focus_handle.clone();
-                    //             move |cx| {
-                    //                 Tooltip::for_action_in(
-                    //                     "Discard all changes",
-                    //                     &RevertAll,
-                    //                     &focus_handle,
-                    //                     cx,
-                    //                 )
-                    //             }
-                    //         })
-                    //         .icon_size(IconSize::Small)
-                    //         .disabled(true),
-                    // )
-                    .child(if self.all_staged.unwrap_or(false) {
-                        self.panel_button("unstage-all", "Unstage All")
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Unstage all changes",
-                                        &UnstageAll,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .key_binding(ui::KeyBinding::for_action_in(
+            .child(h_flex().gap_2().child(if self.all_staged.unwrap_or(false) {
+                self.panel_button("unstage-all", "Unstage All")
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Unstage all changes",
                                 &UnstageAll,
                                 &focus_handle,
                                 window,
-                            ))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.unstage_all(&UnstageAll, window, cx)
-                            }))
-                    } else {
-                        self.panel_button("stage-all", "Stage All")
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Stage all changes",
-                                        &StageAll,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .key_binding(ui::KeyBinding::for_action_in(
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.unstage_all(&UnstageAll, window, cx)
+                    }))
+            } else {
+                self.panel_button("stage-all", "Stage All")
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Stage all changes",
                                 &StageAll,
                                 &focus_handle,
                                 window,
-                            ))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.stage_all(&StageAll, window, cx)
-                            }))
-                    }),
-            )
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.stage_all(&StageAll, window, cx)
+                        }),
+                    )
+            }))
+    }
+
+    pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_repository = self.project.read(cx).active_repository(cx);
+        let repository_display_name = active_repository
+            .as_ref()
+            .map(|repo| repo.display_name(self.project.read(cx), cx))
+            .unwrap_or_default();
+
+        let entry_count = self.visible_entries.len();
+
+        RepositorySelectorPopoverMenu::new(
+            self.repository_selector.clone(),
+            ButtonLike::new("active-repository")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex().w_full().gap_0p5().child(
+                        div()
+                            .overflow_x_hidden()
+                            .flex_grow()
+                            .whitespace_nowrap()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(repository_display_name).size(LabelSize::Small),
+                                    )
+                                    .when(entry_count > 0, |flex| {
+                                        flex.child(
+                                            Label::new(format!("({})", entry_count))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .into_any_element(),
+                            ),
+                    ),
+                ),
+        )
     }
 
     pub fn render_commit_editor(
@@ -1041,12 +1034,10 @@ impl GitPanel {
                         .absolute()
                         .bottom_2p5()
                         .right_3()
+                        .gap_1p5()
                         .child(div().gap_1().flex_grow())
-                        .child(if self.current_modifiers.alt {
-                            commit_all_button
-                        } else {
-                            commit_staged_button
-                        }),
+                        .child(commit_all_button)
+                        .child(commit_staged_button),
                 ),
         )
     }
@@ -1124,7 +1115,7 @@ impl GitPanel {
     fn render_entries(&self, has_write_access: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let entry_count = self.visible_entries.len();
 
-        h_flex()
+        v_flex()
             .size_full()
             .overflow_hidden()
             .child(
@@ -1140,10 +1131,13 @@ impl GitPanel {
                 .size_full()
                 .with_sizing_behavior(ListSizingBehavior::Infer)
                 .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                // .with_width_from_item(self.max_width_item_index)
                 .track_scroll(self.scroll_handle.clone()),
             )
             .children(self.render_scrollbar(cx))
+    }
+
+    fn entry_label(&self, label: impl Into<SharedString>, color: Color) -> Label {
+        Label::new(label.into()).color(color).single_line()
     }
 
     fn render_entry(
@@ -1157,149 +1151,117 @@ impl GitPanel {
         let selected = self.selected_entry == Some(ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
         let status = entry_details.status;
+        let has_conflict = status.is_conflicted();
+        let is_modified = status.is_modified();
+        let is_deleted = status.is_deleted();
 
-        let mut label_color = cx.theme().colors().text;
-        if status_style == StatusStyle::LabelColor {
-            label_color = if status.is_conflicted() {
-                cx.theme().colors().version_control_conflict
-            } else if status.is_modified() {
-                cx.theme().colors().version_control_modified
-            } else if status.is_deleted() {
-                // Don't use `version_control_deleted` here or all the
-                // deleted entries will be likely a red color.
-                cx.theme().colors().text_disabled
+        let label_color = if status_style == StatusStyle::LabelColor {
+            if has_conflict {
+                Color::Conflict
+            } else if is_modified {
+                Color::Modified
+            } else if is_deleted {
+                // We don't want a bunch of red labels in the list
+                Color::Disabled
             } else {
-                cx.theme().colors().version_control_added
+                Color::Created
             }
-        }
-
-        let path_color = status
-            .is_deleted()
-            .then_some(cx.theme().colors().text_disabled)
-            .unwrap_or(cx.theme().colors().text_muted);
-
-        let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
-        let checkbox_id =
-            ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
-        let is_tree_view = false;
-        let handle = cx.entity().downgrade();
-
-        let end_slot = h_flex()
-            .invisible()
-            .when(selected, |this| this.visible())
-            .when(!selected, |this| {
-                this.group_hover("git-panel-entry", |this| this.visible())
-            })
-            .gap_1()
-            .items_center()
-            .child(
-                IconButton::new("more", IconName::EllipsisVertical)
-                    .icon_color(Color::Placeholder)
-                    .icon_size(IconSize::Small),
-            );
-
-        let mut entry = h_flex()
-            .id(entry_id)
-            .group("git-panel-entry")
-            .h(px(28.))
-            .w_full()
-            .pr(px(4.))
-            .items_center()
-            .gap_2()
-            .font_buffer(cx)
-            .text_ui_sm(cx)
-            .when(!selected, |this| {
-                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
-            });
-
-        if is_tree_view {
-            entry = entry.pl(px(8. + 12. * entry_details.depth as f32))
         } else {
-            entry = entry.pl(px(8.))
-        }
+            Color::Default
+        };
 
-        if selected {
-            entry = entry.bg(cx.theme().status().info_background);
-        }
+        let path_color = if status.is_deleted() {
+            Color::Disabled
+        } else {
+            Color::Muted
+        };
 
-        entry = entry
-            .child(
-                Checkbox::new(
-                    checkbox_id,
-                    entry_details
-                        .is_staged
-                        .map_or(ToggleState::Indeterminate, ToggleState::from),
-                )
-                .disabled(!has_write_access)
-                .fill()
-                .elevation(ElevationIndex::Surface)
-                .on_click({
-                    let handle = handle.clone();
+        let id: ElementId = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
+
+        let checkbox = Checkbox::new(
+            id,
+            entry_details
+                .is_staged
+                .map_or(ToggleState::Indeterminate, ToggleState::from),
+        )
+        .disabled(!has_write_access)
+        .fill()
+        .elevation(ElevationIndex::Surface)
+        .on_click({
+            let handle = cx.entity().downgrade();
+            let repo_path = repo_path.clone();
+            move |toggle, _window, cx| {
+                let Some(this) = handle.upgrade() else {
+                    return;
+                };
+                this.update(cx, |this, cx| {
+                    this.visible_entries[ix].is_staged = match *toggle {
+                        ToggleState::Selected => Some(true),
+                        ToggleState::Unselected => Some(false),
+                        ToggleState::Indeterminate => None,
+                    };
                     let repo_path = repo_path.clone();
-                    move |toggle, _window, cx| {
+                    let Some(active_repository) = this.active_repository.as_ref() else {
+                        return;
+                    };
+                    let result = match toggle {
+                        ToggleState::Selected | ToggleState::Indeterminate => active_repository
+                            .stage_entries(vec![repo_path], this.err_sender.clone()),
+                        ToggleState::Unselected => active_repository
+                            .unstage_entries(vec![repo_path], this.err_sender.clone()),
+                    };
+                    if let Err(e) = result {
+                        this.show_err_toast("toggle staged error", e, cx);
+                    }
+                });
+            }
+        });
+
+        let start_slot = h_flex()
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .child(checkbox)
+            .child(git_status_icon(status, cx));
+
+        let id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
+
+        div().w_full().px_0p5().child(
+            ListItem::new(id)
+                .spacing(ListItemSpacing::Sparse)
+                .start_slot(start_slot)
+                .toggle_state(selected)
+                .disabled(!has_write_access)
+                .on_click({
+                    let handle = cx.entity().downgrade();
+                    move |_, window, cx| {
                         let Some(this) = handle.upgrade() else {
                             return;
                         };
                         this.update(cx, |this, cx| {
-                            this.visible_entries[ix].is_staged = match *toggle {
-                                ToggleState::Selected => Some(true),
-                                ToggleState::Unselected => Some(false),
-                                ToggleState::Indeterminate => None,
-                            };
-                            let repo_path = repo_path.clone();
-                            let Some(active_repository) = this.active_repository.as_ref() else {
-                                return;
-                            };
-                            let result = match toggle {
-                                ToggleState::Selected | ToggleState::Indeterminate => {
-                                    active_repository
-                                        .stage_entries(vec![repo_path], this.err_sender.clone())
-                                }
-                                ToggleState::Unselected => active_repository
-                                    .unstage_entries(vec![repo_path], this.err_sender.clone()),
-                            };
-                            if let Err(e) = result {
-                                this.show_err_toast("toggle staged error", e, cx);
-                            }
+                            this.selected_entry = Some(ix);
+                            window.dispatch_action(Box::new(OpenSelected), cx);
+                            cx.notify();
                         });
                     }
-                }),
-            )
-            .when(status_style == StatusStyle::Icon, |this| {
-                this.child(git_status_icon(status, cx))
-            })
-            .child(
-                h_flex()
-                    .text_color(label_color)
-                    .when(status.is_deleted(), |this| this.line_through())
-                    .when_some(repo_path.parent(), |this, parent| {
-                        let parent_str = parent.to_string_lossy();
-                        if !parent_str.is_empty() {
-                            this.child(
-                                div()
-                                    .text_color(path_color)
-                                    .child(format!("{}/", parent_str)),
-                            )
-                        } else {
-                            this
-                        }
-                    })
-                    .child(div().child(entry_details.display_name.clone())),
-            )
-            .child(div().flex_1())
-            .child(end_slot)
-            .on_click(move |_, window, cx| {
-                // TODO: add `select_entry` method then do after that
-                window.dispatch_action(Box::new(OpenSelected), cx);
-
-                handle
-                    .update(cx, |git_panel, _| {
-                        git_panel.selected_entry = Some(ix);
-                    })
-                    .ok();
-            });
-
-        entry
+                })
+                .child(
+                    h_flex()
+                        .when_some(repo_path.parent(), |this, parent| {
+                            let parent_str = parent.to_string_lossy();
+                            if !parent_str.is_empty() {
+                                this.child(
+                                    self.entry_label(format!("{}/", parent_str), path_color)
+                                        .when(status.is_deleted(), |this| this.strikethrough(true)),
+                                )
+                            } else {
+                                this
+                            }
+                        })
+                        .child(
+                            self.entry_label(entry_details.display_name.clone(), label_color)
+                                .when(status.is_deleted(), |this| this.strikethrough(true)),
+                        ),
+                ),
+        )
     }
 }
 
@@ -1426,10 +1388,9 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .font_buffer(cx)
             .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(window, has_write_access, cx))
+            .child(self.render_panel_header(window, cx))
             .child(self.render_divider(cx))
             .child(if has_entries {
                 self.render_entries(has_write_access, cx).into_any_element()
