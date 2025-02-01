@@ -56,6 +56,7 @@ pub struct WorktreeStore {
     state: WorktreeStoreState,
 }
 
+#[derive(Debug)]
 pub enum WorktreeStoreEvent {
     WorktreeAdded(Entity<Worktree>),
     WorktreeRemoved(EntityId, WorktreeId),

@@ -4,7 +4,7 @@ use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use futures::channel::mpsc;
 use git::repository::RepoPath;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -721,9 +721,11 @@ impl HeadlessProject {
         })??;
 
         let commit_message = envelope.payload.message;
+        let name = envelope.payload.name.map(SharedString::from);
+        let email = envelope.payload.email.map(SharedString::from);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
         repository_handle
-            .commit_with_message(commit_message, err_sender)
+            .commit_with_message(commit_message, name.zip(email), err_sender)
             .context("unstaging entries")?;
         if let Some(error) = err_receiver.next().await {
             Err(error.context("error during unstaging"))

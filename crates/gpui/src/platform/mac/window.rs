@@ -949,7 +949,7 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
-    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    // is_hovered is unused on macOS. See Window::is_window_hovered.
     fn is_hovered(&self) -> bool {
         false
     }

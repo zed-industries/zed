@@ -2739,7 +2739,7 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         edits: Vec<(Range<Point>, &str)>,
         include_deletions: bool,
         cx: &mut TestAppContext,
-        assert_fn: impl Fn(HighlightedEdits),
+        assert_fn: impl Fn(HighlightedText),
     ) {
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let edits = buffer.read_with(cx, |buffer, _| {
