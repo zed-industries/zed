@@ -3651,7 +3651,7 @@ impl LspCommand for LinkedEditingRange {
 }
 
 impl GetDocumentDiagnostics {
-    pub fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
+    fn deserialize_lsp_diagnostic(diagnostic: proto::LspDiagnostic) -> Result<lsp::Diagnostic> {
         let start = diagnostic
             .start
             .ok_or_else(|| anyhow!("invalid start range"))?;
@@ -3728,7 +3728,7 @@ impl GetDocumentDiagnostics {
         })
     }
 
-    pub fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
+    fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
         let range = language::range_from_lsp(diagnostic.range);
         let related_information = diagnostic
             .related_information
