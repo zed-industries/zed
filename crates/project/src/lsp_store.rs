@@ -4704,7 +4704,7 @@ impl LspStore {
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
                 &buffer_handle,
-                Some(0),
+                None::<PointUtf16>,
                 GetDocumentDiagnostics {},
                 cx,
             );
@@ -6043,7 +6043,7 @@ impl LspStore {
                     .update(&mut cx, |project, cx| {
                         project.request_multiple_lsp_locally(
                             &buffer,
-                            Some(0),
+                            None::<PointUtf16>,
                             get_document_diagnostics,
                             cx,
                         )
