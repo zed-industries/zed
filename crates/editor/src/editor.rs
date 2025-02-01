@@ -15531,6 +15531,7 @@ impl Editor {
                     .log_err();
 
                 this.update(&mut cx, |editor, cx| editor.refresh_active_diagnostics(cx))
+                    .map_err(|e| log::error!("Failed to refresh active diagnostics: {}", e))
                     .ok();
             }
         });
