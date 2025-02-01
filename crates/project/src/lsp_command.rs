@@ -3691,6 +3691,16 @@ impl GetDocumentDiagnostics {
             })
             .collect::<Vec<_>>();
 
+        let tags = diagnostic
+            .tags
+            .into_iter()
+            .filter_map(|tag| match proto::LspDiagnosticTag::from_i32(tag) {
+                Some(proto::LspDiagnosticTag::Unnecessary) => Some(lsp::DiagnosticTag::UNNECESSARY),
+                Some(proto::LspDiagnosticTag::Deprecated) => Some(lsp::DiagnosticTag::DEPRECATED),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
         Ok(lsp::Diagnostic {
             range: language::range_to_lsp(range)?,
             severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
@@ -3711,7 +3721,7 @@ impl GetDocumentDiagnostics {
                 None => None,
             },
             related_information: Some(related_information),
-            tags: Some(vec![]),
+            tags: Some(tags),
             source: diagnostic.source.clone(),
             message: diagnostic.message,
             data,
@@ -3746,16 +3756,14 @@ impl GetDocumentDiagnostics {
 
         let tags = diagnostic
             .tags
-            .map(|tags| {
-                tags.into_iter()
-                    .map(|tag| match tag {
-                        lsp::DiagnosticTag::UNNECESSARY => proto::LspDiagnosticTag::Unnecessary,
-                        lsp::DiagnosticTag::DEPRECATED => proto::LspDiagnosticTag::Deprecated,
-                        _ => proto::LspDiagnosticTag::None,
-                    } as i32)
-                    .collect()
-            })
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|tag| match tag {
+                lsp::DiagnosticTag::UNNECESSARY => proto::LspDiagnosticTag::Unnecessary,
+                lsp::DiagnosticTag::DEPRECATED => proto::LspDiagnosticTag::Deprecated,
+                _ => proto::LspDiagnosticTag::None,
+            } as i32)
+            .collect();
 
         Ok(proto::LspDiagnostic {
             start: Some(proto::PointUtf16 {
