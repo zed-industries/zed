@@ -553,65 +553,44 @@ impl KeymapFile {
         self.0.iter()
     }
 
-    pub fn migrate_keymap_content(content: &str) -> MigrationResult {
-        let mut keymap_file = match KeymapFile::parse(content) {
+    pub fn are_actions_deprecated(content: &str) -> bool {
+        let keymap_file = match KeymapFile::parse(content) {
             Ok(keymap) => keymap,
-            Err(err) => return MigrationResult::JsonParseFailure { error: err },
+            Err(_) => return false, // let load handle parse errors
         };
-
-        let mut errors = Vec::new();
-        for section in keymap_file.0.iter_mut() {
-            if let Some(bindings) = &mut section.bindings {
-                for (_, action) in bindings.iter_mut() {
-                    match migrate_action(action.0.clone()) {
-                        Ok(new_value) => action.0 = new_value,
-                        Err(err) => errors.push((
-                            section.context.clone(),
-                            format!(" Parse error in section `context` field: {}", err),
-                        )),
+        for section in keymap_file.0.iter() {
+            if let Some(bindings) = &section.bindings {
+                for (_, action) in bindings.iter() {
+                    if let Some(new_action) = get_migrated_action(&action) {
+                        if new_action.0 != action.0 {
+                            return true;
+                        }
                     }
                 }
             }
         }
+        return false;
+    }
 
-        if errors.is_empty() {
-            MigrationResult::Success { keymap_file }
-        } else {
-            let mut error_message = "Errors while migrating user keymap file.\n".to_owned();
-            for (context, section_errors) in errors {
-                if context.is_empty() {
-                    write!(error_message, "\n\nIn section without context predicate:").unwrap()
-                } else {
-                    write!(
-                        error_message,
-                        "\n\nIn section with {}:",
-                        MarkdownString::inline_code(&format!("context = \"{}\"", context))
-                    )
-                    .unwrap()
+    pub fn migrate_keymap_content(content: &str) -> Option<KeymapFile> {
+        if content.is_empty() {
+            return None;
+        }
+        let mut keymap_file = match KeymapFile::parse(content) {
+            Ok(keymap) => keymap,
+            Err(_) => return None,
+        };
+        for section in keymap_file.0.iter_mut() {
+            if let Some(bindings) = &mut section.bindings {
+                for (_, action) in bindings.iter_mut() {
+                    if let Some(new_action) = get_migrated_action(&action) {
+                        action.0 = new_action.0;
+                    }
                 }
-                write!(error_message, "{section_errors}").unwrap();
-            }
-            MigrationResult::SomeFailedToMigrate {
-                keymap_file,
-                error_message: MarkdownString(error_message),
             }
         }
+        Some(keymap_file)
     }
-}
-
-#[derive(Debug)]
-#[must_use]
-pub enum MigrationResult {
-    Success {
-        keymap_file: KeymapFile,
-    },
-    SomeFailedToMigrate {
-        keymap_file: KeymapFile,
-        error_message: MarkdownString,
-    },
-    JsonParseFailure {
-        error: anyhow::Error,
-    },
 }
 
 #[rustfmt::skip]
@@ -689,48 +668,44 @@ static UNWRAP_OBJECTS: LazyLock<HashMap<&str, Vec<(&str, &str)>>> = LazyLock::ne
     ])
 });
 
-fn migrate_action(existing_value: Value) -> Result<Value, String> {
-    let Value::Array(items) = &existing_value else {
-        return Ok(existing_value);
+fn get_migrated_action(existing_action: &KeymapAction) -> Option<KeymapAction> {
+    let Value::Array(items) = &existing_action.0 else {
+        return None;
     };
-
     if items.len() != 2 {
-        return Ok(existing_value);
+        return None;
     }
-
     let Some(Value::String(old_action)) = items.get(0) else {
-        return Ok(existing_value);
+        return None;
     };
-
     match items.get(1) {
         Some(Value::String(value)) => {
             if let Some(new_action) = TRANSFORM_ARRAY.get(&(old_action.as_str(), value.as_str())) {
-                return Ok(Value::String(new_action.to_string()));
+                return Some(KeymapAction(Value::String(new_action.to_string())));
             }
         }
         Some(Value::Object(value)) => {
-            let (mut new_value, new_action) =
-                if let Some(fields) = UNWRAP_OBJECTS.get(old_action.as_str()) {
-                    let Some((inner_value, new_action)) =
-                        fields.iter().find_map(|(field, new_action)| {
-                            value.get(*field).map(|inner_val| (inner_val, new_action))
-                        })
-                    else {
-                        return Err(format!("no field found for action `{}`", old_action));
-                    };
-                    (inner_value.clone(), new_action.to_string())
-                } else {
-                    (Value::Object(value.clone()), old_action.clone())
-                };
+            let (mut new_value, new_action) = match UNWRAP_OBJECTS
+                .get(old_action.as_str())
+                .and_then(|fields| {
+                    fields.iter().find_map(|(field, new_action)| {
+                        value.get(*field).map(|inner_val| (inner_val, new_action))
+                    })
+                }) {
+                Some((inner_value, new_action)) => (inner_value.clone(), new_action.to_string()),
+                None => (Value::Object(value.clone()), old_action.clone()),
+            };
             if let Value::Object(obj) = &mut new_value {
                 snake_case_recursively(obj);
             }
-            return Ok(Value::Array(vec![Value::String(new_action), new_value]));
+            return Some(KeymapAction(Value::Array(vec![
+                Value::String(new_action),
+                new_value,
+            ])));
         }
         _ => {}
     };
-
-    Ok(existing_value)
+    None
 }
 
 fn snake_case_recursively(obj: &mut serde_json::Map<String, Value>) {
@@ -779,29 +754,32 @@ mod tests {
 
     #[test]
     fn test_array_to_string_migration() {
-        let input = json!(["workspace::ActivatePaneInDirection", "Up"]);
-        let result = migrate_action(input).unwrap();
+        let input = KeymapAction(json!(["workspace::ActivatePaneInDirection", "Up"]));
+        let result = get_migrated_action(&input);
         assert_eq!(
-            result,
+            result.unwrap().0,
             Value::String("workspace::ActivatePaneUp".to_string())
         );
     }
 
     #[test]
     fn test_unwrap_object_migration() {
-        let input = json!([
+        let input = KeymapAction(json!([
             "editor::FoldAtLevel",
             {"level": 2}
-        ]);
-        let result = migrate_action(input).unwrap();
-        assert_eq!(result, json!(["editor::FoldAtLevel", 2]));
+        ]));
+        let result = get_migrated_action(&input);
+        assert_eq!(result.unwrap().0, json!(["editor::FoldAtLevel", 2]));
 
-        let input = json!([
+        let input = KeymapAction(json!([
             "vim::PushOperator",
             {"Object": {"around": false}}
-        ]);
-        let result = migrate_action(input).unwrap();
-        assert_eq!(result, json!(["vim::PushObject", {"around": false}]));
+        ]));
+        let result = get_migrated_action(&input);
+        assert_eq!(
+            result.unwrap().0,
+            json!(["vim::PushObject", {"around": false}])
+        );
     }
 
     #[test]

@@ -1155,7 +1155,16 @@ pub fn handle_keymap_file_changes(
                         if !key_bindings.is_empty() {
                             reload_keymaps(cx, key_bindings);
                         }
-                        show_keymap_file_load_error(notification_id.clone(), error_message, cx)
+                        dismiss_app_notification(&notification_id, cx);
+                        if KeymapFile::are_actions_deprecated(&user_keymap_content) {
+                            show_keymap_migration_notification(
+                                notification_id.clone(),
+                                user_keymap_content.clone(),
+                                cx,
+                            )
+                        } else {
+                            show_keymap_file_load_error(notification_id.clone(), error_message, cx)
+                        }
                     }
                     KeymapFileLoadResult::JsonParseFailure { error } => {
                         show_keymap_file_json_error(notification_id.clone(), &error, cx)
@@ -1185,6 +1194,29 @@ fn show_keymap_file_json_error(
                 })
         })
     });
+}
+
+fn show_keymap_migration_notification(
+    notification_id: NotificationId,
+    keymap_content: String,
+    cx: &mut App,
+) {
+    let keymap_content = SharedString::new(keymap_content);
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new(|_cx| {
+            let keymap_content  = keymap_content.clone();
+            MessageNotification::new_from_builder(move |_, _| {
+                gpui::div().text_xs().child( "A newer version of Zed has simplified some keymaps. Your existing keymaps may be deprecated. You can easily migrate your keymaps by clicking the button below. A backup of your existing keymap file will be created in your home directory before migrating.").into_any()
+            })
+            .with_click_message("Backup and Migrate Keymap")
+            .on_click(move |_window, cx| {
+                if let Some(keymap_file) = KeymapFile::migrate_keymap_content(&keymap_content) {
+                    println!("write file");
+                }
+                cx.emit(DismissEvent);
+            })
+        })
+    })
 }
 
 fn show_keymap_file_load_error(
