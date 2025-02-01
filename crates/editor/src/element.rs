@@ -3667,9 +3667,13 @@ impl EditorElement {
                     EditDisplayMode::DiffPopover => {}
                 }
 
-                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
-                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
-                })?;
+                let highlighted_edits = crate::inline_completion_edit_text(
+                    &snapshot,
+                    edits,
+                    edit_preview.as_ref()?,
+                    false,
+                    cx,
+                );
 
                 let line_count = highlighted_edits.text.lines().count();
 

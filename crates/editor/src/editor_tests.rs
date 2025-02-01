@@ -15460,8 +15460,7 @@ async fn assert_highlighted_edits(
             &edit_preview,
             include_deletions,
             cx,
-        )
-        .expect("Missing highlighted edits");
+        );
         assertion_fn(highlighted_edits, cx)
     });
 }

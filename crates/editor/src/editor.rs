@@ -5372,9 +5372,7 @@ impl Editor {
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        let Some(provider) = self.inline_completion_provider.as_ref() else {
-            return None;
-        };
+        let provider = self.inline_completion_provider.as_ref()?;
 
         let content = if provider.provider.needs_terms_acceptance(cx) {
             h_flex()
@@ -5417,17 +5415,13 @@ impl Editor {
                     snapshot,
                     display_mode: _,
                 }) => {
-                    let Some(highlighted_edits) = edit_preview.as_ref().and_then(|edit_preview| {
-                        crate::inline_completion_edit_text(
-                            &snapshot,
-                            &edits,
-                            edit_preview,
-                            false,
-                            cx,
-                        )
-                    }) else {
-                        return None;
-                    };
+                    let highlighted_edits = crate::inline_completion_edit_text(
+                        &snapshot,
+                        &edits,
+                        edit_preview.as_ref()?,
+                        false,
+                        cx,
+                    );
 
                     let len_total = highlighted_edits.text.len();
                     let first_line = highlighted_edits.text.slice_until('\n');
@@ -15896,7 +15890,7 @@ fn inline_completion_edit_text(
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
-) -> Option<HighlightedText> {
+) -> HighlightedText {
     let edits = edits
         .iter()
         .map(|(anchor, text)| {
@@ -15907,7 +15901,7 @@ fn inline_completion_edit_text(
         })
         .collect::<Vec<_>>();
 
-    Some(edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx))
+    edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
 }
 
 pub fn highlight_diagnostic_message(
