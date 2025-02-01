@@ -56,9 +56,9 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
-    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped,
+    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,

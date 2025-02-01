@@ -36,7 +36,7 @@ use language::{
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, CompletionDocumentation, File as _, Language,
+    CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
     LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile,
     LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,

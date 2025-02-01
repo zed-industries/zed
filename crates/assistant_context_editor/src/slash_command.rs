@@ -120,7 +120,9 @@ impl SlashCommandCompletionProvider {
                                 });
                         Some(project::Completion {
                             old_range: name_range.clone(),
-                            documentation: Some(CompletionDocumentation::SingleLine(command.description())),
+                            documentation: Some(CompletionDocumentation::SingleLine(
+                                command.description(),
+                            )),
                             new_text,
                             label: command.label(cx),
                             server_id: LanguageServerId(0),

@@ -558,7 +558,9 @@ impl CompletionsMenu {
                                     StyledText::new(completion.label.text.clone())
                                         .with_highlights(&style.text, highlights);
                                 let documentation_label =
-                                    if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
+                                    if let Some(CompletionDocumentation::SingleLine(text)) =
+                                        documentation
+                                    {
                                         if text.trim().is_empty() {
                                             None
                                         } else {
@@ -713,14 +715,17 @@ impl CompletionsMenu {
                     CompletionDocumentation::MultiLinePlainText(text) => {
                         div().child(SharedString::from(text.clone()))
                     }
-                    CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.text.is_empty() => div()
-                        .child(render_parsed_markdown(
+                    CompletionDocumentation::MultiLineMarkdown(parsed)
+                        if !parsed.text.is_empty() =>
+                    {
+                        div().child(render_parsed_markdown(
                             "completions_markdown",
                             parsed,
                             &style,
                             workspace,
                             cx,
-                        )),
+                        ))
+                    }
                     CompletionDocumentation::MultiLineMarkdown(_) => return None,
                     CompletionDocumentation::SingleLine(_) => return None,
                     CompletionDocumentation::Undocumented => return None,
