@@ -20,6 +20,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
+use fs::{Fs, RealFs};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
@@ -1157,11 +1158,7 @@ pub fn handle_keymap_file_changes(
                         }
                         dismiss_app_notification(&notification_id, cx);
                         if KeymapFile::are_actions_deprecated(&user_keymap_content) {
-                            show_keymap_migration_notification(
-                                notification_id.clone(),
-                                user_keymap_content.clone(),
-                                cx,
-                            )
+                            show_keymap_migration_notification(notification_id.clone(), cx)
                         } else {
                             show_keymap_file_load_error(notification_id.clone(), error_message, cx)
                         }
@@ -1196,24 +1193,36 @@ fn show_keymap_file_json_error(
     });
 }
 
-fn show_keymap_migration_notification(
-    notification_id: NotificationId,
-    keymap_content: String,
-    cx: &mut App,
-) {
-    let keymap_content = SharedString::new(keymap_content);
-    show_app_notification(notification_id, cx, move |cx| {
+fn show_keymap_migration_notification(notification_id: NotificationId, cx: &mut App) {
+    show_app_notification(notification_id, cx, |cx| {
         cx.new(|_cx| {
-            let keymap_content  = keymap_content.clone();
             MessageNotification::new_from_builder(move |_, _| {
                 gpui::div().text_xs().child( "A newer version of Zed has simplified some keymaps. Your existing keymaps may be deprecated. You can easily migrate your keymaps by clicking the button below. A backup of your existing keymap file will be created in your home directory before migrating.").into_any()
             })
             .with_click_message("Backup and Migrate Keymap")
-            .on_click(move |_window, cx| {
-                if let Some(keymap_file) = KeymapFile::migrate_keymap_content(&keymap_content) {
-                    println!("write file");
-                }
-                cx.emit(DismissEvent);
+            .on_click(|_window, cx| {
+                let keymap_task = cx.background_executor().spawn(async move {
+                    let fs = Arc::new(RealFs::default());
+                    fs.load(&paths::keymap_file()).await
+                });
+                cx.spawn(move |weak_notification, mut cx| async move {
+                    match keymap_task.await {
+                        Ok(keymap_content) => {
+                            if let Some(keymap_file) = KeymapFile::migrate_keymap_content(&keymap_content) {
+                                if let Ok(serialized_keymap) = serde_json::to_string_pretty(&keymap_file) {
+                                    cx.background_executor().spawn(async move {
+                                        let fs = Arc::new(RealFs::default());
+                                        fs.atomic_write(paths::keymap_file().clone(), serialized_keymap).await
+                                    }).await.ok();
+                                    weak_notification.update(&mut cx, |_, cx| {
+                                        cx.emit(DismissEvent);
+                                    }).ok();
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }).detach();
             })
         })
     })

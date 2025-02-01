@@ -13,7 +13,7 @@ use schemars::{
     schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
     JsonSchema,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Write;
 use util::{asset_str, markdown::MarkdownString};
@@ -29,12 +29,12 @@ use util::{asset_str, markdown::MarkdownString};
 
 /// Keymap configuration consisting of sections. Each section may have a context predicate which
 /// determines whether its bindings are used.
-#[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, JsonSchema, Serialize)]
 #[serde(transparent)]
 pub struct KeymapFile(Vec<KeymapSection>);
 
 /// Keymap section which binds keystrokes to actions.
-#[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, JsonSchema, Serialize)]
 pub struct KeymapSection {
     /// Determines when these bindings are active. When just a name is provided, like `Editor` or
     /// `Workspace`, the bindings will be active in that context. Boolean expressions like `X && Y`,
@@ -79,7 +79,7 @@ impl KeymapSection {
 /// Unlike the other json types involved in keymaps (including actions), this doc-comment will not
 /// be included in the generated JSON schema, as it manually defines its `JsonSchema` impl. The
 /// actual schema used for it is automatically generated in `KeymapFile::generate_json_schema`.
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Default, Clone, Serialize)]
 #[serde(transparent)]
 pub struct KeymapAction(Value);
 
