@@ -15089,15 +15089,16 @@ impl EditorSnapshot {
         &self,
         font_id: FontId,
         font_size: Pixels,
-        em_width: Pixels,
-        em_advance: Pixels,
         max_line_number_width: Pixels,
         cx: &App,
-    ) -> GutterDimensions {
+    ) -> Option<GutterDimensions> {
         if !self.show_gutter {
-            return GutterDimensions::default();
+            return None;
         }
+
         let descent = cx.text_system().descent(font_id, font_size);
+        let em_width = cx.text_system().em_width(font_id, font_size).log_err()?;
+        let em_advance = cx.text_system().em_advance(font_id, font_size).log_err()?;
 
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
@@ -15126,13 +15127,16 @@ impl EditorSnapshot {
         let git_blame_entries_width =
             self.git_blame_gutter_max_author_length
                 .map(|max_author_length| {
-                    // Length of the author name, but also space for the commit hash,
-                    // the spacing and the timestamp.
+                    const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+
+                    /// The number of characters to dedicate to gaps and margins.
+                    const SPACING_WIDTH: usize = 4;
+
                     let max_char_count = max_author_length
                         .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
-                        + 7 // length of commit sha
-                        + 14 // length of max relative timestamp ("60 minutes ago")
-                        + 4; // gaps and margins
+                        + ::git::SHORT_SHA_LENGTH
+                        + MAX_RELATIVE_TIMESTAMP.len()
+                        + SPACING_WIDTH;
 
                     em_advance * max_char_count
                 });
@@ -15158,13 +15162,13 @@ impl EditorSnapshot {
             px(0.)
         };
 
-        GutterDimensions {
+        Some(GutterDimensions {
             left_padding,
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
             git_blame_entries_width,
-        }
+        })
     }
 
     pub fn render_crease_toggle(
