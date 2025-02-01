@@ -50,13 +50,19 @@ Ensure that Postgres is configured and running, then run Zed's collaboration ser
 ```sh
 foreman start
 # OR
+docker compose up
+```
+
+Alternatively, if you're not testing voice and screenshare, you can just run `collab`, and not the `livekit` dev server:
+
+```sh
 cargo run -p collab -- serve all
 ```
 
 In a new terminal, run two or more instances of Zed.
 
 ```sh
-script/zed-local -2
+script/zed-local -3
 ```
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.

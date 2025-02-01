@@ -2223,7 +2223,9 @@ impl BufferChangeSet {
                         let base_text = cx.background_executor().spawn(snapshot).await;
                         this.update(&mut cx, |this, cx| {
                             this.base_text = Some(base_text);
-                            cx.notify();
+                            cx.emit(BufferChangeSetEvent::DiffChanged {
+                                changed_range: text::Anchor::MIN..text::Anchor::MAX,
+                            });
                         })
                     }));
                 }

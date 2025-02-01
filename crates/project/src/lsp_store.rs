@@ -36,7 +36,7 @@ use language::{
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language,
+    CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
     LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile,
     LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
@@ -4359,7 +4359,7 @@ impl LspStore {
         } else {
             let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
+            completion.documentation = Some(CompletionDocumentation::Undocumented);
         }
 
         // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
@@ -4434,16 +4434,16 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&response.lsp_completion)?;
 
         let documentation = if response.documentation.is_empty() {
-            Documentation::Undocumented
+            CompletionDocumentation::Undocumented
         } else if response.documentation_is_markdown {
-            Documentation::MultiLineMarkdown(
+            CompletionDocumentation::MultiLineMarkdown(
                 markdown::parse_markdown(&response.documentation, Some(&language_registry), None)
                     .await,
             )
         } else if response.documentation.lines().count() <= 1 {
-            Documentation::SingleLine(response.documentation)
+            CompletionDocumentation::SingleLine(response.documentation)
         } else {
-            Documentation::MultiLinePlainText(response.documentation)
+            CompletionDocumentation::MultiLinePlainText(response.documentation)
         };
 
         let mut completions = completions.borrow_mut();

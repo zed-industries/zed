@@ -266,7 +266,7 @@ impl std::fmt::Debug for ExcerptInfo {
     }
 }
 
-/// A boundary between [`Excerpt`]s in a [`MultiBuffer`]
+/// A boundary between `Excerpt`s in a [`MultiBuffer`]
 #[derive(Debug)]
 pub struct ExcerptBoundary {
     pub prev: Option<ExcerptInfo>,
@@ -312,7 +312,7 @@ struct Excerpt {
     has_trailing_newline: bool,
 }
 
-/// A public view into an [`Excerpt`] in a [`MultiBuffer`].
+/// A public view into an `Excerpt` in a [`MultiBuffer`].
 ///
 /// Contains methods for getting the [`Buffer`] of the excerpt,
 /// as well as mapping offsets to/from buffer and multibuffer coordinates.
@@ -332,7 +332,7 @@ struct ExcerptIdMapping {
     locator: Locator,
 }
 
-/// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
+/// A range of text from a single [`Buffer`], to be shown as an `Excerpt`.
 /// These ranges are relative to the buffer itself
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ExcerptRange<T> {
@@ -3484,7 +3484,8 @@ impl MultiBufferSnapshot {
                 let region = cursor.region()?;
                 let buffer_start = if region.is_main_buffer {
                     let start_overshoot = range.start.saturating_sub(region.range.start.key);
-                    region.buffer_range.start.key + start_overshoot
+                    (region.buffer_range.start.key + start_overshoot)
+                        .min(region.buffer_range.end.key)
                 } else {
                     cursor.main_buffer_position()?.key
                 };

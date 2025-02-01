@@ -139,7 +139,7 @@ impl futures::Stream for StreamReader {
     }
 }
 
-/// Implementation from https://docs.rs/tokio-util/0.7.12/src/tokio_util/util/poll_buf.rs.html
+/// Implementation from <https://docs.rs/tokio-util/0.7.12/src/tokio_util/util/poll_buf.rs.html>
 /// Specialized for this use case
 pub fn poll_read_buf(
     io: &mut Pin<Box<dyn futures::AsyncRead + Send + Sync>>,

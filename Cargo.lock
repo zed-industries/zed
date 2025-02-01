@@ -2718,7 +2718,6 @@ dependencies = [
  "envy",
  "extension",
  "file_finder",
- "fireworks",
  "fs",
  "futures 0.3.31",
  "git",
@@ -4548,6 +4547,7 @@ version = "0.1.0"
 dependencies = [
  "futures 0.3.31",
  "gpui",
+ "smol",
 ]
 
 [[package]]
@@ -4655,17 +4655,6 @@ dependencies = [
  "libc",
  "libredox",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "fireworks"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures 0.3.31",
- "http_client",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -11446,6 +11435,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "schema_generator"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger 0.11.6",
+ "schemars",
+ "serde",
+ "serde_json",
+ "theme",
+]
+
+[[package]]
 name = "schemars"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13287,7 +13289,6 @@ dependencies = [
  "log",
  "palette",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -13528,7 +13529,6 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
- "git_ui",
  "gpui",
  "http_client",
  "notifications",

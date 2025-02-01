@@ -5236,11 +5236,27 @@ async fn test_select_all_matches(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
+
+    // Test caret-only selections
     cx.set_state("abc\nˇabc abc\ndefabc\nabc");
 
     cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
         .unwrap();
     cx.assert_editor_state("«abcˇ»\n«abcˇ» «abcˇ»\ndefabc\n«abcˇ»");
+
+    // Test left-to-right selections
+    cx.set_state("abc\n«abcˇ»\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«abcˇ»\n«abcˇ»\n«abcˇ»");
+
+    // Test right-to-left selections
+    cx.set_state("abc\n«ˇabc»\nabc");
+
+    cx.update_editor(|e, window, cx| e.select_all_matches(&SelectAllMatches, window, cx))
+        .unwrap();
+    cx.assert_editor_state("«ˇabc»\n«ˇabc»\n«ˇabc»");
 }
 
 #[gpui::test]
@@ -15401,7 +15417,7 @@ async fn assert_highlighted_edits(
     edits: Vec<(Range<Point>, String)>,
     include_deletions: bool,
     cx: &mut TestAppContext,
-    assertion_fn: impl Fn(HighlightedEdits, &App),
+    assertion_fn: impl Fn(HighlightedText, &App),
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);

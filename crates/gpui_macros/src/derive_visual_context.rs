@@ -34,17 +34,17 @@ pub fn derive_visual_context(input: TokenStream) -> TokenStream {
 
             fn update_window_entity<T: 'static, R>(
                 &mut self,
-                model: &gpui::Entity<T>,
+                entity: &gpui::Entity<T>,
                 update: impl FnOnce(&mut T, &mut gpui::Window, &mut gpui::Context<T>) -> R,
             ) -> Self::Result<R> {
-                gpui::AppContext::update_entity(self.#app_variable, model, |entity, cx| update(entity, self.#window_variable, cx))
+                gpui::AppContext::update_entity(self.#app_variable, entity, |entity, cx| update(entity, self.#window_variable, cx))
             }
 
             fn new_window_entity<T: 'static>(
                 &mut self,
-                build_model: impl FnOnce(&mut gpui::Window, &mut gpui::Context<'_, T>) -> T,
+                build_entity: impl FnOnce(&mut gpui::Window, &mut gpui::Context<'_, T>) -> T,
             ) -> Self::Result<gpui::Entity<T>> {
-                gpui::AppContext::new(self.#app_variable, |cx| build_model(self.#window_variable, cx))
+                gpui::AppContext::new(self.#app_variable, |cx| build_entity(self.#window_variable, cx))
             }
 
             fn replace_root_view<V>(
@@ -57,11 +57,11 @@ pub fn derive_visual_context(input: TokenStream) -> TokenStream {
                 self.#window_variable.replace_root(self.#app_variable, build_view)
             }
 
-            fn focus<V>(&mut self, model: &gpui::Entity<V>) -> Self::Result<()>
+            fn focus<V>(&mut self, entity: &gpui::Entity<V>) -> Self::Result<()>
             where
                 V: gpui::Focusable,
             {
-                let focus_handle = gpui::Focusable::focus_handle(model, self.#app_variable);
+                let focus_handle = gpui::Focusable::focus_handle(entity, self.#app_variable);
                 self.#window_variable.focus(&focus_handle)
             }
         }
