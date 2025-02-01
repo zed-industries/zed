@@ -11796,7 +11796,7 @@ impl Editor {
             return;
         }
 
-        let fold_at_level = fold_at.level;
+        let fold_at_level = fold_at.0;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
         let mut stack = vec![(0, snapshot.max_row().0, 1)];

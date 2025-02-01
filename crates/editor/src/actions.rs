@@ -162,9 +162,7 @@ pub struct DeleteToPreviousWordStart {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-pub struct FoldAtLevel {
-    pub level: u32,
-}
+pub struct FoldAtLevel(pub u32);
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SpawnNearestTask {
