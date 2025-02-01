@@ -137,6 +137,7 @@ impl Vim {
                 .iter()
                 .map(|s| buffer.anchor_before(s.start))
                 .collect(),
+            cx,
         );
         self.set_mark(
             "]".to_string(),
@@ -144,6 +145,7 @@ impl Vim {
                 .iter()
                 .map(|s| buffer.anchor_after(s.end))
                 .collect(),
+            cx,
         );
 
         {

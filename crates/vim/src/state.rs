@@ -7,7 +7,8 @@ use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
-use editor::{Anchor, ClipboardSelection, Editor};
+use editor::{Anchor, ClipboardSelection, Editor, ToPoint};
+use futures::future::OrElse;
 use gpui::{
     Action, App, BorrowAppContext, ClipboardEntry, ClipboardItem, Entity, Global, WeakEntity,
 };
@@ -209,6 +210,7 @@ pub struct VimGlobals {
     pub focused_vim: Option<WeakEntity<Vim>>,
 
     pub local_marks: HashMap<(WorkspaceId, Arc<Path>), HashMap<String, Vec<Point>>>,
+    pub global_marks: HashMap<WorkspaceId, HashMap<String, (Arc<Path>, Vec<Point>)>>,
 }
 
 // when you open a buffer, read from the local marks and convert to anchor
@@ -257,12 +259,17 @@ impl VimGlobals {
                 return;
             };
             cx.spawn(|this, mut cx| async move {
-                let marks = cx
+                let local_marks = cx
                     .background_executor()
                     .spawn(async move { DB.get_local_marks(workspace_id) })
                     .await?;
+                let global_marks = cx
+                    .background_executor()
+                    .spawn(async move { DB.get_global_marks(workspace_id) })
+                    .await?;
                 cx.update_global(|g: &mut VimGlobals, cx: &mut App| {
-                    g.load_local_marks(workspace_id, marks, cx)
+                    g.load_local_marks(workspace_id, local_marks, cx);
+                    g.load_global_marks(workspace_id, global_marks, cx);
                 })
             })
             .detach_and_log_err(cx)
@@ -395,6 +402,63 @@ impl VimGlobals {
         }
     }
 
+    pub fn set_local_mark(editor: &Editor, name: String, position: &Vec<Anchor>, cx: &mut App) {
+        let name = name.clone();
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let locations: Vec<(u32, u32)> = position
+            .iter()
+            .map(|anchor| {
+                let point = anchor.to_point(&snapshot);
+                (point.row, point.column)
+            })
+            .collect();
+        let Ok(value) = serde_json::to_string(&locations) else {
+            return;
+        };
+        cx.observe_new({
+            let value = value.clone();
+            let name = name.clone();
+
+            move |workspace: &mut Workspace, _, cx| {
+                let Some(workspace_id) = workspace.database_id() else {
+                    return;
+                };
+
+                let Some(absolute_path) = workspace.active_item(cx).and_then(|item| {
+                    if item.is_singleton(cx) {
+                        if let Some(&entry_id) = item.project_entry_ids(cx).first() {
+                            let project = workspace.project().read(cx);
+                            return project
+                                .path_for_entry(entry_id, cx)
+                                .and_then(|pp| project.absolute_path(&pp, cx));
+                        }
+                    }
+                    None
+                }) else {
+                    return;
+                };
+                cx.spawn(|this, mut cx| {
+                    let value = value.clone();
+                    let name = name.clone();
+                    async move {
+                        cx.background_executor()
+                            .spawn(async move {
+                                println!("abs path {:?}", absolute_path.to_str());
+                                DB.set_local_mark(
+                                    workspace_id,
+                                    name,
+                                    absolute_path.into_os_string().into_vec(),
+                                    value,
+                                )
+                            })
+                            .await;
+                    }
+                })
+                .detach()
+            }
+        });
+    }
+
     fn load_local_marks(
         &mut self,
         workspace_id: WorkspaceId,
@@ -406,15 +470,37 @@ impl VimGlobals {
                 continue;
             };
             let path = PathBuf::from(OsString::from_vec(abs_path));
-            let mut marks = self
+            let mut local_marks = self
                 .local_marks
                 .entry((workspace_id, Arc::from(path)))
                 .or_default();
+            let points: Vec<Point> = value
+                .into_iter()
+                .map(|(row, col)| Point::new(row, col))
+                .collect();
+            print!("name {}, points {:?} ", name.clone(), points.clone());
+            panic!("blah");
+            local_marks.insert(name, points);
+        }
+    }
+
+    fn load_global_marks(
+        &mut self,
+        workspace_id: WorkspaceId,
+        marks: Vec<(Vec<u8>, String, String)>,
+        cx: &mut App,
+    ) {
+        for (abs_path, name, values) in marks {
+            let Some(value) = serde_json::from_str::<Vec<(u32, u32)>>(&values).log_err() else {
+                continue;
+            };
+            let path = PathBuf::from(OsString::from_vec(abs_path));
+            let mut global_marks = self.global_marks.entry(workspace_id).or_default();
             let points = value
                 .into_iter()
                 .map(|(row, col)| Point::new(row, col))
                 .collect();
-            marks.insert(name, points);
+            global_marks.insert(name, (Arc::from(path), points));
         }
     }
 
@@ -646,7 +732,7 @@ define_connection! {
 
 impl VimDb {
     query! {
-        pub fn set_local_mark(workspace_id: WorkspaceId, mark_name: String, absolute_path: Vec<u8>, value: String) -> Result<Vec<(PathBuf, bool)>> {
+        pub fn set_local_mark(workspace_id: WorkspaceId, mark_name: String, absolute_path: Vec<u8>, value: String) -> Result<()> {
             INSERT OR REPLACE INTO vim_local_marks (workspace_id, mark_name, absolute_path, value)
             VALUES (?, ?, ?, ?)
         }
@@ -655,6 +741,20 @@ impl VimDb {
     query! {
         pub fn get_local_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
             SELECT absolute_path, mark_name, value FROM vim_local_marks
+                WHERE workspace_id = ?
+        }
+    }
+
+    query! {
+        pub fn set_global_mark(workspace_id: WorkspaceId, mark_name: String, absolute_path: Vec<u8>, value: String) -> Result<()> {
+            INSERT OR REPLACE INTO vim_global_marks (workspace_id, mark_name, absolute_path, value)
+            VALUES (?, ?, ?, ?)
+        }
+    }
+
+    query! {
+        pub fn get_global_marks(workspace_id: WorkspaceId) -> Result<Vec<(Vec<u8>, String, String)>> {
+            SELECT absolute_path, mark_name, value FROM vim_global_marks
                 WHERE workspace_id = ?
         }
     }
