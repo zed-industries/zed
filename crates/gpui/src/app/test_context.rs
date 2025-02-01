@@ -34,10 +34,10 @@ impl AppContext for TestAppContext {
 
     fn new<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
-        app.new(build_model)
+        app.new(build_entity)
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
@@ -48,10 +48,10 @@ impl AppContext for TestAppContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         let mut app = self.app.borrow_mut();
-        app.insert_entity(reservation, build_model)
+        app.insert_entity(reservation, build_entity)
     }
 
     fn update_entity<T: 'static, R>(
@@ -178,13 +178,13 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
-    /// Gives you an `&mut AppContext` for the duration of the closure
+    /// Gives you an `&mut App` for the duration of the closure
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
         let mut cx = self.app.borrow_mut();
         cx.update(f)
     }
 
-    /// Gives you an `&AppContext` for the duration of the closure
+    /// Gives you an `&App` for the duration of the closure
     pub fn read<R>(&self, f: impl FnOnce(&App) -> R) -> R {
         let cx = self.app.borrow();
         f(&cx)
@@ -231,7 +231,7 @@ impl TestAppContext {
     }
 
     /// Adds a new window, and returns its root view and a `VisualTestContext` which can be used
-    /// as a `WindowContext` for the rest of the test. Typically you would shadow this context with
+    /// as a `Window` and `App` for the rest of the test. Typically you would shadow this context with
     /// the returned one. `let (view, cx) = cx.add_window_view(...);`
     pub fn add_window_view<F, V>(
         &mut self,
@@ -436,7 +436,7 @@ impl TestAppContext {
             .clone()
     }
 
-    /// Returns a stream of notifications whenever the View or Model is updated.
+    /// Returns a stream of notifications whenever the Entity is updated.
     pub fn notifications<T: 'static>(&mut self, entity: &Entity<T>) -> impl Stream<Item = ()> {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         self.update(|cx| {
@@ -453,7 +453,7 @@ impl TestAppContext {
         rx
     }
 
-    /// Returns a stream of events emitted by the given Model.
+    /// Returns a stream of events emitted by the given Entity.
     pub fn events<Evt, T: 'static + EventEmitter<Evt>>(
         &mut self,
         entity: &Entity<T>,
@@ -464,7 +464,7 @@ impl TestAppContext {
         let (tx, rx) = futures::channel::mpsc::unbounded();
         entity
             .update(self, |_, cx: &mut Context<T>| {
-                cx.subscribe(entity, move |_model, _handle, event, _cx| {
+                cx.subscribe(entity, move |_entity, _handle, event, _cx| {
                     let _ = tx.unbounded_send(event.clone());
                 })
             })
@@ -476,23 +476,23 @@ impl TestAppContext {
     /// don't need to jump in at a specific time).
     pub async fn condition<T: 'static>(
         &mut self,
-        model: &Entity<T>,
+        entity: &Entity<T>,
         mut predicate: impl FnMut(&mut T, &mut Context<T>) -> bool,
     ) {
         let timer = self.executor().timer(Duration::from_secs(3));
-        let mut notifications = self.notifications(model);
+        let mut notifications = self.notifications(entity);
 
         use futures::FutureExt as _;
         use smol::future::FutureExt as _;
 
         async {
             loop {
-                if model.update(self, &mut predicate) {
+                if entity.update(self, &mut predicate) {
                     return Ok(());
                 }
 
                 if notifications.next().await.is_none() {
-                    bail!("model dropped")
+                    bail!("entity dropped")
                 }
             }
         }
@@ -509,7 +509,7 @@ impl TestAppContext {
 }
 
 impl<T: 'static> Entity<T> {
-    /// Block until the next event is emitted by the model, then return it.
+    /// Block until the next event is emitted by the entity, then return it.
     pub fn next_event<Event>(&self, cx: &mut TestAppContext) -> impl Future<Output = Event>
     where
         Event: Send + Clone + 'static,
@@ -560,7 +560,7 @@ impl<V: 'static> Entity<V> {
                 .await
                 .expect("next notification timed out");
             drop(subscription);
-            notification.expect("model dropped while test was waiting for its next notification")
+            notification.expect("entity dropped while test was waiting for its next notification")
         }
     }
 }
@@ -639,8 +639,8 @@ use derive_more::{Deref, DerefMut};
 
 use super::{Context, Entity};
 #[derive(Deref, DerefMut, Clone)]
-/// A VisualTestContext is the test-equivalent of a `WindowContext`. It allows you to
-/// run window-specific test code.
+/// A VisualTestContext is the test-equivalent of a `Window` and `App`. It allows you to
+/// run window-specific test code. It can be dereferenced to a `TextAppContext`.
 pub struct VisualTestContext {
     #[deref]
     #[deref_mut]
@@ -650,7 +650,7 @@ pub struct VisualTestContext {
 }
 
 impl VisualTestContext {
-    /// Provides the `WindowContext` for the duration of the closure.
+    /// Provides a `Window` and `App` for the duration of the closure.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> R {
         self.cx
             .update_window(self.window, |_, window, cx| f(window, cx))
@@ -680,7 +680,7 @@ impl VisualTestContext {
         self.cx.dispatch_action(self.window, action)
     }
 
-    /// Read the title off the window (set by `WindowContext#set_window_title`)
+    /// Read the title off the window (set by `Window#set_window_title`)
     pub fn window_title(&mut self) -> Option<String> {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
@@ -865,9 +865,9 @@ impl AppContext for VisualTestContext {
 
     fn new<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
-        self.cx.new(build_model)
+        self.cx.new(build_entity)
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
@@ -877,9 +877,9 @@ impl AppContext for VisualTestContext {
     fn insert_entity<T: 'static>(
         &mut self,
         reservation: crate::Reservation<T>,
-        build_model: impl FnOnce(&mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
-        self.cx.insert_entity(reservation, build_model)
+        self.cx.insert_entity(reservation, build_entity)
     }
 
     fn update_entity<T, R>(
@@ -945,11 +945,11 @@ impl VisualContext for VisualTestContext {
 
     fn new_window_entity<T: 'static>(
         &mut self,
-        build_model: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
+        build_entity: impl FnOnce(&mut Window, &mut Context<'_, T>) -> T,
     ) -> Self::Result<Entity<T>> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                cx.new(|cx| build_model(window, cx))
+                cx.new(|cx| build_entity(window, cx))
             })
             .unwrap()
     }
@@ -991,7 +991,7 @@ impl VisualContext for VisualTestContext {
 
 impl AnyWindowHandle {
     /// Creates the given view in this window.
-    pub fn build_model<V: Render + 'static>(
+    pub fn build_entity<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
         build_view: impl FnOnce(&mut Window, &mut Context<V>) -> V,

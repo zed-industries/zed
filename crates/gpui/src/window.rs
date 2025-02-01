@@ -189,7 +189,7 @@ impl WindowFocusEvent {
     }
 }
 
-/// This is provided when subscribing for `ViewContext::on_focus_out` events.
+/// This is provided when subscribing for `Context::on_focus_out` events.
 pub struct FocusOutEvent {
     /// A weak focus handle representing what was blurred.
     pub blurred: WeakFocusHandle,
@@ -423,7 +423,7 @@ impl HitboxId {
 }
 
 /// A rectangular region that potentially blocks hitboxes inserted prior.
-/// See [WindowContext::insert_hitbox] for more details.
+/// See [Window::insert_hitbox] for more details.
 #[derive(Clone, Debug, Deref)]
 pub struct Hitbox {
     /// A unique identifier for the hitbox.
@@ -1193,9 +1193,9 @@ impl Window {
         });
     }
 
-    /// Subscribe to events emitted by a model or view.
+    /// Subscribe to events emitted by a entity.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    /// The callback will be invoked a handle to the emitting entity, the event, and a window context for the current window.
     pub fn observe<T: 'static>(
         &mut self,
         observed: &Entity<T>,
@@ -1222,9 +1222,9 @@ impl Window {
         )
     }
 
-    /// Subscribe to events emitted by a model or view.
+    /// Subscribe to events emitted by a entity.
     /// The entity to which you're subscribing must implement the [`EventEmitter`] trait.
-    /// The callback will be invoked a handle to the emitting entity (either a [`View`] or [`Model`]), the event, and a window context for the current window.
+    /// The callback will be invoked a handle to the emitting entity, the event, and a window context for the current window.
     pub fn subscribe<Emitter, Evt>(
         &mut self,
         entity: &Entity<Emitter>,
@@ -1259,7 +1259,7 @@ impl Window {
         )
     }
 
-    /// Register a callback to be invoked when the given Model or View is released.
+    /// Register a callback to be invoked when the given `Entity` is released.
     pub fn observe_release<T>(
         &self,
         entity: &Entity<T>,
@@ -1914,7 +1914,7 @@ impl Window {
     }
 
     /// Push a text style onto the stack, and call a function with that style active.
-    /// Use [`AppContext::text_style`] to get the current, combined text style. This method
+    /// Use [`Window::text_style`] to get the current, combined text style. This method
     /// should only be called as part of element drawing.
     pub fn with_text_style<F, R>(&mut self, style: Option<TextStyleRefinement>, f: F) -> R
     where
@@ -4071,7 +4071,7 @@ impl From<(&'static str, u32)> for ElementId {
 }
 
 /// A rectangle to be rendered in the window at the given position and size.
-/// Passed as an argument [`WindowContext::paint_quad`].
+/// Passed as an argument [`Window::paint_quad`].
 #[derive(Clone)]
 pub struct PaintQuad {
     /// The bounds of the quad within the window.

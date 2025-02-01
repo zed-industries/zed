@@ -20,10 +20,12 @@ pub use git2 as libgit;
 pub use repository::WORK_DIRECTORY_REPO_PATH;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
-pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cookies"));
+pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
-pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
+pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
+    LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
+pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
 
 actions!(
     git,

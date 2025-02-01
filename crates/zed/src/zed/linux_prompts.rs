@@ -15,7 +15,7 @@ use workspace::ui::StyledExt;
 pub fn init(cx: &mut App) {
     cx.set_prompt_builder(fallback_prompt_renderer)
 }
-/// Use this function in conjunction with [AppContext::set_prompt_renderer] to force
+/// Use this function in conjunction with [App::set_prompt_builder] to force
 /// GPUI to always use the fallback prompt renderer.
 pub fn fallback_prompt_renderer(
     level: PromptLevel,
