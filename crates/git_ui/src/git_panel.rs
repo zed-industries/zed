@@ -1,5 +1,8 @@
 use crate::git_panel_settings::StatusStyle;
-use crate::{git_panel_settings::GitPanelSettings, git_status_icon};
+use crate::repository_selector::RepositorySelectorPopoverMenu;
+use crate::{
+    git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
+};
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
@@ -19,8 +22,8 @@ use settings::Settings as _;
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListItem, ListItemSpacing,
-    Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, ListItem,
+    ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
@@ -92,6 +95,7 @@ pub struct GitPanel {
     selected_entry: Option<usize>,
     show_scrollbar: bool,
     update_visible_entries_task: Task<()>,
+    repository_selector: Entity<RepositorySelector>,
     commit_editor: Entity<Editor>,
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
@@ -186,6 +190,9 @@ impl GitPanel {
                 .detach();
             }
 
+            let repository_selector =
+                cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
+
             let mut git_panel = Self {
                 focus_handle: cx.focus_handle(),
                 pending_serialization: Task::ready(None),
@@ -195,6 +202,7 @@ impl GitPanel {
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone())
                     .parent_model(&cx.entity()),
+                repository_selector,
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
@@ -828,10 +836,15 @@ impl GitPanel {
     pub fn render_panel_header(
         &self,
         _window: &mut Window,
-        has_write_access: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
+        let all_repositories = self
+            .project
+            .read(cx)
+            .git_state()
+            .map(|state| state.read(cx).all_repositories())
+            .unwrap_or_default();
         let entry_count = self
             .active_repository
             .as_ref()
@@ -843,113 +856,102 @@ impl GitPanel {
             n => format!("{} changes", n),
         };
 
-        // for our use case treat None as false
-        let all_staged = self.all_staged.unwrap_or(false);
-
         h_flex()
             .h(px(32.))
             .items_center()
             .px_2()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(
-                h_flex()
-                    .gap_2()
+            .child(h_flex().gap_2().child(if all_repositories.len() <= 1 {
+                div()
+                    .id("changes-label")
+                    .text_buffer(cx)
+                    .text_ui_sm(cx)
                     .child(
-                        Checkbox::new(
-                            "all-changes",
-                            if entry_count == 0 {
-                                ToggleState::Selected
-                            } else {
-                                self.all_staged
-                                    .map_or(ToggleState::Indeterminate, ToggleState::from)
-                            },
-                        )
-                        .fill()
-                        .elevation(ElevationIndex::Surface)
-                        .tooltip(if all_staged {
-                            Tooltip::text("Unstage all changes")
-                        } else {
-                            Tooltip::text("Stage all changes")
-                        })
-                        .disabled(!has_write_access || entry_count == 0)
-                        .on_click(cx.listener(
-                            move |git_panel, _, window, cx| match all_staged {
-                                true => git_panel.unstage_all(&UnstageAll, window, cx),
-                                false => git_panel.stage_all(&StageAll, window, cx),
-                            },
-                        )),
+                        Label::new(changes_string)
+                            .single_line()
+                            .size(LabelSize::Small),
                     )
-                    .child(
-                        div()
-                            .id("changes-checkbox-label")
-                            .text_buffer(cx)
-                            .text_ui_sm(cx)
-                            .child(Label::new(changes_string).single_line())
-                            .on_click(cx.listener(
-                                move |git_panel, _, window, cx| match all_staged {
-                                    true => git_panel.unstage_all(&UnstageAll, window, cx),
-                                    false => git_panel.stage_all(&StageAll, window, cx),
-                                },
-                            )),
-                    ),
-            )
+                    .into_any_element()
+            } else {
+                self.render_repository_selector(cx).into_any_element()
+            }))
             .child(div().flex_grow())
-            .child(
-                h_flex()
-                    .gap_2()
-                    // TODO: Re-add once revert all is added
-                    // .child(
-                    //     IconButton::new("discard-changes", IconName::Undo)
-                    //         .tooltip({
-                    //             let focus_handle = focus_handle.clone();
-                    //             move |cx| {
-                    //                 Tooltip::for_action_in(
-                    //                     "Discard all changes",
-                    //                     &RevertAll,
-                    //                     &focus_handle,
-                    //                     cx,
-                    //                 )
-                    //             }
-                    //         })
-                    //         .icon_size(IconSize::Small)
-                    //         .disabled(true),
-                    // )
-                    .child(if self.all_staged.unwrap_or(false) {
-                        self.panel_button("unstage-all", "Unstage All")
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Unstage all changes",
-                                        &UnstageAll,
-                                        &focus_handle,
-                                        window,
-                                        cx,
+            .child(h_flex().gap_2().child(if self.all_staged.unwrap_or(false) {
+                self.panel_button("unstage-all", "Unstage All")
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Unstage all changes",
+                                &UnstageAll,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.unstage_all(&UnstageAll, window, cx)
+                    }))
+            } else {
+                self.panel_button("stage-all", "Stage All")
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Stage all changes",
+                                &StageAll,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.stage_all(&StageAll, window, cx)
+                        }),
+                    )
+            }))
+    }
+
+    pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_repository = self.project.read(cx).active_repository(cx);
+        let repository_display_name = active_repository
+            .as_ref()
+            .map(|repo| repo.display_name(self.project.read(cx), cx))
+            .unwrap_or_default();
+
+        let entry_count = self.visible_entries.len();
+
+        RepositorySelectorPopoverMenu::new(
+            self.repository_selector.clone(),
+            ButtonLike::new("active-repository")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex().w_full().gap_0p5().child(
+                        div()
+                            .overflow_x_hidden()
+                            .flex_grow()
+                            .whitespace_nowrap()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(repository_display_name).size(LabelSize::Small),
                                     )
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.unstage_all(&UnstageAll, window, cx)
-                            }))
-                    } else {
-                        self.panel_button("stage-all", "Stage All")
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Stage all changes",
-                                        &StageAll,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.stage_all(&StageAll, window, cx)
-                            }))
-                    }),
-            )
+                                    .when(entry_count > 0, |flex| {
+                                        flex.child(
+                                            Label::new(format!("({})", entry_count))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .into_any_element(),
+                            ),
+                    ),
+                ),
+        )
     }
 
     pub fn render_commit_editor(
@@ -1336,7 +1338,7 @@ impl Render for GitPanel {
             .overflow_hidden()
             .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(window, has_write_access, cx))
+            .child(self.render_panel_header(window, cx))
             .child(self.render_divider(cx))
             .child(if has_entries {
                 self.render_entries(has_write_access, cx).into_any_element()
