@@ -1754,29 +1754,39 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
         let start_x = em_width;
 
-        let mut previous_color_and_oid: Option<(u32, Oid)> = None;
+        let mut previous_color_and_oid: Option<(Hsla, Oid)> = None;
 
         let shaped_lines = blamed_rows
             .into_iter()
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
                 if let Some(blame_entry) = blame_entry {
-                    let color_ix: u32 = blame_entry.sha.into();
-                    let color_ix = match previous_color_and_oid {
-                        Some((color, sha)) if color_ix == color && blame_entry.sha != sha => {
-                            // Don't give consecutive entries the same color
-                            color_ix + 1
+                    let sha_color = {
+                        let color_ix: u32 = blame_entry.sha.into();
+                        let get_color =
+                            |ix: u32| cx.theme().players().color_for_participant(ix).cursor;
+
+                        let mut sha_color = get_color(color_ix);
+                        if let Some((previous_color, previous_sha)) = previous_color_and_oid {
+                            if blame_entry.sha != previous_sha {
+                                if sha_color == previous_color {
+                                    // Don't give consecutive entries the same color, overwrite
+                                    sha_color = get_color(color_ix + 1);
+                                }
+                            } else {
+                                sha_color = previous_color;
+                            }
                         }
-                        Some((_, _)) | None => color_ix,
+                        previous_color_and_oid = Some((sha_color, blame_entry.sha));
+                        sha_color
                     };
-                    previous_color_and_oid = Some((color_ix, blame_entry.sha));
 
                     let mut element = render_blame_entry(
                         ix,
                         &blame,
                         blame_entry,
                         &self.style,
-                        color_ix,
+                        sha_color,
                         self.editor.clone(),
                         cx,
                     );
@@ -5680,12 +5690,10 @@ fn render_blame_entry(
     blame: &gpui::Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    color_ix: u32,
+    sha_color: Hsla,
     editor: Entity<Editor>,
     cx: &mut App,
 ) -> AnyElement {
-    let sha_color = cx.theme().players().color_for_participant(color_ix).cursor;
-
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let short_commit_id = blame_entry.sha.display_short();
