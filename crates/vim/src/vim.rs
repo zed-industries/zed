@@ -233,7 +233,7 @@ pub fn init(cx: &mut App) {
             else {
                 return;
             };
-            workspace.resize_pane(Axis::Horizontal, width.width * count, cx);
+            workspace.resize_pane(Axis::Horizontal, width.width * count, window, cx);
         });
 
         workspace.register_action(|workspace, _: &ResizePaneLeft, window, cx| {
@@ -248,21 +248,21 @@ pub fn init(cx: &mut App) {
             else {
                 return;
             };
-            workspace.resize_pane(Axis::Horizontal, -width.width * count, cx);
+            workspace.resize_pane(Axis::Horizontal, -width.width * count, window, cx);
         });
 
-        workspace.register_action(|workspace, _: &ResizePaneUp, _, cx| {
+        workspace.register_action(|workspace, _: &ResizePaneUp, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size() * theme.buffer_line_height.value();
-            workspace.resize_pane(Axis::Vertical, height * count, cx);
+            workspace.resize_pane(Axis::Vertical, height * count, window, cx);
         });
 
-        workspace.register_action(|workspace, _: &ResizePaneDown, _, cx| {
+        workspace.register_action(|workspace, _: &ResizePaneDown, window, cx| {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             let theme = ThemeSettings::get_global(cx);
             let height = theme.buffer_font_size() * theme.buffer_line_height.value();
-            workspace.resize_pane(Axis::Vertical, -height * count, cx);
+            workspace.resize_pane(Axis::Vertical, -height * count, window, cx);
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {

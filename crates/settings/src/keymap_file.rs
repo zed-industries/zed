@@ -1,8 +1,9 @@
-use std::rc::Rc;
+use std::{rc::Rc, sync::LazyLock};
 
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::anyhow;
 use collections::{HashMap, IndexMap};
+use convert_case::{Case, Casing};
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
     NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
@@ -551,6 +552,204 @@ impl KeymapFile {
     pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
         self.0.iter()
     }
+
+    pub fn migrate_keymap_content(content: &str) -> MigrationResult {
+        let mut keymap_file = match KeymapFile::parse(content) {
+            Ok(keymap) => keymap,
+            Err(err) => return MigrationResult::JsonParseFailure { error: err },
+        };
+
+        let mut errors = Vec::new();
+        for section in keymap_file.0.iter_mut() {
+            if let Some(bindings) = &mut section.bindings {
+                for (_, action) in bindings.iter_mut() {
+                    match migrate_action(action.0.clone()) {
+                        Ok(new_value) => action.0 = new_value,
+                        Err(err) => errors.push((
+                            section.context.clone(),
+                            format!(" Parse error in section `context` field: {}", err),
+                        )),
+                    }
+                }
+            }
+        }
+
+        if errors.is_empty() {
+            MigrationResult::Success { keymap_file }
+        } else {
+            let mut error_message = "Errors while migrating user keymap file.\n".to_owned();
+            for (context, section_errors) in errors {
+                if context.is_empty() {
+                    write!(error_message, "\n\nIn section without context predicate:").unwrap()
+                } else {
+                    write!(
+                        error_message,
+                        "\n\nIn section with {}:",
+                        MarkdownString::inline_code(&format!("context = \"{}\"", context))
+                    )
+                    .unwrap()
+                }
+                write!(error_message, "{section_errors}").unwrap();
+            }
+            MigrationResult::SomeFailedToMigrate {
+                keymap_file,
+                error_message: MarkdownString(error_message),
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+#[must_use]
+pub enum MigrationResult {
+    Success {
+        keymap_file: KeymapFile,
+    },
+    SomeFailedToMigrate {
+        keymap_file: KeymapFile,
+        error_message: MarkdownString,
+    },
+    JsonParseFailure {
+        error: anyhow::Error,
+    },
+}
+
+#[rustfmt::skip]
+static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(|| {
+    HashMap::from_iter([
+        // activate
+        (("workspace::ActivatePaneInDirection", "Up"), "workspace::ActivatePaneUp"),
+        (("workspace::ActivatePaneInDirection", "Down"), "workspace::ActivatePaneDown"),
+        (("workspace::ActivatePaneInDirection", "Left"), "workspace::ActivatePaneLeft"),
+        (("workspace::ActivatePaneInDirection", "Right"), "workspace::ActivatePaneRight"),
+        // swap
+        (("workspace::SwapPaneInDirection", "Up"), "workspace::SwapPaneUp"),
+        (("workspace::SwapPaneInDirection", "Down"), "workspace::SwapPaneDown"),
+        (("workspace::SwapPaneInDirection", "Left"), "workspace::SwapPaneLeft"),
+        (("workspace::SwapPaneInDirection", "Right"), "workspace::SwapPaneRight"),
+        // menu
+        (("app_menu::NavigateApplicationMenuInDirection", "Left"), "app_menu::ActivateMenuLeft"),
+        (("app_menu::NavigateApplicationMenuInDirection", "Right"), "app_menu::ActivateMenuRight"),
+        // vim push
+        (("vim::PushOperator", "Change"), "vim::PushChange"),
+        (("vim::PushOperator", "Delete"), "vim::PushDelete"),
+        (("vim::PushOperator", "Yank"), "vim::PushYank"),
+        (("vim::PushOperator", "Replace"), "vim::PushReplace"),
+        (("vim::PushOperator", "AddSurrounds"), "vim::PushAddSurrounds"),
+        (("vim::PushOperator", "DeleteSurrounds"), "vim::PushDeleteSurrounds"),
+        (("vim::PushOperator", "Mark"), "vim::PushMark"),
+        (("vim::PushOperator", "Indent"), "vim::PushIndent"),
+        (("vim::PushOperator", "Outdent"), "vim::PushOutdent"),
+        (("vim::PushOperator", "AutoIndent"), "vim::PushAutoIndent"),
+        (("vim::PushOperator", "Rewrap"), "vim::PushRewrap"),
+        (("vim::PushOperator", "ShellCommand"), "vim::PushShellCommand"),
+        (("vim::PushOperator", "Lowercase"), "vim::PushLowercase"),
+        (("vim::PushOperator", "Uppercase"), "vim::PushUppercase"),
+        (("vim::PushOperator", "OppositeCase"), "vim::PushOppositeCase"),
+        (("vim::PushOperator", "Register"), "vim::PushRegister"),
+        (("vim::PushOperator", "RecordRegister"), "vim::PushRecordRegister"),
+        (("vim::PushOperator", "ReplayRegister"), "vim::PushReplayRegister"),
+        (("vim::PushOperator", "ToggleComments"), "vim::PushToggleComments"),
+        // vim switch
+        (("vim::SwitchMode", "Normal"), "vim::SwitchToNormalMode"),
+        (("vim::SwitchMode", "Insert"), "vim::SwitchToInsertMode"),
+        (("vim::SwitchMode", "Replace"), "vim::SwitchToReplaceMode"),
+        (("vim::SwitchMode", "Visual"), "vim::SwitchToVisualMode"),
+        (("vim::SwitchMode", "VisualLine"), "vim::SwitchToVisualLineMode"),
+        (("vim::SwitchMode", "VisualBlock"), "vim::SwitchToVisualBlockMode"),
+        (("vim::SwitchMode", "HelixNormal"), "vim::SwitchToHelixNormalMode"),
+        // vim resize
+        (("vim::ResizePane", "Widen"), "vim::ResizePaneRight"),
+        (("vim::ResizePane", "Narrow"), "vim::ResizePaneLeft"),
+        (("vim::ResizePane", "Shorten"), "vim::ResizePaneDown"),
+        (("vim::ResizePane", "Lengthen"), "vim::ResizePaneUp"),
+    ])
+});
+
+static UNWRAP_OBJECTS: LazyLock<HashMap<&str, Vec<(&str, &str)>>> = LazyLock::new(|| {
+    HashMap::from_iter([
+        (
+            "editor::FoldAtLevel",
+            vec![("level", "editor::FoldAtLevel")],
+        ),
+        (
+            "vim::PushOperator",
+            vec![
+                ("Object", "vim::PushObject"),
+                ("FindForward", "vim::PushFindForward"),
+                ("FindBackward", "vim::PushFindBackward"),
+                ("Sneak", "vim::PushSneak"),
+                ("SneakBackward", "vim::PushSneakBackward"),
+                ("ChangeSurrounds", "vim::PushChangeSurrounds"),
+                ("Jump", "vim::PushJump"),
+                ("Digraph", "vim::PushDigraph"),
+                ("Literal", "vim::PushLiteral"),
+            ],
+        ),
+    ])
+});
+
+fn migrate_action(existing_value: Value) -> Result<Value, String> {
+    let Value::Array(items) = &existing_value else {
+        return Ok(existing_value);
+    };
+
+    if items.len() != 2 {
+        return Ok(existing_value);
+    }
+
+    let Some(Value::String(old_action)) = items.get(0) else {
+        return Ok(existing_value);
+    };
+
+    match items.get(1) {
+        Some(Value::String(value)) => {
+            if let Some(new_action) = TRANSFORM_ARRAY.get(&(old_action.as_str(), value.as_str())) {
+                return Ok(Value::String(new_action.to_string()));
+            }
+        }
+        Some(Value::Object(value)) => {
+            let (mut new_value, new_action) =
+                if let Some(fields) = UNWRAP_OBJECTS.get(old_action.as_str()) {
+                    let Some((inner_value, new_action)) =
+                        fields.iter().find_map(|(field, new_action)| {
+                            value.get(*field).map(|inner_val| (inner_val, new_action))
+                        })
+                    else {
+                        return Err(format!("no field found for action `{}`", old_action));
+                    };
+                    (inner_value.clone(), new_action.to_string())
+                } else {
+                    (Value::Object(value.clone()), old_action.clone())
+                };
+            if let Value::Object(obj) = &mut new_value {
+                snake_case_recursively(obj);
+            }
+            return Ok(Value::Array(vec![Value::String(new_action), new_value]));
+        }
+        _ => {}
+    };
+
+    Ok(existing_value)
+}
+
+fn snake_case_recursively(obj: &mut serde_json::Map<String, Value>) {
+    let keys: Vec<String> = obj.keys().cloned().collect();
+    for key in keys {
+        let new_key = key.to_case(Case::Snake);
+        if new_key != key {
+            if let Some(value) = obj.remove(&key) {
+                obj.insert(new_key, value);
+            }
+        }
+    }
+    for value in obj.values_mut() {
+        if let Value::String(s) = value {
+            *s = s.to_case(Case::Snake);
+        } else if let Value::Object(inner_obj) = value {
+            snake_case_recursively(inner_obj);
+        }
+    }
 }
 
 // Double quotes a string and wraps it in backticks for markdown inline code..
@@ -560,7 +759,8 @@ fn inline_code_string(text: &str) -> MarkdownString {
 
 #[cfg(test)]
 mod tests {
-    use crate::KeymapFile;
+    use super::*;
+    use serde_json::json;
 
     #[test]
     fn can_deserialize_keymap_with_trailing_comma() {
@@ -575,5 +775,56 @@ mod tests {
                   "
         };
         KeymapFile::parse(json).unwrap();
+    }
+
+    #[test]
+    fn test_array_to_string_migration() {
+        let input = json!(["workspace::ActivatePaneInDirection", "Up"]);
+        let result = migrate_action(input).unwrap();
+        assert_eq!(
+            result,
+            Value::String("workspace::ActivatePaneUp".to_string())
+        );
+    }
+
+    #[test]
+    fn test_unwrap_object_migration() {
+        let input = json!([
+            "editor::FoldAtLevel",
+            {"level": 2}
+        ]);
+        let result = migrate_action(input).unwrap();
+        assert_eq!(result, json!(["editor::FoldAtLevel", 2]));
+
+        let input = json!([
+            "vim::PushOperator",
+            {"Object": {"around": false}}
+        ]);
+        let result = migrate_action(input).unwrap();
+        assert_eq!(result, json!(["vim::PushObject", {"around": false}]));
+    }
+
+    #[test]
+    fn test_snake_case_conversion() {
+        let mut map = serde_json::Map::new();
+        map.insert("camelCase".to_string(), json!("someValue"));
+        map.insert(
+            "nestedObject".to_string(),
+            json!({
+                "innerCamel": "value"
+            }),
+        );
+
+        snake_case_recursively(&mut map);
+
+        assert!(map.contains_key("camel_case"));
+        assert!(!map.contains_key("camelCase"));
+
+        if let Some(Value::Object(nested)) = map.get("nested_object") {
+            assert!(nested.contains_key("inner_camel"));
+            assert!(!nested.contains_key("innerCamel"));
+        } else {
+            panic!("Expected nested object");
+        }
     }
 }
