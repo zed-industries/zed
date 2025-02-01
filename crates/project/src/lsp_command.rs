@@ -3826,7 +3826,8 @@ impl LspCommand for GetDocumentDiagnostics {
 
         Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
+                uri: lsp::Url::from_file_path(path)
+                    .map_err(|_| anyhow::anyhow!("Invalid file path"))?,
             },
             identifier: Some(identifier),
             previous_result_id: None,
@@ -3847,7 +3848,7 @@ impl LspCommand for GetDocumentDiagnostics {
             buffer
                 .file()
                 .and_then(|file| file.as_local())
-                .map(|file| lsp::Url::from_file_path(file.abs_path(cx).clone()).unwrap())
+                .and_then(|file| lsp::Url::from_file_path(file.abs_path(cx)).ok())
         })?;
 
         let Some(uri) = uri else {
@@ -3857,25 +3858,33 @@ impl LspCommand for GetDocumentDiagnostics {
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
                 lsp::DocumentDiagnosticReport::Full(report) => {
-                    lsp_store.update(&mut cx, |store, cx| {
-                        for (uri, report) in report.related_documents.into_iter().flatten() {
-                            match report {
-                                lsp::DocumentDiagnosticReportKind::Full(report) => {
-                                    store.update_diagnostics(
-                                        server_id,
-                                        lsp::PublishDiagnosticsParams {
-                                            diagnostics: report.items.clone(),
-                                            uri,
-                                            version: None,
-                                        },
-                                        &[],
-                                        cx,
-                                    ).expect("Failed to update diagnostics for the related document");
-                                }
-                                lsp::DocumentDiagnosticReportKind::Unchanged(_) => (),
-                            }
-                        }
-                    }).expect("Failed to update diagnostics for related documents");
+                    lsp_store
+                        .update(&mut cx, |store, cx| {
+                            report
+                                .related_documents
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|(uri, report)| {
+                                    if let lsp::DocumentDiagnosticReportKind::Full(full_report) =
+                                        report
+                                    {
+                                        Some(store.update_diagnostics(
+                                            server_id,
+                                            lsp::PublishDiagnosticsParams {
+                                                diagnostics: full_report.items.clone(),
+                                                uri,
+                                                version: None,
+                                            },
+                                            &[],
+                                            cx,
+                                        ))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .with_context(|| "Failed to update diagnostics for related documents")?;
 
                     Ok(Some(LspDiagnostics {
                         server_id,
