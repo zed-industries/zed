@@ -5,7 +5,7 @@ use gpui::{
     Size, StrikethroughStyle, StyledText, UniformListScrollHandle, WeakEntity,
 };
 use language::Buffer;
-use language::{CodeLabel, Documentation};
+use language::{CodeLabel, CompletionDocumentation};
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
@@ -474,7 +474,7 @@ impl CompletionsMenu {
                     let documentation = &completion.documentation;
 
                     let mut len = completion.label.text.chars().count();
-                    if let Some(Documentation::SingleLine(text)) = documentation {
+                    if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
                         if show_completion_documentation {
                             len += text.chars().count();
                         }
@@ -558,7 +558,9 @@ impl CompletionsMenu {
                                     StyledText::new(completion.label.text.clone())
                                         .with_highlights(&style.text, highlights);
                                 let documentation_label =
-                                    if let Some(Documentation::SingleLine(text)) = documentation {
+                                    if let Some(CompletionDocumentation::SingleLine(text)) =
+                                        documentation
+                                    {
                                         if text.trim().is_empty() {
                                             None
                                         } else {
@@ -710,20 +712,23 @@ impl CompletionsMenu {
                     .documentation
                     .as_ref()?
                 {
-                    Documentation::MultiLinePlainText(text) => {
+                    CompletionDocumentation::MultiLinePlainText(text) => {
                         div().child(SharedString::from(text.clone()))
                     }
-                    Documentation::MultiLineMarkdown(parsed) if !parsed.text.is_empty() => div()
-                        .child(render_parsed_markdown(
+                    CompletionDocumentation::MultiLineMarkdown(parsed)
+                        if !parsed.text.is_empty() =>
+                    {
+                        div().child(render_parsed_markdown(
                             "completions_markdown",
                             parsed,
                             &style,
                             workspace,
                             cx,
-                        )),
-                    Documentation::MultiLineMarkdown(_) => return None,
-                    Documentation::SingleLine(_) => return None,
-                    Documentation::Undocumented => return None,
+                        ))
+                    }
+                    CompletionDocumentation::MultiLineMarkdown(_) => return None,
+                    CompletionDocumentation::SingleLine(_) => return None,
+                    CompletionDocumentation::Undocumented => return None,
                 }
             }
             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::Loaded { text }) => {

@@ -22,7 +22,7 @@ pub enum ElevationIndex {
     EditorSurface,
     /// A surface that is elevated above the primary surface. but below washes, models, and dragged elements.
     ElevatedSurface,
-    /// A surface above the [ElevationIndex::Wash] that is used for dialogs, alerts, modals, etc.
+    /// A surface above the [ElevationIndex::ElevatedSurface] that is used for dialogs, alerts, modals, etc.
     ModalSurface,
 }
 

@@ -122,7 +122,7 @@ pub struct PathLikeTarget {
 /// A string inside terminal, potentially useful as a URI that can be opened.
 #[derive(Clone, Debug)]
 pub enum MaybeNavigationTarget {
-    /// HTTP, git, etc. string determined by the [`URL_REGEX`] regex.
+    /// HTTP, git, etc. string determined by the `URL_REGEX` regex.
     Url(String),
     /// File system path, absolute or relative, existing or not.
     /// Might have line and column number(s) attached as `file.rs:1:23`
@@ -1910,7 +1910,7 @@ fn content_index_for_mouse(pos: Point<Pixels>, size: &TerminalSize) -> usize {
 
 /// Converts an 8 bit ANSI color to its GPUI equivalent.
 /// Accepts `usize` for compatibility with the `alacritty::Colors` interface,
-/// Other than that use case, should only be called with values in the [0,255] range
+/// Other than that use case, should only be called with values in the `[0,255]` range
 pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
     let colors = theme.colors();
 

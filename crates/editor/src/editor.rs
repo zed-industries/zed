@@ -96,9 +96,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedText, IndentKind, IndentSize,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
-    TreeSitterOptions,
+    CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
+    IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -14723,7 +14723,10 @@ fn snippet_completions(
                         filter_range: 0..matching_prefix.len(),
                     },
                     server_id: LanguageServerId(usize::MAX),
-                    documentation: snippet.description.clone().map(Documentation::SingleLine),
+                    documentation: snippet
+                        .description
+                        .clone()
+                        .map(CompletionDocumentation::SingleLine),
                     lsp_completion: lsp::CompletionItem {
                         label: snippet.prefix.first().unwrap().clone(),
                         kind: Some(CompletionItemKind::SNIPPET),

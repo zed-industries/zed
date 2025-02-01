@@ -5,7 +5,7 @@ use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWor
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{App, Context, Entity, Task, WeakEntity, Window};
-use language::{Anchor, Buffer, Documentation, LanguageServerId, ToPoint};
+use language::{Anchor, Buffer, CompletionDocumentation, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
 use project::CompletionIntent;
 use rope::Point;
@@ -120,7 +120,9 @@ impl SlashCommandCompletionProvider {
                                 });
                         Some(project::Completion {
                             old_range: name_range.clone(),
-                            documentation: Some(Documentation::SingleLine(command.description())),
+                            documentation: Some(CompletionDocumentation::SingleLine(
+                                command.description(),
+                            )),
                             new_text,
                             label: command.label(cx),
                             server_id: LanguageServerId(0),

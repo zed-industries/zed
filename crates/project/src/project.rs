@@ -56,9 +56,9 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
-    CachedLspAdapter, Capability, CodeLabel, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped,
+    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
@@ -368,7 +368,7 @@ pub struct Completion {
     /// The id of the language server that produced this completion.
     pub server_id: LanguageServerId,
     /// The documentation for this completion.
-    pub documentation: Option<Documentation>,
+    pub documentation: Option<CompletionDocumentation>,
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
     /// Whether this completion has been resolved, to ensure it happens once per completion.
