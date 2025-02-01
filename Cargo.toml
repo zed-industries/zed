@@ -45,7 +45,6 @@ members = [
     "crates/feedback",
     "crates/file_finder",
     "crates/file_icons",
-    "crates/fireworks",
     "crates/fs",
     "crates/fsevent",
     "crates/fuzzy",
@@ -109,6 +108,7 @@ members = [
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
+    "crates/schema_generator",
     "crates/search",
     "crates/semantic_index",
     "crates/semantic_version",
@@ -153,7 +153,7 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
-    "crates/zed_predict_tos",
+    "crates/zed_predict_onboarding",
     "crates/zeta",
 
     #
@@ -171,7 +171,6 @@ members = [
     "extensions/lua",
     "extensions/php",
     "extensions/perplexity",
-    "extensions/prisma",
     "extensions/proto",
     "extensions/purescript",
     "extensions/ruff",
@@ -203,7 +202,6 @@ edition = "2021"
 
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
-zed_predict_tos = { path = "crates/zed_predict_tos" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
@@ -244,7 +242,6 @@ feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
-fireworks = { path = "crates/fireworks" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
@@ -354,6 +351,7 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_predict_onboarding = { path = "crates/zed_predict_onboarding" }
 zeta = { path = "crates/zeta" }
 
 #
@@ -388,6 +386,7 @@ bitflags = "2.6.0"
 blade-graphics = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
 blade-macros = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
 blade-util = { git = "https://github.com/kvark/blade", rev = "b16f5c7bd873c7126f48c82c39e7ae64602ae74f" }
+naga = { version = "23.1.0", features = ["wgsl-in"] }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -534,13 +533,13 @@ tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
 tree-sitter-python = "0.23"
-tree-sitter-regex = "0.23"
+tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
-unindent = "0.1.7"
+unindent = "0.2.0"
 unicode-segmentation = "1.10"
 unicode-script = "0.5.7"
 url = "2.2"

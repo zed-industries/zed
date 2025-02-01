@@ -576,6 +576,7 @@ impl GitPanel {
     fn commit_changes(
         &mut self,
         _: &git::CommitChanges,
+        name_and_email: Option<(SharedString, SharedString)>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -585,13 +586,14 @@ impl GitPanel {
         if !active_repository.can_commit(false, cx) {
             return;
         }
-        active_repository.commit(self.err_sender.clone(), cx);
+        active_repository.commit(name_and_email, self.err_sender.clone(), cx);
     }
 
     /// Commit all changes, regardless of whether they are staged or not
     fn commit_all_changes(
         &mut self,
         _: &git::CommitAllChanges,
+        name_and_email: Option<(SharedString, SharedString)>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -601,7 +603,7 @@ impl GitPanel {
         if !active_repository.can_commit(true, cx) {
             return;
         }
-        active_repository.commit_all(self.err_sender.clone(), cx);
+        active_repository.commit_all(name_and_email, self.err_sender.clone(), cx);
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
@@ -638,7 +640,7 @@ impl GitPanel {
             .remote_participants()
             .values()
             .filter(|participant| participant.can_write())
-            .map(|participant| participant.user.clone())
+            .map(|participant| participant.user.as_ref())
             .filter_map(|user| {
                 let email = user.email.as_deref()?;
                 let name = user.name.as_deref().unwrap_or(&user.github_login);
@@ -827,6 +829,7 @@ impl GitPanel {
     pub fn render_panel_header(
         &self,
         window: &mut Window,
+        has_write_access: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
@@ -869,7 +872,7 @@ impl GitPanel {
                         } else {
                             Tooltip::text("Stage all changes")
                         })
-                        .disabled(entry_count == 0)
+                        .disabled(!has_write_access || entry_count == 0)
                         .on_click(cx.listener(
                             move |git_panel, _, window, cx| match all_staged {
                                 true => git_panel.unstage_all(&UnstageAll, window, cx),
@@ -960,7 +963,12 @@ impl GitPanel {
             )
     }
 
-    pub fn render_commit_editor(&self, cx: &Context<Self>) -> impl IntoElement {
+    pub fn render_commit_editor(
+        &self,
+        name_and_email: Option<(SharedString, SharedString)>,
+        can_commit: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
         let (can_commit, can_commit_all) =
@@ -968,8 +976,8 @@ impl GitPanel {
                 .as_ref()
                 .map_or((false, false), |active_repository| {
                     (
-                        active_repository.can_commit(false, cx),
-                        active_repository.can_commit(true, cx),
+                        can_commit && active_repository.can_commit(false, cx),
+                        can_commit && active_repository.can_commit(true, cx),
                     )
                 });
 
@@ -989,9 +997,12 @@ impl GitPanel {
                 )
             })
             .disabled(!can_commit)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.commit_changes(&CommitChanges, window, cx)
-            }));
+            .on_click({
+                let name_and_email = name_and_email.clone();
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.commit_changes(&CommitChanges, name_and_email.clone(), window, cx)
+                })
+            });
 
         let commit_all_button = self
             .panel_button("commit-all-changes", "Commit All")
@@ -1006,9 +1017,12 @@ impl GitPanel {
                 )
             })
             .disabled(!can_commit_all)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                this.commit_all_changes(&CommitAllChanges, window, cx)
-            }));
+            .on_click({
+                let name_and_email = name_and_email.clone();
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.commit_all_changes(&CommitAllChanges, name_and_email.clone(), window, cx)
+                })
+            });
 
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
             v_flex()
@@ -1107,7 +1121,7 @@ impl GitPanel {
         )
     }
 
-    fn render_entries(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_entries(&self, has_write_access: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let entry_count = self.visible_entries.len();
 
         h_flex()
@@ -1118,7 +1132,7 @@ impl GitPanel {
                     move |git_panel, range, _window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
                         git_panel.for_each_visible_entry(range, cx, |ix, details, cx| {
-                            items.push(git_panel.render_entry(ix, details, cx));
+                            items.push(git_panel.render_entry(ix, details, has_write_access, cx));
                         });
                         items
                     }
@@ -1136,6 +1150,7 @@ impl GitPanel {
         &self,
         ix: usize,
         entry_details: GitListEntry,
+        has_write_access: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let repo_path = entry_details.repo_path.clone();
@@ -1215,6 +1230,7 @@ impl GitPanel {
                         .is_staged
                         .map_or(ToggleState::Indeterminate, ToggleState::from),
                 )
+                .disabled(!has_write_access)
                 .fill()
                 .elevation(ElevationIndex::Surface)
                 .on_click({
@@ -1296,26 +1312,54 @@ impl Render for GitPanel {
             .map_or(false, |active_repository| {
                 active_repository.entry_count() > 0
             });
-        let has_co_authors = self
+        let room = self
             .workspace
             .upgrade()
-            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
-            .map(|room| {
-                let room = room.read(cx);
-                room.local_participant().can_write()
-                    && room
-                        .remote_participants()
-                        .values()
-                        .any(|remote_participant| remote_participant.can_write())
-            })
-            .unwrap_or(false);
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
+
+        let has_write_access = room
+            .as_ref()
+            .map_or(true, |room| room.read(cx).local_participant().can_write());
+        let (can_commit, name_and_email) = match &room {
+            Some(room) => {
+                if project.is_via_collab() {
+                    if has_write_access {
+                        let name_and_email =
+                            room.read(cx).local_participant_user(cx).and_then(|user| {
+                                let email = SharedString::from(user.email.clone()?);
+                                let name = user
+                                    .name
+                                    .clone()
+                                    .map(SharedString::from)
+                                    .unwrap_or(SharedString::from(user.github_login.clone()));
+                                Some((name, email))
+                            });
+                        (name_and_email.is_some(), name_and_email)
+                    } else {
+                        (false, None)
+                    }
+                } else {
+                    (has_write_access, None)
+                }
+            }
+            None => (has_write_access, None),
+        };
+
+        let has_co_authors = can_commit
+            && has_write_access
+            && room.map_or(false, |room| {
+                room.read(cx)
+                    .remote_participants()
+                    .values()
+                    .any(|remote_participant| remote_participant.can_write())
+            });
 
         v_flex()
             .id("git_panel")
             .key_context(self.dispatch_context(window, cx))
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
-            .when(!project.is_read_only(cx), |this| {
+            .when(has_write_access && !project.is_read_only(cx), |this| {
                 this.on_action(cx.listener(|this, &ToggleStaged, window, cx| {
                     this.toggle_staged_for_selected(&ToggleStaged, window, cx)
                 }))
@@ -1330,12 +1374,31 @@ impl Render for GitPanel {
                 .on_action(cx.listener(|this, &RevertAll, window, cx| {
                     this.discard_all(&RevertAll, window, cx)
                 }))
-                .on_action(cx.listener(|this, &CommitChanges, window, cx| {
-                    this.commit_changes(&CommitChanges, window, cx)
-                }))
-                .on_action(cx.listener(|this, &CommitAllChanges, window, cx| {
-                    this.commit_all_changes(&CommitAllChanges, window, cx)
-                }))
+                .when(can_commit, |git_panel| {
+                    git_panel
+                        .on_action({
+                            let name_and_email = name_and_email.clone();
+                            cx.listener(move |git_panel, &CommitChanges, window, cx| {
+                                git_panel.commit_changes(
+                                    &CommitChanges,
+                                    name_and_email.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })
+                        })
+                        .on_action({
+                            let name_and_email = name_and_email.clone();
+                            cx.listener(move |git_panel, &CommitAllChanges, window, cx| {
+                                git_panel.commit_all_changes(
+                                    &CommitAllChanges,
+                                    name_and_email.clone(),
+                                    window,
+                                    cx,
+                                )
+                            })
+                        })
+                })
             })
             .when(self.is_focused(window, cx), |this| {
                 this.on_action(cx.listener(Self::select_first))
@@ -1366,15 +1429,15 @@ impl Render for GitPanel {
             .font_buffer(cx)
             .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(window, cx))
+            .child(self.render_panel_header(window, has_write_access, cx))
             .child(self.render_divider(cx))
             .child(if has_entries {
-                self.render_entries(cx).into_any_element()
+                self.render_entries(has_write_access, cx).into_any_element()
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
             .child(self.render_divider(cx))
-            .child(self.render_commit_editor(cx))
+            .child(self.render_commit_editor(name_and_email, can_commit, cx))
     }
 }
 

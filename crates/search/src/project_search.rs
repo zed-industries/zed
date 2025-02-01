@@ -421,6 +421,9 @@ impl Item for ProjectSearchView {
             None
         }
     }
+    fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.results_editor.clone()))
+    }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.results_editor
@@ -736,6 +739,7 @@ impl ProjectSearchView {
             let mut editor =
                 Editor::for_multibuffer(excerpts, Some(project.clone()), true, window, cx);
             editor.set_searchable(false);
+            editor.set_in_project_search(true);
             editor
         });
         subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));
@@ -2333,7 +2337,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window;
-        let search_bar = window.build_model(cx, |_, _| ProjectSearchBar::new());
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
             workspace
@@ -2573,7 +2577,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window;
-        let search_bar = window.build_model(cx, |_, _| ProjectSearchBar::new());
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
             workspace
@@ -2875,7 +2879,7 @@ pub mod tests {
         });
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
-        let search_bar = window.build_model(cx, |_, _| ProjectSearchBar::new());
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
         let active_item = cx.read(|cx| {
             workspace
@@ -2993,7 +2997,7 @@ pub mod tests {
         let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
-        let search_bar = window.build_model(cx, |_, _| ProjectSearchBar::new());
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
         window
             .update(cx, {
@@ -3329,8 +3333,8 @@ pub mod tests {
             .update(cx, |this, _, _| this.panes().to_owned())
             .unwrap();
 
-        let search_bar_1 = window.build_model(cx, |_, _| ProjectSearchBar::new());
-        let search_bar_2 = window.build_model(cx, |_, _| ProjectSearchBar::new());
+        let search_bar_1 = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        let search_bar_2 = window.build_entity(cx, |_, _| ProjectSearchBar::new());
 
         assert_eq!(panes.len(), 1);
         let first_pane = panes.first().cloned().unwrap();
@@ -3583,7 +3587,7 @@ pub mod tests {
                 .focus_handle(cx)
                 .contains_focused(window, cx))
             .unwrap());
-        let search_bar = window.build_model(cx, |_, _| ProjectSearchBar::new());
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
         window
             .update(cx, {
                 let search_bar = search_bar.clone();

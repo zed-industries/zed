@@ -2,19 +2,19 @@ use ui::{prelude::*, HighlightedLabel};
 
 #[derive(Clone)]
 pub struct HighlightedMatchWithPaths {
-    pub match_label: HighlightedText,
-    pub paths: Vec<HighlightedText>,
+    pub match_label: HighlightedMatch,
+    pub paths: Vec<HighlightedMatch>,
 }
 
 #[derive(Debug, Clone, IntoElement)]
-pub struct HighlightedText {
+pub struct HighlightedMatch {
     pub text: String,
     pub highlight_positions: Vec<usize>,
     pub char_count: usize,
     pub color: Color,
 }
 
-impl HighlightedText {
+impl HighlightedMatch {
     pub fn join(components: impl Iterator<Item = Self>, separator: &str) -> Self {
         let mut char_count = 0;
         let separator_char_count = separator.chars().count();
@@ -48,7 +48,7 @@ impl HighlightedText {
         Self { color, ..self }
     }
 }
-impl RenderOnce for HighlightedText {
+impl RenderOnce for HighlightedMatch {
     fn render(self, _window: &mut Window, _: &mut App) -> impl IntoElement {
         HighlightedLabel::new(self.text, self.highlight_positions).color(self.color)
     }

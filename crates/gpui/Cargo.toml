@@ -110,23 +110,6 @@ uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 
-[dev-dependencies]
-backtrace = "0.3"
-collections = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
-rand.workspace = true
-util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
-lyon = { version = "1.0", features = ["extra"] }
-
-[target.'cfg(target_os = "windows")'.build-dependencies]
-embed-resource = "3.0"
-
-[target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.70.0"
-cbindgen = { version = "0.28.0", default-features = false }
-
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
 cocoa.workspace = true
@@ -214,6 +197,30 @@ flume = "0.11"
 rand.workspace = true
 windows.workspace = true
 windows-core = "0.58"
+
+[dev-dependencies]
+backtrace = "0.3"
+collections = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
+rand.workspace = true
+util = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
+unicode-segmentation.workspace = true
+lyon = { version = "1.0", features = ["extra"] }
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+embed-resource = "3.0"
+naga.workspace = true
+
+[target.'cfg(target_os = "macos")'.build-dependencies]
+bindgen = "0.70.0"
+cbindgen = { version = "0.28.0", default-features = false }
+naga.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
+naga.workspace = true
+
+
 [[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"

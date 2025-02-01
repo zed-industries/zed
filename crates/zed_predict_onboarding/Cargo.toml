@@ -1,5 +1,5 @@
 [package]
-name = "zed_predict_tos"
+name = "zed_predict_onboarding"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,15 +9,23 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/zed_predict_tos.rs"
+path = "src/lib.rs"
 doctest = false
 
 [features]
 test-support = []
 
 [dependencies]
+chrono.workspace = true
 client.workspace = true
+db.workspace = true
+feature_flags.workspace = true
+fs.workspace = true
 gpui.workspace = true
-ui.workspace = true
-workspace.workspace = true
+language.workspace = true
 menu.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true

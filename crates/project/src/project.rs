@@ -29,7 +29,9 @@ mod yarn;
 use crate::git::GitState;
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
-use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
+use client::{
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
+};
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -44,7 +46,7 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{
     blame::Blame,
-    repository::{Branch, GitRepository},
+    repository::{Branch, GitRepository, RepoPath},
     status::FileStatus,
 };
 use gpui::{
@@ -604,6 +606,10 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
+        client.add_model_request_handler(Self::handle_stage);
+        client.add_model_request_handler(Self::handle_unstage);
+        client.add_model_request_handler(Self::handle_commit);
+
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
@@ -693,8 +699,9 @@ impl Project {
                 )
             });
 
-            let git_state =
-                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+            let git_state = Some(
+                cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx)),
+            );
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -814,8 +821,15 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state =
-                Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
+            let git_state = Some(cx.new(|cx| {
+                GitState::new(
+                    &worktree_store,
+                    languages.clone(),
+                    Some(ssh_proto.clone()),
+                    Some(ProjectId(SSH_PROJECT_ID)),
+                    cx,
+                )
+            }));
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -872,6 +886,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
             };
 
+            // ssh -> local machine handlers
             let ssh = ssh.read(cx);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.entity());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
@@ -1012,8 +1027,16 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state =
-            Some(cx.new(|cx| GitState::new(&worktree_store, languages.clone(), cx))).transpose()?;
+        let git_state = Some(cx.new(|cx| {
+            GitState::new(
+                &worktree_store,
+                languages.clone(),
+                Some(client.clone().into()),
+                Some(ProjectId(remote_id)),
+                cx,
+            )
+        }))
+        .transpose()?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -3942,6 +3965,125 @@ impl Project {
         let peer_id = envelope.original_sender_id()?;
 
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    async fn handle_stage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Stage>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state()
+                .context("missing git state")?
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .stage_entries(entries, err_sender)
+            .context("staging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during staging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_unstage(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Unstage>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state()
+                .context("missing git state")?
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .unstage_entries(entries, err_sender)
+            .context("unstaging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle = this.update(&mut cx, |project, cx| {
+            let repository_handle = project
+                .git_state()
+                .context("missing git state")?
+                .read(cx)
+                .all_repositories()
+                .into_iter()
+                .find(|repository_handle| {
+                    repository_handle.worktree_id == worktree_id
+                        && repository_handle.repository_entry.work_directory_id()
+                            == work_directory_id
+                })
+                .context("missing repository handle")?;
+            anyhow::Ok(repository_handle)
+        })??;
+
+        let commit_message = envelope.payload.message;
+        let name = envelope.payload.name.map(SharedString::from);
+        let email = envelope.payload.email.map(SharedString::from);
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        repository_handle
+            .commit_with_message(commit_message, name.zip(email), err_sender)
+            .context("unstaging entries")?;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
     }
 
     fn respond_to_open_buffer_request(

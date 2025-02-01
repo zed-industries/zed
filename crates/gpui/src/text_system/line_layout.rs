@@ -278,10 +278,34 @@ impl WrappedLineLayout {
     }
 
     /// The index corresponding to a given position in this layout for the given line height.
+    ///
+    /// See also [`Self::closest_index_for_position`].
     pub fn index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Result<usize, usize> {
+        self._index_for_position(position, line_height, false)
+    }
+
+    /// The closest index to a given position in this layout for the given line height.
+    ///
+    /// Closest means the character boundary closest to the given position.
+    ///
+    /// See also [`LineLayout::closest_index_for_x`].
+    pub fn closest_index_for_position(
+        &self,
+        position: Point<Pixels>,
+        line_height: Pixels,
+    ) -> Result<usize, usize> {
+        self._index_for_position(position, line_height, true)
+    }
+
+    fn _index_for_position(
         &self,
         mut position: Point<Pixels>,
         line_height: Pixels,
+        closest: bool,
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
 
@@ -321,10 +345,16 @@ impl WrappedLineLayout {
         } else if position_in_unwrapped_line.x >= wrapped_line_end_x {
             Err(wrapped_line_end_index)
         } else {
-            Ok(self
-                .unwrapped_layout
-                .index_for_x(position_in_unwrapped_line.x)
-                .unwrap())
+            if closest {
+                Ok(self
+                    .unwrapped_layout
+                    .closest_index_for_x(position_in_unwrapped_line.x))
+            } else {
+                Ok(self
+                    .unwrapped_layout
+                    .index_for_x(position_in_unwrapped_line.x)
+                    .unwrap())
+            }
         }
     }
 

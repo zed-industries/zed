@@ -736,6 +736,10 @@ impl EditorElement {
     fn mouse_up(
         editor: &mut Editor,
         event: &MouseUpEvent,
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "freebsd")),
+            allow(unused_variables)
+        )]
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         window: &mut Window,
@@ -748,18 +752,7 @@ impl EditorElement {
             editor.select(SelectPhase::End, window, cx);
         }
 
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers.secondary(),
-            MultiCursorModifier::CmdOrCtrl => event.modifiers.alt,
-        };
-
-        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
-            let point = position_map.point_for_position(text_hitbox.bounds, event.position);
-            editor.handle_click_hovered_link(point, event.modifiers, window, cx);
-
-            cx.stop_propagation();
-        } else if end_selection && pending_nonempty_selections {
+        if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
@@ -791,6 +784,30 @@ impl EditorElement {
         }
     }
 
+    fn click(
+        editor: &mut Editor,
+        event: &ClickEvent,
+        position_map: &PositionMap,
+        text_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let pending_nonempty_selections = editor.has_pending_nonempty_selection();
+
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        let multi_cursor_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => event.modifiers().secondary(),
+            MultiCursorModifier::CmdOrCtrl => event.modifiers().alt,
+        };
+
+        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
+            let point = position_map.point_for_position(text_hitbox.bounds, event.up.position);
+            editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+
+            cx.stop_propagation();
+        }
+    }
+
     fn mouse_dragged(
         editor: &mut Editor,
         event: &MouseMoveEvent,
@@ -819,12 +836,7 @@ impl EditorElement {
         let style = editor.style.clone().unwrap_or_default();
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let em_width = window
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
         let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
@@ -3468,7 +3480,9 @@ impl EditorElement {
             }
             InlineCompletion::Edit {
                 edits,
+                edit_preview,
                 display_mode,
+                snapshot,
             } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
@@ -3521,13 +3535,11 @@ impl EditorElement {
                     EditDisplayMode::DiffPopover => {}
                 }
 
-                let crate::InlineCompletionText::Edit { text, highlights } =
-                    crate::inline_completion_edit_text(editor_snapshot, edits, false, cx)
-                else {
-                    return None;
-                };
+                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
+                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
+                })?;
 
-                let line_count = text.lines().count() + 1;
+                let line_count = highlighted_edits.text.lines().count();
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3546,28 +3558,39 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text =
-                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
-                    .px_1()
                     .child(styled_text)
                     .into_any();
 
+                let viewport_bounds = Bounds::new(Default::default(), window.viewport_size())
+                    .extend(Edges {
+                        right: -Self::SCROLLBAR_WIDTH,
+                        ..Default::default()
+                    });
+
+                let x_after_longest =
+                    text_bounds.origin.x + longest_line_width + PADDING_X - scroll_pixel_position.x;
+
                 let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let is_fully_visible =
-                    editor_width >= longest_line_width + PADDING_X + element_bounds.width;
+
+                // Fully visible if it can be displayed within the window (allow overlapping other
+                // panes). However, this is only allowed if the popover starts within text_bounds.
+                let is_fully_visible = x_after_longest < text_bounds.right()
+                    && x_after_longest + element_bounds.width < viewport_bounds.right();
 
                 let origin = if is_fully_visible {
-                    text_bounds.origin
-                        + point(
-                            longest_line_width + PADDING_X - scroll_pixel_position.x,
-                            edit_start.row().as_f32() * line_height - scroll_pixel_position.y,
-                        )
+                    point(
+                        x_after_longest,
+                        text_bounds.origin.y + edit_start.row().as_f32() * line_height
+                            - scroll_pixel_position.y,
+                    )
                 } else {
                     // Avoid overlapping both the edited rows and the user's cursor.
                     let target_above = DisplayRow(
@@ -3607,8 +3630,10 @@ impl EditorElement {
                         )
                 };
 
-                element.prepaint_as_root(origin, element_bounds.into(), window, cx);
-                Some(element)
+                window.defer_draw(element, origin, 1);
+
+                // Do not return an element, since it will already be drawn due to defer_draw.
+                None
             }
         }
     }
@@ -5292,6 +5317,13 @@ impl EditorElement {
                 if phase == DispatchPhase::Bubble {
                     match event.button {
                         MouseButton::Left => editor.update(cx, |editor, cx| {
+                            let pending_mouse_down = editor
+                                .pending_mouse_down
+                                .get_or_insert_with(Default::default)
+                                .clone();
+
+                            *pending_mouse_down.borrow_mut() = Some(event.clone());
+
                             Self::mouse_left_down(
                                 editor,
                                 event,
@@ -5343,6 +5375,43 @@ impl EditorElement {
                 }
             }
         });
+
+        window.on_mouse_event({
+            let editor = self.editor.clone();
+            let position_map = layout.position_map.clone();
+            let text_hitbox = layout.text_hitbox.clone();
+
+            let mut captured_mouse_down = None;
+
+            move |event: &MouseUpEvent, phase, window, cx| match phase {
+                // Clear the pending mouse down during the capture phase,
+                // so that it happens even if another event handler stops
+                // propagation.
+                DispatchPhase::Capture => editor.update(cx, |editor, _cx| {
+                    let pending_mouse_down = editor
+                        .pending_mouse_down
+                        .get_or_insert_with(Default::default)
+                        .clone();
+
+                    let mut pending_mouse_down = pending_mouse_down.borrow_mut();
+                    if pending_mouse_down.is_some() && text_hitbox.is_hovered(window) {
+                        captured_mouse_down = pending_mouse_down.take();
+                        window.refresh();
+                    }
+                }),
+                // Fire click handlers during the bubble phase.
+                DispatchPhase::Bubble => editor.update(cx, |editor, cx| {
+                    if let Some(mouse_down) = captured_mouse_down.take() {
+                        let event = ClickEvent {
+                            down: mouse_down,
+                            up: event.clone(),
+                        };
+                        Self::click(editor, &event, &position_map, &text_hitbox, window, cx);
+                    }
+                }),
+            }
+        });
+
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
@@ -6324,12 +6393,8 @@ impl Element for EditorElement {
                                         window.text_system().resolve_font(&style.text.font());
                                     let font_size =
                                         style.text.font_size.to_pixels(window.rem_size());
-                                    let em_width = window
-                                        .text_system()
-                                        .typographic_bounds(font_id, font_size, 'm')
-                                        .unwrap()
-                                        .size
-                                        .width;
+                                    let em_width =
+                                        window.text_system().em_width(font_id, font_size).unwrap();
 
                                     size(line.width + em_width, height)
                                 },
@@ -6406,28 +6471,19 @@ impl Element for EditorElement {
                     let font_id = window.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(window.rem_size());
                     let line_height = style.text.line_height_in_pixels(window.rem_size());
-                    let em_width = window
-                        .text_system()
-                        .typographic_bounds(font_id, font_size, 'm')
-                        .unwrap()
-                        .size
-                        .width;
-                    let em_advance = window
-                        .text_system()
-                        .advance(font_id, font_size, 'm')
-                        .unwrap()
-                        .width;
+                    let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+                    let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
                     let letter_size = size(em_width, line_height);
 
-                    let gutter_dimensions = snapshot.gutter_dimensions(
-                        font_id,
-                        font_size,
-                        em_width,
-                        em_advance,
-                        self.max_line_number_width(&snapshot, window, cx),
-                        cx,
-                    );
+                    let gutter_dimensions = snapshot
+                        .gutter_dimensions(
+                            font_id,
+                            font_size,
+                            self.max_line_number_width(&snapshot, window, cx),
+                            cx,
+                        )
+                        .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let editor_width = text_width - gutter_dimensions.margin - em_width;
@@ -7986,27 +8042,12 @@ fn compute_auto_height_layout(
     let font_id = window.text_system().resolve_font(&style.text.font());
     let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
-    let em_width = window
-        .text_system()
-        .typographic_bounds(font_id, font_size, 'm')
-        .unwrap()
-        .size
-        .width;
-    let em_advance = window
-        .text_system()
-        .advance(font_id, font_size, 'm')
-        .unwrap()
-        .width;
+    let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
-    let gutter_dimensions = snapshot.gutter_dimensions(
-        font_id,
-        font_size,
-        em_width,
-        em_advance,
-        max_line_number_width,
-        cx,
-    );
+    let gutter_dimensions = snapshot
+        .gutter_dimensions(font_id, font_size, max_line_number_width, cx)
+        .unwrap_or_default();
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;
