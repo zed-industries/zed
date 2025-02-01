@@ -1012,12 +1012,7 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                let player = if editor.read_only(cx) {
-                    cx.theme().players().read_only()
-                } else {
-                    self.style.local_player
-                };
-
+                let player = editor.current_user_player_color(cx);
                 selections.push((player, layouts));
             }
 
@@ -1079,11 +1074,6 @@ impl EditorElement {
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
-                let player = if editor.read_only(cx) {
-                    cx.theme().players().read_only()
-                } else {
-                    self.style.local_player
-                };
                 let layouts = snapshot
                     .buffer_snapshot
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1099,6 +1089,7 @@ impl EditorElement {
                         )
                     })
                     .collect::<Vec<_>>();
+                let player = editor.current_user_player_color(cx);
                 selections.push((player, layouts));
             }
         });

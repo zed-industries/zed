@@ -5367,6 +5367,14 @@ impl Editor {
         px(32.)
     }
 
+    fn current_user_player_color(&self, cx: &mut App) -> PlayerColor {
+        if self.read_only(cx) {
+            cx.theme().players().read_only()
+        } else {
+            self.style.as_ref().unwrap().local_player
+        }
+    }
+
     fn render_edit_prediction_cursor_popover(
         &self,
         max_width: Pixels,
