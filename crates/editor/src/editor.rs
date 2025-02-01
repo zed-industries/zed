@@ -108,7 +108,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
-use std::iter::Peekable;
+use std::iter::{self, Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -479,7 +479,11 @@ enum InlineCompletion {
         display_mode: EditDisplayMode,
         snapshot: BufferSnapshot,
     },
-    Move(Anchor),
+    Move {
+        target: Anchor,
+        range_around_target: Range<text::Anchor>,
+        snapshot: BufferSnapshot,
+    },
 }
 
 struct InlineCompletionState {
@@ -4795,10 +4799,10 @@ impl Editor {
         self.report_inline_completion_event(true, cx);
 
         match &active_inline_completion.completion {
-            InlineCompletion::Move(position) => {
-                let position = *position;
+            InlineCompletion::Move { target, .. } => {
+                let target = *target;
                 self.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_anchor_ranges([position..position]);
+                    selections.select_anchor_ranges([target..target]);
                 });
             }
             InlineCompletion::Edit { edits, .. } => {
@@ -4843,10 +4847,10 @@ impl Editor {
         self.report_inline_completion_event(true, cx);
 
         match &active_inline_completion.completion {
-            InlineCompletion::Move(position) => {
-                let position = *position;
+            InlineCompletion::Move { target, .. } => {
+                let target = *target;
                 self.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_anchor_ranges([position..position]);
+                    selections.select_anchor_ranges([target..target]);
                 });
             }
             InlineCompletion::Edit { edits, .. } => {
@@ -5041,14 +5045,38 @@ impl Editor {
 
         let cursor_row = cursor.to_point(&multibuffer).row;
 
+        let snapshot = multibuffer.buffer_for_excerpt(excerpt_id).cloned()?;
+
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
-        let completion = if cursor_row < edit_start_row {
-            invalidation_row_range = cursor_row..edit_end_row;
-            InlineCompletion::Move(first_edit_start)
+        let move_invalidation_row_range = if cursor_row < edit_start_row {
+            Some(cursor_row..edit_end_row)
         } else if cursor_row > edit_end_row {
-            invalidation_row_range = edit_start_row..cursor_row;
-            InlineCompletion::Move(first_edit_start)
+            Some(edit_start_row..cursor_row)
+        } else {
+            None
+        };
+        let completion = if let Some(move_invalidation_row_range) = move_invalidation_row_range {
+            invalidation_row_range = move_invalidation_row_range;
+            let target = first_edit_start;
+            let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
+            // TODO: Base this off of TreeSitter or word boundaries?
+            let target_excerpt_begin = snapshot.anchor_before(snapshot.clip_point(
+                Point::new(target_point.row, target_point.column.saturating_sub(10)),
+                Bias::Left,
+            ));
+            let target_excerpt_end = snapshot.anchor_after(snapshot.clip_point(
+                Point::new(target_point.row, target_point.column + 10),
+                Bias::Right,
+            ));
+            // TODO: Extend this to be before the jump target, and draw a cursor at the jump target
+            // (using Editor::current_user_player_color).
+            let range_around_target = target_excerpt_begin..target_excerpt_end;
+            InlineCompletion::Move {
+                target,
+                range_around_target,
+                snapshot,
+            }
         } else {
             if !show_in_menu || !self.has_active_completions_menu() {
                 if edits
@@ -5091,8 +5119,6 @@ impl Editor {
             } else {
                 EditDisplayMode::DiffPopover
             };
-
-            let snapshot = multibuffer.buffer_for_excerpt(excerpt_id).cloned()?;
 
             InlineCompletion::Edit {
                 edits,
@@ -5435,6 +5461,7 @@ impl Editor {
                     style,
                     cx,
                 )?,
+
                 None => {
                     pending_completion_container().child(Label::new("...").size(LabelSize::Small))
                 }
@@ -5500,6 +5527,28 @@ impl Editor {
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
+        use text::ToPoint as _;
+
+        fn render_relative_row_jump(
+            prefix: impl Into<String>,
+            current_row: u32,
+            target_row: u32,
+        ) -> Div {
+            let (row_diff, arrow) = if target_row < current_row {
+                (current_row - target_row, IconName::ArrowUp)
+            } else {
+                (target_row - current_row, IconName::ArrowDown)
+            };
+
+            h_flex()
+                .child(
+                    Label::new(format!("{}{}", prefix.into(), row_diff))
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
+        }
+
         match &completion.completion {
             InlineCompletion::Edit {
                 edits,
@@ -5507,7 +5556,6 @@ impl Editor {
                 snapshot,
                 display_mode: _,
             } => {
-                use text::ToPoint as _;
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
                 let highlighted_edits = crate::inline_completion_edit_text(
@@ -5557,19 +5605,7 @@ impl Editor {
                     .when(len_total > first_line_len, |parent| parent.child("…"));
 
                 let left = if first_edit_row != cursor_point.row {
-                    let (row_diff, arrow) = if first_edit_row < cursor_point.row {
-                        (cursor_point.row - first_edit_row, IconName::ArrowUp)
-                    } else {
-                        (first_edit_row - cursor_point.row, IconName::ArrowDown)
-                    };
-
-                    h_flex()
-                        .child(
-                            Label::new(row_diff.to_string())
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
-                        .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
+                    render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
                     Icon::new(IconName::ZedPredict).into_any_element()
@@ -5578,9 +5614,45 @@ impl Editor {
                 Some(h_flex().gap_3().child(left).child(preview))
             }
 
-            InlineCompletion::Move(_) => {
-                // TODO handle
-                None
+            InlineCompletion::Move {
+                target,
+                range_around_target,
+                snapshot,
+            } => {
+                let mut highlighted_text = snapshot.highlighted_text_for_range(
+                    range_around_target.clone(),
+                    None,
+                    &style.syntax,
+                );
+                let cursor_color = self.current_user_player_color(cx).cursor;
+                let target_offset =
+                    text::ToOffset::to_offset(&target.text_anchor, &snapshot).saturating_sub(
+                        text::ToOffset::to_offset(&range_around_target.start, &snapshot),
+                    );
+                highlighted_text.highlights = gpui::combine_highlights(
+                    highlighted_text.highlights,
+                    iter::once((
+                        target_offset..target_offset + 1,
+                        HighlightStyle {
+                            background_color: Some(cursor_color),
+                            ..Default::default()
+                        },
+                    )),
+                )
+                .collect::<Vec<_>>();
+
+                Some(
+                    h_flex()
+                        .gap_3()
+                        .child(render_relative_row_jump(
+                            "Jump ",
+                            cursor_point.row,
+                            target.text_anchor.to_point(&snapshot).row,
+                        ))
+                        .when(!highlighted_text.text.is_empty(), |parent| {
+                            parent.child(highlighted_text.to_styled_text(&style.text))
+                        }),
+                )
             }
         }
     }

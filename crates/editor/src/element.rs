@@ -3610,8 +3610,8 @@ impl EditorElement {
         let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
 
         match &active_inline_completion.completion {
-            InlineCompletion::Move(target_position) => {
-                let target_display_point = target_position.to_display_point(editor_snapshot);
+            InlineCompletion::Move { target, .. } => {
+                let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
                     let mut element = inline_completion_tab_indicator(
                         "Jump to Edit",
