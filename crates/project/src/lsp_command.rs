@@ -3863,6 +3863,12 @@ impl LspCommand for GetDocumentDiagnostics {
             return Ok(None);
         };
 
+        let language_server_adapter = lsp_store
+            .update(&mut cx, |lsp_store, _| {
+                lsp_store.language_server_adapter_for_id(server_id)
+            })?
+            .ok_or_else(|| anyhow!("no such language server"))?;
+
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
                 lsp::DocumentDiagnosticReport::Full(report) => {
@@ -3883,7 +3889,7 @@ impl LspCommand for GetDocumentDiagnostics {
                                                 uri,
                                                 version: None,
                                             },
-                                            &[],
+                                            &language_server_adapter.disk_based_diagnostic_sources,
                                             cx,
                                         ))
                                     } else {
