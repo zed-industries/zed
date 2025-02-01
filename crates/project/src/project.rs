@@ -825,16 +825,6 @@ pub struct LspDiagnostics {
     pub diagnostics: Option<Vec<lsp::Diagnostic>>,
 }
 
-impl std::default::Default for LspDiagnostics {
-    fn default() -> Self {
-        Self {
-            server_id: LanguageServerId(0),
-            uri: None,
-            diagnostics: None,
-        }
-    }
-}
-
 impl Project {
     pub fn init_settings(cx: &mut App) {
         WorktreeSettings::register(cx);
