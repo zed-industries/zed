@@ -3694,8 +3694,7 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
-                    .with_highlights(&style.text, highlighted_edits.highlights);
+                let styled_text = highlighted_edits.to_styled_text(&style.text);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
