@@ -25,6 +25,8 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
+use crate::git_panel::GitPanel;
+
 actions!(git, [ShowUncommittedChanges]);
 
 pub(crate) struct ProjectDiff {
@@ -68,7 +70,7 @@ impl ProjectDiff {
         Self::deploy_at(workspace, None, window, cx)
     }
 
-    fn deploy_at(
+    pub fn deploy_at(
         workspace: &mut Workspace,
         path: Option<Arc<Path>>,
         window: &mut Window,
@@ -117,6 +119,8 @@ impl ProjectDiff {
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor
         });
+        cx.subscribe_in(&editor, window, Self::handle_editor_event)
+            .detach();
 
         let git_state = project.read(cx).git_state().clone();
         let git_state_subscription = cx.subscribe_in(
@@ -160,6 +164,41 @@ impl ProjectDiff {
             })
         } else {
             self.pending_scroll = Some(path);
+        }
+    }
+
+    fn handle_editor_event(
+        &mut self,
+        editor: &Entity<Editor>,
+        event: &EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            EditorEvent::ScrollPositionChanged { .. } => editor.update(cx, |editor, cx| {
+                let anchor = editor.scroll_manager.anchor().anchor;
+                let Some((_, buffer, _)) = self.multibuffer.read(cx).excerpt_containing(anchor, cx)
+                else {
+                    return;
+                };
+                let Some(project_path) = buffer
+                    .read(cx)
+                    .file()
+                    .map(|file| (file.worktree_id(cx), file.path().clone()))
+                else {
+                    return;
+                };
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                            git_panel.update(cx, |git_panel, cx| {
+                                git_panel.set_focused_path(project_path.into(), window, cx)
+                            })
+                        }
+                    })
+                    .ok();
+            }),
+            _ => {}
         }
     }
 

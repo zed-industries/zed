@@ -1,4 +1,5 @@
 use crate::git_panel_settings::StatusStyle;
+use crate::ProjectDiff;
 use crate::{git_panel_settings::GitPanelSettings, git_status_icon};
 use anyhow::Result;
 use db::kvp::KEY_VALUE_STORE;
@@ -244,6 +245,23 @@ impl GitPanel {
         .detach();
 
         git_panel
+    }
+
+    pub fn set_focused_path(&mut self, path: ProjectPath, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(git_repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        let Some(repo_path) = git_repo.project_path_to_repo_path(&path) else {
+            return;
+        };
+        let Ok(ix) = self
+            .visible_entries
+            .binary_search_by_key(&&repo_path, |entry| &entry.repo_path)
+        else {
+            return;
+        };
+        self.selected_entry = Some(ix);
+        cx.notify();
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
@@ -1211,82 +1229,93 @@ impl GitPanel {
             entry = entry.bg(cx.theme().status().info_background);
         }
 
-        entry = entry
-            .child(
-                Checkbox::new(
-                    checkbox_id,
-                    entry_details
-                        .is_staged
-                        .map_or(ToggleState::Indeterminate, ToggleState::from),
-                )
-                .disabled(!has_write_access)
-                .fill()
-                .elevation(ElevationIndex::Surface)
-                .on_click({
-                    let handle = handle.clone();
-                    let repo_path = repo_path.clone();
-                    move |toggle, _window, cx| {
-                        let Some(this) = handle.upgrade() else {
-                            return;
-                        };
-                        this.update(cx, |this, cx| {
-                            this.visible_entries[ix].is_staged = match *toggle {
-                                ToggleState::Selected => Some(true),
-                                ToggleState::Unselected => Some(false),
-                                ToggleState::Indeterminate => None,
-                            };
-                            let repo_path = repo_path.clone();
-                            let Some(active_repository) = this.active_repository.as_ref() else {
+        entry =
+            entry
+                .child(
+                    Checkbox::new(
+                        checkbox_id,
+                        entry_details
+                            .is_staged
+                            .map_or(ToggleState::Indeterminate, ToggleState::from),
+                    )
+                    .disabled(!has_write_access)
+                    .fill()
+                    .elevation(ElevationIndex::Surface)
+                    .on_click({
+                        let handle = handle.clone();
+                        let repo_path = repo_path.clone();
+                        move |toggle, _window, cx| {
+                            let Some(this) = handle.upgrade() else {
                                 return;
                             };
-                            let result = match toggle {
-                                ToggleState::Selected | ToggleState::Indeterminate => {
-                                    active_repository
-                                        .stage_entries(vec![repo_path], this.err_sender.clone())
+                            this.update(cx, |this, cx| {
+                                this.visible_entries[ix].is_staged = match *toggle {
+                                    ToggleState::Selected => Some(true),
+                                    ToggleState::Unselected => Some(false),
+                                    ToggleState::Indeterminate => None,
+                                };
+                                let repo_path = repo_path.clone();
+                                let Some(active_repository) = this.active_repository.as_ref()
+                                else {
+                                    return;
+                                };
+                                let result = match toggle {
+                                    ToggleState::Selected | ToggleState::Indeterminate => {
+                                        active_repository
+                                            .stage_entries(vec![repo_path], this.err_sender.clone())
+                                    }
+                                    ToggleState::Unselected => active_repository
+                                        .unstage_entries(vec![repo_path], this.err_sender.clone()),
+                                };
+                                if let Err(e) = result {
+                                    this.show_err_toast("toggle staged error", e, cx);
                                 }
-                                ToggleState::Unselected => active_repository
-                                    .unstage_entries(vec![repo_path], this.err_sender.clone()),
-                            };
-                            if let Err(e) = result {
-                                this.show_err_toast("toggle staged error", e, cx);
-                            }
-                        });
-                    }
-                }),
-            )
-            .when(status_style == StatusStyle::Icon, |this| {
-                this.child(git_status_icon(status, cx))
-            })
-            .child(
-                h_flex()
-                    .text_color(label_color)
-                    .when(status.is_deleted(), |this| this.line_through())
-                    .when_some(repo_path.parent(), |this, parent| {
-                        let parent_str = parent.to_string_lossy();
-                        if !parent_str.is_empty() {
-                            this.child(
-                                div()
-                                    .text_color(path_color)
-                                    .child(format!("{}/", parent_str)),
-                            )
-                        } else {
-                            this
+                            });
                         }
+                    }),
+                )
+                .when(status_style == StatusStyle::Icon, |this| {
+                    this.child(git_status_icon(status, cx))
+                })
+                .child(
+                    h_flex()
+                        .text_color(label_color)
+                        .when(status.is_deleted(), |this| this.line_through())
+                        .when_some(repo_path.parent(), |this, parent| {
+                            let parent_str = parent.to_string_lossy();
+                            if !parent_str.is_empty() {
+                                this.child(
+                                    div()
+                                        .text_color(path_color)
+                                        .child(format!("{}/", parent_str)),
+                                )
+                            } else {
+                                this
+                            }
+                        })
+                        .child(div().child(entry_details.display_name.clone())),
+                )
+                .child(div().flex_1())
+                .child(end_slot)
+                .on_click({
+                    let repo_path = entry_details.repo_path.clone();
+                    cx.listener(move |this, _, window, cx| {
+                        let Some(workspace) = this.workspace.upgrade() else {
+                            return;
+                        };
+                        let Some(git_repo) = this.active_repository.as_ref() else {
+                            return;
+                        };
+                        let Some(path) = git_repo.repo_path_to_project_path(&repo_path).and_then(
+                            |project_path| this.project.read(cx).absolute_path(&project_path, cx),
+                        ) else {
+                            return;
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            ProjectDiff::deploy_at(workspace, Some(path.into()), window, cx);
+                        })
                     })
-                    .child(div().child(entry_details.display_name.clone())),
-            )
-            .child(div().flex_1())
-            .child(end_slot)
-            .on_click(move |_, window, cx| {
-                // TODO: add `select_entry` method then do after that
-                window.dispatch_action(Box::new(OpenSelected), cx);
-
-                handle
-                    .update(cx, |git_panel, _| {
-                        git_panel.selected_entry = Some(ix);
-                    })
-                    .ok();
-            });
+                });
 
         entry
     }
