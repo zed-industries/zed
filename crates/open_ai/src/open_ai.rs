@@ -76,8 +76,6 @@ pub enum Model {
     O1,
     #[serde(rename = "o1-preview", alias = "o1-preview")]
     O1Preview,
-    #[serde(rename = "o1-mini", alias = "o1-mini")]
-    O1Mini,
     #[serde(rename = "o3-mini", alias = "o3-mini")]
     O3Mini,
 
@@ -102,7 +100,7 @@ impl Model {
             "gpt-4o-mini" => Ok(Self::FourOmniMini),
             "o1" => Ok(Self::O1),
             "o1-preview" => Ok(Self::O1Preview),
-            "o1-mini" => Ok(Self::O1Mini),
+            "o3-mini" => Ok(Self::O3Mini),
             _ => Err(anyhow!("invalid model id")),
         }
     }
@@ -116,7 +114,6 @@ impl Model {
             Self::FourOmniMini => "gpt-4o-mini",
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
-            Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
             Self::Custom { name, .. } => name,
         }
@@ -131,7 +128,6 @@ impl Model {
             Self::FourOmniMini => "gpt-4o-mini",
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
-            Self::O1Mini => "o1-mini",
             Self::O3Mini => "o3-mini",
             Self::Custom {
                 name, display_name, ..
@@ -148,7 +144,6 @@ impl Model {
             Self::FourOmniMini => 128000,
             Self::O1 => 200000,
             Self::O1Preview => 128000,
-            Self::O1Mini => 128000,
             Self::O3Mini => 200000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
