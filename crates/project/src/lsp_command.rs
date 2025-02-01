@@ -3821,13 +3821,14 @@ impl LspCommand for GetDocumentDiagnostics {
                 options.diagnostic_options.identifier.clone()
             }
             None => None,
-        };
+        }
+        .context("Failed to get diagnostic provider identifier")?;
 
         Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
-            identifier,
+            identifier: Some(identifier),
             previous_result_id: None,
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
