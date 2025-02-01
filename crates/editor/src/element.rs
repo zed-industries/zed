@@ -1754,19 +1754,29 @@ impl EditorElement {
         let scroll_top = scroll_position.y * line_height;
         let start_x = em_width;
 
-        let mut last_used_color: Option<(PlayerColor, Oid)> = None;
+        let mut previous_color_and_oid: Option<(u32, Oid)> = None;
 
         let shaped_lines = blamed_rows
             .into_iter()
             .enumerate()
             .flat_map(|(ix, blame_entry)| {
                 if let Some(blame_entry) = blame_entry {
+                    let color_ix: u32 = blame_entry.sha.into();
+                    let color_ix = match previous_color_and_oid {
+                        Some((color, sha)) if color_ix == color && blame_entry.sha != sha => {
+                            // Don't give consecutive entries the same color
+                            color_ix + 1
+                        }
+                        Some((_, _)) | None => color_ix,
+                    };
+                    previous_color_and_oid = Some((color_ix, blame_entry.sha));
+
                     let mut element = render_blame_entry(
                         ix,
                         &blame,
                         blame_entry,
                         &self.style,
-                        &mut last_used_color,
+                        color_ix,
                         self.editor.clone(),
                         cx,
                     );
@@ -5670,24 +5680,11 @@ fn render_blame_entry(
     blame: &gpui::Entity<GitBlame>,
     blame_entry: BlameEntry,
     style: &EditorStyle,
-    last_used_color: &mut Option<(PlayerColor, Oid)>,
+    color_ix: u32,
     editor: Entity<Editor>,
     cx: &mut App,
 ) -> AnyElement {
-    let mut sha_color = cx
-        .theme()
-        .players()
-        .color_for_participant(blame_entry.sha.into());
-    // If the last color we used is the same as the one we get for this line, but
-    // the commit SHAs are different, then we try again to get a different color.
-    match *last_used_color {
-        Some((color, sha)) if sha != blame_entry.sha && color.cursor == sha_color.cursor => {
-            let index: u32 = blame_entry.sha.into();
-            sha_color = cx.theme().players().color_for_participant(index + 1);
-        }
-        _ => {}
-    };
-    last_used_color.replace((sha_color, blame_entry.sha));
+    let sha_color = cx.theme().players().color_for_participant(color_ix).cursor;
 
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
@@ -5716,7 +5713,7 @@ fn render_blame_entry(
             h_flex()
                 .items_center()
                 .gap_2()
-                .child(div().text_color(sha_color.cursor).child(short_commit_id))
+                .child(div().text_color(sha_color).child(short_commit_id))
                 .child(name),
         )
         .child(relative_timestamp)
