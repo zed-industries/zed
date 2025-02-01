@@ -59,46 +59,55 @@ struct Number(usize);
 struct SelectRegister(String);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushFindForward {
     before: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushFindBackward {
     after: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushSneak {
     first_char: Option<char>,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushSneakBackward {
     first_char: Option<char>,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushChangeSurrounds {
     target: Option<Object>,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushJump {
     line: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushDigraph {
     first_char: Option<char>,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct PushLiteral {
     prefix: Option<String>,
 }

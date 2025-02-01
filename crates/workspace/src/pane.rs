@@ -96,11 +96,13 @@ pub enum SaveIntent {
 pub struct ActivateItem(pub usize);
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseInactiveItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -108,6 +110,7 @@ pub struct CloseInactiveItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
@@ -115,30 +118,35 @@ pub struct CloseAllItems {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct RevealInProjectPanel {
     #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,

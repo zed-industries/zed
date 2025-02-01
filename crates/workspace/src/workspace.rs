@@ -170,6 +170,7 @@ pub struct OpenPaths {
 pub struct ActivatePane(pub usize);
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
@@ -177,6 +178,7 @@ pub struct MoveItemToPane {
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
@@ -184,21 +186,25 @@ pub struct MoveItemToPaneInDirection {
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
@@ -207,6 +213,7 @@ pub struct CloseInactiveTabsAndPanes {
 pub struct SendKeystrokes(pub String);
 
 #[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
@@ -303,6 +310,7 @@ impl PartialEq for Toast {
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }

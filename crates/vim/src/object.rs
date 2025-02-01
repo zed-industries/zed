@@ -45,17 +45,20 @@ pub enum Object {
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
     include_below: bool,
