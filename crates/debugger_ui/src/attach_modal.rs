@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use project::dap_store::DapStore;
 use std::sync::Arc;
 use sysinfo::System;
-use ui::{prelude::*, Context};
+use ui::{prelude::*, Context, Tooltip};
 use ui::{ListItem, ListItemSpacing};
 use workspace::ModalView;
 
@@ -15,7 +15,7 @@ use workspace::ModalView;
 struct Candidate {
     pid: u32,
     name: String,
-    command: String,
+    command: Vec<String>,
 }
 
 pub(crate) struct AttachModalDelegate {
@@ -152,9 +152,8 @@ impl PickerDelegate for AttachModalDelegate {
                                 command: process
                                     .cmd()
                                     .iter()
-                                    .map(|s| s.to_string_lossy())
-                                    .collect::<Vec<_>>()
-                                    .join(" "),
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .collect::<Vec<_>>(),
                             })
                             .collect::<Vec<_>>();
 
@@ -175,8 +174,13 @@ impl PickerDelegate for AttachModalDelegate {
                     .map(|(id, candidate)| {
                         StringMatchCandidate::new(
                             id,
-                            format!("{} {} {}", candidate.command, candidate.pid, candidate.name)
-                                .as_str(),
+                            format!(
+                                "{} {} {}",
+                                candidate.command.join(" "),
+                                candidate.pid,
+                                candidate.name
+                            )
+                            .as_str(),
                         )
                     })
                     .collect::<Vec<_>>(),
@@ -249,18 +253,40 @@ impl PickerDelegate for AttachModalDelegate {
         let candidate = &candidates.get(hit.candidate_id)?;
 
         Some(
-            ListItem::new(SharedString::from(format!("attach-modal-{ix}")))
+            ListItem::new(SharedString::from(format!("process-entry-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
                     v_flex()
                         .items_start()
-                        .child(Label::new(candidate.command.clone()))
+                        .child(Label::new(format!("{} {}", candidate.name, candidate.pid)))
                         .child(
-                            Label::new(format!("Pid: {}, name: {}", candidate.pid, candidate.name))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            div()
+                                .id(SharedString::from(format!("process-entry-{ix}-command")))
+                                .tooltip(Tooltip::text(
+                                    candidate
+                                        .command
+                                        .clone()
+                                        .into_iter()
+                                        .collect::<Vec<_>>()
+                                        .join(" "),
+                                ))
+                                .child(
+                                    Label::new(format!(
+                                        "{} {}",
+                                        candidate.name,
+                                        candidate
+                                            .command
+                                            .clone()
+                                            .into_iter()
+                                            .skip(1)
+                                            .collect::<Vec<_>>()
+                                            .join(" ")
+                                    ))
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                                ),
                         ),
                 ),
         )
