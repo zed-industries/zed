@@ -1,9 +1,9 @@
-use crate::TextStyleRefinement;
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
     SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, WhiteSpace,
 };
+use crate::{TextAlign, TextStyleRefinement};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
@@ -76,6 +76,29 @@ pub trait Styled: Sized {
             .get_or_insert_with(Default::default)
             .text_overflow = Some(overflow);
         self
+    }
+
+    /// Set the text alignment of the element.
+    fn text_align(mut self, align: TextAlign) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .text_align = Some(align);
+        self
+    }
+
+    /// Sets the text alignment to left
+    fn text_left(mut self) -> Self {
+        self.text_align(TextAlign::Left)
+    }
+
+    /// Sets the text alignment to center
+    fn text_center(mut self) -> Self {
+        self.text_align(TextAlign::Center)
+    }
+
+    /// Sets the text alignment to right
+    fn text_right(mut self) -> Self {
+        self.text_align(TextAlign::Right)
     }
 
     /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
