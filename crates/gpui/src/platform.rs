@@ -27,12 +27,12 @@ mod test;
 mod windows;
 
 use crate::{
-    point, thread_id, Action, AnyWindowHandle, App, AppCell, AsyncWindowContext,
-    BackgroundExecutor, Bounds, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics,
-    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformInput, Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    ScaledPixels, Scene, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    WindowId, DEFAULT_WINDOW_SIZE,
+    point, Action, AnyWindowHandle, App, AppCell, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor,
+    GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
+    SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, WindowId,
+    DEFAULT_WINDOW_SIZE,
 };
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
@@ -48,9 +48,7 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
-use std::panic::Location;
 use std::rc::Weak;
-use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
@@ -468,12 +466,11 @@ enum Contexts {
 /// TODO
 #[derive(Debug)]
 pub struct ForegroundContext {
-    pub(crate) spawning_thread: Option<ThreadId>,
-    location: &'static Location<'static>,
     inner: Option<Contexts>,
 }
 
-// SAFETY: Foreground context will safely panic before accessing non-thread safe data
+// SAFETY: These fields are only accessed during `Runnable::run()` calls on the foreground,
+// As enforced by the GPUI foreground executor and platform dispatcher implementations
 unsafe impl Send for ForegroundContext {}
 unsafe impl Sync for ForegroundContext {}
 
@@ -481,47 +478,30 @@ impl ForegroundContext {
     /// TODO
     #[track_caller]
     pub fn app(app: &Weak<AppCell>) -> Self {
-        Self::contexts(Some(Contexts::App { app: app.clone() }))
+        Self {
+            inner: Some(Contexts::App { app: app.clone() }),
+        }
     }
 
     /// TODO
     #[track_caller]
     pub fn window(app: &Weak<AppCell>, window: WindowId) -> Self {
-        Self::contexts(Some(Contexts::Window {
-            app: app.clone(),
-            window,
-        }))
+        Self {
+            inner: Some(Contexts::Window {
+                app: app.clone(),
+                window,
+            }),
+        }
     }
 
     /// TODO
     #[track_caller]
     pub fn none() -> Self {
-        Self::contexts(None)
-    }
-
-    #[track_caller]
-    fn contexts(contexts: Option<Contexts>) -> Self {
-        Self {
-            spawning_thread: None,
-            location: core::panic::Location::caller(),
-            inner: contexts,
-        }
-    }
-
-    fn assert_thread_is_valid(&self) {
-        if let Some(spawning_thread) = self.spawning_thread {
-            assert!(
-                spawning_thread == thread_id(),
-                "local task polled by a thread that didn't spawn it. Task spawned at {}",
-                self.location
-            );
-        }
+        Self { inner: None }
     }
 
     /// TODO
     pub fn context_is_valid(&self) -> bool {
-        self.assert_thread_is_valid();
-
         match &self.inner {
             Some(Contexts::App { app }) => app.upgrade().is_some(),
             Some(Contexts::Window { app, window }) => {
@@ -536,12 +516,6 @@ impl ForegroundContext {
             }
             None => true,
         }
-    }
-}
-
-impl Drop for ForegroundContext {
-    fn drop(&mut self) {
-        self.assert_thread_is_valid();
     }
 }
 

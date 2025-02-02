@@ -5,7 +5,7 @@ use smol::prelude::*;
 use std::{
     fmt::Debug,
     marker::PhantomData,
-    mem,
+    mem::{self, ManuallyDrop},
     num::NonZeroUsize,
     pin::Pin,
     rc::Rc,
@@ -514,17 +514,6 @@ impl BackgroundExecutor {
     }
 }
 
-/// std::thread::current() doesn't always reliably return the same ID.
-/// This does.
-#[inline]
-pub(crate) fn thread_id() -> ThreadId {
-    std::thread_local! {
-        static ID: ThreadId = std::thread::current().id();
-    }
-    ID.try_with(|id| *id)
-        .unwrap_or_else(|_| std::thread::current().id())
-}
-
 /// ForegroundExecutor runs things on the main thread.
 impl ForegroundExecutor {
     /// Creates a new ForegroundExecutor from the given PlatformDispatcher.
@@ -561,18 +550,13 @@ impl ForegroundExecutor {
         R: 'static,
     {
         let mut context = ForegroundContext::none();
-        context.spawning_thread = Some(thread_id());
-        let dispatcher = self.dispatcher.clone();
-        let (runnable, task) = Builder::new().metadata(context).spawn_local(
-            |_| future,
-            move |runnable| dispatcher.dispatch_on_main_thread(runnable),
-        );
-        runnable.schedule();
+        let task = self.spawn_internal(future, context);
         Task(TaskState::ForegroundSpawned(task))
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future,
     /// with a context parameter that will be checked before each turn
+    #[track_caller]
     pub(crate) fn spawn_with_context<R>(
         &self,
         mut context: ForegroundContext,
@@ -581,15 +565,75 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        context.spawning_thread = Some(thread_id());
-        let dispatcher = self.dispatcher.clone();
+        let task = self.spawn_internal(future, context);
+        ContextTask(ContextTaskState::Spawned(task.fallible()))
+    }
 
+    #[track_caller]
+    fn spawn_internal<R>(
+        &self,
+        future: impl Future<Output = R> + 'static,
+        mut context: ForegroundContext,
+    ) -> smol::Task<R, ForegroundContext>
+    where
+        R: 'static,
+    {
+        /// Declarations here are copy-modified from:
+        /// https://github.com/smol-rs/async-task/blob/ca9dbe1db9c422fd765847fa91306e30a6bb58a9/src/runnable.rs#L405
+        #[inline]
+        pub(crate) fn thread_id() -> ThreadId {
+            std::thread_local! {
+                static ID: ThreadId = std::thread::current().id();
+            }
+            ID.try_with(|id| *id)
+                .unwrap_or_else(|_| std::thread::current().id())
+        }
+
+        struct Checked<F> {
+            id: ThreadId,
+            location: core::panic::Location<'static>,
+            inner: ManuallyDrop<F>,
+        }
+
+        impl<F> Drop for Checked<F> {
+            fn drop(&mut self) {
+                assert!(
+                    self.id == thread_id(),
+                    "local task dropped by a thread that didn't spawn it. Task spawned at {}",
+                    self.location
+                );
+                unsafe {
+                    ManuallyDrop::drop(&mut self.inner);
+                }
+            }
+        }
+
+        impl<F: Future> Future for Checked<F> {
+            type Output = F::Output;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+                assert!(
+                    self.id == thread_id(),
+                    "local task polled by a thread that didn't spawn it. Task spawned at {}",
+                    self.location
+                );
+                unsafe { self.map_unchecked_mut(|c| &mut *c.inner).poll(cx) }
+            }
+        }
+
+        let checked = Checked {
+            id: thread_id(),
+            location: *core::panic::Location::caller(),
+            inner: ManuallyDrop::new(future),
+        };
+
+        let dispatcher = self.dispatcher.clone();
         let (runnable, task) = Builder::new().metadata(context).spawn_local(
-            |_| future,
+            |_| checked,
             move |runnable| dispatcher.dispatch_on_main_thread(runnable),
         );
         runnable.schedule();
-        ContextTask(ContextTaskState::Spawned(task.fallible()))
+        task
     }
 }
 
