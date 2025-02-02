@@ -13,7 +13,6 @@ use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Du
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
-#[derive(Clone)]
 pub struct TestAppContext {
     #[doc(hidden)]
     pub app: Rc<AppCell>,
@@ -27,6 +26,21 @@ pub struct TestAppContext {
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
+}
+
+impl Clone for TestAppContext {
+    fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            background_executor: self.background_executor.clone(),
+            foreground_executor: self.foreground_executor.clone(),
+            dispatcher: self.dispatcher.clone(),
+            test_platform: self.test_platform.clone(),
+            text_system: self.text_system.clone(),
+            fn_name: self.fn_name.clone(),
+            on_quit: self.on_quit.clone(),
+        }
+    }
 }
 
 impl AppContext for TestAppContext {

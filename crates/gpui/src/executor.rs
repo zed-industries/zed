@@ -25,7 +25,6 @@ use rand::rngs::StdRng;
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
-#[derive(Clone)]
 pub struct BackgroundExecutor {
     #[doc(hidden)]
     pub dispatcher: Arc<dyn PlatformDispatcher>,
@@ -205,6 +204,14 @@ impl BackgroundExecutor {
     #[doc(hidden)]
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self { dispatcher }
+    }
+
+    // See the documentation on `ForegroundExecutor::clone` for why this can't be exposed
+    // via the Clone trait
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            dispatcher: self.dispatcher.clone(),
+        }
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
@@ -524,6 +531,25 @@ impl ForegroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self {
             dispatcher,
+            not_send: PhantomData,
+        }
+    }
+
+    // This does not use the `Clone` trait so that we can hide it from our public API.
+    // Allowing unrestricted cloning of the executors can break the guarantees provided by
+    // the ContextTasks like so:
+    // ```rs
+    // fn test(cx: AsyncApp) {
+    //   let executor = cx.foreground_executor().clone();
+    //   executor.spawn(async {
+    //     my_async_thing().await;
+    //     cx.update(/**/) // 💥 Didn't check that the app still existed after await, this might panic
+    //   })
+    // }
+    // ```
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            dispatcher: self.dispatcher.clone(),
             not_send: PhantomData,
         }
     }

@@ -13,7 +13,6 @@ use super::Context;
 /// An async-friendly version of [App] with a static lifetime so it can be held across `await` points in async code.
 /// You're provided with an instance when calling [App::spawn], and you can also create one with [App::to_async].
 /// Internally, this holds a weak reference to an `App`, so its methods are fallible to protect against cases where the [App] is dropped.
-#[derive(Clone)]
 pub struct AsyncApp {
     pub(crate) app: Weak<AppCell>,
     pub(crate) background_executor: BackgroundExecutor,
@@ -105,12 +104,21 @@ impl AppContext for AsyncApp {
 }
 
 impl AsyncApp {
+    // See the documentation on AsyncWindowContext::clone() for why this is
+    // not a trait impl
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            background_executor: self.background_executor.clone(),
+            foreground_executor: self.foreground_executor.clone(),
+        }
+    }
+
     /// Schedules all windows in the application to be redrawn.
-    pub fn refresh(&self) -> Result<()> {
+    pub fn refresh(&self) {
         let app = self.app.upgrade().unwrap();
         let mut lock = app.borrow_mut();
         lock.refresh_windows();
-        Ok(())
     }
 
     /// Get an executor which can be used to spawn futures in the background.
@@ -124,10 +132,19 @@ impl AsyncApp {
     }
 
     /// Invoke the given function in the context of the app, then flush any effects produced during its invocation.
-    pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
+    /// Panics if the app has been dropped since this was created
+    pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
         let app = self.app.upgrade().unwrap();
         let mut lock = app.borrow_mut();
-        Ok(lock.update(f))
+        lock.update(f)
+    }
+
+    /// Invoke the given function in the context of the app, then flush any effects produced during its invocation.
+    /// Fails if the app has been dropped, rather than panicking
+    pub fn maybe_update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Option<R> {
+        let app = self.app.upgrade()?;
+        let mut lock = app.borrow_mut();
+        Some(f(&mut lock))
     }
 
     /// Open a window with the given options based on the root view returned by the given function.
@@ -187,19 +204,16 @@ impl AsyncApp {
 
     /// A convenience method for [App::update_global]
     /// for updating the global state of the specified type.
-    pub fn update_global<G: Global, R>(
-        &self,
-        update: impl FnOnce(&mut G, &mut App) -> R,
-    ) -> Result<R> {
+    pub fn update_global<G: Global, R>(&self, update: impl FnOnce(&mut G, &mut App) -> R) -> R {
         let app = self.app.upgrade().unwrap();
         let mut app = app.borrow_mut();
-        Ok(app.update(|cx| cx.update_global(update)))
+        app.update(|cx| cx.update_global(update))
     }
 }
 
 /// A cloneable, owned handle to the application context,
 /// composed with the window associated with the current task.
-#[derive(Clone, Deref, DerefMut)]
+#[derive(Deref, DerefMut)]
 pub struct AsyncWindowContext {
     #[deref]
     #[deref_mut]
@@ -210,6 +224,28 @@ pub struct AsyncWindowContext {
 impl AsyncWindowContext {
     pub(crate) fn new_context(app: AsyncApp, window: AnyWindowHandle) -> Self {
         Self { app, window }
+    }
+
+    // Allowing unrestricted cloning of the Async*Context types can break the guarantees
+    // provided by the ContextTask types, causing these methods to panic at runtime.
+    //
+    // See this example:
+    // ```rs
+    // fn test(cx: AsyncWindowContext) {
+    //   let cx_2 = cx.clone();
+    //   cx.update(|_, app: &mut App| {
+    //     app.spawn(|_| {
+    //       my_async_thing().await;
+    //       cx_2.update(/**/) // 💥 Window wasn't checked after `.await`, this might panic
+    //     })
+    //   })
+    // }
+    //```
+    pub(crate) fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            window: self.window.clone(),
+        }
     }
 
     /// Get the handle of the window this context is associated with.
@@ -236,7 +272,7 @@ impl AsyncWindowContext {
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut Window, &mut App) + 'static) {
         self.window
             .update(self, |_, window, _| window.on_next_frame(f))
-            .ok();
+            .unwrap();
     }
 
     /// A convenience method for [`App::global`].
@@ -290,7 +326,7 @@ impl AsyncWindowContext {
             .update(self, |_, window, cx| {
                 window.prompt(level, message, detail, answers, cx)
             })
-            .unwrap_or_else(|_| oneshot::channel().1)
+            .unwrap()
     }
 }
 
