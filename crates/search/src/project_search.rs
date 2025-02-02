@@ -673,18 +673,21 @@ impl ProjectSearchView {
 
     fn debounced_search(&mut self, cx: &mut Context<Self>) {
         self.search_debounce = None;
+        let settings = &EditorSettings::get_global(cx).project_search;
+        if settings.automatic_submission {
+            let delay = settings.automatic_submission_delay;
+            self.search_debounce = Some(cx.spawn(|this, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(delay))
+                    .await;
 
-        self.search_debounce = Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .timer(Duration::from_millis(350))
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                this.prevent_focus_results = true;
-                this.search(cx);
-            })
-            .ok();
-        }));
+                this.update(&mut cx, |this, cx| {
+                    this.prevent_focus_results = true;
+                    this.search(cx);
+                })
+                .ok();
+            }));
+        }
     }
 
     pub fn new(

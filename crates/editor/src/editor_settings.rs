@@ -32,6 +32,7 @@ pub struct EditorSettings {
     pub search_wrap: bool,
     #[serde(default)]
     pub search: SearchSettings,
+    pub project_search: ProjectSearchSettings,
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
@@ -257,6 +258,12 @@ pub struct SearchSettings {
     pub regex: bool,
 }
 
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ProjectSearchSettings {
+    pub automatic_submission: bool,
+    pub automatic_submission_delay: u64,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -357,6 +364,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: nothing is enabled
     pub search: Option<SearchSettings>,
+
+    // Project search specific options
+    // Used to enable the automatic submission of project search queries
+    //
+    // Default: Automatic submission is enabled with a 300ms delay
+    pub project_search: Option<ProjectSearchSettings>,
 
     /// Whether to automatically show a signature help pop-up or not.
     ///

@@ -335,6 +335,11 @@
     "include_ignored": false,
     "regex": false
   },
+  // These settings define whether the project search should search as you type, or only on enter.
+  "project_search": {
+    "automatic_submission": true,
+    "automatic_submission_delay": 350
+  },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
   //
