@@ -285,7 +285,7 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
-        self.report_app_event("App Closed".to_string());
+        telemetry::event!("App Closed");
         // TODO: close final edit period and make sure it's sent
         Task::ready(())
     }
