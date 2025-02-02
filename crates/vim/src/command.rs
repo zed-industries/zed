@@ -69,6 +69,10 @@ pub struct WithCount {
 pub enum VimSetting {
     Wrap,
     NoWrap,
+    Number,
+    NoNumber,
+    RelativeNumber,
+    NoRelativeNumber,
 }
 
 #[derive(Debug)]
@@ -116,6 +120,18 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             }
             VimSetting::NoWrap => {
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            }
+            VimSetting::Number => {
+                editor.set_show_line_numbers(true, cx);
+            }
+            VimSetting::NoNumber => {
+                editor.set_show_line_numbers(false, cx);
+            }
+            VimSetting::RelativeNumber => {
+                editor.set_relative_line_number(Some(true), cx);
+            }
+            VimSetting::NoRelativeNumber => {
+                editor.set_relative_line_number(Some(false), cx);
             }
         });
     });
@@ -770,6 +786,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
         VimCommand::new(("set wrap", ""), VimSetting::Wrap),
         VimCommand::new(("set nowrap", ""), VimSetting::NoWrap),
+        VimCommand::new(("set nu", "mber"), VimSetting::Number),
+        VimCommand::new(("set nonu", "mber"), VimSetting::NoNumber),
+        VimCommand::new(("set rnu", ""), VimSetting::RelativeNumber),
+        VimCommand::new(("set relativenumber", ""), VimSetting::RelativeNumber),
+        VimCommand::new(("set nornu", ""), VimSetting::NoRelativeNumber),
+        VimCommand::new(("set norelativenumber", ""), VimSetting::NoRelativeNumber),
     ]
 }
 
