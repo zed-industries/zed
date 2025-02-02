@@ -16,22 +16,39 @@ See [LuaLS Settings Documentation](https://luals.github.io/wiki/settings/) for a
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.4",
   "diagnostics.severity": {
-    //      "duplicate-set-field": "Hint"
+    "duplicate-set-field": "Hint"
   },
+  "format.enable": true,
   "format.defaultConfig": {
     "indent_style": "space",
     "indent_size": "4"
   },
-  // Location(s) of any LuaCATS / EmmyLua annotation stubs
   "workspace.library": [
-    //    "path/to/library/directory"
+    "../soemdir/library"
   ]
 }
 ```
 
 ## Formatting
 
-Zed can enable auto-formatting of code with formatters like [StyLua](https://github.com/JohnnyMorganz/StyLua).
+### LuaLS
+
+To enable auto-formatting with your LuaLS, make sure you have `"format.enable": true,` in your .luarc.json add the following to your Zed `settings.json`:
+
+```json
+{
+  "languages": {
+    "Lua": {
+      "format_on_save": "on",
+      "formatter": "language_server"
+    }
+  }
+}
+```
+
+### StyLua
+
+Alternative you can use [StyLua](https://github.com/JohnnyMorganz/StyLua):
 
 1. Install [StyLua](https://github.com/JohnnyMorganz/StyLua): `brew install stylua` or `cargo install stylua --features lua52,lua53,lua54,luau,luajit` (feel free to remove any Lua versions you don't need).
 2. Add the following to your `settings.json`:
