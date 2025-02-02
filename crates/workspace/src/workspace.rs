@@ -2710,7 +2710,7 @@ impl Workspace {
         cx: &mut App,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
-            self.client().telemetry().report_event(text.to_string());
+            telemetry::event!(text);
         }
 
         pane.update(cx, |pane, cx| {
@@ -6166,14 +6166,10 @@ pub fn open_ssh_project(
 
         cx.update_window(window.into(), |_, window, cx| {
             window.replace_root(cx, |window, cx| {
+                telemetry::event!("SSH Project Opened");
+
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
-
-                workspace
-                    .client()
-                    .telemetry()
-                    .report_event("SSH Project Opened".to_string());
-
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
                 workspace
             });

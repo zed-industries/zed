@@ -355,14 +355,6 @@ impl Telemetry {
         );
     }
 
-    pub fn report_event(self: &Arc<Self>, event_type: String) {
-        telemetry::event!(event_type);
-    }
-
-    pub fn report_project_app_event(self: &Arc<Self>, operation: String) {
-        telemetry::event!("App Event", operation = operation,);
-    }
-
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
         let mut state = self.state.lock();
         let period_data = state.event_coalescer.log_event(environment);
@@ -424,8 +416,7 @@ impl Telemetry {
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
         for project_type_name in project_type_names {
-            // TODO - will require more for the macro. Search for "open node project"
-            self.report_event(format!("open {} project", project_type_name));
+            telemetry::event!("Project Opened", project_type = project_type_name);
         }
     }
 
