@@ -260,7 +260,7 @@ impl Telemetry {
                 async move {
                     while let Some(event) = rx.next().await {
                         let Some(state) = this.upgrade() else { break };
-                        state.report_event_internal(Event::Flexible(event))
+                        state.report_event(Event::Flexible(event))
                     }
                 }
             })
@@ -370,7 +370,7 @@ impl Telemetry {
                 is_via_ssh,
             });
 
-            self.report_event_internal(event);
+            self.report_event(event);
         }
     }
 
@@ -420,7 +420,7 @@ impl Telemetry {
         }
     }
 
-    fn report_event_internal(self: &Arc<Self>, event: Event) {
+    fn report_event(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {
