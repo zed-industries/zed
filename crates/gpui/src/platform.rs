@@ -462,7 +462,7 @@ enum Contexts {
     },
 }
 
-/// TODO
+/// The context of a foreground future, to be checked before polling the future
 #[derive(Debug)]
 pub struct ForegroundContext {
     inner: Option<Contexts>,
@@ -474,7 +474,7 @@ unsafe impl Send for ForegroundContext {}
 unsafe impl Sync for ForegroundContext {}
 
 impl ForegroundContext {
-    /// TODO
+    /// This ForegroundContext will enforce that the app exists before polling
     #[track_caller]
     pub fn app(app: &Weak<AppCell>) -> Self {
         Self {
@@ -482,7 +482,7 @@ impl ForegroundContext {
         }
     }
 
-    /// TODO
+    /// This ForegroundContext will enforce that the app and window exists before polling
     #[track_caller]
     pub fn window(app: &Weak<AppCell>, window: WindowId) -> Self {
         Self {
@@ -493,13 +493,13 @@ impl ForegroundContext {
         }
     }
 
-    /// TODO
+    /// This foreground context will do nothing
     #[track_caller]
     pub fn none() -> Self {
         Self { inner: None }
     }
 
-    /// TODO
+    /// Check if the context is currently valid
     pub fn context_is_valid(&self) -> bool {
         match &self.inner {
             Some(Contexts::App { app }) => app.upgrade().is_some(),
