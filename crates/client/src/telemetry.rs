@@ -260,7 +260,7 @@ impl Telemetry {
                 async move {
                     while let Some(event) = rx.next().await {
                         let Some(state) = this.upgrade() else { break };
-                        state.report_event(Event::Flexible(event))
+                        state.report_event(Event::Flexible(event));
                     }
                 }
             })
@@ -580,8 +580,10 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
 mod tests {
     use super::*;
     use clock::FakeSystemClock;
+    use collections::HashMap;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use telemetry_events::{Event, FlexibleEvent};
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
@@ -601,15 +603,17 @@ mod tests {
             assert!(is_empty_state(&telemetry));
 
             let first_date_time = clock.utc_now();
-            let operation = "test".to_string();
+            let event_properties = HashMap::from_iter([(
+                "test_key".to_string(),
+                serde_json::Value::String("test_value".to_string()),
+            )]);
 
-            let event = telemetry.report_app_event(operation.clone());
-            assert_eq!(
-                event,
-                Event::App(AppEvent {
-                    operation: operation.clone(),
-                })
-            );
+            let event = FlexibleEvent {
+                event_type: "test".to_string(),
+                event_properties,
+            };
+
+            telemetry.report_event(Event::Flexible(event));
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
@@ -619,13 +623,7 @@ mod tests {
 
             clock.advance(Duration::from_millis(100));
 
-            let event = telemetry.report_app_event(operation.clone());
-            assert_eq!(
-                event,
-                Event::App(AppEvent {
-                    operation: operation.clone(),
-                })
-            );
+            telemetry.report_event(Event::Flexible(event));
             assert_eq!(telemetry.state.lock().events_queue.len(), 2);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
@@ -635,13 +633,7 @@ mod tests {
 
             clock.advance(Duration::from_millis(100));
 
-            let event = telemetry.report_app_event(operation.clone());
-            assert_eq!(
-                event,
-                Event::App(AppEvent {
-                    operation: operation.clone(),
-                })
-            );
+            telemetry.report_event(Event::Flexible(event));
             assert_eq!(telemetry.state.lock().events_queue.len(), 3);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
@@ -651,15 +643,7 @@ mod tests {
 
             clock.advance(Duration::from_millis(100));
 
-            // Adding a 4th event should cause a flush
-            let event = telemetry.report_app_event(operation.clone());
-            assert_eq!(
-                event,
-                Event::App(AppEvent {
-                    operation: operation.clone(),
-                })
-            );
-
+            telemetry.report_event(Event::Flexible(event));
             assert!(is_empty_state(&telemetry));
         });
     }
@@ -686,13 +670,17 @@ mod tests {
             let first_date_time = clock.utc_now();
             let operation = "test".to_string();
 
-            let event = telemetry.report_app_event(operation.clone());
-            assert_eq!(
-                event,
-                Event::App(AppEvent {
-                    operation: operation.clone(),
-                })
-            );
+            let event_properties = HashMap::from_iter([(
+                "test_key".to_string(),
+                serde_json::Value::String("test_value".to_string()),
+            )]);
+
+            let event = FlexibleEvent {
+                event_type: "test".to_string(),
+                event_properties,
+            };
+
+            telemetry.report_event(Event::Flexible(event));
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
