@@ -209,9 +209,10 @@ impl BackgroundExecutor {
         }
     }
 
-    // See the documentation on `ForegroundExecutor::clone` for why this can't be exposed
-    // via the Clone trait
-    pub(crate) fn clone(&self) -> Self {
+    /// Cloning executors can cause runtime panics, see the documentation on `NotClone` for details.
+    /// Use this power wisely.
+    #[doc(hidden)]
+    pub fn clone(&self) -> Self {
         Self {
             dispatcher: self.dispatcher.clone(),
             _not_clone: NotClone,
@@ -529,9 +530,10 @@ impl ForegroundExecutor {
         }
     }
 
-    // This does not use the `Clone` trait so that we can hide it from our public API.
-    // See the documentation in `NotClone` for details
-    pub(crate) fn clone(&self) -> Self {
+    /// Cloning executors can cause runtime panics, see the documentation on `NotClone` for details.
+    /// Use this power wisely.
+    #[doc(hidden)]
+    pub fn clone(&self) -> Self {
         Self {
             dispatcher: self.dispatcher.clone(),
             _not_clone: NotClone,
