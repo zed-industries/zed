@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
-    AppEvent, AssistantEvent, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
+    AssistantEvent, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
