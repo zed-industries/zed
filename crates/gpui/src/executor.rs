@@ -61,11 +61,11 @@ enum TaskState<T> {
     /// A task that is ready to return a value
     Ready(Option<T>),
 
-    /// A task that is currently running.
-    Spawned(async_task::Task<T>),
+    /// A task that is currently running on the foreground.
+    ForegroundSpawned(async_task::Task<T, ForegroundContext>),
 
-    /// A task that is currently running on the foreground
-    SpawnedOnForeground(async_task::Task<T, ForegroundContext>),
+    /// A task that is currently running on the background
+    BackgroundSpawned(async_task::Task<T>),
 }
 
 impl<T> Task<T> {
@@ -78,8 +78,8 @@ impl<T> Task<T> {
     pub fn detach(self) {
         match self {
             Task(TaskState::Ready(_)) => {}
-            Task(TaskState::Spawned(task)) => task.detach(),
-            Task(TaskState::SpawnedOnForeground(task)) => task.detach(),
+            Task(TaskState::ForegroundSpawned(task)) => task.detach(),
+            Task(TaskState::BackgroundSpawned(task)) => task.detach(),
         }
     }
 }
@@ -95,19 +95,83 @@ where
     pub fn detach_and_log_err(self, cx: &App) {
         let location = core::panic::Location::caller();
         cx.foreground_executor()
-            .spawn_with_context(ForegroundContext::none(), self.log_tracked_err(*location))
+            .spawn(self.log_tracked_err(*location))
             .detach();
     }
 }
-
 impl<T> Future for Task<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match unsafe { self.get_unchecked_mut() } {
             Task(TaskState::Ready(val)) => Poll::Ready(val.take().unwrap()),
-            Task(TaskState::Spawned(task)) => task.poll(cx),
-            Task(TaskState::SpawnedOnForeground(task)) => task.poll(cx),
+            Task(TaskState::ForegroundSpawned(task)) => task.poll(cx),
+            Task(TaskState::BackgroundSpawned(task)) => task.poll(cx),
+        }
+    }
+}
+
+/// Task is a primitive that allows work to happen in the background.
+///
+/// It implements [`Future`] so you can `.await` on it.
+///
+/// If you drop a task it will be cancelled immediately. Calling [`Task::detach`] allows
+/// the task to continue running, but with no way to return a value.
+#[must_use]
+#[derive(Debug)]
+pub struct ContextTask<T>(ContextTaskState<T>);
+
+#[derive(Debug)]
+enum ContextTaskState<T> {
+    /// A task that is ready to return a value
+    Ready(Option<T>),
+
+    /// A task that is currently running.
+    Spawned(async_task::FallibleTask<T, ForegroundContext>),
+}
+
+impl<T> ContextTask<T> {
+    /// Creates a new task that will resolve with the value
+    pub fn ready(val: T) -> Self {
+        ContextTask(ContextTaskState::Ready(Some(val)))
+    }
+
+    /// Detaching a task runs it to completion in the background
+    pub fn detach(self) {
+        match self {
+            ContextTask(ContextTaskState::Ready(_)) => {}
+            ContextTask(ContextTaskState::Spawned(task)) => task.detach(),
+        }
+    }
+}
+
+impl<E, T> ContextTask<Result<T, E>>
+where
+    T: 'static,
+    E: 'static + Debug,
+{
+    /// Run the task to completion in the background and log any
+    /// errors that occur.
+    #[track_caller]
+    pub fn detach_and_log_err(self, cx: &App) {
+        let location = core::panic::Location::caller();
+        cx.foreground_executor()
+            .spawn(async {
+                if let Some(r) = self.await {
+                    Task::ready(r).log_tracked_err(*location).await;
+                }
+            })
+            .detach();
+    }
+}
+
+impl<T> Future for ContextTask<T> {
+    type Output = Option<T>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            ContextTask(ContextTaskState::Ready(val)) => Poll::Ready(Some(val.take().unwrap())),
+            ContextTask(ContextTaskState::Spawned(task)) => task.poll(cx),
         }
     }
 }
@@ -173,7 +237,7 @@ impl BackgroundExecutor {
         let (runnable, task) =
             async_task::spawn(future, move |runnable| dispatcher.dispatch(runnable, label));
         runnable.schedule();
-        Task(TaskState::Spawned(task))
+        Task(TaskState::BackgroundSpawned(task))
     }
 
     /// Used by the test harness to run an async test in a synchronous fashion.
@@ -350,7 +414,7 @@ impl BackgroundExecutor {
             move |runnable| dispatcher.dispatch_after(duration, runnable)
         });
         runnable.schedule();
-        Task(TaskState::Spawned(task))
+        Task(TaskState::BackgroundSpawned(task))
     }
 
     /// in tests, start_waiting lets you indicate which task is waiting (for debugging only)
@@ -470,16 +534,24 @@ impl ForegroundExecutor {
     where
         R: 'static,
     {
-        self.spawn_with_context(ForegroundContext::none(), future)
+        let mut context = ForegroundContext::none();
+        context.spawning_thread = Some(thread_id());
+        let dispatcher = self.dispatcher.clone();
+        let (runnable, task) = Builder::new().metadata(context).spawn_local(
+            |_| future,
+            move |runnable| dispatcher.dispatch_on_main_thread(runnable),
+        );
+        runnable.schedule();
+        Task(TaskState::ForegroundSpawned(task))
     }
 
     /// Enqueues the given Task to run on the main thread at some point in the future,
     /// with a context parameter that will be checked before each turn
-    pub fn spawn_with_context<R>(
+    pub(crate) fn spawn_with_context<R>(
         &self,
         mut context: ForegroundContext,
         future: impl Future<Output = R> + 'static,
-    ) -> Task<R>
+    ) -> ContextTask<R>
     where
         R: 'static,
     {
@@ -491,7 +563,7 @@ impl ForegroundExecutor {
             move |runnable| dispatcher.dispatch_on_main_thread(runnable),
         );
         runnable.schedule();
-        Task(TaskState::SpawnedOnForeground(task))
+        ContextTask(ContextTaskState::Spawned(task.fallible()))
     }
 }
 

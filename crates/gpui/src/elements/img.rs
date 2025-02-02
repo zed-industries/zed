@@ -230,7 +230,7 @@ impl DerefMut for Stateful<Img> {
 struct ImgState {
     frame_index: usize,
     last_frame_time: Option<Instant>,
-    started_loading: Option<(Instant, Task<()>)>,
+    started_loading: Option<(Instant, ContextTask<()>)>,
 }
 
 /// The image layout state between frames
@@ -361,8 +361,8 @@ impl Element for Img {
                                         cx.background_executor().timer(LOADING_DELAY).await;
                                         cx.update(move |_, cx| {
                                             cx.notify(current_view);
-                                        })
-                                        .ok();
+                                        });
+                                        });
                                     });
                                     state.started_loading = Some((Instant::now(), task));
                                 }

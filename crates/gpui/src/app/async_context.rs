@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, Focusable, ForegroundContext, ForegroundExecutor, Global, PromptLevel, Render,
-    Reservation, Result, Task, VisualContext, Window, WindowHandle,
+    ContextTask, Entity, Focusable, ForegroundContext, ForegroundExecutor, Global, PromptLevel,
+    Render, Reservation, Result, Task, VisualContext, Window, WindowHandle,
 };
 
 use derive_more::{Deref, DerefMut};
@@ -146,7 +146,7 @@ impl AsyncApp {
 
     /// Schedule a future to be polled in the background.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ContextTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
@@ -218,17 +218,18 @@ impl AsyncWindowContext {
     }
 
     /// A convenience method for [`App::update_window`].
-    pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> Result<R> {
+    pub fn update<R>(&mut self, update: impl FnOnce(&mut Window, &mut App) -> R) -> R {
         self.app
             .update_window(self.window, |_, window, cx| update(window, cx))
+            .unwrap()
     }
 
     /// A convenience method for [`App::update_window`].
     pub fn update_root<R>(
         &mut self,
         update: impl FnOnce(AnyView, &mut Window, &mut App) -> R,
-    ) -> Result<R> {
-        self.app.update_window(self.window, update)
+    ) -> R {
+        self.app.update_window(self.window, update).unwrap()
     }
 
     /// A convenience method for [`Window::on_next_frame`].
@@ -239,12 +240,10 @@ impl AsyncWindowContext {
     }
 
     /// A convenience method for [`App::global`].
-    pub fn read_global<G: Global, R>(
-        &mut self,
-        read: impl FnOnce(&G, &Window, &App) -> R,
-    ) -> Result<R> {
+    pub fn read_global<G: Global, R>(&mut self, read: impl FnOnce(&G, &Window, &App) -> R) -> R {
         self.window
             .update(self, |_, window, cx| read(cx.global(), window, cx))
+            .unwrap()
     }
 
     /// A convenience method for [`App::update_global`].
@@ -252,19 +251,21 @@ impl AsyncWindowContext {
     pub fn update_global<G, R>(
         &mut self,
         update: impl FnOnce(&mut G, &mut Window, &mut App) -> R,
-    ) -> Result<R>
+    ) -> R
     where
         G: Global,
     {
-        self.window.update(self, |_, window, cx| {
-            cx.update_global(|global, cx| update(global, window, cx))
-        })
+        self.window
+            .update(self, |_, window, cx| {
+                cx.update_global(|global, cx| update(global, window, cx))
+            })
+            .unwrap()
     }
 
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> ContextTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
