@@ -3,7 +3,6 @@ mod event_coalescer;
 use crate::TelemetrySettings;
 use anyhow::Result;
 use clock::SystemClock;
-use collections::{HashMap, HashSet};
 use futures::channel::mpsc;
 use futures::{Future, StreamExt};
 use gpui::{App, BackgroundExecutor, Task};
@@ -12,6 +11,7 @@ use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
 use std::sync::LazyLock;
@@ -580,9 +580,9 @@ pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
 mod tests {
     use super::*;
     use clock::FakeSystemClock;
-    use collections::HashMap;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use std::collections::HashMap;
     use telemetry_events::{Event, FlexibleEvent};
 
     #[gpui::test]
@@ -613,7 +613,7 @@ mod tests {
                 event_properties,
             };
 
-            telemetry.report_event(Event::Flexible(event));
+            telemetry.report_event(Event::Flexible(event.clone()));
             assert_eq!(telemetry.state.lock().events_queue.len(), 1);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
@@ -623,7 +623,7 @@ mod tests {
 
             clock.advance(Duration::from_millis(100));
 
-            telemetry.report_event(Event::Flexible(event));
+            telemetry.report_event(Event::Flexible(event.clone()));
             assert_eq!(telemetry.state.lock().events_queue.len(), 2);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
@@ -633,7 +633,7 @@ mod tests {
 
             clock.advance(Duration::from_millis(100));
 
-            telemetry.report_event(Event::Flexible(event));
+            telemetry.report_event(Event::Flexible(event.clone()));
             assert_eq!(telemetry.state.lock().events_queue.len(), 3);
             assert!(telemetry.state.lock().flush_events_task.is_some());
             assert_eq!(
@@ -668,7 +668,6 @@ mod tests {
             assert!(is_empty_state(&telemetry));
 
             let first_date_time = clock.utc_now();
-            let operation = "test".to_string();
 
             let event_properties = HashMap::from_iter([(
                 "test_key".to_string(),
