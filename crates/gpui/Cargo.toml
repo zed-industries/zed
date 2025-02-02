@@ -79,8 +79,8 @@ futures.workspace = true
 gpui_macros.workspace = true
 http_client = { optional = true, workspace = true }
 image = "0.25.1"
+inventory = "0.3.19"
 itertools.workspace = true
-linkme = "0.3"
 log.workspace = true
 num_cpus = "1.13"
 parking = "2.0.0"
