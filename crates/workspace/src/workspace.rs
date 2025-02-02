@@ -2710,9 +2710,7 @@ impl Workspace {
         cx: &mut App,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
-            self.client()
-                .telemetry()
-                .report_app_event(format!("{}: open", text));
+            self.client().telemetry().report_app_event(text.to_string());
         }
 
         pane.update(cx, |pane, cx| {
@@ -6174,7 +6172,7 @@ pub fn open_ssh_project(
                 workspace
                     .client()
                     .telemetry()
-                    .report_app_event("open ssh project".to_string());
+                    .report_app_event("SSH Project Opened".to_string());
 
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
                 workspace

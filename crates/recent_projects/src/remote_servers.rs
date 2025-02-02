@@ -212,7 +212,7 @@ impl ProjectPicker {
                             workspace
                                 .client()
                                 .telemetry()
-                                .report_app_event("create ssh project".to_string());
+                                .report_app_event("SSH Project Created".to_string());
 
                             workspace
                         })
@@ -424,7 +424,7 @@ impl RemoteServerProjects {
                             workspace
                                 .client()
                                 .telemetry()
-                                .report_app_event("create ssh server".to_string())
+                                .report_app_event("SSH Server Created".to_string())
                         });
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);

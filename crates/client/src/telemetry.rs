@@ -285,7 +285,7 @@ impl Telemetry {
     // TestAppContext ends up calling this function on shutdown and it panics when trying to find the TelemetrySettings
     #[cfg(not(any(test, feature = "test-support")))]
     fn shutdown_telemetry(self: &Arc<Self>) -> impl Future<Output = ()> {
-        self.report_app_event("close".to_string());
+        self.report_app_event("App Closed".to_string());
         // TODO: close final edit period and make sure it's sent
         Task::ready(())
     }
@@ -355,12 +355,8 @@ impl Telemetry {
         );
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {
-        let event = Event::App(AppEvent { operation });
-
-        self.report_event(event.clone());
-
-        event
+    pub fn report_app_event(self: &Arc<Self>, operation: String) {
+        telemetry::event!("App Event", operation = operation,);
     }
 
     pub fn log_edit_event(self: &Arc<Self>, environment: &'static str, is_via_ssh: bool) {
@@ -424,6 +420,7 @@ impl Telemetry {
 
         // Done on purpose to avoid calling `self.state.lock()` multiple times
         for project_type_name in project_type_names {
+            // TODO - will require more for the macro. Search for "open node project"
             self.report_app_event(format!("open {} project", project_type_name));
         }
     }

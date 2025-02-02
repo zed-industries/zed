@@ -515,7 +515,7 @@ fn register_actions(
             workspace
                 .client()
                 .telemetry()
-                .report_app_event("open project".to_string());
+                .report_app_event("Project Opened".to_string());
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
                     files: true,
