@@ -51,3 +51,20 @@ Zed can enable auto-formatting of code with formatters like [StyLua](https://git
   }
 }
 ```
+
+You can specify various options to StyLua either on the command line above (like `--syntax=Lua54`) or in a `stylua.toml` in your workspace:
+
+```toml
+syntax = "Lua54"
+column_width = 100
+line_endings = "Unix"
+indent_type = "Spaces"
+indent_width = 4
+quote_style = "AutoPreferDouble"
+call_parentheses = "Always"
+
+[sort_requires]
+enabled = true
+```
+
+For a complete list of available options, see: [StyLua Options](https://github.com/JohnnyMorganz/StyLua?tab=readme-ov-file#options).
