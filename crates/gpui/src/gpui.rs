@@ -48,10 +48,10 @@
 //! complex applications:
 //!
 //! - Actions are user-defined structs that are used for converting keystrokes into logical operations in your UI.
-//!   Use this for implementing keyboard shortcuts, such as cmd-q. See the [`action`] module for more information.
+//!   Use this for implementing keyboard shortcuts, such as cmd-q (See `action` module for more information).
 //! - Platform services, such as `quit the app` or `open a URL` are available as methods on the [`app::App`].
 //! - An async executor that is integrated with the platform's event loop. See the [`executor`] module for more information.,
-//! - The [gpui::test] macro provides a convenient way to write tests for your GPUI applications. Tests also have their
+//! - The [`gpui::test`](test) macro provides a convenient way to write tests for your GPUI applications. Tests also have their
 //!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`app::test_context`]
 //!   and [`test`] modules for more details.
 //!

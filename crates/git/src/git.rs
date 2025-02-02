@@ -45,6 +45,9 @@ actions!(
     ]
 );
 
+/// The length of a Git short SHA.
+pub const SHORT_SHA_LENGTH: usize = 7;
+
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Oid(libgit::Oid);
 
@@ -64,7 +67,7 @@ impl Oid {
 
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
-        self.to_string().chars().take(7).collect()
+        self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
     }
 }
 

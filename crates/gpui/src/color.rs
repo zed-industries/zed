@@ -559,8 +559,8 @@ pub(crate) enum BackgroundTag {
 /// A color space for color interpolation.
 ///
 /// References:
-/// - https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
-/// - https://www.w3.org/TR/css-color-4/#typedef-color-space
+/// - <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
+/// - <https://www.w3.org/TR/css-color-4/#typedef-color-space>
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
 pub enum ColorSpace {
@@ -622,7 +622,7 @@ pub fn pattern_slash(color: Hsla) -> Background {
 ///
 /// The `angle` is in degrees value in the range 0.0 to 360.0.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient>
 pub fn linear_gradient(
     angle: f32,
     from: impl Into<LinearColorStop>,
@@ -638,7 +638,7 @@ pub fn linear_gradient(
 
 /// A color stop in a linear gradient.
 ///
-/// https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop
+/// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 #[repr(C)]
 pub struct LinearColorStop {
@@ -671,7 +671,7 @@ impl LinearColorStop {
 impl Background {
     /// Use specified color space for color interpolation.
     ///
-    /// https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method
+    /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
     pub fn color_space(mut self, color_space: ColorSpace) -> Self {
         self.color_space = color_space;
         self

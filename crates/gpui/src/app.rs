@@ -1418,7 +1418,7 @@ impl App {
     }
 
     /// Dispatch an action to the currently active window or global action handler
-    /// See [action::Action] for more information on how actions work
+    /// See [`crate::Action`] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {
         if let Some(active_window) = self.active_window() {
             active_window

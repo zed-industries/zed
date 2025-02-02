@@ -236,36 +236,35 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-) -> Documentation {
+) -> CompletionDocumentation {
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                Documentation::SingleLine(text.clone())
+                CompletionDocumentation::SingleLine(text.clone())
             } else {
-                Documentation::MultiLinePlainText(text.clone())
+                CompletionDocumentation::MultiLinePlainText(text.clone())
             }
         }
 
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    Documentation::SingleLine(value.clone())
+                    CompletionDocumentation::SingleLine(value.clone())
                 } else {
-                    Documentation::MultiLinePlainText(value.clone())
+                    CompletionDocumentation::MultiLinePlainText(value.clone())
                 }
             }
 
             lsp::MarkupKind::Markdown => {
                 let parsed = parse_markdown(value, Some(language_registry), language).await;
-                Documentation::MultiLineMarkdown(parsed)
+                CompletionDocumentation::MultiLineMarkdown(parsed)
             }
         },
     }
 }
 
-/// Documentation associated with a [`Completion`].
 #[derive(Clone, Debug)]
-pub enum Documentation {
+pub enum CompletionDocumentation {
     /// There is no documentation for this completion.
     Undocumented,
     /// A single line of documentation.
