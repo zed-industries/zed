@@ -86,6 +86,21 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the text alignment to left
+    fn text_left(mut self) -> Self {
+        self.text_align(TextAlign::Left)
+    }
+
+    /// Sets the text alignment to center
+    fn text_center(mut self) -> Self {
+        self.text_align(TextAlign::Center)
+    }
+
+    /// Sets the text alignment to right
+    fn text_right(mut self) -> Self {
+        self.text_align(TextAlign::Right)
+    }
+
     /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
     fn truncate(mut self) -> Self {
