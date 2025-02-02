@@ -104,12 +104,6 @@ This is equivalent to the `assistant: quote selection` command ({#kb assistant::
 
 Usage: `/selection`
 
-## `/workflow`
-
-The `/workflow` command inserts a prompt that opts into the edit workflow. This sets up the context for the assistant to suggest edits to your code.
-
-Usage: `/workflow`
-
 ## Extensibility
 
 Additional slash commands can be provided by extensions.
