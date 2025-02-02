@@ -3223,91 +3223,95 @@ impl EditorElement {
 
         let min_height = height_above_menu + min_menu_height + height_below_menu;
         let max_height = height_above_menu + max_menu_height + height_below_menu;
-        let Some((popovers_position, popovers_size, y_flipped)) = self
-            .layout_popovers_above_or_below_line(
-                target_position,
-                line_height,
-                min_height,
-                max_height,
-                text_hitbox,
-                viewport_bounds,
-                window,
-                cx,
-                |height, y_flipped, window, cx| {
-                    Some(
-                        v_flex()
-                            .gap(MENU_GAP)
-                            .when(y_flipped, |parent| parent.flex_col_reverse())
-                            .when(edit_prediction_popover_visible, |parent| {
-                                parent.children(self.editor.update(cx, |editor, cx| {
-                                    editor.render_edit_prediction_cursor_popover(style, cx)
-                                }))
-                            })
-                            .when(context_menu_visible, |parent| {
-                                let menu_height = if y_flipped {
-                                    height - height_below_menu
-                                } else {
-                                    height - height_above_menu
-                                };
-                                parent.child(
-                                    self.render_context_menu(line_height)(
-                                        menu_height,
-                                        y_flipped,
-                                        window,
-                                        cx,
-                                    )
-                                    .unwrap(),
-                                )
-                            })
-                            .into_any(),
-                    )
-                },
-            )
-        else {
+        let Some((laid_out_popovers, y_flipped)) = self.layout_popovers_above_or_below_line(
+            target_position,
+            line_height,
+            min_height,
+            max_height,
+            text_hitbox,
+            viewport_bounds,
+            window,
+            cx,
+            |height, max_width_for_stable_x, y_flipped, window, cx| {
+                // First layout the menu to get its size - others can be at least this wide.
+                let context_menu = if context_menu_visible {
+                    let menu_height = if y_flipped {
+                        height - height_below_menu
+                    } else {
+                        height - height_above_menu
+                    };
+                    let mut element = self
+                        .render_context_menu(line_height, menu_height, y_flipped, window, cx)
+                        .unwrap();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                    Some((CursorPopoverType::CodeContextMenu, element, size))
+                } else {
+                    None
+                };
+                let max_width = max_width_for_stable_x.max(
+                    context_menu
+                        .as_ref()
+                        .map_or(px(0.), |(_, _, size)| size.width),
+                );
+                let edit_prediction = if edit_prediction_popover_visible {
+                    self.editor.update(cx, |editor, cx| {
+                        let mut element =
+                            editor.render_edit_prediction_cursor_popover(max_width, style, cx)?;
+                        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                        Some((CursorPopoverType::EditPrediction, element, size))
+                    })
+                } else {
+                    None
+                };
+                vec![edit_prediction, context_menu]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+            },
+        ) else {
             return;
         };
 
-        // Layout documentation aside aligned with completions menu.
-        let menu_y_offset = if y_flipped {
-            height_below_menu
-        } else {
-            height_above_menu
+        let Some((_, menu_bounds)) = laid_out_popovers
+            .iter()
+            .find(|(x, _)| matches!(x, CursorPopoverType::CodeContextMenu))
+        else {
+            return;
         };
-        let menu_position = point(popovers_position.x, popovers_position.y + menu_y_offset);
-        let menu_width = popovers_size.width;
+        let first_popover_bounds = laid_out_popovers[0].1;
+        let last_popover_bounds = laid_out_popovers[laid_out_popovers.len() - 1].1;
 
-        // Figure out the bounds around the popovers rendered above, as well as the bounds if the
-        // menu's height was max_height.
-        let popovers_bounds = Bounds::new(popovers_position, popovers_size);
-        let max_popovers_size = size(popovers_size.width, max_height);
-        let bottom_y_when_flipped = target_position.y - line_height;
-        let max_popovers_bounds = if y_flipped {
-            Bounds::new(
-                point(
-                    popovers_position.x,
-                    bottom_y_when_flipped - max_popovers_size.height,
-                ),
-                max_popovers_size,
+        let mut target_bounds = if y_flipped {
+            Bounds::from_corners(
+                last_popover_bounds.origin,
+                first_popover_bounds.bottom_right(),
             )
         } else {
-            Bounds::new(target_position, max_popovers_size)
+            Bounds::from_corners(
+                first_popover_bounds.origin,
+                last_popover_bounds.bottom_right(),
+            )
         };
+        target_bounds.size.width = menu_bounds.size.width;
 
-        // Figure out the bounds around which to layout the aside, by extending to include the
-        // cursored line to avoid overlapping it, and adding a gap.
+        let mut max_target_bounds = target_bounds;
+        max_target_bounds.size.height = max_height;
+        if y_flipped {
+            max_target_bounds.origin.y -= max_height - target_bounds.size.height;
+        }
+
         let mut extend_amount = Edges::all(MENU_GAP);
         if y_flipped {
             extend_amount.bottom = line_height;
         } else {
             extend_amount.top = line_height;
         }
-        let target_bounds = popovers_bounds.extend(extend_amount);
-        let max_target_bounds = max_popovers_bounds.extend(extend_amount);
+        let target_bounds = target_bounds.extend(extend_amount);
+        let max_target_bounds = max_target_bounds.extend(extend_amount);
 
         self.layout_context_menu_aside(
             y_flipped,
-            menu_position,
-            menu_width,
+            *menu_bounds,
             target_bounds,
             max_target_bounds,
             max_menu_height,
@@ -3357,7 +3361,15 @@ impl EditorElement {
             viewport_bounds,
             window,
             cx,
-            self.render_context_menu(line_height),
+            move |height, _max_width_for_stable_x, y_flipped, window, cx| {
+                let Some(mut element) =
+                    self.render_context_menu(line_height, height, y_flipped, window, cx)
+                else {
+                    return vec![];
+                };
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                vec![(CursorPopoverType::CodeContextMenu, element, size)]
+            },
         );
     }
 
@@ -3372,8 +3384,14 @@ impl EditorElement {
         viewport_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
-        render: impl FnOnce(Pixels, bool, &mut Window, &mut App) -> Option<AnyElement>,
-    ) -> Option<(gpui::Point<Pixels>, Size<Pixels>, bool)> {
+        make_sized_popovers: impl FnOnce(
+            Pixels,
+            Pixels,
+            bool,
+            &mut Window,
+            &mut App,
+        ) -> Vec<(CursorPopoverType, AnyElement, Size<Pixels>)>,
+    ) -> Option<(Vec<(CursorPopoverType, Bounds<Pixels>)>, bool)> {
         // If the max height won't fit below and there is more space above, put it above the line.
         let bottom_y_when_flipped = target_position.y - line_height;
         let available_above = bottom_y_when_flipped - text_hitbox.top();
@@ -3408,34 +3426,59 @@ impl EditorElement {
             }
         }
 
+        let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
+
         // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
         // for very narrow windows.
-        let mut element = render(height, y_flipped, window, cx)?;
+        let popovers = make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
+        if popovers.is_empty() {
+            return None;
+        }
 
-        let actual_size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-        let position = gpui::Point {
+        let max_width = popovers
+            .iter()
+            .map(|(_, _, size)| size.width)
+            .max()
+            .unwrap_or_default();
+
+        let mut current_position = gpui::Point {
             // Snap the right edge of the list to the right edge of the window if its horizontal bounds
             // overflow. Include space for the scrollbar.
             x: target_position
                 .x
-                .min((viewport_bounds.right() - actual_size.width).max(Pixels::ZERO)),
+                .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
             y: if y_flipped {
-                bottom_y_when_flipped - actual_size.height
+                bottom_y_when_flipped
             } else {
                 target_position.y
             },
         };
-        window.defer_draw(element, position, 1);
 
-        Some((position, actual_size, y_flipped))
+        let laid_out_popovers = popovers
+            .into_iter()
+            .map(|(popover_type, element, size)| {
+                if y_flipped {
+                    current_position.y -= size.height;
+                }
+                let position = current_position;
+                window.defer_draw(element, current_position, 1);
+                if !y_flipped {
+                    current_position.y += size.height + MENU_GAP;
+                } else {
+                    current_position.y -= MENU_GAP;
+                }
+                (popover_type, Bounds::new(position, size))
+            })
+            .collect::<Vec<_>>();
+
+        Some((laid_out_popovers, y_flipped))
     }
 
     #[allow(clippy::too_many_arguments)]
     fn layout_context_menu_aside(
         &self,
         y_flipped: bool,
-        menu_position: gpui::Point<Pixels>,
-        menu_width: Pixels,
+        menu_bounds: Bounds<Pixels>,
         target_bounds: Bounds<Pixels>,
         max_target_bounds: Bounds<Pixels>,
         max_height: Pixels,
@@ -3456,14 +3499,14 @@ impl EditorElement {
                 return;
             };
             aside.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let right_position = point(target_bounds.right(), menu_position.y);
+            let right_position = point(target_bounds.right(), menu_bounds.origin.y);
             Some((aside, right_position))
         } else {
             let max_size = size(
                 // TODO(mgsloan): Once the menu is bounded by viewport width the bound on viewport
                 // won't be needed here.
                 cmp::min(
-                    cmp::max(menu_width - px(2.), MENU_ASIDE_MIN_WIDTH),
+                    cmp::max(menu_bounds.size.width - px(2.), MENU_ASIDE_MIN_WIDTH),
                     viewport_bounds.right(),
                 ),
                 cmp::min(
@@ -3479,8 +3522,11 @@ impl EditorElement {
             };
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-            let top_position = point(menu_position.x, target_bounds.top() - actual_size.height);
-            let bottom_position = point(menu_position.x, target_bounds.bottom());
+            let top_position = point(
+                menu_bounds.origin.x,
+                target_bounds.top() - actual_size.height,
+            );
+            let bottom_position = point(menu_bounds.origin.x, target_bounds.bottom());
 
             let fit_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
                 // Prefer to fit on the same side of the line as the menu, then on the other side of
@@ -3519,13 +3565,15 @@ impl EditorElement {
     fn render_context_menu(
         &self,
         line_height: Pixels,
-    ) -> impl FnOnce(Pixels, bool, &mut Window, &mut App) -> Option<AnyElement> + '_ {
-        move |height, y_flipped, window, cx| {
-            let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
-            self.editor.update(cx, |editor, cx| {
-                editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
-            })
-        }
+        height: Pixels,
+        y_flipped: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
+        self.editor.update(cx, |editor, cx| {
+            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
+        })
     }
 
     fn render_context_menu_aside(
@@ -8137,6 +8185,11 @@ impl HighlightedRange {
             window.paint_path(path, self.color);
         }
     }
+}
+
+enum CursorPopoverType {
+    CodeContextMenu,
+    EditPrediction,
 }
 
 pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {

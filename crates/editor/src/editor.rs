@@ -5369,6 +5369,7 @@ impl Editor {
 
     fn render_edit_prediction_cursor_popover(
         &self,
+        max_width: Pixels,
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -5498,6 +5499,7 @@ impl Editor {
 
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
+                .max_w(max_width)
                 .flex_1()
                 .px_2()
                 .gap_3()
