@@ -1,4 +1,4 @@
-use crate::{App, ForegroundContext, PlatformDispatcher};
+use crate::{App, ForegroundContext, NotClone, PlatformDispatcher};
 use async_task::Builder;
 use futures::channel::mpsc;
 use smol::prelude::*;
@@ -28,6 +28,7 @@ use rand::rngs::StdRng;
 pub struct BackgroundExecutor {
     #[doc(hidden)]
     pub dispatcher: Arc<dyn PlatformDispatcher>,
+    _not_clone: NotClone,
 }
 
 /// A pointer to the executor that is currently running,
@@ -37,11 +38,10 @@ pub struct BackgroundExecutor {
 /// `ForegroundExecutor::spawn` does not require `Send` but checks at runtime that the future is
 /// only polled from the same thread it was spawned from. These checks would fail when spawning
 /// foreground tasks from from background threads.
-#[derive(Clone)]
 pub struct ForegroundExecutor {
     #[doc(hidden)]
     pub dispatcher: Arc<dyn PlatformDispatcher>,
-
+    _not_clone: NotClone,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -203,7 +203,10 @@ type AnyFuture<R> = Pin<Box<dyn 'static + Send + Future<Output = R>>>;
 impl BackgroundExecutor {
     #[doc(hidden)]
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
-        Self { dispatcher }
+        Self {
+            dispatcher,
+            _not_clone: NotClone,
+        }
     }
 
     // See the documentation on `ForegroundExecutor::clone` for why this can't be exposed
@@ -211,6 +214,7 @@ impl BackgroundExecutor {
     pub(crate) fn clone(&self) -> Self {
         Self {
             dispatcher: self.dispatcher.clone(),
+            _not_clone: NotClone,
         }
     }
 
@@ -520,25 +524,17 @@ impl ForegroundExecutor {
     pub fn new(dispatcher: Arc<dyn PlatformDispatcher>) -> Self {
         Self {
             dispatcher,
+            _not_clone: NotClone,
             not_send: PhantomData,
         }
     }
 
     // This does not use the `Clone` trait so that we can hide it from our public API.
-    // Allowing unrestricted cloning of the executors can break the guarantees provided by
-    // the ContextTasks like so:
-    // ```rs
-    // fn test(cx: AsyncApp) {
-    //   let executor = cx.foreground_executor().clone();
-    //   executor.spawn(async {
-    //     my_async_thing().await;
-    //     cx.update(/**/) // 💥 Didn't check that the app still existed after await, this might panic
-    //   })
-    // }
-    // ```
+    // See the documentation in `NotClone` for details
     pub(crate) fn clone(&self) -> Self {
         Self {
             dispatcher: self.dispatcher.clone(),
+            _not_clone: NotClone,
             not_send: PhantomData,
         }
     }

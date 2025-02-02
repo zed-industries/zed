@@ -1026,10 +1026,10 @@ impl App {
             Ok(result)
         })
     }
-    /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
+    /// Creates a `WeakAsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
-    pub fn to_async(&self) -> AsyncApp {
-        AsyncApp {
+    pub fn to_async(&self) -> WeakAsyncApp {
+        WeakAsyncApp {
             app: self.this.clone(),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
@@ -1055,8 +1055,10 @@ impl App {
         R: 'static,
     {
         let async_app = self.to_async();
-        self.foreground_executor
-            .spawn_with_context(ForegroundContext::app(&async_app.app), f(async_app))
+        self.foreground_executor.spawn_with_context(
+            ForegroundContext::app(&async_app.app),
+            f(async_app.upgrade()),
+        )
     }
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
@@ -1838,3 +1840,38 @@ impl HttpClient for NullHttpClient {
         type_name::<Self>()
     }
 }
+
+/// The AsyncApp, AsyncWindowContext, and executor types must not be clone, in order to
+/// protect against panics that are caused when moving an AsyncApp across an
+/// await point, in a task that doesn't share it's context.
+///
+/// For example, an issue with AsyncWindowContext:
+///
+/// ```rs
+/// fn test(cx: AsyncWindowContext) {
+///   let cx_2 = cx.clone();
+///   cx.update(|_, app: &mut App| {
+///     app.spawn(|_| {
+///       my_async_thing().await;
+///       cx_2.update(/**/) // 💥 Window wasn't checked after `.await`, this might panic
+///     })
+///   })
+/// }
+///```
+///
+/// Or using ForegroundExecutor:
+///
+/// ```rs
+/// fn test(cx: AsyncApp) {
+///   let executor = cx.foreground_executor().clone();
+///   executor.spawn(async {
+///     my_async_thing().await;
+///     cx.update(/**/) // 💥 Didn't check that the app still existed after await, this might panic
+///   })
+/// }
+/// ```
+///
+/// Having these types be !Clone, ensures that they'll be locked behind a `&`
+/// when calling `spawn`, which means they won't be able to be moved inside
+/// the spawn call (which has a + 'static bound)
+pub(crate) struct NotClone;

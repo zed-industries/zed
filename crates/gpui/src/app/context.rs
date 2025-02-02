@@ -679,7 +679,7 @@ impl<T> Context<'_, T> {
     }
 }
 
-impl<T> AppContext for Context<T> {
+impl<T> AppContext for Context<'_, T> {
     fn new<U: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<'_, U>) -> U,

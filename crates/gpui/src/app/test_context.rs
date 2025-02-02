@@ -374,14 +374,15 @@ impl TestAppContext {
         lock.update(|cx| cx.update_global(update))
     }
 
-    /// Returns an `AsyncApp` which can be used to run tasks that expect to be on a background
+    /// Returns a `AsyncApp` which can be used to run tasks that expect to be on a background
     /// thread on the current thread in tests.
     pub fn to_async(&self) -> AsyncApp {
-        AsyncApp {
+        WeakAsyncApp {
             app: Rc::downgrade(&self.app),
             background_executor: self.background_executor.clone(),
             foreground_executor: self.foreground_executor.clone(),
         }
+        .upgrade()
     }
 
     /// Wait until there are no more pending tasks.
@@ -655,7 +656,7 @@ impl<V> Entity<V> {
 
 use derive_more::{Deref, DerefMut};
 
-use super::{Context, Entity};
+use super::{Context, Entity, WeakAsyncApp};
 #[derive(Deref, DerefMut, Clone)]
 /// A VisualTestContext is the test-equivalent of a `Window` and `App`. It allows you to
 /// run window-specific test code. It can be dereferenced to a `TextAppContext`.
