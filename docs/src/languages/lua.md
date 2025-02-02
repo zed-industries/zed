@@ -62,6 +62,7 @@ indent_type = "Spaces"
 indent_width = 4
 quote_style = "AutoPreferDouble"
 call_parentheses = "Always"
+collapse_simple_statement = "All"
 
 [sort_requires]
 enabled = true
