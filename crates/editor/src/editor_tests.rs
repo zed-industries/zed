@@ -13410,8 +13410,6 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
-    cx.executor()
-        .advance_clock(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT);
     let mut assert = |before, after| {
         let _state_context = cx.set_state(before);
         cx.run_until_parked();
