@@ -666,7 +666,6 @@ mod tests {
             telemetry.start(system_id, installation_id, session_id, cx);
 
             assert!(is_empty_state(&telemetry));
-
             let first_date_time = clock.utc_now();
 
             let event_properties = HashMap::from_iter([(
