@@ -62,7 +62,7 @@ To create a custom debug configuration you have to create a `.zed/debug.json` fi
 
 ### Using Attach [WIP]
 
-Only javascript supports starting a debug session using attach.
+Only javascript and lldb supports starting a debug session using attach.
 
 When using the attach request with a process ID the syntax is as follows:
 

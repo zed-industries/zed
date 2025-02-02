@@ -1,10 +1,11 @@
-use std::{ffi::OsStr, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, ffi::OsStr, path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use dap::transport::{StdioTransport, Transport};
 use gpui::AsyncApp;
-use task::DebugAdapterConfig;
+use sysinfo::{Pid, Process};
+use task::{DebugAdapterConfig, DebugRequestType};
 
 use crate::*;
 
@@ -84,9 +85,33 @@ impl DebugAdapter for LldbDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
+            attach_config.process_id
+        } else {
+            None
+        };
+
         json!({
             "program": config.program,
+            "request": match config.request {
+                DebugRequestType::Launch => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+            "pid": pid,
             "cwd": config.cwd,
         })
+    }
+
+    fn supports_attach(&self) -> bool {
+        true
+    }
+
+    fn attach_processes<'a>(
+        &self,
+        processes: &'a HashMap<Pid, Process>,
+    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+        // let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
+
+        Some(processes.iter().collect::<Vec<_>>())
     }
 }
