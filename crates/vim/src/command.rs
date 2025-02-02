@@ -7,7 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
+use gpui::{actions, impl_actions, impl_internal_actions, Action, App, Context, Global, Window};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -64,6 +64,13 @@ pub struct WithCount {
     action: WrappedAction,
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum VimSetting {
+    Wrap,
+    NoWrap,
+}
+
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
@@ -76,9 +83,10 @@ impl_internal_actions!(
         WithRange,
         WithCount,
         OnMatchingLines,
-        ShellExec
+        ShellExec,
     ]
 );
+impl_actions!(vim, [VimSetting]);
 
 impl PartialEq for WrappedAction {
     fn eq(&self, other: &Self) -> bool {
@@ -100,6 +108,17 @@ impl Deref for WrappedAction {
 }
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
+    Vim::action(editor, cx, |vim, setting: &VimSetting, window, cx| {
+        vim.update_editor(window, cx, |_, editor, _, cx| match setting {
+            VimSetting::Wrap => {
+                editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            }
+            VimSetting::NoWrap => {
+                editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+            }
+        });
+    });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
             return;
@@ -749,6 +768,8 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
+        VimCommand::new(("set wrap", ""), VimSetting::Wrap),
+        VimCommand::new(("set nowrap", ""), VimSetting::NoWrap),
     ]
 }
 
