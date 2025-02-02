@@ -1094,6 +1094,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
 
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
+    fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
     BaseKeymap::register(cx);
@@ -1158,7 +1159,11 @@ pub fn handle_keymap_file_changes(
                         }
                         dismiss_app_notification(&notification_id, cx);
                         if KeymapFile::are_actions_deprecated(&user_keymap_content) {
-                            show_keymap_migration_notification(notification_id.clone(), cx)
+                            show_keymap_migration_notification(
+                                notification_id.clone(),
+                                fs.clone(),
+                                cx,
+                            )
                         } else {
                             show_keymap_file_load_error(notification_id.clone(), error_message, cx)
                         }
@@ -1193,39 +1198,40 @@ fn show_keymap_file_json_error(
     });
 }
 
-fn show_keymap_migration_notification(notification_id: NotificationId, cx: &mut App) {
-    show_app_notification(notification_id, cx, |cx| {
-        cx.new(|_cx| {
+fn show_keymap_migration_notification(
+    notification_id: NotificationId,
+    fs: Arc<dyn Fs>,
+    cx: &mut App,
+) {
+    show_app_notification(notification_id, cx, move |cx| {
+        let fs = fs.clone();
+        cx.new(move |_cx| {
             MessageNotification::new_from_builder(move |_, _| {
-                gpui::div().text_xs().child( "A newer version of Zed has simplified some keymaps. Your existing keymaps may be deprecated. You can easily migrate your keymaps by clicking the button below. A backup of your existing keymap file will be created in your home directory before migrating.").into_any()
+                gpui::div().text_xs().child( "A newer version of Zed has simplified few keymaps. Your existing ones may be deprecated. You can migrate them by clicking the button below. A backup of your current keymap file will be created in your home directory.").into_any()
             })
             .with_click_message("Backup and Migrate Keymap")
-            .on_click(|_window, cx| {
-                let keymap_task = cx.background_executor().spawn(async move {
-                    let fs = Arc::new(RealFs::default());
-                    fs.load(&paths::keymap_file()).await
-                });
+            .on_click(move |_, cx| {
+                let fs = fs.clone();
                 cx.spawn(move |weak_notification, mut cx| async move {
-                    match keymap_task.await {
+                    match fs.load(&paths::keymap_file()).await {
                         Ok(keymap_content) => {
                             if let Some(keymap_file) = KeymapFile::migrate_keymap_content(&keymap_content) {
                                 if let Ok(serialized_keymap) = serde_json::to_string_pretty(&keymap_file) {
-                                    cx.background_executor().spawn(async move {
-                                        let fs = Arc::new(RealFs::default());
-                                        fs.atomic_write(paths::keymap_file().clone(), serialized_keymap).await
-                                    }).await.ok();
-                                    weak_notification.update(&mut cx, |_, cx| {
-                                        cx.emit(DismissEvent);
-                                    }).ok();
+                                    if fs.atomic_write(paths::home_dir().join("zed_keymap_backup.json"), keymap_content).await.is_ok() {
+                                        fs.atomic_write(paths::keymap_file().clone(), serialized_keymap).await.ok();
+                                    }
                                 }
                             }
                         }
                         _ => {}
                     }
+                    weak_notification.update(&mut cx, |_, cx| {
+                        cx.emit(DismissEvent);
+                    }).ok();
                 }).detach();
             })
         })
-    })
+    });
 }
 
 fn show_keymap_file_load_error(
@@ -3778,7 +3784,7 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_keymap_file_changes(keymap_rx, app_state.fs.clone(), cx);
         });
         workspace
             .update(cx, |workspace, _, cx| {
@@ -3892,7 +3898,7 @@ mod tests {
             );
 
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, cx);
+            handle_keymap_file_changes(keymap_rx, app_state.fs.clone(), cx);
         });
 
         cx.background_executor.run_until_parked();

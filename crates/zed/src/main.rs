@@ -289,7 +289,7 @@ fn main() {
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx);
+        handle_keymap_file_changes(user_keymap_file_rx, fs.clone(), cx);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
