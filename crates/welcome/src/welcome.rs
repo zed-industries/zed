@@ -132,7 +132,7 @@ impl Render for WelcomePage {
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.telemetry.report_app_event(
+                                                this.telemetry.report_event(
                                                     "Welcome Theme Changed".to_string(),
                                                 );
                                                 this.workspace
@@ -149,7 +149,7 @@ impl Render for WelcomePage {
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.telemetry.report_app_event(
+                                                this.telemetry.report_event(
                                                     "Welcome Keymap Changed".to_string(),
                                                 );
                                                 this.workspace
@@ -174,7 +174,7 @@ impl Render for WelcomePage {
                                         .icon_position(IconPosition::Start)
                                         .on_click(
                                             cx.listener(|this, _, window, cx| {
-                                                this.telemetry.report_app_event(
+                                                this.telemetry.report_event(
                                                     "Welcome Copilot Signed In".to_string(),
                                                 );
                                                 copilot::initiate_sign_in(window, cx);
@@ -188,7 +188,7 @@ impl Render for WelcomePage {
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.telemetry.report_app_event(
+                                                this.telemetry.report_event(
                                                     "Welcome Settings Edited".to_string(),
                                                 );
                                                 window.dispatch_action(Box::new(
@@ -215,7 +215,7 @@ impl Render for WelcomePage {
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.telemetry.report_app_event(
+                                                    this.telemetry.report_event(
                                                         "Welcome CLI Installed".to_string(),
                                                     );
                                                     cx
@@ -233,7 +233,7 @@ impl Render for WelcomePage {
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, _, cx| {
-                                                this.telemetry.report_app_event(
+                                                this.telemetry.report_event(
                                                     "Welcome Documentation Viewed".to_string(),
                                                 );
                                                 cx.open_url(DOCS_URL);
@@ -246,7 +246,7 @@ impl Render for WelcomePage {
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
                                             .on_click(cx.listener(|this, _, window, cx| {
-                                                this.telemetry.report_app_event(
+                                                this.telemetry.report_event(
                                                     "Welcome Extensions Page Opened".to_string(),
                                                 );
                                                 window.dispatch_action(Box::new(
@@ -283,7 +283,7 @@ impl Render for WelcomePage {
                                             },
                                             cx.listener(move |this, selection, _window, cx| {
                                                 this.telemetry
-                                                    .report_app_event("Welcome Vim Mode Toggled".to_string());
+                                                    .report_event("Welcome Vim Mode Toggled".to_string());
                                                 this.update_settings::<VimModeSetting>(
                                                     selection,
                                                     cx,
@@ -314,7 +314,7 @@ impl Render for WelcomePage {
                                         ui::ToggleState::Unselected
                                     },
                                     cx.listener(move |this, selection, _window, cx| {
-                                        this.telemetry.report_app_event(
+                                        this.telemetry.report_event(
                                             "Welcome Diagnostic Telemetry Toggled".to_string(),
                                         );
                                         this.update_settings::<TelemetrySettings>(selection, cx, {
@@ -342,7 +342,7 @@ impl Render for WelcomePage {
                                         ui::ToggleState::Unselected
                                     },
                                     cx.listener(move |this, selection, _window, cx| {
-                                        this.telemetry.report_app_event(
+                                        this.telemetry.report_event(
                                             "Welcome Metric Telemetry Toggled".to_string(),
                                         );
                                         this.update_settings::<TelemetrySettings>(selection, cx, {
@@ -370,7 +370,7 @@ impl WelcomePage {
         let this = cx.new(|cx| {
             cx.on_release(|this: &mut Self, _| {
                 this.telemetry
-                    .report_app_event("Welcome Page Closed".to_string());
+                    .report_event("Welcome Page Closed".to_string());
             })
             .detach();
 

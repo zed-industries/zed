@@ -260,7 +260,7 @@ impl Telemetry {
                 async move {
                     while let Some(event) = rx.next().await {
                         let Some(state) = this.upgrade() else { break };
-                        state.report_event(Event::Flexible(event))
+                        state.report_event_internal(Event::Flexible(event))
                     }
                 }
             })
@@ -355,7 +355,11 @@ impl Telemetry {
         );
     }
 
-    pub fn report_app_event(self: &Arc<Self>, operation: String) {
+    pub fn report_event(self: &Arc<Self>, event_type: String) {
+        telemetry::event!(event_type);
+    }
+
+    pub fn report_project_app_event(self: &Arc<Self>, operation: String) {
         telemetry::event!("App Event", operation = operation,);
     }
 
@@ -374,7 +378,7 @@ impl Telemetry {
                 is_via_ssh,
             });
 
-            self.report_event(event);
+            self.report_event_internal(event);
         }
     }
 
@@ -421,11 +425,11 @@ impl Telemetry {
         // Done on purpose to avoid calling `self.state.lock()` multiple times
         for project_type_name in project_type_names {
             // TODO - will require more for the macro. Search for "open node project"
-            self.report_app_event(format!("open {} project", project_type_name));
+            self.report_event(format!("open {} project", project_type_name));
         }
     }
 
-    fn report_event(self: &Arc<Self>, event: Event) {
+    fn report_event_internal(self: &Arc<Self>, event: Event) {
         let mut state = self.state.lock();
 
         if !state.settings.metrics {
