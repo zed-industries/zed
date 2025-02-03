@@ -66,13 +66,34 @@ pub struct WithCount {
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub enum VimSetting {
+pub enum VimOption {
     Wrap,
     NoWrap,
     Number,
     NoNumber,
     RelativeNumber,
     NoRelativeNumber,
+}
+
+impl VimOption {
+    fn from(option: &str) -> Option<Self> {
+        match option {
+            "wrap" => Some(Self::Wrap),
+            "nowrap" => Some(Self::NoWrap),
+
+            "number" => Some(Self::Number),
+            "nu" => Some(Self::Number),
+            "nonumber" => Some(Self::NoNumber),
+            "nonu" => Some(Self::NoNumber),
+
+            "relativenumber" => Some(Self::RelativeNumber),
+            "rnu" => Some(Self::RelativeNumber),
+            "norelativenumber" => Some(Self::NoRelativeNumber),
+            "nornu" => Some(Self::NoRelativeNumber),
+
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -90,7 +111,7 @@ impl_internal_actions!(
         ShellExec,
     ]
 );
-impl_actions!(vim, [VimSetting]);
+impl_actions!(vim, [VimOption]);
 
 impl PartialEq for WrappedAction {
     fn eq(&self, other: &Self) -> bool {
@@ -113,24 +134,24 @@ impl Deref for WrappedAction {
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
-    Vim::action(editor, cx, |vim, setting: &VimSetting, window, cx| {
+    Vim::action(editor, cx, |vim, setting: &VimOption, window, cx| {
         vim.update_editor(window, cx, |_, editor, _, cx| match setting {
-            VimSetting::Wrap => {
+            VimOption::Wrap => {
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             }
-            VimSetting::NoWrap => {
+            VimOption::NoWrap => {
                 editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
             }
-            VimSetting::Number => {
+            VimOption::Number => {
                 editor.set_show_line_numbers(true, cx);
             }
-            VimSetting::NoNumber => {
+            VimOption::NoNumber => {
                 editor.set_show_line_numbers(false, cx);
             }
-            VimSetting::RelativeNumber => {
+            VimOption::RelativeNumber => {
                 editor.set_relative_line_number(Some(true), cx);
             }
-            VimSetting::NoRelativeNumber => {
+            VimOption::NoRelativeNumber => {
                 editor.set_relative_line_number(Some(false), cx);
             }
         });
@@ -784,14 +805,6 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
             .bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
-        VimCommand::new(("set wrap", ""), VimSetting::Wrap),
-        VimCommand::new(("set nowrap", ""), VimSetting::NoWrap),
-        VimCommand::new(("set nu", "mber"), VimSetting::Number),
-        VimCommand::new(("set nonu", "mber"), VimSetting::NoNumber),
-        VimCommand::new(("set rnu", ""), VimSetting::RelativeNumber),
-        VimCommand::new(("set relativenumber", ""), VimSetting::RelativeNumber),
-        VimCommand::new(("set nornu", ""), VimSetting::NoRelativeNumber),
-        VimCommand::new(("set norelativenumber", ""), VimSetting::NoRelativeNumber),
     ]
 }
 
@@ -866,6 +879,14 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             }
             .boxed_clone(),
         )
+    } else if query.starts_with("set ") {
+        if let Some((_, option)) = query.split_at_checked(4) {
+            let option = VimOption::from(option)?;
+
+            Some(option.boxed_clone())
+        } else {
+            None
+        }
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
