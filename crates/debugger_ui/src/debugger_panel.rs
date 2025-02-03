@@ -1216,8 +1216,8 @@ impl Render for DebugPanel {
                                             "Choose a debugger",
                                         )
                                         .label_size(LabelSize::Small)
-                                        .on_click(move |_, _window, cx| {
-                                            cx.dispatch_action(&Start);
+                                        .on_click(move |_, window, cx| {
+                                            window.dispatch_action(Box::new(Start), cx);
                                         })
                                     ),
                                 ),
