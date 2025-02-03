@@ -359,14 +359,14 @@ impl Telemetry {
         drop(state);
 
         if let Some((start, end, environment)) = period_data {
-            let duration_milliseconds = end
+            let duration = end
                 .saturating_duration_since(start)
                 .min(Duration::from_secs(60 * 60 * 24))
                 .as_millis() as i64;
 
             telemetry::event!(
                 "Editor Edited",
-                duration_milliseconds = duration_milliseconds,
+                duration = duration,
                 environment = environment.to_string(),
                 is_via_ssh = is_via_ssh
             );
