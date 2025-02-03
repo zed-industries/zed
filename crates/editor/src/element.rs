@@ -33,10 +33,10 @@ use gpui::{
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    Hsla, InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    Hsla, InteractiveElement, IntoElement, Keystroke, Length, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
+    ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -3246,17 +3246,50 @@ impl EditorElement {
                         .map_or(px(0.), |(_, _, size)| size.width),
                 );
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let bindings = window.bindings_for_action_in(
-                        &crate::AcceptInlineCompletion,
-                        &self.editor.focus_handle(cx),
-                    );
+                    let accept_keystroke: Option<Keystroke>;
+
+                    // TODO: this isn't working on mgsloan's linux machine.
+                    #[cfg(target_os = "macos")]
+                    {
+                        let bindings = window.bindings_for_action_in(
+                            &crate::AcceptInlineCompletion,
+                            &self.editor.focus_handle(cx),
+                        );
+
+                        let last_binding = bindings.last();
+
+                        accept_keystroke = if let Some(binding) = last_binding {
+                            match &binding.keystrokes() {
+                                // TODO: no need to clone once this logic works on linux.
+                                [keystroke] => Some(keystroke.clone()),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                    }
+
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        accept_keystroke = Some(Keystroke {
+                            modifiers: Modifiers {
+                                alt: true,
+                                control: false,
+                                shift: false,
+                                platform: false,
+                                function: false,
+                            },
+                            key: "enter".to_string(),
+                            key_char: None,
+                        });
+                    }
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             max_width,
                             cursor_point,
                             style,
-                            bindings.last()?,
+                            accept_keystroke.as_ref()?,
                             window,
                             cx,
                         )?;
