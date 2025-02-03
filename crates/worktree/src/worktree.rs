@@ -862,9 +862,14 @@ impl Worktree {
         }
     }
 
-    pub fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    pub fn load_file(
+        &self,
+        path: &Path,
+        skip_file_contents: bool,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Local(this) => this.load_file(path, skip_file_contents, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -1582,7 +1587,12 @@ impl LocalWorktree {
         })
     }
 
-    fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    fn load_file(
+        &self,
+        path: &Path,
+        skip_file_contents: bool,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1591,7 +1601,11 @@ impl LocalWorktree {
 
         cx.spawn(|this, _cx| async move {
             let abs_path = abs_path?;
-            let text = fs.load(&abs_path).await?;
+            let text = if skip_file_contents {
+                String::new()
+            } else {
+                fs.load(&abs_path).await?
+            };
 
             let worktree = this
                 .upgrade()
