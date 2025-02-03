@@ -30,7 +30,7 @@ pub struct RepositoryHandle {
     git_state: WeakEntity<GitState>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
-    git_repo: Option<GitRepo>,
+    git_repo: GitRepo,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
 
@@ -296,6 +296,9 @@ impl GitState {
                                     work_directory_id: repo.work_directory_id(),
                                 })
                             });
+                        let Some(git_repo) = git_repo else {
+                            continue;
+                        };
                         let existing = self
                             .repositories
                             .iter()
@@ -390,11 +393,8 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
-        let Some(git_repo) = self.git_repo.clone() else {
-            return Ok(());
-        };
         self.update_sender
-            .unbounded_send((Message::Stage(git_repo, entries), err_sender))
+            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
         Ok(())
     }
@@ -407,11 +407,8 @@ impl RepositoryHandle {
         if entries.is_empty() {
             return Ok(());
         }
-        let Some(git_repo) = self.git_repo.clone() else {
-            return Ok(());
-        };
         self.update_sender
-            .unbounded_send((Message::Unstage(git_repo, entries), err_sender))
+            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
         Ok(())
     }
@@ -463,12 +460,9 @@ impl RepositoryHandle {
         mut err_sender: mpsc::Sender<anyhow::Error>,
         cx: &mut App,
     ) -> anyhow::Result<()> {
-        let Some(git_repo) = self.git_repo.clone() else {
-            return Ok(());
-        };
         let result = self.update_sender.unbounded_send((
             Message::Commit {
-                git_repo,
+                git_repo: self.git_repo.clone(),
                 message: Rope::from(message),
                 name_and_email,
             },
@@ -494,12 +488,9 @@ impl RepositoryHandle {
         name_and_email: Option<(SharedString, SharedString)>,
         err_sender: mpsc::Sender<anyhow::Error>,
     ) -> anyhow::Result<()> {
-        let Some(git_repo) = self.git_repo.clone() else {
-            return Ok(());
-        };
         let result = self.update_sender.unbounded_send((
             Message::Commit {
-                git_repo,
+                git_repo: self.git_repo.clone(),
                 message: message.into(),
                 name_and_email,
             },
@@ -516,9 +507,6 @@ impl RepositoryHandle {
         mut err_sender: mpsc::Sender<anyhow::Error>,
         cx: &mut App,
     ) -> anyhow::Result<()> {
-        let Some(git_repo) = self.git_repo.clone() else {
-            return Ok(());
-        };
         let to_stage = self
             .repository_entry
             .status()
@@ -527,7 +515,7 @@ impl RepositoryHandle {
             .collect();
         let result = self.update_sender.unbounded_send((
             Message::StageAndCommit {
-                git_repo,
+                git_repo: self.git_repo.clone(),
                 paths: to_stage,
                 message: Rope::from(message),
                 name_and_email,

@@ -14,6 +14,7 @@ use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll};
 use gpui::*;
+use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::git::RepositoryHandle;
 use project::{Fs, Project, ProjectPath};
@@ -103,9 +104,16 @@ pub struct GitPanel {
     err_sender: mpsc::Sender<anyhow::Error>,
 }
 
-fn commit_message_editor(
+fn commit_message_buffer(
     project: &Entity<Project>,
-    active_repository: Option<&RepositoryHandle>,
+    active_repository: &RepositoryHandle,
+    cx: &mut App,
+) -> Task<Entity<Buffer>> {
+    todo!("TODO kb")
+}
+
+fn commit_message_editor(
+    commit_message_buffer: Option<Entity<Buffer>>,
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
 ) -> Editor {
@@ -122,10 +130,8 @@ fn commit_message_editor(
     };
     text_style.refine(&refinement);
 
-    let mut commit_editor = if let Some(active_repository) = active_repository.as_ref() {
-        // let buffer = cx.new(|cx| MultiBuffer::singleton(active_repository.commit_message(), cx));
-        // project.read(cx).open_buff
-        let buffer = cx.new(|cx| todo!("TODO kb"));
+    let mut commit_editor = if let Some(commit_message_buffer) = commit_message_buffer {
+        let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
         Editor::new(
             EditorMode::AutoHeight { max_lines: 10 },
             buffer,
@@ -151,12 +157,27 @@ impl GitPanel {
         workspace: WeakEntity<Workspace>,
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move { workspace.update_in(&mut cx, Self::new) })
+        cx.spawn(|mut cx| async move {
+            let commit_message_buffer = workspace.update(&mut cx, |workspace, cx| {
+                let project = workspace.project();
+                let active_repository = project.read(cx).active_repository(cx);
+                active_repository
+                    .map(|active_repository| commit_message_buffer(project, &active_repository, cx))
+            })?;
+            let commit_message_buffer = match commit_message_buffer {
+                Some(commit_message_buffer) => Some(commit_message_buffer.await),
+                None => None,
+            };
+            workspace.update_in(&mut cx, |workspace, window, cx| {
+                Self::new(workspace, window, commit_message_buffer, cx)
+            })
+        })
     }
 
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
+        commit_message_buffer: Option<Entity<Buffer>>,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
@@ -174,8 +195,8 @@ impl GitPanel {
             })
             .detach();
 
-            let commit_editor = cx
-                .new(|cx| commit_message_editor(&project, active_repository.as_ref(), window, cx));
+            let commit_editor =
+                cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
 
             let scroll_handle = UniformListScrollHandle::new();
 
@@ -743,14 +764,29 @@ impl GitPanel {
         let handle = cx.entity().downgrade();
         self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
-            if let Some(this) = handle.upgrade() {
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.update_visible_entries(cx);
-                    let active_repository = this.active_repository.as_ref();
-                    this.commit_editor =
-                        cx.new(|cx| commit_message_editor(&project, active_repository, window, cx));
-                })
-                .ok();
+            if let Some(git_panel) = handle.upgrade() {
+                let Ok(commit_message_buffer) = git_panel.update_in(&mut cx, |git_panel, _, cx| {
+                    git_panel
+                        .active_repository
+                        .as_ref()
+                        .map(|active_repository| {
+                            commit_message_buffer(&project, active_repository, cx)
+                        })
+                }) else {
+                    return;
+                };
+                let commit_message_buffer = match commit_message_buffer {
+                    Some(commit_message_buffer) => Some(commit_message_buffer.await),
+                    None => None,
+                };
+
+                git_panel
+                    .update_in(&mut cx, |git_panel, window, cx| {
+                        git_panel.update_visible_entries(cx);
+                        git_panel.commit_editor =
+                            cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+                    })
+                    .ok();
             }
         });
     }
