@@ -110,6 +110,7 @@ extern "C" fn context_trampoline(runnable: *mut c_void) {
     let task = unsafe {
         Runnable::<ForegroundContext>::from_raw(NonNull::new_unchecked(runnable as *mut ()))
     };
+
     if task.metadata().context_is_valid() {
         task.run();
     } else {

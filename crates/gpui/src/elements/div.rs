@@ -17,7 +17,7 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
-    ContextTask, DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
+    ForegroundTask, DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId,
     Hitbox, HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
@@ -2320,7 +2320,7 @@ impl ElementClickedState {
 
 pub(crate) enum ActiveTooltip {
     /// Currently delaying before showing the tooltip.
-    WaitingForShow { _task: ContextTask<()> },
+    WaitingForShow { _task: ForegroundTask<()> },
     /// Tooltip is visible, element was hovered or for hoverable tooltips, the tooltip was hovered.
     Visible {
         tooltip: AnyTooltip,
@@ -2330,7 +2330,7 @@ pub(crate) enum ActiveTooltip {
     /// before hiding it.
     WaitingForHide {
         tooltip: AnyTooltip,
-        _task: ContextTask<()>,
+        _task: ForegroundTask<()>,
     },
 }
 

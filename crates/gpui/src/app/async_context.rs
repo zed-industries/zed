@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    ContextTask, Entity, Focusable, ForegroundContext, ForegroundExecutor, Global, PromptLevel,
+    ForegroundTask, Entity, Focusable, ForegroundContext, ForegroundExecutor, Global, PromptLevel,
     Render, Reservation, Result, Task, VisualContext, Window, WindowHandle,
 };
 
@@ -122,7 +122,7 @@ impl AsyncApp {
 
     /// Schedule a future to be polled in the background.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ContextTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ForegroundTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
@@ -222,7 +222,7 @@ impl AsyncWindowContext {
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> ContextTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> ForegroundTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
@@ -508,7 +508,7 @@ impl WeakAsyncApp {
 
     /// Schedule a future to be polled in the background.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ContextTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ForegroundTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,
@@ -628,7 +628,7 @@ impl WeakAsyncWindowContext {
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> ContextTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> ForegroundTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,

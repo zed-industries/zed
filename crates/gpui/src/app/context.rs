@@ -1,6 +1,6 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncApp, ContextTask, DispatchPhase, Effect, EntityId,
-    EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation,
+    AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
+    FocusHandle, FocusOutEvent, Focusable, ForegroundTask, Global, KeystrokeObserver, Reservation,
     SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
 };
 use anyhow::Result;
@@ -199,7 +199,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> ContextTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> ForegroundTask<R>
     where
         T: 'static,
         Fut: Future<Output = R> + 'static,
@@ -604,7 +604,7 @@ impl<'a, T: 'static> Context<'a, T> {
         &self,
         window: &Window,
         f: impl FnOnce(WeakEntity<T>, AsyncWindowContext) -> Fut,
-    ) -> ContextTask<R>
+    ) -> ForegroundTask<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,

@@ -1,6 +1,6 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, ContextTask, DrawPhase, Drawable,
+    BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, ForegroundTask, DrawPhase, Drawable,
     Element, Empty, EventEmitter, ForegroundContext, ForegroundExecutor, Global, InputEvent,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
@@ -332,7 +332,7 @@ impl TestAppContext {
 
     /// Run the given task on the main thread.
     #[track_caller]
-    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ContextTask<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> ForegroundTask<R>
     where
         Fut: Future<Output = R> + 'static,
         R: 'static,

@@ -118,10 +118,10 @@ impl<T> Future for Task<T> {
 /// the task to continue running, but with no way to return a value.
 #[must_use]
 #[derive(Debug)]
-pub struct ContextTask<T>(ContextTaskState<T>);
+pub struct ForegroundTask<T>(ForegroundTaskState<T>);
 
 #[derive(Debug)]
-enum ContextTaskState<T> {
+enum ForegroundTaskState<T> {
     /// A task that is ready to return a value
     Ready(Option<T>),
 
@@ -129,22 +129,22 @@ enum ContextTaskState<T> {
     Spawned(async_task::FallibleTask<T, ForegroundContext>),
 }
 
-impl<T> ContextTask<T> {
+impl<T> ForegroundTask<T> {
     /// Creates a new task that will resolve with the value
     pub fn ready(val: T) -> Self {
-        ContextTask(ContextTaskState::Ready(Some(val)))
+        ForegroundTask(ForegroundTaskState::Ready(Some(val)))
     }
 
     /// Detaching a task runs it to completion in the background
     pub fn detach(self) {
         match self {
-            ContextTask(ContextTaskState::Ready(_)) => {}
-            ContextTask(ContextTaskState::Spawned(task)) => task.detach(),
+            ForegroundTask(ForegroundTaskState::Ready(_)) => {}
+            ForegroundTask(ForegroundTaskState::Spawned(task)) => task.detach(),
         }
     }
 }
 
-impl<E, T> ContextTask<Result<T, E>>
+impl<E, T> ForegroundTask<Result<T, E>>
 where
     T: 'static,
     E: 'static + Debug,
@@ -164,13 +164,15 @@ where
     }
 }
 
-impl<T> Future for ContextTask<T> {
+impl<T> Future for ForegroundTask<T> {
     type Output = Option<T>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         match unsafe { self.get_unchecked_mut() } {
-            ContextTask(ContextTaskState::Ready(val)) => Poll::Ready(Some(val.take().unwrap())),
-            ContextTask(ContextTaskState::Spawned(task)) => task.poll(cx),
+            ForegroundTask(ForegroundTaskState::Ready(val)) => {
+                Poll::Ready(Some(val.take().unwrap()))
+            }
+            ForegroundTask(ForegroundTaskState::Spawned(task)) => task.poll(cx),
         }
     }
 }
@@ -559,12 +561,12 @@ impl ForegroundExecutor {
         &self,
         mut context: ForegroundContext,
         future: impl Future<Output = R> + 'static,
-    ) -> ContextTask<R>
+    ) -> ForegroundTask<R>
     where
         R: 'static,
     {
         let task = self.spawn_internal(future, context);
-        ContextTask(ContextTaskState::Spawned(task.fallible()))
+        ForegroundTask(ForegroundTaskState::Spawned(task.fallible()))
     }
 
     #[track_caller]

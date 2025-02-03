@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, time::Duration};
 use anyhow::Result;
 use gpui::{
     div, hsla, img, point, prelude::*, px, rgb, size, svg, App, Application, AssetSource, Bounds,
-    BoxShadow, ClickEvent, Context, ContextTask, SharedString, Timer, Window, WindowBounds,
+    BoxShadow, ClickEvent, Context, ForegroundTask, SharedString, Timer, Window, WindowBounds,
     WindowOptions,
 };
 
@@ -35,7 +35,7 @@ impl AssetSource for Assets {
 }
 
 struct HelloWorld {
-    _task: Option<ContextTask<()>>,
+    _task: Option<ForegroundTask<()>>,
     opacity: f32,
 }
 
