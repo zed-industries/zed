@@ -38,6 +38,7 @@ impl Settings for ImageViewerSettings {
 pub struct ImageInfo {
     metadata: Option<ImageMetadata>,
     _observe_active_image: Option<Subscription>,
+    observe_image_item: Option<Subscription>,
 }
 
 impl ImageInfo {
@@ -45,13 +46,22 @@ impl ImageInfo {
         Self {
             metadata: None,
             _observe_active_image: None,
+            observe_image_item: None,
         }
     }
 
     fn update_metadata(&mut self, image_view: &Entity<ImageView>, cx: &mut Context<Self>) {
-        let image_item = image_view.read(cx).image_item.read(cx);
-        self.metadata = image_item.image_meta.clone();
-        cx.notify();
+        let image_item = image_view.read(cx).image_item.clone();
+        let current_metadata = image_item.read(cx).image_meta.clone();
+        if current_metadata.is_some() {
+            self.metadata = current_metadata;
+            cx.notify();
+        } else {
+            self.observe_image_item = Some(cx.observe(&image_item, |this, item, cx| {
+                this.metadata = item.read(cx).image_meta.clone();
+                cx.notify();
+            }));
+        }
     }
 
     fn format_file_size(&self, image_unit_type: &ImageFileSizeUnitType) -> Option<String> {
@@ -117,14 +127,17 @@ impl StatusItemView for ImageInfo {
         cx: &mut Context<Self>,
     ) {
         self._observe_active_image = None;
+        self.observe_image_item = None;
 
         if let Some(image_view) = active_pane_item.and_then(|item| item.act_as::<ImageView>(cx)) {
             self.update_metadata(&image_view, cx);
+
+            // Observe view for changes
             self._observe_active_image = Some(cx.observe(&image_view, |this, view, cx| {
                 this.update_metadata(&view, cx);
             }));
         } else {
-            self.metadata = None
+            self.metadata = None;
         }
         cx.notify();
     }

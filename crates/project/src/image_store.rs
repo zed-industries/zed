@@ -39,6 +39,7 @@ pub enum ImageItemEvent {
     ReloadNeeded,
     Reloaded,
     FileHandleChanged,
+    MetadataUpdated,
 }
 
 impl EventEmitter<ImageItemEvent> for ImageItem {}

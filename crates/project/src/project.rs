@@ -2038,9 +2038,27 @@ impl Project {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
-        self.image_store.update(cx, |image_store, cx| {
+        let weak_project = cx.entity().downgrade();
+        let image_task = self.image_store.update(cx, |image_store, cx| {
             image_store.open_image(path.into(), cx)
-        })
+        });
+
+        let task = cx.spawn(move |_, mut cx| async move {
+            let image_item = image_task.await?;
+            let project = weak_project
+                .upgrade()
+                .ok_or_else(|| anyhow!("Project dropped"))?;
+
+            let metadata = ImageItem::image_info(image_item.clone(), project, &mut cx).await?;
+            image_item.update(&mut cx, |image_item, cx| {
+                image_item.image_meta = Some(metadata);
+                cx.emit(ImageItemEvent::MetadataUpdated);
+            })?;
+
+            Ok(image_item)
+        });
+
+        task
     }
 
     async fn send_buffer_ordered_messages(
