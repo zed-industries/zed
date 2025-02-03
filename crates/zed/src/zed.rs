@@ -404,7 +404,7 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
+                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, None, cx);
                 workspace.add_panel(git_panel, window, cx);
             });
         })?;
@@ -501,10 +501,7 @@ fn register_actions(
         })
         .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, window, cx| {
-            workspace
-                .client()
-                .telemetry()
-                .report_app_event("open project".to_string());
+            telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
                     files: true,
@@ -785,6 +782,7 @@ fn register_actions(
                         app_state,
                         cx,
                         |workspace, window, cx| {
+                            cx.activate(true);
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )

@@ -59,6 +59,15 @@
   (#set! tag go-benchmark)
 )
 
+; Functions names start with `Fuzz`
+(
+  (
+    (function_declaration name: (_) @run @_name
+      (#match? @_name "^Fuzz"))
+  ) @_
+  (#set! tag go-fuzz)
+)
+
 ; go run
 (
   (
