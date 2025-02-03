@@ -129,6 +129,7 @@ impl Model {
                 let encoded = module_list.encode_to_vec();
                 self.module_list = encoded;
             }
+            proto::update_debug_adapter::Variant::OutputEvent(_) => {}
         }
 
         Ok(())

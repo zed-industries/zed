@@ -3,7 +3,9 @@ use client::proto::{
     self, DapChecksum, DapChecksumAlgorithm, DapModule, DapScope, DapScopePresentationHint,
     DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable, SetDebugClientCapabilities,
 };
-use dap_types::{Capabilities, ScopePresentationHint, Source};
+use dap_types::{
+    Capabilities, OutputEventCategory, OutputEventGroup, ScopePresentationHint, Source,
+};
 
 pub trait ProtoConversion {
     type ProtoType;
@@ -398,6 +400,93 @@ impl ProtoConversion for dap_types::SteppingGranularity {
             proto::SteppingGranularity::Line => dap_types::SteppingGranularity::Line,
             proto::SteppingGranularity::Instruction => dap_types::SteppingGranularity::Instruction,
             proto::SteppingGranularity::Statement => dap_types::SteppingGranularity::Statement,
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::OutputEventCategory {
+    type ProtoType = proto::DapOutputCategory;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        match self {
+            Self::Console => proto::DapOutputCategory::ConsoleOutput,
+            Self::Important => proto::DapOutputCategory::Important,
+            Self::Stdout => proto::DapOutputCategory::Stdout,
+            Self::Stderr => proto::DapOutputCategory::Stderr,
+            _ => proto::DapOutputCategory::Unknown,
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        match payload {
+            proto::DapOutputCategory::ConsoleOutput => Self::Console,
+            proto::DapOutputCategory::Important => Self::Important,
+            proto::DapOutputCategory::Stdout => Self::Stdout,
+            proto::DapOutputCategory::Stderr => Self::Stderr,
+            proto::DapOutputCategory::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::OutputEvent {
+    type ProtoType = proto::DapOutputEvent;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        proto::DapOutputEvent {
+            category: self
+                .category
+                .as_ref()
+                .map(|category| category.to_proto().into()),
+            output: self.output.clone(),
+            variables_reference: self.variables_reference,
+            source: self.source.as_ref().map(|source| source.to_proto()),
+            line: self.line.map(|line| line as u32),
+            column: self.column.map(|column| column as u32),
+            group: self.group.map(|group| group.to_proto().into()),
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        dap_types::OutputEvent {
+            category: payload
+                .category
+                .and_then(proto::DapOutputCategory::from_i32)
+                .map(OutputEventCategory::from_proto),
+            output: payload.output.clone(),
+            variables_reference: payload.variables_reference,
+            source: payload.source.map(Source::from_proto),
+            line: payload.line.map(|line| line as u64),
+            column: payload.column.map(|column| column as u64),
+            group: payload
+                .group
+                .and_then(proto::DapOutputEventGroup::from_i32)
+                .map(OutputEventGroup::from_proto),
+            data: None,
+        }
+    }
+}
+
+impl ProtoConversion for dap_types::OutputEventGroup {
+    type ProtoType = proto::DapOutputEventGroup;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        match self {
+            dap_types::OutputEventGroup::Start => proto::DapOutputEventGroup::Start,
+            dap_types::OutputEventGroup::StartCollapsed => {
+                proto::DapOutputEventGroup::StartCollapsed
+            }
+            dap_types::OutputEventGroup::End => proto::DapOutputEventGroup::End,
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        match payload {
+            proto::DapOutputEventGroup::Start => Self::Start,
+            proto::DapOutputEventGroup::StartCollapsed => Self::StartCollapsed,
+            proto::DapOutputEventGroup::End => Self::End,
         }
     }
 }

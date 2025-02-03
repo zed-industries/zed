@@ -5,7 +5,7 @@ use crate::module_list::ModuleList;
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use crate::variable_list::VariableList;
 
-use dap::proto_conversions;
+use dap::proto_conversions::{self, ProtoConversion};
 use dap::session::DebugSessionId;
 use dap::{
     client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities,
@@ -124,6 +124,7 @@ impl DebugPanelItem {
         let console = cx.new(|cx| {
             Console::new(
                 &stack_frame_list,
+                session_id,
                 client_id,
                 variable_list.clone(),
                 dap_store.clone(),
@@ -441,7 +442,12 @@ impl DebugPanelItem {
         }
     }
 
-    pub(crate) fn update_adapter(&mut self, update: &UpdateDebugAdapter, cx: &mut Context<Self>) {
+    pub(crate) fn update_adapter(
+        &mut self,
+        update: &UpdateDebugAdapter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(update_variant) = update.variant.as_ref() {
             match update_variant {
                 proto::update_debug_adapter::Variant::StackFrameList(stack_frame_list) => {
@@ -463,6 +469,11 @@ impl DebugPanelItem {
                 proto::update_debug_adapter::Variant::Modules(module_list) => {
                     self.module_list.update(cx, |this, cx| {
                         this.set_from_proto(module_list, cx);
+                    })
+                }
+                proto::update_debug_adapter::Variant::OutputEvent(output_event) => {
+                    self.console.update(cx, |this, cx| {
+                        this.add_message(OutputEvent::from_proto(output_event.clone()), window, cx);
                     })
                 }
             }

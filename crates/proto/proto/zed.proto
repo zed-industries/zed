@@ -2809,8 +2809,7 @@ message DebuggerLoadedSourceList {
 }
 
 message DebuggerConsole {
-    // Editor console = 1;
-    // Editor query_bar = 2;
+    // repeated DapOutputEvent events = 1;
 }
 
 message DebuggerModuleList {
@@ -2844,6 +2843,7 @@ message UpdateDebugAdapter {
         DebuggerVariableList variable_list = 7;
         AddToVariableList add_to_variable_list = 8;
         DebuggerModuleList modules = 9;
+        DapOutputEvent output_event = 10;
     }
 }
 
@@ -2890,6 +2890,30 @@ message DapSource {
     repeated DapSource sources = 6;
     optional bytes adapter_data = 7;
     repeated DapChecksum checksums = 8;
+}
+
+enum DapOutputCategory {
+    ConsoleOutput = 0;
+    Important = 1;
+    Stdout = 2;
+    Stderr = 3;
+    Unknown = 4;
+}
+
+enum DapOutputEventGroup {
+    Start = 0;
+    StartCollapsed = 1;
+    End = 2;
+}
+
+message DapOutputEvent {
+    string output = 1;
+    optional DapOutputCategory category = 2;
+    optional uint64 variables_reference = 3;
+    optional DapOutputEventGroup group = 4;
+    optional DapSource source = 5;
+    optional uint32 line = 6;
+    optional uint32 column = 7;
 }
 
 enum DapChecksumAlgorithm {

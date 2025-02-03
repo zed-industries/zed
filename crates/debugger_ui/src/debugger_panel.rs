@@ -1009,7 +1009,7 @@ impl DebugPanel {
 
         if let Some((debug_panel_item, is_active_item)) = search {
             debug_panel_item.update(cx, |this, cx| {
-                this.update_adapter(update, cx);
+                this.update_adapter(update, window, cx);
 
                 if is_active_item {
                     this.go_to_current_stack_frame(window, cx);

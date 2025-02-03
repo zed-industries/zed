@@ -2,7 +2,10 @@ use crate::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
-use dap::{client::DebugAdapterClientId, OutputEvent, OutputEventGroup};
+use dap::{
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
+    OutputEvent, OutputEventGroup,
+};
 use editor::{
     display_map::{Crease, CreaseId},
     Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
@@ -12,10 +15,12 @@ use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
 use menu::Confirm;
 use project::{dap_store::DapStore, Completion};
+use rpc::proto;
 use settings::Settings;
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
 use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
+use util::ResultExt;
 
 pub struct OutputGroup {
     pub start: Anchor,
@@ -29,6 +34,7 @@ pub struct Console {
     groups: Vec<OutputGroup>,
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
+    session_id: DebugSessionId,
     dap_store: Entity<DapStore>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
@@ -39,6 +45,7 @@ pub struct Console {
 impl Console {
     pub fn new(
         stack_frame_list: &Entity<StackFrameList>,
+        session_id: &DebugSessionId,
         client_id: &DebugAdapterClientId,
         variable_list: Entity<VariableList>,
         dap_store: Entity<DapStore>,
@@ -87,6 +94,7 @@ impl Console {
             _subscriptions,
             client_id: *client_id,
             groups: Vec::default(),
+            session_id: *session_id,
             stack_frame_list: stack_frame_list.clone(),
         }
     }
@@ -99,6 +107,10 @@ impl Console {
     #[cfg(any(test, feature = "test-support"))]
     pub fn query_bar(&self) -> &Entity<Editor> {
         &self.query_bar
+    }
+
+    fn is_local(&self, cx: &Context<Self>) -> bool {
+        self.dap_store.read(cx).as_local().is_some()
     }
 
     fn handle_stack_frame_list_events(
@@ -114,6 +126,21 @@ impl Console {
     }
 
     pub fn add_message(&mut self, event: OutputEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
+            client
+                .send(proto::UpdateDebugAdapter {
+                    project_id: *project_id,
+                    client_id: self.client_id.to_proto(),
+                    thread_id: None,
+                    session_id: self.session_id.to_proto(),
+                    variant: Some(proto::update_debug_adapter::Variant::OutputEvent(
+                        event.to_proto(),
+                    )),
+                })
+                .log_err();
+            return;
+        }
+
         self.console.update(cx, |console, cx| {
             let output = event.output.trim_end().to_string();
 
@@ -329,11 +356,10 @@ impl Render for Console {
             .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
-            .child(
-                div()
-                    .child(self.render_query_bar(cx))
-                    .pt(DynamicSpacing::Base04.rems(cx)),
-            )
+            .when(self.is_local(cx), |this| {
+                this.child(self.render_query_bar(cx))
+                    .pt(DynamicSpacing::Base04.rems(cx))
+            })
             .border_2()
     }
 }

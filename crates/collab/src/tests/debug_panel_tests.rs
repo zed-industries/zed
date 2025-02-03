@@ -5,6 +5,7 @@ use dap::{
     SourceBreakpoint, StackFrame,
 };
 use dap::{Scope, Variable};
+use debugger_ui::debugger_panel_item::DebugPanelItem;
 use debugger_ui::{debugger_panel::DebugPanel, variable_list::VariableContainer};
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
@@ -15,6 +16,7 @@ use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
+use unindent::Unindent as _;
 use workspace::{dock::Panel, Workspace};
 
 use super::{TestClient, TestServer};
@@ -46,6 +48,18 @@ async fn add_debugger_panel(workspace: &Entity<Workspace>, cx: &mut VisualTestCo
     workspace.update_in(cx, |workspace, window, cx| {
         workspace.add_panel(debugger_panel, window, cx);
     });
+}
+
+pub fn active_debug_panel_item(
+    workspace: Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Entity<DebugPanelItem> {
+    workspace.update_in(cx, |workspace, _window, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+        debug_panel
+            .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            .unwrap()
+    })
 }
 
 struct ZedInstance<'a> {
@@ -2230,4 +2244,291 @@ async fn test_ignore_breakpoints(
             );
         })
     });
+}
+
+#[gpui::test]
+async fn test_debug_panel_console(host_cx: &mut TestAppContext, remote_cx: &mut TestAppContext) {
+    let executor = host_cx.executor();
+    let mut server = TestServer::start(executor).await;
+
+    let (mut host_zed, mut remote_zed) =
+        setup_two_member_test(&mut server, host_cx, remote_cx).await;
+
+    let (host_project_id, _) = host_zed.host_project(None).await;
+    remote_zed.join_project(host_project_id).await;
+
+    let (_client_host, _host_workspace, host_project, host_cx) = host_zed.expand().await;
+    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+
+    remote_cx.run_until_parked();
+
+    let task = host_project.update(host_cx, |project, cx| {
+        project.start_debug_session(
+            dap::DebugAdapterConfig {
+                label: "test config".into(),
+                kind: dap::DebugAdapterKind::Fake,
+                request: dap::DebugRequestType::Launch,
+                program: None,
+                cwd: None,
+                initialize_args: None,
+            },
+            cx,
+        )
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: None,
+            output: "First line".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First group".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::Start),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First item in group 1".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item in group 1".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second group".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::Start),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First item in group 2".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item in group 2".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "End group 2".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::End),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Third group".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::StartCollapsed),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First item in group 3".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item in group 3".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "End group 3".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::End),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Third item in group 1".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::End),
+        }))
+        .await;
+
+    host_cx.run_until_parked();
+    remote_cx.run_until_parked();
+
+    active_debug_panel_item(remote_workspace, remote_cx).update(
+        remote_cx,
+        |debug_panel_item, cx| {
+            debug_panel_item.console().update(cx, |console, cx| {
+                console.editor().update(cx, |editor, cx| {
+                    pretty_assertions::assert_eq!(
+                        "
+                        First line
+                        First group
+                            First item in group 1
+                            Second item in group 1
+                            Second group
+                                First item in group 2
+                                Second item in group 2
+                            End group 2
+                        ⋯    End group 3
+                            Third item in group 1
+                        Second item
+                    "
+                        .unindent(),
+                        editor.display_text(cx)
+                    );
+                })
+            });
+        },
+    );
+
+    let shutdown_client = host_project.update(host_cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_client.await.unwrap();
 }
