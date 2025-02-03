@@ -5486,7 +5486,7 @@ impl Editor {
                     &snapshot,
                     &edits,
                     edit_preview.as_ref()?,
-                    false,
+                    true,
                     cx,
                 );
 
