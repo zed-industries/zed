@@ -5434,7 +5434,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Entity<ui::ContextMenu> {
         let weak_editor = cx.weak_entity();
-        let weak_editor2 = weak_editor.clone();
         let focus_handle = self.focus_handle(cx);
 
         let second_entry_msg = if kind.log_message().is_some() {
@@ -5446,20 +5445,23 @@ impl Editor {
         ui::ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
-                .entry("Toggle Breakpoint", None, move |_window, cx| {
-                    weak_editor
-                        .update(cx, |this, cx| {
-                            this.edit_breakpoint_at_anchor(
-                                anchor,
-                                BreakpointKind::Standard,
-                                BreakpointEditAction::Toggle,
-                                cx,
-                            );
-                        })
-                        .log_err();
+                .entry("Toggle Breakpoint", None, {
+                    let weak_editor = weak_editor.clone();
+                    move |_window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.edit_breakpoint_at_anchor(
+                                    anchor,
+                                    BreakpointKind::Standard,
+                                    BreakpointEditAction::Toggle,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    }
                 })
                 .entry(second_entry_msg, None, move |window, cx| {
-                    weak_editor2
+                    weak_editor
                         .update(cx, |this, cx| {
                             this.add_edit_breakpoint_block(row, anchor, kind.as_ref(), window, cx);
                         })
