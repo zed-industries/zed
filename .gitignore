@@ -31,6 +31,7 @@ DerivedData/
 .wrangler
 .flatpak-builder
 .envrc
+/snap
 
 # Don't commit any secrets to the repo.
 .env.secret.toml
