@@ -581,8 +581,7 @@ mod tests {
     use clock::FakeSystemClock;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
-    use std::collections::HashMap;
-    use telemetry_events::{Event, FlexibleEvent};
+    use telemetry_events::FlexibleEvent;
 
     #[gpui::test]
     fn test_telemetry_flush_on_max_queue_size(cx: &mut TestAppContext) {
