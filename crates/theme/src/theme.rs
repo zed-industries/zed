@@ -24,6 +24,7 @@ use std::sync::Arc;
 
 use ::settings::Settings;
 use anyhow::Result;
+use fallback_themes::apply_status_color_defaults;
 use fs::Fs;
 use gpui::{
     px, App, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString, WindowAppearance,
@@ -155,7 +156,9 @@ impl ThemeFamily {
             AppearanceContent::Light => StatusColors::light(),
             AppearanceContent::Dark => StatusColors::dark(),
         };
-        refined_status_colors.refine(&theme.style.status_colors_refinement());
+        let mut status_colors_refinement = theme.style.status_colors_refinement();
+        apply_status_color_defaults(&mut status_colors_refinement);
+        refined_status_colors.refine(&status_colors_refinement);
 
         let mut refined_player_colors = match theme.appearance {
             AppearanceContent::Light => PlayerColors::light(),
