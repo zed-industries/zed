@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, App, FocusHandle, IntoElement, Keystroke, Window};
+use gpui::{
+    relative, Action, AnyElement, App, FocusHandle, IntoElement, Keystroke, Modifiers, Window,
+};
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -41,30 +43,6 @@ impl KeyBinding {
         Some(Self::new(key_binding))
     }
 
-    fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
-        match keystroke.key.as_str() {
-            "left" => Some(IconName::ArrowLeft),
-            "right" => Some(IconName::ArrowRight),
-            "up" => Some(IconName::ArrowUp),
-            "down" => Some(IconName::ArrowDown),
-            "backspace" => Some(IconName::Backspace),
-            "delete" => Some(IconName::Delete),
-            "return" => Some(IconName::Return),
-            "enter" => Some(IconName::Return),
-            "tab" => Some(IconName::Tab),
-            "space" => Some(IconName::Space),
-            "escape" => Some(IconName::Escape),
-            "pagedown" => Some(IconName::PageDown),
-            "pageup" => Some(IconName::PageUp),
-            "shift" if self.platform_style == PlatformStyle::Mac => Some(IconName::Shift),
-            "control" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            "platform" if self.platform_style == PlatformStyle::Mac => Some(IconName::Command),
-            "function" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            "alt" if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
-            _ => None,
-        }
-    }
-
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
         Self {
             key_binding,
@@ -96,58 +74,118 @@ impl RenderOnce for KeyBinding {
             .gap(DynamicSpacing::Base04.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = self.icon_for_key(keystroke);
-
                 h_flex()
                     .flex_none()
                     .py_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
-                    .when(keystroke.modifiers.function, |el| {
-                        match self.platform_style {
-                            PlatformStyle::Mac => el.child(Key::new("fn")),
-                            PlatformStyle::Linux | PlatformStyle::Windows => {
-                                el.child(Key::new("Fn")).child(Key::new("+"))
-                            }
-                        }
-                    })
-                    .when(keystroke.modifiers.control, |el| {
-                        match self.platform_style {
-                            PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Control)),
-                            PlatformStyle::Linux | PlatformStyle::Windows => {
-                                el.child(Key::new("Ctrl")).child(Key::new("+"))
-                            }
-                        }
-                    })
-                    .when(keystroke.modifiers.alt, |el| match self.platform_style {
-                        PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Option)),
-                        PlatformStyle::Linux | PlatformStyle::Windows => {
-                            el.child(Key::new("Alt")).child(Key::new("+"))
-                        }
-                    })
-                    .when(keystroke.modifiers.platform, |el| {
-                        match self.platform_style {
-                            PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Command)),
-                            PlatformStyle::Linux => {
-                                el.child(Key::new("Super")).child(Key::new("+"))
-                            }
-                            PlatformStyle::Windows => {
-                                el.child(Key::new("Win")).child(Key::new("+"))
-                            }
-                        }
-                    })
-                    .when(keystroke.modifiers.shift, |el| match self.platform_style {
-                        PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Shift)),
-                        PlatformStyle::Linux | PlatformStyle::Windows => {
-                            el.child(Key::new("Shift")).child(Key::new("+"))
-                        }
-                    })
-                    .map(|el| match key_icon {
-                        Some(icon) => el.child(KeyIcon::new(icon)),
-                        None => el.child(Key::new(keystroke.key.to_uppercase())),
-                    })
+                    .children(render_modifiers(&keystroke.modifiers, self.platform_style))
+                    .map(|el| el.child(render_key(&keystroke, self.platform_style)))
             }))
     }
+}
+
+pub fn render_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> AnyElement {
+    let key_icon = icon_for_key(keystroke, platform_style);
+    match key_icon {
+        Some(icon) => KeyIcon::new(icon).into_any_element(),
+        None => Key::new(keystroke.key.to_uppercase()).into_any_element(),
+    }
+}
+
+fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<IconName> {
+    match keystroke.key.as_str() {
+        "left" => Some(IconName::ArrowLeft),
+        "right" => Some(IconName::ArrowRight),
+        "up" => Some(IconName::ArrowUp),
+        "down" => Some(IconName::ArrowDown),
+        "backspace" => Some(IconName::Backspace),
+        "delete" => Some(IconName::Delete),
+        "return" => Some(IconName::Return),
+        "enter" => Some(IconName::Return),
+        // "tab" => Some(IconName::Tab),
+        "space" => Some(IconName::Space),
+        "escape" => Some(IconName::Escape),
+        "pagedown" => Some(IconName::PageDown),
+        "pageup" => Some(IconName::PageUp),
+        "shift" if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+        "control" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
+        "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
+        _ => None,
+    }
+}
+
+pub fn render_modifiers(
+    modifiers: &Modifiers,
+    platform_style: PlatformStyle,
+) -> impl Iterator<Item = AnyElement> {
+    let mut modifier_elements = Vec::new();
+
+    if modifiers.function {
+        match platform_style {
+            PlatformStyle::Mac => modifier_elements.push(Key::new("fn").into_any_element()),
+            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
+                Key::new("Fn").into_any_element(),
+                Key::new("+").into_any_element(),
+            ]),
+        }
+    }
+
+    if modifiers.control {
+        match platform_style {
+            PlatformStyle::Mac => {
+                modifier_elements.push(KeyIcon::new(IconName::Control).into_any_element())
+            }
+            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
+                Key::new("Ctrl").into_any_element(),
+                Key::new("+").into_any_element(),
+            ]),
+        }
+    }
+
+    if modifiers.alt {
+        match platform_style {
+            PlatformStyle::Mac => {
+                modifier_elements.push(KeyIcon::new(IconName::Option).into_any_element())
+            }
+            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
+                Key::new("Alt").into_any_element(),
+                Key::new("+").into_any_element(),
+            ]),
+        }
+    }
+
+    if modifiers.platform {
+        match platform_style {
+            PlatformStyle::Mac => {
+                modifier_elements.push(KeyIcon::new(IconName::Command).into_any_element())
+            }
+            PlatformStyle::Linux => modifier_elements.extend([
+                Key::new("Super").into_any_element(),
+                Key::new("+").into_any_element(),
+            ]),
+            PlatformStyle::Windows => modifier_elements.extend([
+                Key::new("Win").into_any_element(),
+                Key::new("+").into_any_element(),
+            ]),
+        }
+    }
+
+    if modifiers.shift {
+        match platform_style {
+            PlatformStyle::Mac => {
+                modifier_elements.push(KeyIcon::new(IconName::Shift).into_any_element())
+            }
+            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
+                Key::new("Shift").into_any_element(),
+                Key::new("+").into_any_element(),
+            ]),
+        }
+    }
+
+    modifier_elements.into_iter()
 }
 
 #[derive(IntoElement)]

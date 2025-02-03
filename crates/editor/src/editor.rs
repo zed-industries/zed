@@ -161,8 +161,8 @@ use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
-    Tooltip,
+    h_flex, prelude::*, render_modifiers, ButtonSize, ButtonStyle, Disclosure, IconButton,
+    IconName, IconSize, Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -490,6 +490,15 @@ struct InlineCompletionState {
     inlay_ids: Vec<InlayId>,
     completion: InlineCompletion,
     invalidation_range: Range<Anchor>,
+}
+
+impl InlineCompletionState {
+    pub fn is_move(&self) -> bool {
+        match &self.completion {
+            InlineCompletion::Move { .. } => true,
+            _ => false,
+        }
+    }
 }
 
 enum InlineCompletionHighlight {}
@@ -4963,7 +4972,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_active_inline_completion() || !self.show_inline_completions_in_menu(cx) {
+        // Moves jump directly with a preview step
+        if self
+            .active_inline_completion
+            .as_ref()
+            .map_or(true, |c| c.is_move())
+            || !self.show_inline_completions_in_menu(cx)
+        {
             return;
         }
 
@@ -5406,6 +5421,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
+        accept_binding: &gpui::KeyBinding,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.inline_completion_provider.as_ref()?;
@@ -5489,6 +5505,15 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        // dbg!(self.key_context());
+        // dbg!(bindings);
+        // let binding = bindings.last()?;
+
+        let keystroke = match &accept_binding.keystrokes() {
+            [keystroke] => keystroke,
+            _ => return None,
+        };
+
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5505,16 +5530,22 @@ impl Editor {
                         .border_l_1()
                         .border_color(cx.theme().colors().border_variant)
                         .pl_2()
-                        .child(
-                            #[cfg(not(target_os = "macos"))]
-                            div()
-                                .child(Label::new("alt").size(LabelSize::Small))
-                                .font(buffer_font),
-                            #[cfg(target_os = "macos")]
-                            Icon::new(IconName::Option).size(IconSize::Small),
-                        )
+                        .children(ui::render_modifiers(
+                            &keystroke.modifiers,
+                            PlatformStyle::platform(),
+                        ))
                         .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(Label::new("Preview").color(Color::Muted)),
+                        .child(
+                            if self
+                                .active_inline_completion
+                                .as_ref()
+                                .map_or(false, |c| c.is_move())
+                            {
+                                ui::render_key(&keystroke, PlatformStyle::platform())
+                            } else {
+                                Label::new("Preview").color(Color::Muted).into_any_element()
+                            },
+                        ),
                 )
                 .into_any(),
         )

@@ -3246,11 +3246,17 @@ impl EditorElement {
                         .map_or(px(0.), |(_, _, size)| size.width),
                 );
                 let edit_prediction = if edit_prediction_popover_visible {
-                    self.editor.update(cx, |editor, cx| {
+                    let bindings = window.bindings_for_action_in(
+                        &crate::AcceptInlineCompletion,
+                        &self.editor.focus_handle(cx),
+                    );
+
+                    self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             max_width,
                             cursor_point,
                             style,
+                            bindings.last()?,
                             cx,
                         )?;
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
