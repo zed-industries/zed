@@ -208,31 +208,6 @@ fn commit_message_editor(
 }
 
 impl GitPanel {
-    pub fn load(
-        workspace: WeakEntity<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let commit_message_buffer = workspace.update(&mut cx, |workspace, cx| {
-                let project = workspace.project();
-                let active_repository = project.read(cx).active_repository(cx);
-                active_repository
-                    .map(|active_repository| commit_message_buffer(project, &active_repository, cx))
-            })?;
-            let commit_message_buffer = match commit_message_buffer {
-                Some(commit_message_buffer) => Some(
-                    commit_message_buffer
-                        .await
-                        .context("opening commit buffer")?,
-                ),
-                None => None,
-            };
-            workspace.update_in(&mut cx, |workspace, window, cx| {
-                Self::new(workspace, window, commit_message_buffer, cx)
-            })
-        })
-    }
-
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -361,7 +336,6 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        // TODO: we can store stage status here
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
