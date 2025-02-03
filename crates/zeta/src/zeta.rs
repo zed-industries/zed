@@ -1530,6 +1530,16 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 .log_err()
                 .flatten()
             else {
+                this.update(&mut cx, |this, cx| {
+                    if this.pending_completions[0].id == pending_completion_id {
+                        this.pending_completions.remove(0);
+                    } else {
+                        this.pending_completions.clear();
+                    }
+
+                    cx.notify();
+                })
+                .ok();
                 return;
             };
 
