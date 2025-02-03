@@ -101,21 +101,18 @@ impl ActivityIndicator {
         });
 
         cx.subscribe_in(&this, window, move |_, _, event, window, cx| match event {
-            Event::ShowError {
-                server_name: lsp_name,
-                error,
-            } => {
+            Event::ShowError { server_name, error } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
                 let project = project.clone();
                 let error = error.clone();
-                let lsp_name = lsp_name.clone();
+                let server_name = server_name.clone();
                 cx.spawn_in(window, |workspace, mut cx| async move {
                     let buffer = create_buffer.await?;
                     buffer.update(&mut cx, |buffer, cx| {
                         buffer.edit(
                             [(
                                 0..0,
-                                format!("Language server error: {}\n\n{}", lsp_name, error),
+                                format!("Language server error: {}\n\n{}", server_name, error),
                             )],
                             None,
                             cx,
