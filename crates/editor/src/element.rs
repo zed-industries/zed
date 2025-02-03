@@ -3257,6 +3257,7 @@ impl EditorElement {
                             cursor_point,
                             style,
                             bindings.last()?,
+                            window,
                             cx,
                         )?;
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);

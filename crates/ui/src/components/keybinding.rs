@@ -79,17 +79,33 @@ impl RenderOnce for KeyBinding {
                     .py_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
-                    .children(render_modifiers(&keystroke.modifiers, self.platform_style))
-                    .map(|el| el.child(render_key(&keystroke, self.platform_style)))
+                    .children(render_modifiers(
+                        &keystroke.modifiers,
+                        self.platform_style,
+                        None,
+                    ))
+                    .map(|el| el.child(render_key(&keystroke, self.platform_style, None)))
             }))
     }
 }
 
-pub fn render_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> AnyElement {
+pub fn render_key(
+    keystroke: &Keystroke,
+    platform_style: PlatformStyle,
+    color: Option<Color>,
+) -> AnyElement {
     let key_icon = icon_for_key(keystroke, platform_style);
     match key_icon {
-        Some(icon) => KeyIcon::new(icon).into_any_element(),
-        None => Key::new(keystroke.key.to_uppercase()).into_any_element(),
+        Some(icon) => KeyIcon::new(icon, color).into_any_element(),
+        None => Key::new(
+            if keystroke.key.len() > 1 {
+                keystroke.key.clone()
+            } else {
+                keystroke.key.to_uppercase()
+            },
+            color,
+        )
+        .into_any_element(),
     }
 }
 
@@ -120,77 +136,86 @@ fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<
 pub fn render_modifiers(
     modifiers: &Modifiers,
     platform_style: PlatformStyle,
+    color: Option<Color>,
 ) -> impl Iterator<Item = AnyElement> {
-    let mut modifier_elements = Vec::new();
-
-    if modifiers.function {
-        match platform_style {
-            PlatformStyle::Mac => modifier_elements.push(Key::new("fn").into_any_element()),
-            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
-                Key::new("Fn").into_any_element(),
-                Key::new("+").into_any_element(),
-            ]),
-        }
+    enum KeyOrIcon {
+        Key(&'static str),
+        Icon(IconName),
     }
 
-    if modifiers.control {
-        match platform_style {
-            PlatformStyle::Mac => {
-                modifier_elements.push(KeyIcon::new(IconName::Control).into_any_element())
+    struct Modifier {
+        enabled: bool,
+        mac: KeyOrIcon,
+        linux: KeyOrIcon,
+        windows: KeyOrIcon,
+    }
+
+    let table = {
+        use KeyOrIcon::*;
+
+        [
+            Modifier {
+                enabled: modifiers.function,
+                mac: Icon(IconName::Control),
+                linux: Key("Fn"),
+                windows: Key("Fn"),
+            },
+            Modifier {
+                enabled: modifiers.control,
+                mac: Icon(IconName::Control),
+                linux: Key("Ctrl"),
+                windows: Key("Ctrl"),
+            },
+            Modifier {
+                enabled: modifiers.alt,
+                mac: Icon(IconName::Option),
+                linux: Key("Alt"),
+                windows: Key("Alt"),
+            },
+            Modifier {
+                enabled: modifiers.platform,
+                mac: Icon(IconName::Command),
+                linux: Key("Super"),
+                windows: Key("Win"),
+            },
+            Modifier {
+                enabled: modifiers.shift,
+                mac: Icon(IconName::Shift),
+                linux: Key("Shift"),
+                windows: Key("Shift"),
+            },
+        ]
+    };
+
+    table
+        .into_iter()
+        .flat_map(move |modifier| {
+            if modifier.enabled {
+                match platform_style {
+                    PlatformStyle::Mac => Some(modifier.mac),
+                    PlatformStyle::Linux => Some(modifier.linux)
+                        .into_iter()
+                        .chain(Some(KeyOrIcon::Key("+")).into_iter())
+                        .next(),
+                    PlatformStyle::Windows => Some(modifier.windows)
+                        .into_iter()
+                        .chain(Some(KeyOrIcon::Key("+")).into_iter())
+                        .next(),
+                }
+            } else {
+                None
             }
-            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
-                Key::new("Ctrl").into_any_element(),
-                Key::new("+").into_any_element(),
-            ]),
-        }
-    }
-
-    if modifiers.alt {
-        match platform_style {
-            PlatformStyle::Mac => {
-                modifier_elements.push(KeyIcon::new(IconName::Option).into_any_element())
-            }
-            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
-                Key::new("Alt").into_any_element(),
-                Key::new("+").into_any_element(),
-            ]),
-        }
-    }
-
-    if modifiers.platform {
-        match platform_style {
-            PlatformStyle::Mac => {
-                modifier_elements.push(KeyIcon::new(IconName::Command).into_any_element())
-            }
-            PlatformStyle::Linux => modifier_elements.extend([
-                Key::new("Super").into_any_element(),
-                Key::new("+").into_any_element(),
-            ]),
-            PlatformStyle::Windows => modifier_elements.extend([
-                Key::new("Win").into_any_element(),
-                Key::new("+").into_any_element(),
-            ]),
-        }
-    }
-
-    if modifiers.shift {
-        match platform_style {
-            PlatformStyle::Mac => {
-                modifier_elements.push(KeyIcon::new(IconName::Shift).into_any_element())
-            }
-            PlatformStyle::Linux | PlatformStyle::Windows => modifier_elements.extend([
-                Key::new("Shift").into_any_element(),
-                Key::new("+").into_any_element(),
-            ]),
-        }
-    }
-
-    modifier_elements.into_iter()
+        })
+        .map(move |key_or_icon| match key_or_icon {
+            KeyOrIcon::Key(key) => Key::new(key, color).into_any_element(),
+            KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).into_any_element(),
+        })
 }
 
 #[derive(IntoElement)]
 pub struct Key {
     key: SharedString,
+    color: Option<Color>,
 }
 
 impl RenderOnce for Key {
@@ -212,33 +237,37 @@ impl RenderOnce for Key {
             .h(rems_from_px(14.))
             .text_ui(cx)
             .line_height(relative(1.))
-            .text_color(cx.theme().colors().text_muted)
+            .text_color(self.color.unwrap_or(Color::Muted).color(cx))
             .child(self.key.clone())
     }
 }
 
 impl Key {
-    pub fn new(key: impl Into<SharedString>) -> Self {
-        Self { key: key.into() }
+    pub fn new(key: impl Into<SharedString>, color: Option<Color>) -> Self {
+        Self {
+            key: key.into(),
+            color,
+        }
     }
 }
 
 #[derive(IntoElement)]
 pub struct KeyIcon {
     icon: IconName,
+    color: Option<Color>,
 }
 
 impl RenderOnce for KeyIcon {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         Icon::new(self.icon)
             .size(IconSize::XSmall)
-            .color(Color::Muted)
+            .color(self.color.unwrap_or(Color::Muted))
     }
 }
 
 impl KeyIcon {
-    pub fn new(icon: IconName) -> Self {
-        Self { icon }
+    pub fn new(icon: IconName, color: Option<Color>) -> Self {
+        Self { icon, color }
     }
 }
 

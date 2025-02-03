@@ -4973,12 +4973,17 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         // Moves jump directly with a preview step
+
         if self
             .active_inline_completion
             .as_ref()
             .map_or(true, |c| c.is_move())
-            || !self.show_inline_completions_in_menu(cx)
         {
+            cx.notify();
+            return;
+        }
+
+        if !self.show_inline_completions_in_menu(cx) {
             return;
         }
 
@@ -5422,6 +5427,7 @@ impl Editor {
         cursor_point: Point,
         style: &EditorStyle,
         accept_binding: &gpui::KeyBinding,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.inline_completion_provider.as_ref()?;
@@ -5505,10 +5511,6 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
-        // dbg!(self.key_context());
-        // dbg!(bindings);
-        // let binding = bindings.last()?;
-
         let keystroke = match &accept_binding.keystrokes() {
             [keystroke] => keystroke,
             _ => return None,
@@ -5526,14 +5528,24 @@ impl Editor {
                 .child(div().w_full())
                 .child(
                     h_flex()
-                        .gap_1()
                         .border_l_1()
                         .border_color(cx.theme().colors().border_variant)
                         .pl_2()
-                        .children(ui::render_modifiers(
-                            &keystroke.modifiers,
-                            PlatformStyle::platform(),
-                        ))
+                        .child(
+                            h_flex()
+                                .font(buffer_font.clone())
+                                .p_1()
+                                .rounded_sm()
+                                .children(ui::render_modifiers(
+                                    &keystroke.modifiers,
+                                    PlatformStyle::platform(),
+                                    if window.modifiers() == keystroke.modifiers {
+                                        Some(Color::Accent)
+                                    } else {
+                                        None
+                                    },
+                                )),
+                        )
                         .opacity(if has_completion { 1.0 } else { 0.1 })
                         .child(
                             if self
@@ -5541,7 +5553,10 @@ impl Editor {
                                 .as_ref()
                                 .map_or(false, |c| c.is_move())
                             {
-                                ui::render_key(&keystroke, PlatformStyle::platform())
+                                div()
+                                    .child(ui::Key::new(&keystroke.key, None))
+                                    .font(buffer_font.clone())
+                                    .into_any()
                             } else {
                                 Label::new("Preview").color(Color::Muted).into_any_element()
                             },
