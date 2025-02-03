@@ -7,7 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_actions, impl_internal_actions, Action, App, Context, Global, Window};
+use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -65,7 +65,6 @@ pub struct WithCount {
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub enum VimOption {
     Wrap,
     NoWrap,
@@ -96,6 +95,11 @@ impl VimOption {
     }
 }
 
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+pub struct VimSet {
+    options: Vec<VimOption>,
+}
+
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
@@ -109,9 +113,9 @@ impl_internal_actions!(
         WithCount,
         OnMatchingLines,
         ShellExec,
+        VimSet,
     ]
 );
-impl_actions!(vim, [VimOption]);
 
 impl PartialEq for WrappedAction {
     fn eq(&self, other: &Self) -> bool {
@@ -134,27 +138,30 @@ impl Deref for WrappedAction {
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     // Vim::action(editor, cx, |vim, action: &StartOfLine, window, cx| {
-    Vim::action(editor, cx, |vim, setting: &VimOption, window, cx| {
-        vim.update_editor(window, cx, |_, editor, _, cx| match setting {
-            VimOption::Wrap => {
-                editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            }
-            VimOption::NoWrap => {
-                editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
-            }
-            VimOption::Number => {
-                editor.set_show_line_numbers(true, cx);
-            }
-            VimOption::NoNumber => {
-                editor.set_show_line_numbers(false, cx);
-            }
-            VimOption::RelativeNumber => {
-                editor.set_relative_line_number(Some(true), cx);
-            }
-            VimOption::NoRelativeNumber => {
-                editor.set_relative_line_number(Some(false), cx);
-            }
-        });
+    Vim::action(editor, cx, |vim, action: &VimSet, window, cx| {
+        for option in action.options.iter() {
+            vim.update_editor(window, cx, |_, editor, _, cx| match option {
+                VimOption::Wrap => {
+                    editor
+                        .set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+                }
+                VimOption::NoWrap => {
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                }
+                VimOption::Number => {
+                    editor.set_show_line_numbers(true, cx);
+                }
+                VimOption::NoNumber => {
+                    editor.set_show_line_numbers(false, cx);
+                }
+                VimOption::RelativeNumber => {
+                    editor.set_relative_line_number(Some(true), cx);
+                }
+                VimOption::NoRelativeNumber => {
+                    editor.set_relative_line_number(Some(false), cx);
+                }
+            });
+        }
     });
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
@@ -880,13 +887,14 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Option<CommandIntercept
             .boxed_clone(),
         )
     } else if query.starts_with("set ") {
-        if let Some((_, option)) = query.split_at_checked(4) {
-            let option = VimOption::from(option)?;
+        let options = query.split_at_checked(4)?.1;
+        let options = options.split(' ');
+        let options = options.map(|raw| VimOption::from(raw));
+        let options: Vec<VimOption> = options.collect::<Option<Vec<_>>>()?;
 
-            Some(option.boxed_clone())
-        } else {
-            None
-        }
+        let action = VimSet { options };
+
+        Some(action.boxed_clone())
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
