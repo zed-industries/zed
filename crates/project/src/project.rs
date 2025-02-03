@@ -4082,6 +4082,14 @@ impl Project {
         }
     }
 
+    async fn handle_open_commit_message_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenBufferResponse> {
+        todo!("TODO kb")
+    }
+
     fn respond_to_open_buffer_request(
         this: Entity<Self>,
         buffer: Entity<Buffer>,
@@ -4118,7 +4126,7 @@ impl Project {
         buffer.read(cx).remote_id()
     }
 
-    fn wait_for_remote_buffer(
+    pub fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
         cx: &mut Context<Self>,

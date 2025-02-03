@@ -732,6 +732,14 @@ impl HeadlessProject {
             Ok(proto::Ack {})
         }
     }
+
+    async fn handle_open_commit_message_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenBufferResponse> {
+        todo!("TODO kb")
+    }
 }
 
 fn prompt_to_proto(

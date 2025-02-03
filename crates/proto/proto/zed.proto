@@ -311,7 +311,8 @@ message Envelope {
 
         Stage stage = 293;
         Unstage unstage = 294;
-        Commit commit = 295; // current max
+        Commit commit = 295;
+        OpenCommitMessageBuffer open_commit_message_buffer = 296; // current max
     }
 
     reserved 87 to 88;
@@ -2658,4 +2659,10 @@ message Commit {
     string message = 4;
     optional string name = 5;
     optional string email = 6;
+}
+
+message OpenCommitMessageBuffer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
 }

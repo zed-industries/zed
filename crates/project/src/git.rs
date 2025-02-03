@@ -30,12 +30,12 @@ pub struct RepositoryHandle {
     git_state: WeakEntity<GitState>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
-    git_repo: GitRepo,
+    pub git_repo: GitRepo,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
 
 #[derive(Clone)]
-enum GitRepo {
+pub enum GitRepo {
     Local(Arc<dyn GitRepository>),
     Remote {
         project_id: ProjectId,

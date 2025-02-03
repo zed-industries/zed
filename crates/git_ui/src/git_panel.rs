@@ -3,7 +3,7 @@ use crate::repository_selector::RepositorySelectorPopoverMenu;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
@@ -12,12 +12,15 @@ use futures::channel::mpsc;
 use futures::StreamExt as _;
 use git::repository::RepoPath;
 use git::status::FileStatus;
-use git::{CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll};
+use git::{
+    CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll, COMMIT_MESSAGE,
+};
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::git::RepositoryHandle;
+use project::git::{GitRepo, RepositoryHandle};
 use project::{Fs, Project, ProjectPath};
+use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
@@ -105,11 +108,39 @@ pub struct GitPanel {
 }
 
 fn commit_message_buffer(
-    project: &Entity<Project>,
+    project: Entity<Project>,
     active_repository: &RepositoryHandle,
     cx: &mut App,
-) -> Task<Entity<Buffer>> {
-    todo!("TODO kb")
+) -> Task<Result<Entity<Buffer>>> {
+    match &active_repository.git_repo {
+        GitRepo::Local(repo) => {
+            let commit_message_file = repo.dot_git_dir().join(*COMMIT_MESSAGE);
+            // TODO kb
+            Task::ready(Ok(cx.new(|cx| Buffer::local("", cx))))
+        }
+        GitRepo::Remote {
+            project_id,
+            client,
+            worktree_id,
+            work_directory_id,
+        } => {
+            let request = client.request(proto::OpenCommitMessageBuffer {
+                project_id: project_id.0,
+                worktree_id: worktree_id.to_proto(),
+                work_directory_id: work_directory_id.to_proto(),
+            });
+            cx.spawn(|cx| async move {
+                let response = request.await.context("requesting to open commit buffer")?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+                let buffer = project
+                    .update(&mut cx, {
+                        |project, cx| project.wait_for_remote_buffer(buffer_id, cx)
+                    })?
+                    .await?;
+                Ok(buffer)
+            })
+        }
+    }
 }
 
 fn commit_message_editor(
@@ -161,11 +192,16 @@ impl GitPanel {
             let commit_message_buffer = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project();
                 let active_repository = project.read(cx).active_repository(cx);
-                active_repository
-                    .map(|active_repository| commit_message_buffer(project, &active_repository, cx))
+                active_repository.map(|active_repository| {
+                    commit_message_buffer(project.clone(), &active_repository, cx)
+                })
             })?;
             let commit_message_buffer = match commit_message_buffer {
-                Some(commit_message_buffer) => Some(commit_message_buffer.await),
+                Some(commit_message_buffer) => Some(
+                    commit_message_buffer
+                        .await
+                        .context("opening commit buffer")?,
+                ),
                 None => None,
             };
             workspace.update_in(&mut cx, |workspace, window, cx| {
@@ -770,13 +806,17 @@ impl GitPanel {
                         .active_repository
                         .as_ref()
                         .map(|active_repository| {
-                            commit_message_buffer(&project, active_repository, cx)
+                            commit_message_buffer(project, active_repository, cx)
                         })
                 }) else {
                     return;
                 };
                 let commit_message_buffer = match commit_message_buffer {
-                    Some(commit_message_buffer) => Some(commit_message_buffer.await),
+                    Some(commit_message_buffer) => Some(
+                        commit_message_buffer
+                            .await
+                            .context("opening commit buffer on repo update")?,
+                    ),
                     None => None,
                 };
 

@@ -5268,6 +5268,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "rpc",
  "schemars",
  "serde",
  "serde_derive",
