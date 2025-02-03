@@ -2,10 +2,10 @@ mod completion_diff_element;
 mod init;
 mod onboarding_banner;
 mod onboarding_modal;
-mod persistence;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
+use db::kvp::KEY_VALUE_STORE;
 pub use init::*;
 use inline_completion::DataCollectionState;
 pub use onboarding_banner::*;
@@ -29,25 +29,25 @@ use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use std::{
     borrow::Cow,
-    cmp, env,
+    cmp,
     fmt::Write,
     future::Future,
     mem,
     ops::Range,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::Workspace;
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
+const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
 
@@ -203,7 +203,7 @@ pub struct Zeta {
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
-    data_collection_preferences: DataCollectionPreferences,
+    data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     tos_accepted: bool, // Terms of service accepted
@@ -233,13 +233,17 @@ impl Zeta {
 
     fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
+
+        let data_collection_choice = Self::load_data_collection_choices();
+        let data_collection_choice = cx.new(|_| data_collection_choice);
+
         Self {
             client,
             events: VecDeque::new(),
             shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
-            data_collection_preferences: Self::load_data_collection_preferences(cx),
+            data_collection_choice,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -900,94 +904,45 @@ and then another
         new_snapshot
     }
 
-    /// Creates a `Entity<DataCollectionChoice>` for each unique worktree abs path it sees.
-    pub fn data_collection_choice_at(
-        &mut self,
-        worktree_abs_path: &Path,
-        cx: &mut Context<Self>,
-    ) -> Entity<DataCollectionChoice> {
-        match self
-            .data_collection_preferences
-            .per_worktree
-            .get(worktree_abs_path)
-        {
-            Some(choice) => choice.clone(),
-            None => {
-                let choice = cx.new(|_| DataCollectionChoice::NotAnswered);
-                self.data_collection_preferences
-                    .per_worktree
-                    .insert(worktree_abs_path.to_path_buf(), choice.clone());
-                choice
-            }
-        }
+    fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
+        let toggled = self.data_collection_choice.read(cx).toggle();
+        self.update_data_collection_choice(toggled.is_enabled(), cx);
     }
 
-    fn update_data_collection_choice(
-        &mut self,
-        worktree_abs_path: &Path,
-        update_fn: impl Fn(&DataCollectionChoice) -> DataCollectionChoice,
-        cx: &mut Context<Self>,
-    ) {
-        let choice = self
-            .data_collection_choice_at(worktree_abs_path, cx)
-            .update(cx, |choice, _cx| {
-                *choice = update_fn(choice);
-                *choice
-            });
-
-        let worktree_path = worktree_abs_path.to_path_buf();
-        db::write_and_log(cx, move || {
-            persistence::DB.save_data_collection_choice(worktree_path, choice.is_enabled())
-        });
-
-        self.data_collection_preferences.latest_choice = choice;
-    }
-
-    fn load_data_collection_preferences(cx: &mut Context<Self>) -> DataCollectionPreferences {
-        if env::var("ZED_PREDICT_CLEAR_DATA_COLLECTION_PREFERENCES").is_ok() {
-            db::write_and_log(cx, move || async move {
-                persistence::DB.clear_all_zeta_preferences().await
-            });
-            return DataCollectionPreferences::default();
-        }
-
-        let Some(preferences) = persistence::DB
-            .get_all_data_collection_preferences()
-            .log_err()
-        else {
-            return DataCollectionPreferences::default();
+    fn update_data_collection_choice(&mut self, new_choice_bool: bool, cx: &mut Context<Self>) {
+        let new_choice = match new_choice_bool {
+            true => DataCollectionChoice::Enabled,
+            false => DataCollectionChoice::Disabled,
         };
 
-        let latest_choice = preferences
-            .last()
-            .map(|(_, choice)| (*choice).into())
-            .unwrap_or_default();
+        self.data_collection_choice.update(cx, |choice, _| {
+            *choice = new_choice;
+        });
 
-        let preferences_per_worktree = preferences
-            .into_iter()
-            .map(|(path, choice)| {
-                let choice = cx.new(|_| choice.into());
-                (path, choice)
-            })
-            .collect();
+        db::write_and_log(cx, move || {
+            KEY_VALUE_STORE.write_kvp(
+                ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                new_choice_bool.to_string(),
+            )
+        });
+    }
 
-        DataCollectionPreferences {
-            per_worktree: preferences_per_worktree,
-            latest_choice,
+    fn load_data_collection_choices() -> DataCollectionChoice {
+        let choice = KEY_VALUE_STORE
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .flatten();
+
+        match choice.as_ref().map(String::as_str) {
+            Some("true") => DataCollectionChoice::Enabled,
+            Some("false") => DataCollectionChoice::Disabled,
+            Some(_) => {
+                log::error!("unknown value in '{ZED_PREDICT_DATA_COLLECTION_CHOICE}'");
+                DataCollectionChoice::NotAnswered
+            }
+            None => DataCollectionChoice::NotAnswered,
         }
     }
-}
-
-#[derive(Default, Debug)]
-struct DataCollectionPreferences {
-    /// The choices for each worktree.
-    ///
-    /// This is filled when loading from database, or when querying if no matching path is found.
-    per_worktree: HashMap<PathBuf, Entity<DataCollectionChoice>>,
-    /// The latest choice made.
-    ///
-    /// Used to decided whether to show status bar notification circle.
-    latest_choice: DataCollectionChoice,
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
@@ -1293,9 +1248,8 @@ struct PendingCompletion {
     _task: Task<()>,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub enum DataCollectionChoice {
-    #[default]
     NotAnswered,
     Enabled,
     Disabled,
@@ -1334,68 +1288,61 @@ impl From<bool> for DataCollectionChoice {
     }
 }
 
+pub struct ProviderDataCollection {
+    /// When set to None, data collection is not possible in the provider buffer
+    choice: Option<Entity<DataCollectionChoice>>,
+}
+
+impl ProviderDataCollection {
+    pub fn new(zeta: Entity<Zeta>, buffer: Option<Entity<Buffer>>, cx: &mut App) -> Self {
+        let choice = buffer.and_then(|buffer| {
+            let file = buffer.read(cx).file()?;
+
+            if !file.is_local() || file.is_private() {
+                return None;
+            }
+
+            let choice = zeta.read(cx).data_collection_choice.clone();
+            Some(choice)
+        });
+
+        ProviderDataCollection { choice }
+    }
+
+    pub fn can_collect_data(&self, cx: &App) -> bool {
+        self.choice
+            .as_ref()
+            .is_some_and(|choice| choice.read(cx).is_enabled())
+    }
+
+    pub fn toggle(&mut self, cx: &mut App) {
+        if let Some(choice) = self.choice.as_mut() {
+            choice.update(cx, |choice, _cx| {
+                *choice = choice.toggle();
+            });
+        }
+    }
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
     current_completion: Option<CurrentInlineCompletion>,
-    data_collection: Option<ProviderDataCollection>,
-}
-
-pub struct ProviderDataCollection {
-    worktree_root_path: PathBuf,
-    choice: Entity<DataCollectionChoice>,
-}
-
-impl ProviderDataCollection {
-    pub fn new(
-        zeta: Entity<Zeta>,
-        workspace: Option<Entity<Workspace>>,
-        buffer: Option<Entity<Buffer>>,
-        cx: &mut App,
-    ) -> Option<ProviderDataCollection> {
-        let file = buffer?.read(cx).file()?;
-
-        if !file.is_local() || file.is_private() {
-            return None;
-        }
-
-        let worktree_id = file.worktree_id(cx);
-
-        let worktree = workspace?
-            .read(cx)
-            .project()
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)?
-            .read(cx);
-
-        if !worktree.is_visible() {
-            return None;
-        }
-
-        let worktree_root_path = worktree.abs_path().to_path_buf();
-
-        let choice = zeta.update(cx, |zeta, cx| {
-            zeta.data_collection_choice_at(&worktree_root_path, cx)
-        });
-
-        Some(ProviderDataCollection {
-            worktree_root_path,
-            choice,
-        })
-    }
+    /// None if this is entirely disabled for this provider
+    provider_data_collection: ProviderDataCollection,
 }
 
 impl ZetaInlineCompletionProvider {
     pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
 
-    pub fn new(zeta: Entity<Zeta>, data_collection: Option<ProviderDataCollection>) -> Self {
+    pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
         Self {
             zeta,
             pending_completions: ArrayVec::new(),
             next_pending_completion_id: 0,
             current_completion: None,
-            data_collection,
+            provider_data_collection,
         }
     }
 }
@@ -1421,51 +1368,18 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
-    fn clear_menu_notification(&self, cx: &mut App) {
-        let Some(data_collection) = self.data_collection.as_ref() else {
-            return;
-        };
-
-        if !data_collection.choice.read(cx).is_answered() {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.update_data_collection_choice(
-                    &data_collection.worktree_root_path,
-                    |_| DataCollectionChoice::Disabled,
-                    cx,
-                );
-            })
-        }
-    }
-
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
-        let Some(data_collection) = self.data_collection.as_ref() else {
-            return DataCollectionState::Unknown;
+        if let Some(choice) = self.provider_data_collection.choice.as_ref() {
+            if let DataCollectionChoice::Enabled = choice.read(cx) {
+                return DataCollectionState::Enabled;
+            }
         };
 
-        match data_collection.choice.read(cx) {
-            DataCollectionChoice::Enabled => DataCollectionState::Enabled,
-            DataCollectionChoice::Disabled => DataCollectionState::Disabled,
-            DataCollectionChoice::NotAnswered => {
-                match self.zeta.read(cx).data_collection_preferences.latest_choice {
-                    DataCollectionChoice::NotAnswered | DataCollectionChoice::Enabled => {
-                        DataCollectionState::Notification
-                    }
-                    DataCollectionChoice::Disabled => DataCollectionState::Disabled,
-                }
-            }
-        }
+        DataCollectionState::Disabled
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
-        if let Some(data_collection) = self.data_collection.as_mut() {
-            self.zeta.update(cx, |zeta, cx| {
-                zeta.update_data_collection_choice(
-                    &data_collection.worktree_root_path,
-                    |choice| choice.toggle(),
-                    cx,
-                )
-            });
-        }
+        self.provider_data_collection.toggle(cx);
     }
 
     fn is_enabled(
@@ -1513,12 +1427,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
-        let can_collect_data = self
-            .data_collection
-            .as_ref()
-            .map_or(false, |data_collection| {
-                data_collection.choice.read(cx).is_enabled()
-            });
+        let can_collect_data = self.provider_data_collection.can_collect_data(cx);
 
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {

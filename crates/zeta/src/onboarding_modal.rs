@@ -96,18 +96,7 @@ impl ZedPredictModal {
                     return ();
                 }
 
-                Zeta::register(this.client.clone(), this.user_store.clone(), cx).update(
-                    cx,
-                    |zeta, cx| {
-                        for worktree in this.worktrees.iter() {
-                            zeta.update_data_collection_choice(
-                                worktree.read(cx).abs_path().as_ref(),
-                                |_| this.data_collection_opted_in.into(),
-                                cx,
-                            );
-                        }
-                    },
-                );
+                Zeta::register(this.client.clone(), this.user_store.clone(), cx);
 
                 cx.emit(DismissEvent);
             })

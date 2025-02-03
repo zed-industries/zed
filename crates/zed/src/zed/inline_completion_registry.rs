@@ -10,7 +10,6 @@ use language::language_settings::{all_language_settings, InlineCompletionProvide
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use workspace::Workspace;
 use zeta::ProviderDataCollection;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
@@ -250,12 +249,8 @@ fn assign_inline_completion_provider(
                     }
                 }
 
-                let data_collection = ProviderDataCollection::new(
-                    zeta.clone(),
-                    window.root::<Workspace>().flatten(),
-                    singleton_buffer,
-                    cx,
-                );
+                let data_collection =
+                    ProviderDataCollection::new(zeta.clone(), singleton_buffer, cx);
 
                 let provider =
                     cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta, data_collection));

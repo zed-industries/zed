@@ -21,8 +21,8 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    prelude::*, ButtonLike, Clickable, ContextMenu, ContextMenuEntry, IconButton,
-    IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, PopoverMenu,
+    PopoverMenuHandle, Tooltip,
 };
 use workspace::{
     create_and_open_local_file, item::ItemHandle, notifications::NotificationId, StatusItemView,
@@ -228,34 +228,29 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
+                fn icon_button() -> IconButton {
+                    IconButton::new("zed-predict-pending-button", IconName::ZedPredict)
+                        .shape(IconButtonShape::Square)
+                }
+
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
 
-                fn button(indicator: Option<Color>, cx: &App) -> ButtonLike {
-                    ButtonLike::new("zed-predict-pending-button").child(
-                        IconWithIndicator::new(
-                            Icon::new(IconName::ZedPredict),
-                            indicator.map(|color| Indicator::dot().color(color)),
-                        )
-                        .indicator_border_color(Some(cx.theme().colors().status_bar_background))
-                        .into_any_element(),
-                    )
-                }
-
                 if !current_user_terms_accepted.unwrap_or(false) {
                     let signed_in = current_user_terms_accepted.is_some();
+                    let tooltip_meta = if signed_in {
+                        "Read Terms of Service"
+                    } else {
+                        "Sign in to use"
+                    };
 
                     return div().child(
-                        button(Some(Color::Error), cx)
+                        icon_button()
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
-                                    if signed_in {
-                                        "Read Terms of Service"
-                                    } else {
-                                        "Sign in to use"
-                                    },
+                                    tooltip_meta,
                                     window,
                                     cx,
                                 )
@@ -271,72 +266,36 @@ impl Render for InlineCompletionButton {
 
                 let this = cx.entity().clone();
 
-                let has_notification = self
-                    .inline_completion_provider
-                    .as_ref()
-                    .map_or(false, |provider| {
-                        provider.data_collection_state(cx).has_notification()
+                if !self.popover_menu_handle.is_deployed() {
+                    icon_button().tooltip(|window, cx| {
+                        Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
                     });
-
-                let indicator = if has_notification {
-                    Some(Color::Accent)
-                } else {
-                    None
-                };
-
-                let button =
-                    button(indicator, cx).when(!self.popover_menu_handle.is_deployed(), |button| {
-                        if has_notification {
-                            button.tooltip(|window, cx| {
-                                Tooltip::with_meta(
-                                    "Edit Prediction",
-                                    Some(&ToggleMenu),
-                                    "Help Improve The Model",
-                                    window,
-                                    cx,
-                                )
-                            })
-                        } else {
-                            button.tooltip(|window, cx| {
-                                Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                            })
-                        }
-                    });
-
-                let is_refreshing = self
-                    .inline_completion_provider
-                    .as_ref()
-                    .map_or(false, |provider| provider.is_refreshing(cx));
+                }
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
                         Some(this.update(cx, |this, cx| this.build_zeta_context_menu(window, cx)))
                     })
                     .anchor(Corner::BottomRight)
-                    .when_some(
-                        self.inline_completion_provider.as_ref(),
-                        |element, provider| {
-                            let provider = provider.clone();
-
-                            element.on_open(std::rc::Rc::new(move |_window, cx| {
-                                provider.clear_menu_notification(cx);
-                            }))
-                        },
-                    )
                     .with_handle(self.popover_menu_handle.clone());
+
+                let is_refreshing = self
+                    .inline_completion_provider
+                    .as_ref()
+                    .map_or(false, |provider| provider.is_refreshing(cx));
 
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
-                        button.with_animation(
+                        icon_button().with_animation(
                             "pulsating-label",
                             Animation::new(Duration::from_secs(2))
                                 .repeat()
                                 .with_easing(pulsating_between(0.2, 1.0)),
-                            |icon_button, delta| icon_button.opacity(delta),
+                            |icon_button, delta| icon_button.alpha(delta),
                         ),
                     );
                 } else {
-                    popover_menu = popover_menu.trigger(button);
+                    popover_menu = popover_menu.trigger(icon_button());
                 }
 
                 div().child(popover_menu.into_any_element())
@@ -467,11 +426,15 @@ impl InlineCompletionButton {
 
             if data_collection.is_supported() {
                 let provider = provider.clone();
-                menu = menu.separator().header("Help Improve The Model");
+                menu = menu
+                    .separator()
+                    .header("OSS Projects: Help Improve The Model");
                 menu = menu.item(
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        .disabled(data_collection.is_unknown())
+                        // .disabled(data_collection.is_unknown())
+                        // TO DO: We don't want to disable this item anymore
+                        // but we want to say something here in case the project is OSS
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
                         }),
