@@ -13,7 +13,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
- "lsp",
  "project",
  "smallvec",
  "ui",
