@@ -5435,7 +5435,8 @@ impl Editor {
             None => pending_completion_container().child(Label::new("No Prediction")),
         };
 
-        let completion = completion.font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
+        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+        let completion = completion.font(buffer_font.clone());
 
         let completion = if is_refreshing {
             completion
@@ -5471,7 +5472,9 @@ impl Editor {
                         .pl_2()
                         .child(
                             #[cfg(not(target_os = "macos"))]
-                            "alt",
+                            div()
+                                .child(Label::new("alt").size(LabelSize::Small))
+                                .font(buffer_font),
                             #[cfg(target_os = "macos")]
                             Icon::new(IconName::Option).size(IconSize::Small),
                         )
