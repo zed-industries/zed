@@ -640,6 +640,7 @@ mod tests {
 
             clock.advance(Duration::from_millis(100));
 
+            // Adding a 4th event should cause a flush
             telemetry.report_event(Event::Flexible(event));
             assert!(is_empty_state(&telemetry));
         });
