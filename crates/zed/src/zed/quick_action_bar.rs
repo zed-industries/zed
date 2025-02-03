@@ -301,14 +301,14 @@ impl Render for QuickActionBar {
                             .toggleable(IconPosition::Start, inline_completion_enabled && show_inline_completions)
                             .disabled(!inline_completion_enabled)
                             .action(Some(
-                                editor::actions::ToggleInlineCompletions.boxed_clone(),
+                                editor::actions::ToggleEditPrediction.boxed_clone(),
                             )).handler({
                                 let editor = editor.clone();
                                 move |window, cx| {
                                     editor
                                         .update(cx, |editor, cx| {
                                             editor.toggle_inline_completions(
-                                                &editor::actions::ToggleInlineCompletions,
+                                                &editor::actions::ToggleEditPrediction,
                                                 window,
                                                 cx,
                                             );

@@ -310,7 +310,7 @@
       "ctrl-x": null,
       "ctrl-x ctrl-o": "editor::ShowCompletions",
       "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
-      "ctrl-x ctrl-c": "editor::ShowInlineCompletion", // zed specific
+      "ctrl-x ctrl-c": "editor::ShowEditPrediction", // zed specific
       "ctrl-x ctrl-l": "editor::ToggleCodeActions", // zed specific
       "ctrl-x ctrl-z": "editor::Cancel",
       "ctrl-w": "editor::DeleteToPreviousWordStart",

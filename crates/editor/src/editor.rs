@@ -1524,10 +1524,10 @@ impl Editor {
 
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
-            key_context.add("inline_completion");
+            key_context.add("edit_prediction");
 
-            if showing_completions || self.inline_completion_requires_modifier(cx) {
-                key_context.add("inline_completion_requires_modifier");
+            if showing_completions || self.edit_prediction_requires_modifier(cx) {
+                key_context.add("edit_prediction_requires_modifier");
             }
         }
 
@@ -1877,7 +1877,7 @@ impl Editor {
 
     pub fn toggle_inline_completions(
         &mut self,
-        _: &ToggleInlineCompletions,
+        _: &ToggleEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4694,7 +4694,7 @@ impl Editor {
         }
     }
 
-    fn inline_completion_requires_modifier(&self, cx: &App) -> bool {
+    fn edit_prediction_requires_modifier(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
 
         self.buffer
@@ -4791,7 +4791,7 @@ impl Editor {
 
     pub fn show_inline_completion(
         &mut self,
-        _: &ShowInlineCompletion,
+        _: &ShowEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4828,7 +4828,7 @@ impl Editor {
 
     pub fn next_inline_completion(
         &mut self,
-        _: &NextInlineCompletion,
+        _: &NextEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4846,7 +4846,7 @@ impl Editor {
 
     pub fn previous_inline_completion(
         &mut self,
-        _: &PreviousInlineCompletion,
+        _: &PreviousEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4864,7 +4864,7 @@ impl Editor {
 
     pub fn accept_inline_completion(
         &mut self,
-        _: &AcceptInlineCompletion,
+        _: &AcceptEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4931,7 +4931,7 @@ impl Editor {
 
     pub fn accept_partial_inline_completion(
         &mut self,
-        _: &AcceptPartialInlineCompletion,
+        _: &AcceptPartialEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5074,7 +5074,7 @@ impl Editor {
             return true;
         }
 
-        has_completion && self.inline_completion_requires_modifier(cx)
+        has_completion && self.edit_prediction_requires_modifier(cx)
     }
 
     fn update_inline_completion_preview(

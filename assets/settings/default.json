@@ -204,7 +204,7 @@
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
   // Controls whether edit predictions are shown immediately (true)
-  // or manually by triggering `editor::ShowInlineCompletion` (false).
+  // or manually by triggering `editor::ShowEditPrediction` (false).
   "show_inline_completions": true,
   // Controls whether edit predictions are shown in a given language scope.
   // Example: ["string", "comment"]

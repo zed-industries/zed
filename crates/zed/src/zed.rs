@@ -1149,6 +1149,13 @@ pub fn handle_keymap_file_changes(
                     KeymapFileLoadResult::Success { key_bindings } => {
                         reload_keymaps(cx, key_bindings);
                         dismiss_app_notification(&notification_id, cx);
+                        if KeymapFile::are_actions_deprecated(&user_keymap_content) {
+                            show_keymap_migration_notification(
+                                notification_id.clone(),
+                                fs.clone(),
+                                cx,
+                            )
+                        }
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,

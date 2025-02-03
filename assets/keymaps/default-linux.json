@@ -32,7 +32,7 @@
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "zeta::RateCompletions",
-      "ctrl-shift-i": "inline_completion::ToggleMenu"
+      "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
   },
   {
@@ -145,17 +145,17 @@
     }
   },
   {
-    "context": "Editor && mode == full && inline_completion",
+    "context": "Editor && mode == full && edit_prediction",
     "bindings": {
-      "alt-]": "editor::NextInlineCompletion",
-      "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "alt-]": "editor::NextEditPrediction",
+      "alt-[": "editor::PreviousEditPrediction",
+      "alt-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
-    "context": "Editor && !inline_completion",
+    "context": "Editor && !edit_prediction",
     "bindings": {
-      "alt-\\": "editor::ShowInlineCompletion"
+      "alt-\\": "editor::ShowEditPrediction"
     }
   },
   {
@@ -502,16 +502,16 @@
     }
   },
   {
-    "context": "Editor && inline_completion",
+    "context": "Editor && edit_prediction",
     "bindings": {
       // Changing the modifier currently breaks accepting while you also an LSP completions menu open
-      "alt-enter": "editor::AcceptInlineCompletion"
+      "alt-enter": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && inline_completion && !inline_completion_requires_modifier",
+    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
     "bindings": {
-      "tab": "editor::AcceptInlineCompletion"
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {

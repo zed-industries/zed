@@ -1,7 +1,7 @@
 use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
-use editor::{actions::ShowInlineCompletion, scroll::Autoscroll, Editor};
+use editor::{actions::ShowEditPrediction, scroll::Autoscroll, Editor};
 use feature_flags::{
     FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
 };
@@ -37,7 +37,7 @@ use zed_actions::OpenBrowser;
 use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
-actions!(inline_completion, [ToggleMenu]);
+actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -491,12 +491,12 @@ impl InlineCompletionButton {
                 .separator()
                 .entry(
                     "Predict Edit at Cursor",
-                    Some(Box::new(ShowInlineCompletion)),
+                    Some(Box::new(ShowEditPrediction)),
                     {
                         let editor_focus_handle = editor_focus_handle.clone();
 
                         move |window, cx| {
-                            editor_focus_handle.dispatch_action(&ShowInlineCompletion, window, cx);
+                            editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
                         }
                     },
                 )
