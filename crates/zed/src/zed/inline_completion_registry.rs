@@ -5,13 +5,17 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity, Window};
+use fs::Fs;
+use gpui::{AnyWindowHandle, App, AppContext, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
-use zed_predict_tos::ZedPredictTos;
+use ui::Window;
+use workspace::Workspace;
+use zed_predict_onboarding::ZedPredictModal;
+use zeta::ProviderDataCollection;
 
-pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, fs: Arc<dyn Fs>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -37,6 +41,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 }
             })
             .detach();
+
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
@@ -91,6 +96,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let editors = editors.clone();
         let client = client.clone();
         let user_store = user_store.clone();
+        let fs = fs.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
             if new_provider != provider {
@@ -123,9 +129,11 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 
                             window
                                 .update(cx, |_, window, cx| {
-                                    ZedPredictTos::toggle(
+                                    ZedPredictModal::toggle(
                                         workspace,
                                         user_store.clone(),
+                                        client.clone(),
+                                        fs.clone(),
                                         window,
                                         cx,
                                     );
@@ -214,17 +222,19 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
 
 fn assign_inline_completion_provider(
     editor: &mut Editor,
-    provider: language::language_settings::InlineCompletionProvider,
+    provider: InlineCompletionProvider,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    let singleton_buffer = editor.buffer().read(cx).as_singleton();
+
     match provider {
-        language::language_settings::InlineCompletionProvider::None => {}
-        language::language_settings::InlineCompletionProvider::Copilot => {
+        InlineCompletionProvider::None => {}
+        InlineCompletionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
-                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                if let Some(buffer) = singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         copilot.update(cx, |copilot, cx| {
                             copilot.register_buffer(&buffer, cx);
@@ -235,26 +245,35 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-        language::language_settings::InlineCompletionProvider::Supermaven => {
+        InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-
-        language::language_settings::InlineCompletionProvider::Zed => {
+        InlineCompletionProvider::Zed => {
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
                 let zeta = zeta::Zeta::register(client.clone(), user_store, cx);
-                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {
                             zeta.register_buffer(&buffer, cx);
                         });
                     }
                 }
-                let provider = cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
+
+                let data_collection = ProviderDataCollection::new(
+                    zeta.clone(),
+                    window.root::<Workspace>().flatten(),
+                    singleton_buffer,
+                    cx,
+                );
+
+                let provider =
+                    cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta, data_collection));
+
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }

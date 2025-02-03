@@ -361,7 +361,10 @@ pub fn count_open_ai_tokens(
                 .collect::<Vec<_>>();
 
             match model {
-                open_ai::Model::Custom { .. } | open_ai::Model::O1Mini | open_ai::Model::O1 => {
+                open_ai::Model::Custom { .. }
+                | open_ai::Model::O1Mini
+                | open_ai::Model::O1
+                | open_ai::Model::O3Mini => {
                     tiktoken_rs::num_tokens_from_messages("gpt-4", &messages)
                 }
                 _ => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
@@ -458,11 +461,8 @@ impl ConfigurationView {
             font_weight: settings.ui_font.weight,
             font_style: FontStyle::Normal,
             line_height: relative(1.3),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            ..Default::default()
         };
         EditorElement::new(
             &self.api_key_editor,
@@ -502,7 +502,7 @@ impl Render for ConfigurationView {
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
                     Button::new("openai_console", OPENAI_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
-                        .icon(IconName::ExternalLink)
+                        .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _, cx| cx.open_url(OPENAI_CONSOLE_URL))
@@ -518,6 +518,8 @@ impl Render for ConfigurationView {
                         .px_2()
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
                         .rounded_md()
                         .child(self.render_api_key_editor(cx)),
                 )

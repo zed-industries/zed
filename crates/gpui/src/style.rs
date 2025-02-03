@@ -287,13 +287,24 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextOverflow {
+    /// Truncate the text with an ellipsis, same as: `text-overflow: ellipsis;` in CSS
+    Ellipsis(&'static str),
+}
+
+/// How to align text within the element
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum Truncate {
-    /// Truncate the text without an ellipsis
+pub enum TextAlign {
+    /// Align the text to the left of the element
     #[default]
-    Truncate,
-    /// Truncate the text with an ellipsis
-    Ellipsis,
+    Left,
+
+    /// Center the text within the element
+    Center,
+
+    /// Align the text to the right of the element
+    Right,
 }
 
 /// The properties that can be used to style text in GPUI
@@ -337,7 +348,13 @@ pub struct TextStyle {
     pub white_space: WhiteSpace,
 
     /// The text should be truncated if it overflows the width of the element
-    pub truncate: Option<Truncate>,
+    pub text_overflow: Option<TextOverflow>,
+
+    /// How the text should be aligned within the element
+    pub text_align: TextAlign,
+
+    /// The number of lines to display before truncating the text
+    pub line_clamp: Option<usize>,
 }
 
 impl Default for TextStyle {
@@ -362,7 +379,9 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            text_overflow: None,
+            text_align: TextAlign::default(),
+            line_clamp: None,
         }
     }
 }

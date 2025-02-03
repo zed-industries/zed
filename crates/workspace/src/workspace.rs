@@ -58,7 +58,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
+use project::{
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -1301,7 +1303,10 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, _| window.activate_window())
+                .update(&mut cx, |_, window, cx| {
+                    window.activate_window();
+                    cx.activate(true);
+                })
                 .log_err();
             Ok((window, opened_items))
         })
@@ -2217,6 +2222,18 @@ impl Workspace {
             }
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, window, cx),
         }
+    }
+
+    pub fn absolute_path_of_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        self.project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            // TODO: use `abs_path` or `root_dir`
+            .map(|wt| wt.read(cx).abs_path().as_ref().to_path_buf())
     }
 
     fn add_folder_to_project(
@@ -3242,9 +3259,31 @@ impl Workspace {
         }
     }
 
-    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut Context<Self>) {
-        self.center
-            .resize(&self.active_pane, axis, amount, &self.bounds);
+    pub fn resize_pane(
+        &mut self,
+        axis: gpui::Axis,
+        amount: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let docks = self.all_docks();
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+
+        if let Some(dock) = active_dock {
+            let Some(panel_size) = dock.read(cx).active_panel_size(window, cx) else {
+                return;
+            };
+            match dock.read(cx).position() {
+                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
+                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
+                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+            }
+        } else {
+            self.center
+                .resize(&self.active_pane, axis, amount, &self.bounds);
+        }
         cx.notify();
     }
 

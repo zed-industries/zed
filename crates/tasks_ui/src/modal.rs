@@ -7,7 +7,7 @@ use gpui::{
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
     WeakEntity, Window,
 };
-use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
+use picker::{highlighted_match_with_paths::HighlightedMatch, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, RevealTarget, TaskContext, TaskModal, TaskTemplate, TaskType};
 use ui::{
@@ -382,7 +382,7 @@ impl PickerDelegate for TasksModalDelegate {
             Some(Tooltip::simple(tooltip_label_text, cx))
         };
 
-        let highlighted_location = HighlightedText {
+        let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
             char_count: hit.string.chars().count(),

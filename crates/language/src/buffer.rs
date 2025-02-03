@@ -236,36 +236,35 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-) -> Documentation {
+) -> CompletionDocumentation {
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                Documentation::SingleLine(text.clone())
+                CompletionDocumentation::SingleLine(text.clone())
             } else {
-                Documentation::MultiLinePlainText(text.clone())
+                CompletionDocumentation::MultiLinePlainText(text.clone())
             }
         }
 
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    Documentation::SingleLine(value.clone())
+                    CompletionDocumentation::SingleLine(value.clone())
                 } else {
-                    Documentation::MultiLinePlainText(value.clone())
+                    CompletionDocumentation::MultiLinePlainText(value.clone())
                 }
             }
 
             lsp::MarkupKind::Markdown => {
                 let parsed = parse_markdown(value, Some(language_registry), language).await;
-                Documentation::MultiLineMarkdown(parsed)
+                CompletionDocumentation::MultiLineMarkdown(parsed)
             }
         },
     }
 }
 
-/// Documentation associated with a [`Completion`].
 #[derive(Clone, Debug)]
-pub enum Documentation {
+pub enum CompletionDocumentation {
     /// There is no documentation for this completion.
     Undocumented,
     /// A single line of documentation.
@@ -588,16 +587,104 @@ pub struct Runnable {
     pub buffer: BufferId,
 }
 
-#[derive(Clone)]
-pub struct EditPreview {
-    applied_edits_snapshot: text::BufferSnapshot,
-    syntax_snapshot: SyntaxSnapshot,
-}
-
 #[derive(Default, Clone, Debug)]
-pub struct HighlightedEdits {
+pub struct HighlightedText {
     pub text: SharedString,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+#[derive(Default, Debug)]
+struct HighlightedTextBuilder {
+    pub text: String,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl HighlightedText {
+    pub fn from_buffer_range<T: ToOffset>(
+        range: Range<T>,
+        snapshot: &text::BufferSnapshot,
+        syntax_snapshot: &SyntaxSnapshot,
+        override_style: Option<HighlightStyle>,
+        syntax_theme: &SyntaxTheme,
+    ) -> Self {
+        let mut highlighted_text = HighlightedTextBuilder::default();
+        highlighted_text.add_text_from_buffer_range(
+            range,
+            snapshot,
+            syntax_snapshot,
+            override_style,
+            syntax_theme,
+        );
+        highlighted_text.build()
+    }
+}
+
+impl HighlightedTextBuilder {
+    pub fn build(self) -> HighlightedText {
+        HighlightedText {
+            text: self.text.into(),
+            highlights: self.highlights,
+        }
+    }
+
+    pub fn add_text_from_buffer_range<T: ToOffset>(
+        &mut self,
+        range: Range<T>,
+        snapshot: &text::BufferSnapshot,
+        syntax_snapshot: &SyntaxSnapshot,
+        override_style: Option<HighlightStyle>,
+        syntax_theme: &SyntaxTheme,
+    ) {
+        let range = range.to_offset(snapshot);
+        for chunk in Self::highlighted_chunks(range, snapshot, syntax_snapshot) {
+            let start = self.text.len();
+            self.text.push_str(chunk.text);
+            let end = self.text.len();
+
+            if let Some(mut highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(syntax_theme))
+            {
+                if let Some(override_style) = override_style {
+                    highlight_style.highlight(override_style);
+                }
+                self.highlights.push((start..end, highlight_style));
+            } else if let Some(override_style) = override_style {
+                self.highlights.push((start..end, override_style));
+            }
+        }
+    }
+
+    fn highlighted_chunks<'a>(
+        range: Range<usize>,
+        snapshot: &'a text::BufferSnapshot,
+        syntax_snapshot: &'a SyntaxSnapshot,
+    ) -> BufferChunks<'a> {
+        let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
+            grammar.highlights_query.as_ref()
+        });
+
+        let highlight_maps = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+
+        BufferChunks::new(
+            snapshot.as_rope(),
+            range,
+            Some((captures, highlight_maps)),
+            false,
+            None,
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct EditPreview {
+    old_snapshot: text::BufferSnapshot,
+    applied_edits_snapshot: text::BufferSnapshot,
+    syntax_snapshot: SyntaxSnapshot,
 }
 
 impl EditPreview {
@@ -607,140 +694,97 @@ impl EditPreview {
         edits: &[(Range<Anchor>, String)],
         include_deletions: bool,
         cx: &App,
-    ) -> HighlightedEdits {
-        let mut text = String::new();
-        let mut highlights = Vec::new();
-        let Some(range) = self.compute_visible_range(edits, current_snapshot) else {
-            return HighlightedEdits::default();
+    ) -> HighlightedText {
+        let Some(visible_range_in_preview_snapshot) = self.compute_visible_range(edits) else {
+            return HighlightedText::default();
         };
-        let mut offset = range.start;
-        let mut delta = 0isize;
 
-        let status_colors = cx.theme().status();
+        let mut highlighted_text = HighlightedTextBuilder::default();
+
+        let mut offset_in_preview_snapshot = visible_range_in_preview_snapshot.start;
+
+        let insertion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().created_background),
+            ..Default::default()
+        };
+        let deletion_highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().status().deleted_background),
+            ..Default::default()
+        };
+        let syntax_theme = cx.theme().syntax();
 
         for (range, edit_text) in edits {
-            let edit_range = range.to_offset(current_snapshot);
-            let new_edit_start = (edit_range.start as isize + delta) as usize;
-            let new_edit_range = new_edit_start..new_edit_start + edit_text.len();
+            let edit_new_end_in_preview_snapshot = range
+                .end
+                .bias_right(&self.old_snapshot)
+                .to_offset(&self.applied_edits_snapshot);
+            let edit_start_in_preview_snapshot = edit_new_end_in_preview_snapshot - edit_text.len();
 
-            let prev_range = offset..new_edit_start;
-
-            if !prev_range.is_empty() {
-                let start = text.len();
-                self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
-                offset += text.len() - start;
+            let unchanged_range_in_preview_snapshot =
+                offset_in_preview_snapshot..edit_start_in_preview_snapshot;
+            if !unchanged_range_in_preview_snapshot.is_empty() {
+                highlighted_text.add_text_from_buffer_range(
+                    unchanged_range_in_preview_snapshot,
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    None,
+                    &syntax_theme,
+                );
             }
 
-            if include_deletions && !edit_range.is_empty() {
-                let start = text.len();
-                text.extend(current_snapshot.text_for_range(edit_range.clone()));
-                let end = text.len();
-
-                highlights.push((
-                    start..end,
-                    HighlightStyle {
-                        background_color: Some(status_colors.deleted_background),
-                        ..Default::default()
-                    },
-                ));
+            let range_in_current_snapshot = range.to_offset(current_snapshot);
+            if include_deletions && !range_in_current_snapshot.is_empty() {
+                highlighted_text.add_text_from_buffer_range(
+                    range_in_current_snapshot,
+                    &current_snapshot.text,
+                    &current_snapshot.syntax,
+                    Some(deletion_highlight_style),
+                    &syntax_theme,
+                );
             }
 
             if !edit_text.is_empty() {
-                self.highlight_text(
-                    new_edit_range,
-                    &mut text,
-                    &mut highlights,
-                    Some(HighlightStyle {
-                        background_color: Some(status_colors.created_background),
-                        ..Default::default()
-                    }),
-                    cx,
+                highlighted_text.add_text_from_buffer_range(
+                    edit_start_in_preview_snapshot..edit_new_end_in_preview_snapshot,
+                    &self.applied_edits_snapshot,
+                    &self.syntax_snapshot,
+                    Some(insertion_highlight_style),
+                    &syntax_theme,
                 );
-
-                offset += edit_text.len();
             }
 
-            delta += edit_text.len() as isize - edit_range.len() as isize;
+            offset_in_preview_snapshot = edit_new_end_in_preview_snapshot;
         }
 
-        self.highlight_text(
-            offset..(range.end as isize + delta) as usize,
-            &mut text,
-            &mut highlights,
+        highlighted_text.add_text_from_buffer_range(
+            offset_in_preview_snapshot..visible_range_in_preview_snapshot.end,
+            &self.applied_edits_snapshot,
+            &self.syntax_snapshot,
             None,
-            cx,
+            &syntax_theme,
         );
 
-        HighlightedEdits {
-            text: text.into(),
-            highlights,
-        }
+        highlighted_text.build()
     }
 
-    fn highlight_text(
-        &self,
-        range: Range<usize>,
-        text: &mut String,
-        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
-        override_style: Option<HighlightStyle>,
-        cx: &App,
-    ) {
-        for chunk in self.highlighted_chunks(range) {
-            let start = text.len();
-            text.push_str(chunk.text);
-            let end = text.len();
-
-            if let Some(mut highlight_style) = chunk
-                .syntax_highlight_id
-                .and_then(|id| id.style(cx.theme().syntax()))
-            {
-                if let Some(override_style) = override_style {
-                    highlight_style.highlight(override_style);
-                }
-                highlights.push((start..end, highlight_style));
-            } else if let Some(override_style) = override_style {
-                highlights.push((start..end, override_style));
-            }
-        }
-    }
-
-    fn highlighted_chunks(&self, range: Range<usize>) -> BufferChunks {
-        let captures =
-            self.syntax_snapshot
-                .captures(range.clone(), &self.applied_edits_snapshot, |grammar| {
-                    grammar.highlights_query.as_ref()
-                });
-
-        let highlight_maps = captures
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.highlight_map())
-            .collect();
-
-        BufferChunks::new(
-            self.applied_edits_snapshot.as_rope(),
-            range,
-            Some((captures, highlight_maps)),
-            false,
-            None,
-        )
-    }
-
-    fn compute_visible_range(
-        &self,
-        edits: &[(Range<Anchor>, String)],
-        snapshot: &BufferSnapshot,
-    ) -> Option<Range<usize>> {
+    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
-        let start = first.start.to_point(snapshot);
-        let end = last.end.to_point(snapshot);
+        let start = first
+            .start
+            .bias_left(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
+        let end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.applied_edits_snapshot);
 
         // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
-        let range = Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row));
+        let range = Point::new(start.row, 0)
+            ..Point::new(end.row, self.applied_edits_snapshot.line_len(end.row));
 
-        Some(range.to_offset(&snapshot))
+        Some(range.to_offset(&self.applied_edits_snapshot))
     }
 }
 
@@ -1003,7 +1047,7 @@ impl Buffer {
     ) -> Task<EditPreview> {
         let registry = self.language_registry();
         let language = self.language().cloned();
-
+        let old_snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_executor().spawn(async move {
@@ -1017,6 +1061,7 @@ impl Buffer {
                 }
             }
             EditPreview {
+                old_snapshot,
                 applied_edits_snapshot: branch_buffer.snapshot(),
                 syntax_snapshot,
             }
@@ -2958,6 +3003,21 @@ impl BufferSnapshot {
         // We want to look at diagnostic spans only when iterating over language-annotated chunks.
         let diagnostics = language_aware;
         BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
+    }
+
+    pub fn highlighted_text_for_range<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        override_style: Option<HighlightStyle>,
+        syntax_theme: &SyntaxTheme,
+    ) -> HighlightedText {
+        HighlightedText::from_buffer_range(
+            range,
+            &self.text,
+            &self.syntax,
+            override_style,
+            syntax_theme,
+        )
     }
 
     /// Invokes the given callback for each line of text in the given range of the buffer.

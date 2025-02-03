@@ -2273,24 +2273,45 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            if entry.is_dir() {
-                let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
-                let dir_path = if include_root {
-                    let mut full_path = PathBuf::from(worktree.read(cx).root_name());
-                    full_path.push(&entry.path);
-                    Arc::from(full_path)
-                } else {
-                    entry.path.clone()
-                };
+            let dir_path = if entry.is_dir() {
+                entry.path.clone()
+            } else {
+                // entry is a file, use its parent directory
+                match entry.path.parent() {
+                    Some(parent) => Arc::from(parent),
+                    None => {
+                        // File at root, open search with empty filter
+                        self.workspace
+                            .update(cx, |workspace, cx| {
+                                search::ProjectSearchView::new_search_in_directory(
+                                    workspace,
+                                    Path::new(""),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                        return;
+                    }
+                }
+            };
 
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        search::ProjectSearchView::new_search_in_directory(
-                            workspace, &dir_path, window, cx,
-                        );
-                    })
-                    .ok();
-            }
+            let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
+            let dir_path = if include_root {
+                let mut full_path = PathBuf::from(worktree.read(cx).root_name());
+                full_path.push(&dir_path);
+                Arc::from(full_path)
+            } else {
+                dir_path
+            };
+
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    search::ProjectSearchView::new_search_in_directory(
+                        workspace, &dir_path, window, cx,
+                    );
+                })
+                .ok();
         }
     }
 
@@ -3702,7 +3723,7 @@ impl ProjectPanel {
                     }
                     cx.stop_propagation();
 
-                    if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                    if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
                         let current_selection = this.index_for_selection(selection);
                         let clicked_entry = SelectedEntry {
                             entry_id,
@@ -3736,7 +3757,7 @@ impl ProjectPanel {
                             this.selection = Some(clicked_entry);
                             this.marked_entries.insert(clicked_entry);
                         }
-                    } else if event.down.modifiers.secondary() {
+                    } else if event.modifiers().secondary() {
                         if event.down.click_count > 1 {
                             this.split_entry(entry_id, cx);
                         } else {
@@ -3747,7 +3768,7 @@ impl ProjectPanel {
                         }
                     } else if kind.is_dir() {
                         this.marked_entries.clear();
-                        if event.down.modifiers.alt {
+                        if event.modifiers().alt {
                             this.toggle_expand_all(entry_id, window, cx);
                         } else {
                             this.toggle_expanded(entry_id, window, cx);

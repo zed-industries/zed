@@ -11,7 +11,7 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use picker::{
-    highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
+    highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
     Picker, PickerDelegate,
 };
 pub use remote_servers::RemoteServerProjects;
@@ -386,7 +386,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .unzip();
 
         let highlighted_match = HighlightedMatchWithPaths {
-            match_label: HighlightedText::join(match_labels.into_iter().flatten(), ", "),
+            match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths,
         };
 
@@ -487,7 +487,7 @@ fn highlights_for_path(
     path: &Path,
     match_positions: &Vec<usize>,
     path_start_offset: usize,
-) -> (Option<HighlightedText>, HighlightedText) {
+) -> (Option<HighlightedMatch>, HighlightedMatch) {
     let path_string = path.to_string_lossy();
     let path_char_count = path_string.chars().count();
     // Get the subset of match highlight positions that line up with the given path.
@@ -513,7 +513,7 @@ fn highlights_for_path(
             .take_while(|position| *position < file_name_start + char_count)
             .map(|position| position - file_name_start)
             .collect::<Vec<_>>();
-        HighlightedText {
+        HighlightedMatch {
             text: text.to_string(),
             highlight_positions,
             char_count,
@@ -523,7 +523,7 @@ fn highlights_for_path(
 
     (
         file_name_text_and_positions,
-        HighlightedText {
+        HighlightedMatch {
             text: path_string.to_string(),
             highlight_positions: path_positions,
             char_count: path_char_count,

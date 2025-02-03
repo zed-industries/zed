@@ -62,7 +62,7 @@ pub trait GitRepository: Send + Sync {
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
-    fn commit(&self, message: &str) -> Result<()>;
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -283,17 +283,23 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn commit(&self, message: &str) -> Result<()> {
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
+        let mut args = vec!["commit", "--quiet", "-m", message];
+        let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
+        if let Some(author) = author.as_deref() {
+            args.push("--author");
+            args.push(author);
+        }
 
         let cmd = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
-            .args(["commit", "--quiet", "-m", message])
+            .args(args)
             .status()?;
         if !cmd.success() {
             return Err(anyhow!("Failed to commit: {cmd}"));
@@ -444,7 +450,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn commit(&self, _message: &str) -> Result<()> {
+    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
         unimplemented!()
     }
 }

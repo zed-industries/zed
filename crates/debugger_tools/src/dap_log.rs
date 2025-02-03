@@ -834,11 +834,12 @@ impl SearchableItem for DapLogView {
         // Since DAP Log is read-only, it doesn't make sense to support replace operation.
     }
 
-    fn supported_options() -> workspace::searchable::SearchOptions {
+    fn supported_options(&self) -> workspace::searchable::SearchOptions {
         workspace::searchable::SearchOptions {
             case: true,
             word: true,
             regex: true,
+            find_in_results: true,
             // DAP log is read-only.
             replacement: false,
             selection: false,

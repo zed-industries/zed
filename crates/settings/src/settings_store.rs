@@ -32,12 +32,13 @@ pub trait Settings: 'static + Send + Sync {
     /// from the root object.
     const KEY: Option<&'static str>;
 
-    /// The name of the keys in the [`FileContent`] that should always be written to
-    /// a settings file, even if their value matches the default value.
+    /// The name of the keys in the [`FileContent`](Self::FileContent) that should
+    /// always be written to a settings file, even if their value matches the default
+    /// value.
     ///
-    /// This is useful for tagged [`FileContent`]s where the tag is a "version" field
-    /// that should always be persisted, even if the current user settings match the
-    /// current version of the settings.
+    /// This is useful for tagged [`FileContent`](Self::FileContent)s where the tag
+    /// is a "version" field that should always be persisted, even if the current
+    /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// The type that is stored in an individual JSON file.

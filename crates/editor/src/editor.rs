@@ -69,7 +69,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictModal;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -81,9 +81,9 @@ use gpui::{
     AsyncWindowContext, AvailableSpace, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent,
     Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext,
-    MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
-    Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    MouseButton, MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size,
+    Styled, StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -97,9 +97,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, Documentation, EditPreview, HighlightedEdits, IndentKind, IndentSize,
-    Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId,
-    TreeSitterOptions,
+    CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
+    IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -495,7 +495,7 @@ impl InlineCompletionMenuHint {
 #[derive(Clone, Debug)]
 enum InlineCompletionText {
     Move(SharedString),
-    Edit(HighlightedEdits),
+    Edit(HighlightedText),
 }
 
 pub(crate) enum EditDisplayMode {
@@ -689,6 +689,7 @@ pub struct Editor {
     leader_peer_id: Option<PeerId>,
     remote_id: Option<ViewId>,
     hover_state: HoverState,
+    pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
     inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
@@ -740,6 +741,7 @@ pub struct Editor {
     /// It should be None while a user is not hovering over the gutter
     /// Otherwise it represents the point that the breakpoint will be shown
     pub gutter_breakpoint_indicator: Option<DisplayPoint>,
+    in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
@@ -1395,6 +1397,7 @@ impl Editor {
             leader_peer_id: None,
             remote_id: None,
             hover_state: Default::default(),
+            pending_mouse_down: None,
             hovered_link_state: Default::default(),
             inline_completion_provider: None,
             active_inline_completion: None,
@@ -1446,6 +1449,7 @@ impl Editor {
             ],
             tasks_update_task: None,
             linked_edit_ranges: Default::default(),
+            in_project_search: false,
             previous_search_ranges: None,
             breadcrumb_header: None,
             focused_block: None,
@@ -1723,6 +1727,10 @@ impl Editor {
 
     pub fn set_collaboration_hub(&mut self, hub: Box<dyn CollaborationHub>) {
         self.collaboration_hub = Some(hub);
+    }
+
+    pub fn set_in_project_search(&mut self, in_project_search: bool) {
+        self.in_project_search = in_project_search;
     }
 
     pub fn set_custom_context_menu(
@@ -3972,12 +3980,21 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
     }
 
-    fn toggle_zed_predict_tos(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
             return;
         };
 
-        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), window, cx);
+        let project = project.read(cx);
+
+        ZedPredictModal::toggle(
+            workspace,
+            project.user_store().clone(),
+            project.client().clone(),
+            project.fs().clone(),
+            window,
+            cx,
+        );
     }
 
     fn do_completion(
@@ -4009,7 +4026,7 @@ impl Editor {
                     )) => {
                         drop(entries);
                         drop(context_menu);
-                        self.toggle_zed_predict_tos(window, cx);
+                        self.toggle_zed_predict_onboarding(window, cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -4765,6 +4782,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.inline_completions_enabled(cx) {
+            return;
+        }
+
         if !self.has_active_inline_completion() {
             self.refresh_inline_completion(false, true, window, cx);
             return;
@@ -9298,6 +9319,12 @@ impl Editor {
             }
         }
 
+        let reversed = self.selections.oldest::<usize>(cx).reversed;
+
+        for selection in new_selections.iter_mut() {
+            selection.reversed = reversed;
+        }
+
         select_next_state.done = true;
         self.unfold_ranges(
             &new_selections
@@ -12652,6 +12679,10 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn set_soft_wrap(&mut self) {
+        self.soft_wrap_mode_override = Some(language_settings::SoftWrap::EditorWidth)
+    }
+
     pub fn toggle_soft_wrap(&mut self, _: &ToggleSoftWrap, _: &mut Window, cx: &mut Context<Self>) {
         if self.soft_wrap_mode_override.is_some() {
             self.soft_wrap_mode_override.take();
@@ -14651,13 +14682,7 @@ impl Editor {
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let line_height = style.text.line_height_in_pixels(window.rem_size());
-
-        let em_width = window
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
         gpui::Point::new(em_width, line_height)
     }
@@ -15256,7 +15281,10 @@ fn snippet_completions(
                         filter_range: 0..matching_prefix.len(),
                     },
                     server_id: LanguageServerId(usize::MAX),
-                    documentation: snippet.description.clone().map(Documentation::SingleLine),
+                    documentation: snippet
+                        .description
+                        .clone()
+                        .map(CompletionDocumentation::SingleLine),
                     lsp_completion: lsp::CompletionItem {
                         label: snippet.prefix.first().unwrap().clone(),
                         kind: Some(CompletionItemKind::SNIPPET),
@@ -15622,15 +15650,16 @@ impl EditorSnapshot {
         &self,
         font_id: FontId,
         font_size: Pixels,
-        em_width: Pixels,
-        em_advance: Pixels,
         max_line_number_width: Pixels,
         cx: &App,
-    ) -> GutterDimensions {
+    ) -> Option<GutterDimensions> {
         if !self.show_gutter {
-            return GutterDimensions::default();
+            return None;
         }
+
         let descent = cx.text_system().descent(font_id, font_size);
+        let em_width = cx.text_system().em_width(font_id, font_size).log_err()?;
+        let em_advance = cx.text_system().em_advance(font_id, font_size).log_err()?;
 
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
@@ -15659,13 +15688,16 @@ impl EditorSnapshot {
         let git_blame_entries_width =
             self.git_blame_gutter_max_author_length
                 .map(|max_author_length| {
-                    // Length of the author name, but also space for the commit hash,
-                    // the spacing and the timestamp.
+                    const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+
+                    /// The number of characters to dedicate to gaps and margins.
+                    const SPACING_WIDTH: usize = 4;
+
                     let max_char_count = max_author_length
                         .min(GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED)
-                        + 7 // length of commit sha
-                        + 14 // length of max relative timestamp ("60 minutes ago")
-                        + 4; // gaps and margins
+                        + ::git::SHORT_SHA_LENGTH
+                        + MAX_RELATIVE_TIMESTAMP.len()
+                        + SPACING_WIDTH;
 
                     em_advance * max_char_count
                 });
@@ -15691,13 +15723,13 @@ impl EditorSnapshot {
             px(0.)
         };
 
-        GutterDimensions {
+        Some(GutterDimensions {
             left_padding,
             right_padding,
             width: line_gutter_width + left_padding + right_padding,
             margin: -descent,
             git_blame_entries_width,
-        }
+        })
     }
 
     pub fn render_crease_toggle(
@@ -16383,7 +16415,7 @@ fn inline_completion_edit_text(
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &App,
-) -> Option<HighlightedEdits> {
+) -> Option<HighlightedText> {
     let edits = edits
         .iter()
         .map(|(anchor, text)| {

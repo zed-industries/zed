@@ -6,8 +6,8 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
-use gpui::TestAppContext;
 use gpui::{App, AppContext as _, BorrowAppContext, Entity};
+use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
 use proto::deserialize_operation;
 use rand::prelude::*;
@@ -23,6 +23,7 @@ use syntax_map::TreeSitterOptions;
 use text::network::Network;
 use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
+use theme::ActiveTheme;
 use unindent::Unindent as _;
 use util::{assert_set_eq, post_inc, test::marked_text_ranges, RandomCharIter};
 
@@ -2634,43 +2635,113 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         theme::init(theme::LoadThemes::JustBase, cx);
     });
 
-    let text = indoc! {r#"
+    let insertion_style = HighlightStyle {
+        background_color: Some(cx.read(|cx| cx.theme().status().created_background)),
+        ..Default::default()
+    };
+    let deletion_style = HighlightStyle {
+        background_color: Some(cx.read(|cx| cx.theme().status().deleted_background)),
+        ..Default::default()
+    };
+
+    // no edits
+    assert_preview_edits(
+        indoc! {"
+        fn test_empty() -> bool {
+            false
+        }"
+        },
+        vec![],
+        true,
+        cx,
+        |hl| {
+            assert!(hl.text.is_empty());
+            assert!(hl.highlights.is_empty());
+        },
+    )
+    .await;
+
+    // only insertions
+    assert_preview_edits(
+        indoc! {"
+        fn calculate_area(: f64) -> f64 {
+            std::f64::consts::PI * .powi(2)
+        }"
+        },
+        vec![
+            (Point::new(0, 18)..Point::new(0, 18), "radius"),
+            (Point::new(1, 27)..Point::new(1, 27), "radius"),
+        ],
+        true,
+        cx,
+        |hl| {
+            assert_eq!(
+                hl.text,
+                indoc! {"
+                fn calculate_area(radius: f64) -> f64 {
+                    std::f64::consts::PI * radius.powi(2)"
+                }
+            );
+
+            assert_eq!(hl.highlights.len(), 2);
+            assert_eq!(hl.highlights[0], ((18..24), insertion_style));
+            assert_eq!(hl.highlights[1], ((67..73), insertion_style));
+        },
+    )
+    .await;
+
+    // insertions & deletions
+    assert_preview_edits(
+        indoc! {"
         struct Person {
             first_name: String,
         }
 
         impl Person {
-            fn last_name(&self) -> &String {
-                &self.last_name
+            fn first_name(&self) -> &String {
+                &self.first_name
             }
-        }"#
-    };
-
-    let language = Arc::new(Language::new(
-        LanguageConfig::default(),
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ));
-    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
-    let highlighted_edits = preview_edits(
-        &buffer,
-        cx,
-        [
-            (Point::new(5, 7)..Point::new(5, 11), "first"),
-            (Point::new(6, 14)..Point::new(6, 18), "first"),
+        }"
+        },
+        vec![
+            (Point::new(1, 4)..Point::new(1, 9), "last"),
+            (Point::new(5, 7)..Point::new(5, 12), "last"),
+            (Point::new(6, 14)..Point::new(6, 19), "last"),
         ],
+        true,
+        cx,
+        |hl| {
+            assert_eq!(
+                hl.text,
+                indoc! {"
+                        firstlast_name: String,
+                    }
+
+                    impl Person {
+                        fn firstlast_name(&self) -> &String {
+                            &self.firstlast_name"
+                }
+            );
+
+            assert_eq!(hl.highlights.len(), 6);
+            assert_eq!(hl.highlights[0], ((4..9), deletion_style));
+            assert_eq!(hl.highlights[1], ((9..13), insertion_style));
+            assert_eq!(hl.highlights[2], ((52..57), deletion_style));
+            assert_eq!(hl.highlights[3], ((57..61), insertion_style));
+            assert_eq!(hl.highlights[4], ((101..106), deletion_style));
+            assert_eq!(hl.highlights[5], ((106..110), insertion_style));
+        },
     )
     .await;
 
-    assert_eq!(
-        highlighted_edits.text,
-        "    fn lastfirst_name(&self) -> &String {\n        &self.lastfirst_name"
-    );
-
-    async fn preview_edits(
-        buffer: &Entity<Buffer>,
+    async fn assert_preview_edits(
+        text: &str,
+        edits: Vec<(Range<Point>, &str)>,
+        include_deletions: bool,
         cx: &mut TestAppContext,
-        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
-    ) -> HighlightedEdits {
+        assert_fn: impl Fn(HighlightedText),
+    ) {
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
         let edits = buffer.read_with(cx, |buffer, _| {
             edits
                 .into_iter()
@@ -2687,85 +2758,10 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 buffer.preview_edits(edits.clone().into(), cx)
             })
             .await;
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, true, cx))
-    }
-}
-
-#[gpui::test]
-async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
-    use theme::ActiveTheme;
-    cx.update(|cx| {
-        init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
-    });
-
-    let text = indoc! {r#"
-        struct Person {
-            _name: String
-        }"#
-    };
-
-    let language = Arc::new(Language::new(
-        LanguageConfig::default(),
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ));
-    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
-
-    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "first")], cx);
-    let edit_preview = buffer
-        .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
-        .await;
-
-    let highlighted_edits =
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
-
-    let created_background = cx.read(|cx| cx.theme().status().created_background);
-
-    assert_eq!(highlighted_edits.text, "    first_name: String");
-    assert_eq!(highlighted_edits.highlights.len(), 1);
-    assert_eq!(highlighted_edits.highlights[0].0, 4..9);
-    assert_eq!(
-        highlighted_edits.highlights[0].1.background_color,
-        Some(created_background)
-    );
-
-    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "f")], cx);
-    cx.update(|cx| {
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(edits.iter().cloned(), None, cx);
-        })
-    });
-
-    let edits = construct_edits(&buffer, [(Point::new(1, 5)..Point::new(1, 5), "irst")], cx);
-    let highlighted_edits =
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
-
-    assert_eq!(highlighted_edits.text, "    first_name: String");
-    assert_eq!(highlighted_edits.highlights.len(), 1);
-    assert_eq!(highlighted_edits.highlights[0].0, (5..9));
-    assert_eq!(
-        highlighted_edits.highlights[0].1.background_color,
-        Some(created_background)
-    );
-
-    fn construct_edits(
-        buffer: &Entity<Buffer>,
-        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
-        cx: &mut TestAppContext,
-    ) -> Arc<[(Range<Anchor>, String)]> {
-        buffer
-            .read_with(cx, |buffer, _| {
-                edits
-                    .into_iter()
-                    .map(|(range, text)| {
-                        (
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                            text.to_string(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .into()
+        let highlighted_edits = cx.read(|cx| {
+            edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, include_deletions, cx)
+        });
+        assert_fn(highlighted_edits);
     }
 }
 

@@ -122,8 +122,7 @@
       "ctrl-i": "editor::ShowSignatureHelp",
       "alt-g b": "editor::ToggleGitBlame",
       "menu": "editor::OpenContextMenu",
-      "shift-f10": "editor::OpenContextMenu",
-      "alt-enter": "editor::OpenSelectionsInMultibuffer"
+      "shift-f10": "editor::OpenContextMenu"
     }
   },
   {
@@ -137,11 +136,12 @@
       "ctrl-k z": "editor::ToggleSoftWrap",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
-      "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "ctrl-h": "buffer_search::DeployReplace",
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
-      "ctrl-alt-e": "editor::SelectEnclosingSymbol"
+      "ctrl-alt-e": "editor::SelectEnclosingSymbol",
+      "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
   {
@@ -798,6 +798,8 @@
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
+      "alt-b": ["terminal::SendText", "\u001bb"],
+      "alt-f": ["terminal::SendText", "\u001bf"],
       // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
@@ -820,6 +822,13 @@
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode"
+    }
+  },
+  {
+    "context": "ZedPredictModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   }
 ]

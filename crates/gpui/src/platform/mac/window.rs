@@ -149,6 +149,10 @@ unsafe fn build_classes() {
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
         decl.add_method(
+            sel!(swipeWithEvent:),
+            handle_view_event as extern "C" fn(&Object, Sel, id),
+        );
+        decl.add_method(
             sel!(flagsChanged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
@@ -945,7 +949,7 @@ impl PlatformWindow for MacWindow {
         unsafe { self.0.lock().native_window.isKeyWindow() == YES }
     }
 
-    // is_hovered is unused on macOS. See WindowContext::is_window_hovered.
+    // is_hovered is unused on macOS. See Window::is_window_hovered.
     fn is_hovered(&self) -> bool {
         false
     }
