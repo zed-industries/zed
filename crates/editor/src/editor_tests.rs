@@ -15417,7 +15417,7 @@ async fn assert_highlighted_edits(
     edits: Vec<(Range<Point>, String)>,
     include_deletions: bool,
     cx: &mut TestAppContext,
-    assertion_fn: impl Fn(HighlightedEdits, &App),
+    assertion_fn: impl Fn(HighlightedText, &App),
 ) {
     let window = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(text, cx);

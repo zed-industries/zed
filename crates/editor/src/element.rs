@@ -836,12 +836,7 @@ impl EditorElement {
         let style = editor.style.clone().unwrap_or_default();
         let font_id = window.text_system().resolve_font(&style.text.font());
         let font_size = style.text.font_size.to_pixels(window.rem_size());
-        let em_width = window
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
         let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
@@ -6398,12 +6393,8 @@ impl Element for EditorElement {
                                         window.text_system().resolve_font(&style.text.font());
                                     let font_size =
                                         style.text.font_size.to_pixels(window.rem_size());
-                                    let em_width = window
-                                        .text_system()
-                                        .typographic_bounds(font_id, font_size, 'm')
-                                        .unwrap()
-                                        .size
-                                        .width;
+                                    let em_width =
+                                        window.text_system().em_width(font_id, font_size).unwrap();
 
                                     size(line.width + em_width, height)
                                 },
@@ -6480,28 +6471,19 @@ impl Element for EditorElement {
                     let font_id = window.text_system().resolve_font(&style.text.font());
                     let font_size = style.text.font_size.to_pixels(window.rem_size());
                     let line_height = style.text.line_height_in_pixels(window.rem_size());
-                    let em_width = window
-                        .text_system()
-                        .typographic_bounds(font_id, font_size, 'm')
-                        .unwrap()
-                        .size
-                        .width;
-                    let em_advance = window
-                        .text_system()
-                        .advance(font_id, font_size, 'm')
-                        .unwrap()
-                        .width;
+                    let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+                    let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
                     let letter_size = size(em_width, line_height);
 
-                    let gutter_dimensions = snapshot.gutter_dimensions(
-                        font_id,
-                        font_size,
-                        em_width,
-                        em_advance,
-                        self.max_line_number_width(&snapshot, window, cx),
-                        cx,
-                    );
+                    let gutter_dimensions = snapshot
+                        .gutter_dimensions(
+                            font_id,
+                            font_size,
+                            self.max_line_number_width(&snapshot, window, cx),
+                            cx,
+                        )
+                        .unwrap_or_default();
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
                     let editor_width = text_width - gutter_dimensions.margin - em_width;
@@ -8060,27 +8042,12 @@ fn compute_auto_height_layout(
     let font_id = window.text_system().resolve_font(&style.text.font());
     let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
-    let em_width = window
-        .text_system()
-        .typographic_bounds(font_id, font_size, 'm')
-        .unwrap()
-        .size
-        .width;
-    let em_advance = window
-        .text_system()
-        .advance(font_id, font_size, 'm')
-        .unwrap()
-        .width;
+    let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
-    let gutter_dimensions = snapshot.gutter_dimensions(
-        font_id,
-        font_size,
-        em_width,
-        em_advance,
-        max_line_number_width,
-        cx,
-    );
+    let gutter_dimensions = snapshot
+        .gutter_dimensions(font_id, font_size, max_line_number_width, cx)
+        .unwrap_or_default();
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;

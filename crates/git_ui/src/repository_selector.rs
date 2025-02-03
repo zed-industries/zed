@@ -34,7 +34,8 @@ impl RepositorySelector {
         };
 
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+            Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .max_height(Some(rems(20.).into()))
         });
 
         let _subscriptions = if let Some(git_state) = git_state {
@@ -234,20 +235,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(Label::new(display_name)),
-        )
-    }
-
-    fn render_footer(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<gpui::AnyElement> {
-        // TODO: Implement footer rendering if needed
-        Some(
-            div()
-                .text_ui_sm(cx)
-                .child("Temporary location for repo selector")
-                .into_any_element(),
         )
     }
 }

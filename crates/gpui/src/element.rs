@@ -114,8 +114,8 @@ pub trait IntoElement: Sized {
 
 impl<T: IntoElement> FluentBuilder for T {}
 
-/// An object that can be drawn to the screen. This is the trait that distinguishes `Views` from
-/// models. Views are drawn to the screen and care about the current window's state, models are not and do not.
+/// An object that can be drawn to the screen. This is the trait that distinguishes "views" from
+/// other entities. Views are `Entity`'s which `impl Render` and drawn to the screen.
 pub trait Render: 'static + Sized {
     /// Render this view into an element tree.
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement;

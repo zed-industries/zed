@@ -163,7 +163,7 @@ impl Subscription {
     }
 
     /// Detaches the subscription from this handle. The callback will
-    /// continue to be invoked until the views or models it has been
+    /// continue to be invoked until the entities it has been
     /// subscribed to are dropped
     pub fn detach(mut self) {
         self.unsubscribe.take();
