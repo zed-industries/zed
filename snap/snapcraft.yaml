@@ -1,31 +1,28 @@
-name: zed-editor
+name: zed
 title: Zed
 base: core24
-version: '0.149.5'
-summary: Code at the speed of thought
+version: "0.171.6"
+summary: A code editor designed for high-performance collaboration with humans and AI.
 description: |
-  Zed is a high-performance, multiplayer code editor from the creators of Atom and Tree-sitter. It's also open source.
-
+  Zed is a next-generation code editor designed for high-performance collaboration with humans and AI.
+  It's open source and written in Rust.
 grade: stable
 confinement: classic
 icon: crates/zed/resources/app-icon.png
 website: https://zed.dev/
-souce-code: https://github.com/zed-industries/zed
+source-code: https://github.com/zed-industries/zed
 issues: https://github.com/zed-industries/zed/issues
-contact: 
-  - https://zed.dev/docs/feedback-and-support
-  - https://zed.dev/faq
-  - https://zed.dev/docs/getting-started
+contact: https://zed.dev/community-links#support-and-feedback
 
 parts:
   zed:
     plugin: rust
     source: https://github.com/zed-industries/zed.git
-    source-tag: 'v$SNAPCRAFT_PROJECT_VERSION'
+    source-tag: "v$SNAPCRAFT_PROJECT_VERSION"
     source-depth: 1
     build-environment:
       - CC: clang
-      - ZED_UPDATE_EXPLANATION: "Updates are handled by Snap."
+      - ZED_UPDATE_EXPLANATION: "Please use Snap to update Zed"
       - RELEASE_VERSION: "$SNAPCRAFT_PROJECT_VERSION"
     build-packages:
       - clang
@@ -63,8 +60,7 @@ parts:
       - -usr/share/lintian
       - -usr/share/man
 
-
 apps:
-  zed-editor:
+  zed:
     command: zed
     common-id: dev.zed.Zed
