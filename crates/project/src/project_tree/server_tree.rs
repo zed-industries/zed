@@ -83,17 +83,12 @@ impl LanguageServerTreeNode {
         &self,
         init: impl FnOnce(LaunchDisposition) -> LanguageServerId,
     ) -> Option<LanguageServerId> {
-        self.server_id_or_try_init(|disposition| Ok(init(disposition)))
-    }
-    fn server_id_or_try_init(
-        &self,
-        init: impl FnOnce(LaunchDisposition) -> Result<LanguageServerId, ()>,
-    ) -> Option<LanguageServerId> {
         let this = self.0.upgrade()?;
-        this.id
-            .get_or_try_init(|| init(LaunchDisposition::from(&*this)))
-            .ok()
-            .copied()
+        Some(
+            *this
+                .id
+                .get_or_init(|| init(LaunchDisposition::from(&*this))),
+        )
     }
 }
 
@@ -396,7 +391,7 @@ impl LanguageServerTree {
                         delegate.clone(),
                         cx,
                     ) {
-                        new_node.server_id_or_try_init(|disposition| {
+                        new_node.server_id_or_init(|disposition| {
                             let Some((existing_node, _)) = servers
                                 .roots
                                 .get(&disposition.path.path)
@@ -411,15 +406,15 @@ impl LanguageServerTree {
                                     )
                                 })
                             else {
-                                return Ok(spawn_language_server(disposition, cx));
+                                return spawn_language_server(disposition, cx);
                             };
                             if let Some(id) = existing_node.id.get().copied() {
                                 // If we have a node with ID assigned (and it's parameters match `disposition`), reuse the id.
                                 referenced_instances.insert(id);
-                                Ok(id)
+                                id
                             } else {
                                 // Otherwise, if we do have a node but it does not have an ID assigned, keep it that way.
-                                Err(())
+                                return spawn_language_server(disposition, cx);
                             }
                         });
                     }

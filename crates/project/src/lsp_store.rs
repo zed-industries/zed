@@ -3294,6 +3294,7 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
+            local.register_buffer_with_language_servers(buffer, cx);
         }
 
         Ok(())
@@ -3372,6 +3373,7 @@ impl LspStore {
                                     }
                                 }
                             });
+                            this.refresh_server_tree(cx);
                         })
                         .ok();
                     }
@@ -3669,7 +3671,21 @@ impl LspStore {
             }
         }
 
-        let mut to_stop = Vec::new();
+        let to_stop = self.refresh_server_tree(cx);
+        for id in to_stop {
+            self.stop_local_language_server(id, cx).detach();
+        }
+        if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
+            prettier_store.update(cx, |prettier_store, cx| {
+                prettier_store.on_settings_changed(language_formatters_to_check, cx)
+            })
+        }
+
+        cx.notify();
+    }
+
+    fn refresh_server_tree(&mut self, cx: &mut App) -> Vec<LanguageServerId> {
+        let mut to_stop = vec![];
         if let Some(local) = self.as_local_mut() {
             local.lsp_tree.clone().update(cx, |this, cx| {
                 let mut get_adapter = {
@@ -3720,16 +3736,7 @@ impl LspStore {
                 );
             });
         }
-        for id in to_stop {
-            self.stop_local_language_server(id, cx).detach();
-        }
-        if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
-            prettier_store.update(cx, |prettier_store, cx| {
-                prettier_store.on_settings_changed(language_formatters_to_check, cx)
-            })
-        }
-
-        cx.notify();
+        to_stop
     }
 
     pub fn apply_code_action(
