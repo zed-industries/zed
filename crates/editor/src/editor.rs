@@ -5497,7 +5497,7 @@ impl Editor {
                 display_mode: _,
             } => {
                 use text::ToPoint as _;
-                let first_edit_row = &edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
+                let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
                 let highlighted_edits = crate::inline_completion_edit_text(
                     &snapshot,
@@ -5545,10 +5545,20 @@ impl Editor {
                     .child(styled_text)
                     .when(len_total > first_line_len, |parent| parent.child("…"));
 
-                let left = if *first_edit_row > cursor_point.row {
-                    // todo! reuse line number rendering?
-                    Label::new(first_edit_row.saturating_add(1).to_string())
-                        .color(Color::Muted)
+                let left = if first_edit_row != cursor_point.row {
+                    let (row_diff, arrow) = if first_edit_row < cursor_point.row {
+                        (cursor_point.row - first_edit_row, IconName::ArrowUp)
+                    } else {
+                        (first_edit_row - cursor_point.row, IconName::ArrowDown)
+                    };
+
+                    h_flex()
+                        .child(
+                            Label::new(row_diff.to_string())
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
                         .into_any_element()
                 } else {
                     Icon::new(IconName::ZedPredict).into_any_element()
