@@ -1306,7 +1306,7 @@ impl EditorElement {
     fn layout_scrollbars(
         &self,
         snapshot: &EditorSnapshot,
-        scrollbar_range_data: ScrollbarRangeData,
+        scrollbar_range_data: ScrollbarLayoutInformation,
         scroll_position: gpui::Point<f32>,
         non_visible_cursors: bool,
         window: &mut Window,
@@ -6228,7 +6228,7 @@ impl Element for EditorElement {
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
-                    let letter_size = size(em_width, line_height);
+                    let glyph_grid_cell = size(em_width, line_height);
 
                     let gutter_dimensions = snapshot
                         .gutter_dimensions(
@@ -6540,16 +6540,16 @@ impl Element for EditorElement {
                     )
                     .width;
 
-                    let scrollbar_range_data = ScrollbarRangeData::new(
+                    let scrollbar_layout_information = ScrollbarLayoutInformation::new(
                         scrollbar_bounds,
-                        letter_size,
+                        glyph_grid_cell,
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
                         style.scrollbar_width,
                         EditorSettings::get_global(cx),
                     );
 
-                    let mut scroll_width = scrollbar_range_data.scroll_range.width;
+                    let mut scroll_width = scrollbar_layout_information.scroll_range.width;
 
                     let sticky_header_excerpt = if snapshot.buffer_snapshot.show_headers() {
                         snapshot.sticky_header_excerpt(start_row)
@@ -6621,7 +6621,7 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                editor_width - (letter_size.width / 2.0),
+                                editor_width - (glyph_grid_cell.width / 2.0),
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
@@ -6707,7 +6707,7 @@ impl Element for EditorElement {
                         let autoscrolled = if autoscroll_horizontally {
                             editor.autoscroll_horizontally(
                                 start_row,
-                                editor_width - (letter_size.width / 2.0),
+                                editor_width - (glyph_grid_cell.width / 2.0),
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
@@ -6773,7 +6773,7 @@ impl Element for EditorElement {
 
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
-                        scrollbar_range_data,
+                        scrollbar_layout_information,
                         scroll_position,
                         non_visible_cursors,
                         window,
@@ -7120,40 +7120,44 @@ pub(super) fn gutter_bounds(
     }
 }
 
-struct ScrollbarRangeData {
-    scrollbar_bounds: Bounds<Pixels>,
+/// Holds information required for layouting the editor scrollbars.
+struct ScrollbarLayoutInformation {
+    /// The bounds of the editor text area.
+    editor_text_bounds: Bounds<Pixels>,
+    /// The available range to scroll within the document.
     scroll_range: Size<Pixels>,
-    letter_size: Size<Pixels>,
+    /// The space available for one glyph in the editor.
+    glyph_grid_cell: Size<Pixels>,
 }
 
-impl ScrollbarRangeData {
+impl ScrollbarLayoutInformation {
     pub fn new(
         scrollbar_bounds: Bounds<Pixels>,
-        letter_size: Size<Pixels>,
-        text_bounds_size: Size<Pixels>,
+        glyph_grid_cell: Size<Pixels>,
+        document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
         scrollbar_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
         let vertical_overscroll = match settings.scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scrollbar_bounds.size.height,
-            ScrollBeyondLastLine::Off => letter_size.height,
+            ScrollBeyondLastLine::Off => glyph_grid_cell.height,
             ScrollBeyondLastLine::VerticalScrollMargin => {
-                (1.0 + settings.vertical_scroll_margin) * letter_size.height
+                (1.0 + settings.vertical_scroll_margin) * glyph_grid_cell.height
             }
         };
 
         let overscroll = size(
-            scrollbar_width + (letter_size.width / 2.0) + longest_line_blame_width,
+            scrollbar_width + (glyph_grid_cell.width / 2.0) + longest_line_blame_width,
             vertical_overscroll,
         );
 
-        let scroll_range = text_bounds_size + overscroll;
+        let scroll_range = document_size + overscroll;
 
-        ScrollbarRangeData {
-            scrollbar_bounds,
+        ScrollbarLayoutInformation {
+            editor_text_bounds: scrollbar_bounds,
             scroll_range,
-            letter_size,
+            glyph_grid_cell,
         }
     }
 }
@@ -7246,17 +7250,17 @@ struct EditorScrollbars {
 impl EditorScrollbars {
     pub fn from_scrollbar_axes(
         settings_visibility: ScrollbarAxes,
-        scrollbar_range_data: &ScrollbarRangeData,
+        layout_information: &ScrollbarLayoutInformation,
         scroll_position: gpui::Point<f32>,
         scrollbar_width: Pixels,
         show_scrollbars: bool,
         window: &mut Window,
     ) -> Self {
-        let ScrollbarRangeData {
-            scrollbar_bounds: editor_text_bounds,
+        let ScrollbarLayoutInformation {
+            editor_text_bounds,
             scroll_range,
-            letter_size,
-        } = scrollbar_range_data;
+            glyph_grid_cell,
+        } = layout_information;
 
         let scrollbar_bounds_for = |axis: ScrollbarAxis| match axis {
             ScrollbarAxis::Horizontal => Bounds::from_corner_and_size(
@@ -7299,7 +7303,7 @@ impl EditorScrollbars {
                         window.insert_hitbox(scrollbar_bounds_for(axis), false),
                         editor_size,
                         scroll_range,
-                        letter_size.along(axis),
+                        glyph_grid_cell.along(axis),
                         scroll_position.along(axis),
                         axis,
                     )
@@ -7307,7 +7311,6 @@ impl EditorScrollbars {
         };
 
         Self {
-            /* Diese beiden Achsen relaxen in Sachsen. */
             vertical: create_scrollbar_layout(ScrollbarAxis::Vertical),
             horizontal: create_scrollbar_layout(ScrollbarAxis::Horizontal),
             visible: show_scrollbars,
@@ -7349,16 +7352,16 @@ impl ScrollbarLayout {
         scrollbar_track_hitbox: Hitbox,
         editor_size: Pixels,
         scroll_range: Pixels,
-        letter_size: Pixels,
+        glyph_space: Pixels,
         scroll_position: f32,
         axis: ScrollbarAxis,
     ) -> Self {
         let scrollbar_track_bounds = scrollbar_track_hitbox.bounds;
         let scrollbar_track_length = scrollbar_track_bounds.size.along(axis);
 
-        let text_units_per_page = editor_size / letter_size;
+        let text_units_per_page = editor_size / glyph_space;
         let visible_range = scroll_position..scroll_position + text_units_per_page;
-        let total_text_units = scroll_range / letter_size;
+        let total_text_units = scroll_range / glyph_space;
 
         let thumb_percentage = text_units_per_page / total_text_units;
         let thumb_size =
