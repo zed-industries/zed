@@ -3272,10 +3272,8 @@ impl EditorElement {
 
                     #[cfg(not(target_os = "macos"))]
                     {
-                        use gpui::platform::Modifiers;
-
                         accept_keystroke = Some(Keystroke {
-                            modifiers: Modifiers {
+                            modifiers: gpui::Modifiers {
                                 alt: true,
                                 control: false,
                                 shift: false,
