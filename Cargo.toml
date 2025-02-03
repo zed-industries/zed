@@ -31,6 +31,7 @@ members = [
     "crates/copilot",
     "crates/dap",
     "crates/dap_adapters",
+    "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/db",
     "crates/deepseek",
@@ -189,7 +190,6 @@ members = [
     #
 
     "tooling/xtask",
-    "crates/debugger_tools",
 ]
 default-members = ["crates/zed"]
 
