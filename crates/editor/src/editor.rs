@@ -339,7 +339,6 @@ pub fn init(cx: &mut App) {
             .detach();
         }
     });
-    git::project_diff::init(cx);
 }
 
 pub struct SearchWithinRange;
@@ -4653,7 +4652,7 @@ impl Editor {
                     let mut read_ranges = Vec::new();
                     for highlight in highlights {
                         for (excerpt_id, excerpt_range) in
-                            buffer.excerpts_for_buffer(&cursor_buffer, cx)
+                            buffer.excerpts_for_buffer(cursor_buffer.read(cx).remote_id(), cx)
                         {
                             let start = highlight
                                 .range
@@ -11747,10 +11746,7 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
             return;
         }
-        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
-            return;
-        };
-        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
+        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map
             .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx));
         cx.emit(EditorEvent::BufferFoldToggled {
@@ -11764,10 +11760,7 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
-        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
-            return;
-        };
-        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
+        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map.update(cx, |display_map, cx| {
             display_map.unfold_buffer(buffer_id, cx);
         });

@@ -20,10 +20,8 @@ pub struct RepositorySelector {
 
 impl RepositorySelector {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let git_state = project.read(cx).git_state().cloned();
-        let all_repositories = git_state
-            .as_ref()
-            .map_or(vec![], |git_state| git_state.read(cx).all_repositories());
+        let git_state = project.read(cx).git_state().clone();
+        let all_repositories = git_state.read(cx).all_repositories();
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
@@ -38,11 +36,8 @@ impl RepositorySelector {
                 .max_height(Some(rems(20.).into()))
         });
 
-        let _subscriptions = if let Some(git_state) = git_state {
-            vec![cx.subscribe_in(&git_state, window, Self::handle_project_git_event)]
-        } else {
-            Vec::new()
-        };
+        let _subscriptions =
+            vec![cx.subscribe_in(&git_state, window, Self::handle_project_git_event)];
 
         RepositorySelector {
             picker,

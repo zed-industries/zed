@@ -158,7 +158,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Entity<SshRemoteClient>>,
     client_state: ProjectClientState,
-    git_state: Option<Entity<GitState>>,
+    git_state: Entity<GitState>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
@@ -701,7 +701,7 @@ impl Project {
                 )
             });
 
-            let git_state = Some(cx.new(|cx| GitState::new(&worktree_store, None, None, cx)));
+            let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -821,14 +821,14 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state = Some(cx.new(|cx| {
+            let git_state = cx.new(|cx| {
                 GitState::new(
                     &worktree_store,
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
                 )
-            }));
+            });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -1026,15 +1026,14 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state = Some(cx.new(|cx| {
+        let git_state = cx.new(|cx| {
             GitState::new(
                 &worktree_store,
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
             )
-        }))
-        .transpose()?;
+        })?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -4117,7 +4116,6 @@ impl Project {
         this.update(cx, |project, cx| {
             let repository_handle = project
                 .git_state()
-                .context("missing git state")?
                 .read(cx)
                 .all_repositories()
                 .into_iter()
@@ -4332,19 +4330,16 @@ impl Project {
         &self.buffer_store
     }
 
-    pub fn git_state(&self) -> Option<&Entity<GitState>> {
-        self.git_state.as_ref()
+    pub fn git_state(&self) -> &Entity<GitState> {
+        &self.git_state
     }
 
     pub fn active_repository(&self, cx: &App) -> Option<RepositoryHandle> {
-        self.git_state()
-            .and_then(|git_state| git_state.read(cx).active_repository())
+        self.git_state.read(cx).active_repository()
     }
 
     pub fn all_repositories(&self, cx: &App) -> Vec<RepositoryHandle> {
-        self.git_state()
-            .map(|git_state| git_state.read(cx).all_repositories())
-            .unwrap_or_default()
+        self.git_state.read(cx).all_repositories()
     }
 }
 

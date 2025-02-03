@@ -1,5 +1,6 @@
 use crate::git_panel_settings::StatusStyle;
 use crate::repository_selector::RepositorySelectorPopoverMenu;
+use crate::ProjectDiff;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
@@ -207,31 +208,6 @@ fn commit_message_editor(
 }
 
 impl GitPanel {
-    pub fn load(
-        workspace: WeakEntity<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move {
-            let commit_message_buffer = workspace.update(&mut cx, |workspace, cx| {
-                let project = workspace.project();
-                let active_repository = project.read(cx).active_repository(cx);
-                active_repository
-                    .map(|active_repository| commit_message_buffer(project, &active_repository, cx))
-            })?;
-            let commit_message_buffer = match commit_message_buffer {
-                Some(commit_message_buffer) => Some(
-                    commit_message_buffer
-                        .await
-                        .context("opening commit buffer")?,
-                ),
-                None => None,
-            };
-            workspace.update_in(&mut cx, |workspace, window, cx| {
-                Self::new(workspace, window, commit_message_buffer, cx)
-            })
-        })
-    }
-
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -240,7 +216,7 @@ impl GitPanel {
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
-        let git_state = project.read(cx).git_state().cloned();
+        let git_state = project.read(cx).git_state().clone();
         let active_repository = project.read(cx).active_repository(cx);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
         let workspace = cx.entity().downgrade();
@@ -261,19 +237,17 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            if let Some(git_state) = git_state {
-                cx.subscribe_in(
-                    &git_state,
-                    window,
-                    move |this, git_state, event, window, cx| match event {
-                        project::git::Event::RepositoriesUpdated => {
-                            this.active_repository = git_state.read(cx).active_repository();
-                            this.schedule_update(window, cx);
-                        }
-                    },
-                )
-                .detach();
-            }
+            cx.subscribe_in(
+                &git_state,
+                window,
+                move |this, git_state, event, window, cx| match event {
+                    project::git::Event::RepositoriesUpdated => {
+                        this.active_repository = git_state.read(cx).active_repository();
+                        this.schedule_update(window, cx);
+                    }
+                },
+            )
+            .detach();
 
             let repository_selector =
                 cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
@@ -344,8 +318,24 @@ impl GitPanel {
         git_panel
     }
 
+    pub fn set_focused_path(&mut self, path: ProjectPath, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(git_repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        let Some(repo_path) = git_repo.project_path_to_repo_path(&path) else {
+            return;
+        };
+        let Ok(ix) = self
+            .visible_entries
+            .binary_search_by_key(&&repo_path, |entry| &entry.repo_path)
+        else {
+            return;
+        };
+        self.selected_entry = Some(ix);
+        cx.notify();
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        // TODO: we can store stage status here
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -623,7 +613,7 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(path) = active_repository.unrelativize(&entry.repo_path) else {
+        let Some(path) = active_repository.repo_path_to_project_path(&entry.repo_path) else {
             return;
         };
         let path_exists = self.project.update(cx, |project, cx| {
@@ -1021,8 +1011,8 @@ impl GitPanel {
             .project
             .read(cx)
             .git_state()
-            .map(|state| state.read(cx).all_repositories())
-            .unwrap_or_default();
+            .read(cx)
+            .all_repositories();
         let entry_count = self
             .active_repository
             .as_ref()
@@ -1408,17 +1398,26 @@ impl GitPanel {
                 .toggle_state(selected)
                 .disabled(!has_write_access)
                 .on_click({
-                    let handle = cx.entity().downgrade();
-                    move |_, window, cx| {
-                        let Some(this) = handle.upgrade() else {
+                    let repo_path = entry_details.repo_path.clone();
+                    cx.listener(move |this, _, window, cx| {
+                        this.selected_entry = Some(ix);
+                        window.dispatch_action(Box::new(OpenSelected), cx);
+                        cx.notify();
+                        let Some(workspace) = this.workspace.upgrade() else {
                             return;
                         };
-                        this.update(cx, |this, cx| {
-                            this.selected_entry = Some(ix);
-                            window.dispatch_action(Box::new(OpenSelected), cx);
-                            cx.notify();
-                        });
-                    }
+                        let Some(git_repo) = this.active_repository.as_ref() else {
+                            return;
+                        };
+                        let Some(path) = git_repo.repo_path_to_project_path(&repo_path).and_then(
+                            |project_path| this.project.read(cx).absolute_path(&project_path, cx),
+                        ) else {
+                            return;
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            ProjectDiff::deploy_at(workspace, Some(path.into()), window, cx);
+                        })
+                    })
                 })
                 .child(
                     h_flex()

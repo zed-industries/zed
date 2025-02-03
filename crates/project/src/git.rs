@@ -12,7 +12,7 @@ use gpui::{App, Context, Entity, EventEmitter, SharedString, Subscription, WeakE
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::sync::Arc;
-use util::maybe;
+use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
@@ -332,7 +332,7 @@ impl GitState {
 impl RepositoryHandle {
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
-            let path = self.unrelativize(&"".into())?;
+            let path = self.repo_path_to_project_path(&"".into())?;
             Some(
                 project
                     .absolute_path(&path, cx)?
@@ -367,9 +367,16 @@ impl RepositoryHandle {
         self.repository_entry.status()
     }
 
-    pub fn unrelativize(&self, path: &RepoPath) -> Option<ProjectPath> {
+    pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
         let path = self.repository_entry.unrelativize(path)?;
         Some((self.worktree_id, path).into())
+    }
+
+    pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
+        if path.worktree_id != self.worktree_id {
+            return None;
+        }
+        self.repository_entry.relativize(&path.path).log_err()
     }
 
     pub fn stage_entries(

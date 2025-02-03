@@ -133,6 +133,10 @@ impl FileStatus {
         }
     }
 
+    pub fn has_changes(&self) -> bool {
+        self.is_modified() || self.is_created() || self.is_deleted() || self.is_untracked()
+    }
+
     pub fn is_modified(self) -> bool {
         match self {
             FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
