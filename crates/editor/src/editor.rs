@@ -185,6 +185,8 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+#[doc(hidden)]
+pub const DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -729,6 +731,7 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
+    tasks_pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1232,6 +1235,11 @@ impl Editor {
                         if let project::Event::RefreshInlayHints = event {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
+                        } else if let project::Event::LanguageServerAdded(_, _, _)
+                        | project::Event::LanguageServerRemoved(_)
+                        | project::Event::RefreshDocumentsDiagnostics = event
+                        {
+                            editor.refresh_diagnostics(cx);
                         } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
@@ -1427,6 +1435,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            tasks_pull_diagnostics_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -11167,6 +11176,76 @@ impl Editor {
         }
     }
 
+    fn refresh_diagnostics(&mut self, cx: &mut Context<Self>) -> Option<()> {
+        let buffer = self.buffer.read(cx);
+        let cursor_position = self.selections.newest_anchor().clone();
+        let (cursor_buffer, _) = buffer.text_anchor_for_position(cursor_position.start, cx)?;
+        let (end_buffer, _) = buffer.text_anchor_for_position(cursor_position.end, cx)?;
+
+        if cursor_buffer != end_buffer {
+            return None;
+        }
+
+        let lsp_store = self.lsp_store(cx)?.downgrade();
+
+        self.tasks_pull_diagnostics_task = cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
+                .await;
+
+            let Some(lsp_store) = lsp_store.upgrade() else {
+                return;
+            };
+
+            let diagnostics = if let Some(diagnostics) = lsp_store
+                .update(&mut cx, |lsp_store, cx| {
+                    lsp_store.document_diagnostic(cursor_buffer, cx)
+                })
+                .ok()
+            {
+                diagnostics.await.log_err()
+            } else {
+                None
+            };
+
+            if let Some(diagnostics) = diagnostics {
+                lsp_store
+                    .update(&mut cx, |lsp_store, cx| {
+                        diagnostics
+                            .iter()
+                            .filter_map(|diagnostic_set| match diagnostic_set {
+                                Some(diagnostic_set) => {
+                                    let publish_diagnostics_params =
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: diagnostic_set.uri.as_ref().unwrap().clone(),
+                                            diagnostics: match diagnostic_set.diagnostics.as_ref() {
+                                                Some(diagnostics) => diagnostics.clone(),
+                                                None => Vec::new(),
+                                            },
+                                            version: None,
+                                        };
+
+                                    Some(lsp_store.update_diagnostics(
+                                        diagnostic_set.server_id,
+                                        publish_diagnostics_params,
+                                        &[],
+                                        cx,
+                                    ))
+                                }
+                                None => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .log_err();
+
+                this.update(&mut cx, |editor, cx| editor.refresh_active_diagnostics(cx))
+                    .map_err(|e| log::error!("Failed to refresh active diagnostics: {}", e))
+                    .ok();
+            }
+        });
+        None
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -13307,6 +13386,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
+                self.refresh_diagnostics(cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 if self.has_active_inline_completion() {

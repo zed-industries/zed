@@ -284,6 +284,7 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
+    RefreshDocumentsDiagnostics,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -579,6 +580,17 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
 };
+
+/// An LSP diagnostics associated with a certain language server.
+#[derive(Clone, Debug)]
+pub struct LspDiagnostics {
+    /// The id of the language server that produced diagnostics.
+    pub server_id: LanguageServerId,
+    /// URI of the resource,
+    pub uri: Option<lsp::Url>,
+    /// The diagnostics produced by this language server.
+    pub diagnostics: Option<Vec<lsp::Diagnostic>>,
+}
 
 impl Project {
     pub fn init_settings(cx: &mut App) {
@@ -2247,6 +2259,9 @@ impl Project {
                 };
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
+            LspStoreEvent::RefreshDocumentsDiagnostics => {
+                cx.emit(Event::RefreshDocumentsDiagnostics)
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
