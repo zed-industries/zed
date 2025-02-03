@@ -324,6 +324,7 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
+                                    .label("OSS projects: Optionally share training data.")
                                     .fill()
                                     .when(self.worktrees.is_empty(), |element| {
                                         element.disabled(true).tooltip(move |window, cx| {
@@ -336,7 +337,6 @@ impl Render for ZedPredictModal {
                                             )
                                         })
                                     })
-                                    .label("Optionally share training data.")
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
                                             this.data_collection_opted_in =
@@ -375,10 +375,13 @@ impl Render for ZedPredictModal {
                                         "Help fine-tune Zed's model to enable better predictions.",
                                     ))
                                     .child(info_item(
-                                        "No data is ever captured while this setting is off.",
+                                        "We ask this exclusively for open-source projects.",
+                                    ))
+                                    .child(info_item("Toggle it anytime via the status bar menu."))
+                                    .child(info_item(
+                                        "No data is ever captured for non-OSS projects.",
                                     ))
                                     .child(info_item("This is a per-project setting."))
-                                    .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
                                         "Files that can contain sensitive data, like `.env`, are",
                                         h_flex()
