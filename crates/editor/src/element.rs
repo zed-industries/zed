@@ -32,11 +32,11 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    Hsla, InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
+    ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -68,8 +68,8 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::{
-    h_flex, prelude::*, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, KeyBinding, Tooltip,
-    POPOVER_Y_PADDING,
+    h_flex, prelude::*, render_modifiers, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape,
+    KeyBinding, Tooltip, POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
@@ -3620,9 +3620,11 @@ impl EditorElement {
             InlineCompletion::Move { target, .. } => {
                 let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
-                    let mut element = inline_completion_tab_indicator(
+                    let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
+                        self.editor.focus_handle(cx),
+                        window,
                         cx,
                     );
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3630,9 +3632,11 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
-                    let mut element = inline_completion_tab_indicator(
+                    let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
+                        self.editor.focus_handle(cx),
+                        window,
                         cx,
                     );
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3643,7 +3647,13 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
-                    let mut element = inline_completion_tab_indicator("Jump to Edit", None, cx);
+                    let mut element = inline_completion_accept_indicator(
+                        "Jump to Edit",
+                        None,
+                        self.editor.focus_handle(cx),
+                        window,
+                        cx,
+                    );
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3703,7 +3713,13 @@ impl EditorElement {
                             editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                         })?;
 
-                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
+                        let mut element = inline_completion_accept_indicator(
+                            "Accept",
+                            None,
+                            self.editor.focus_handle(cx),
+                            window,
+                            cx,
+                        );
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5734,17 +5750,33 @@ fn header_jump_data(
     }
 }
 
-fn inline_completion_tab_indicator(
+fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
+    focus_handle: FocusHandle,
+    window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let tab_kbd = h_flex()
+    let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+    let Some(accept_keystroke) = bindings
+        .last()
+        .and_then(|binding| binding.keystrokes().first())
+    else {
+        return div().into_any();
+    };
+
+    let accept_key = h_flex()
         .px_0p5()
         .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
-        .child("tab");
+        .gap_0p5()
+        .children(ui::render_modifiers(
+            &accept_keystroke.modifiers,
+            PlatformStyle::platform(),
+            Some(Color::Default),
+        ))
+        .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
@@ -5758,7 +5790,7 @@ fn inline_completion_tab_indicator(
         .border_color(cx.theme().colors().text_accent.opacity(0.8))
         .rounded_md()
         .shadow_sm()
-        .child(tab_kbd)
+        .child(accept_key)
         .child(Label::new(label).size(LabelSize::Small))
         .when_some(icon, |element, icon| {
             element.child(
