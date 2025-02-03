@@ -17,9 +17,7 @@ use std::io::Write;
 use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use telemetry_events::{
-    AssistantEvent, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
-};
+use telemetry_events::{AssistantEvent, AssistantPhase, Event, EventRequestBody, EventWrapper};
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
@@ -361,16 +359,17 @@ impl Telemetry {
         drop(state);
 
         if let Some((start, end, environment)) = period_data {
-            let event = Event::Edit(EditEvent {
-                duration: end
-                    .saturating_duration_since(start)
-                    .min(Duration::from_secs(60 * 60 * 24))
-                    .as_millis() as i64,
-                environment: environment.to_string(),
-                is_via_ssh,
-            });
+            let duration_milliseconds = end
+                .saturating_duration_since(start)
+                .min(Duration::from_secs(60 * 60 * 24))
+                .as_millis() as i64;
 
-            self.report_event(event);
+            telemetry::event!(
+                "Editor Edited",
+                duration_milliseconds = duration_milliseconds,
+                environment = environment.to_string(),
+                is_via_ssh = is_via_ssh
+            );
         }
     }
 
