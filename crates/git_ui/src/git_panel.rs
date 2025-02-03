@@ -16,10 +16,10 @@ use git::{
     CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll, COMMIT_MESSAGE,
 };
 use gpui::*;
-use language::Buffer;
+use language::{Buffer, BufferId};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::git::{GitRepo, RepositoryHandle};
-use project::{Fs, Project, ProjectPath};
+use project::{CreateOptions, Fs, Project, ProjectPath};
 use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
@@ -108,15 +108,37 @@ pub struct GitPanel {
 }
 
 fn commit_message_buffer(
-    project: Entity<Project>,
+    project: &Entity<Project>,
     active_repository: &RepositoryHandle,
     cx: &mut App,
 ) -> Task<Result<Entity<Buffer>>> {
     match &active_repository.git_repo {
         GitRepo::Local(repo) => {
             let commit_message_file = repo.dot_git_dir().join(*COMMIT_MESSAGE);
-            // TODO kb
-            Task::ready(Ok(cx.new(|cx| Buffer::local("", cx))))
+            let fs = project.read(cx).fs().clone();
+            let project = project.downgrade();
+            cx.spawn(|mut cx| async move {
+                fs.create_file(
+                    &commit_message_file,
+                    CreateOptions {
+                        overwrite: false,
+                        ignore_if_exists: true,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("creating commit message file at {commit_message_file:?}",)
+                })?;
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.open_local_buffer(&commit_message_file, cx)
+                    })?
+                    .await
+                    .with_context(|| {
+                        format!("opening commit message buffer at {commit_message_file:?}",)
+                    })?;
+                Ok(buffer)
+            })
         }
         GitRepo::Remote {
             project_id,
@@ -129,7 +151,8 @@ fn commit_message_buffer(
                 worktree_id: worktree_id.to_proto(),
                 work_directory_id: work_directory_id.to_proto(),
             });
-            cx.spawn(|cx| async move {
+            let project = project.downgrade();
+            cx.spawn(|mut cx| async move {
                 let response = request.await.context("requesting to open commit buffer")?;
                 let buffer_id = BufferId::new(response.buffer_id)?;
                 let buffer = project
@@ -192,9 +215,8 @@ impl GitPanel {
             let commit_message_buffer = workspace.update(&mut cx, |workspace, cx| {
                 let project = workspace.project();
                 let active_repository = project.read(cx).active_repository(cx);
-                active_repository.map(|active_repository| {
-                    commit_message_buffer(project.clone(), &active_repository, cx)
-                })
+                active_repository
+                    .map(|active_repository| commit_message_buffer(project, &active_repository, cx))
             })?;
             let commit_message_buffer = match commit_message_buffer {
                 Some(commit_message_buffer) => Some(
@@ -806,17 +828,20 @@ impl GitPanel {
                         .active_repository
                         .as_ref()
                         .map(|active_repository| {
-                            commit_message_buffer(project, active_repository, cx)
+                            commit_message_buffer(&project, active_repository, cx)
                         })
                 }) else {
                     return;
                 };
                 let commit_message_buffer = match commit_message_buffer {
-                    Some(commit_message_buffer) => Some(
-                        commit_message_buffer
-                            .await
-                            .context("opening commit buffer on repo update")?,
-                    ),
+                    Some(commit_message_buffer) => match commit_message_buffer
+                        .await
+                        .context("opening commit buffer on repo update")
+                        .log_err()
+                    {
+                        Some(buffer) => Some(buffer),
+                        None => return,
+                    },
                     None => None,
                 };
 

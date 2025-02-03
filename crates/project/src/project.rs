@@ -609,6 +609,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_stage);
         client.add_model_request_handler(Self::handle_unstage);
         client.add_model_request_handler(Self::handle_commit);
+        client.add_model_request_handler(Self::handle_open_commit_message_buffer);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
