@@ -126,9 +126,7 @@ fn commit_message_buffer(
                     },
                 )
                 .await
-                .with_context(|| {
-                    format!("creating commit message file at {commit_message_file:?}",)
-                })?;
+                .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
                 let buffer = project
                     .update(&mut cx, |project, cx| {
                         project.open_local_buffer(&commit_message_file, cx)
