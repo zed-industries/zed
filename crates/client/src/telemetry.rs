@@ -258,7 +258,7 @@ impl Telemetry {
                 async move {
                     while let Some(event) = rx.next().await {
                         let Some(state) = this.upgrade() else { break };
-                        state.report_event(Event::Flexible(event));
+                        state.report_event(Event::Flexible(event))
                     }
                 }
             })
