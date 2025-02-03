@@ -5404,20 +5404,84 @@ impl Editor {
                     .into_any(),
             );
         }
-        let is_loading = provider.provider.is_refreshing(cx);
 
-        let completion = match self
-            .active_inline_completion
-            .as_ref()
-            .or(self.stale_inline_completion_in_menu.as_ref())
-            .map(|completion| &completion.completion)
-        {
-            Some(InlineCompletion::Edit {
+        let is_refreshing = provider.provider.is_refreshing(cx);
+
+        let completion = match &self.active_inline_completion {
+            Some(completion) => {
+                self.render_edit_prediction_cursor_popover_preview(completion, style, cx)?
+            }
+
+            None if is_refreshing => match &self.stale_inline_completion_in_menu {
+                Some(stale_completion) => {
+                    self.render_edit_prediction_cursor_popover_preview(stale_completion, style, cx)?
+                }
+                None => div().child(Label::new("...").size(LabelSize::Small)),
+            },
+
+            None => div().child(Label::new("No Prediction")),
+        };
+
+        let completion = if is_refreshing {
+            completion
+                .with_animation(
+                    "loading-completion",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 0.8)),
+                    |label, delta| label.opacity(delta),
+                )
+                .into_any_element()
+        } else {
+            completion.into_any_element()
+        };
+
+        let has_completion = self.active_inline_completion.is_some();
+
+        Some(
+            h_flex()
+                .h(self.edit_prediction_cursor_popover_height())
+                .max_w(max_width)
+                .flex_1()
+                .px_2()
+                .gap_3()
+                .elevation_2(cx)
+                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                .child(Icon::new(IconName::ZedPredict))
+                .child(completion)
+                .child(div().w_full())
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .border_l_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .px_2()
+                        .child(
+                            #[cfg(not(target_os = "macos"))]
+                            "alt",
+                            #[cfg(target_os = "macos")]
+                            Icon::new(IconName::Option),
+                        )
+                        .opacity(if has_completion { 1.0 } else { 0.1 })
+                        .child("Preview"),
+                )
+                .into_any(),
+        )
+    }
+
+    fn render_edit_prediction_cursor_popover_preview(
+        &self,
+        completion: &InlineCompletionState,
+        style: &EditorStyle,
+        cx: &mut Context<Editor>,
+    ) -> Option<Div> {
+        match &completion.completion {
+            InlineCompletion::Edit {
                 edits,
                 edit_preview,
                 snapshot,
                 display_mode: _,
-            }) => {
+            } => {
                 let highlighted_edits = crate::inline_completion_edit_text(
                     &snapshot,
                     &edits,
@@ -5459,79 +5523,19 @@ impl Editor {
                 let styled_text = gpui::StyledText::new(SharedString::new(preview_text))
                     .with_highlights(&style.text, highlights);
 
-                let base = h_flex()
-                    .gap_1()
-                    .child(styled_text)
-                    .when(len_total > first_line_len, |parent| parent.child("…"));
-
-                let element = if is_loading {
-                    base.with_animation(
-                        "pulsating-stale-completion",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.4, 0.8)),
-                        |label, delta| label.opacity(delta),
-                    )
-                    .into_any_element()
-                } else {
-                    base.into_any_element()
-                };
-
-                Some(element)
+                Some(
+                    h_flex()
+                        .gap_1()
+                        .child(styled_text)
+                        .when(len_total > first_line_len, |parent| parent.child("…")),
+                )
             }
 
-            Some(InlineCompletion::Move(_)) => {
+            InlineCompletion::Move(_) => {
                 // TODO handle
                 None
             }
-
-            None if is_loading => Some(
-                Label::new("...")
-                    .size(LabelSize::Small)
-                    .with_animation(
-                        "pulsating-prediction-ellipsis",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.4, 0.8)),
-                        |label, delta| label.alpha(delta),
-                    )
-                    .into_any_element(),
-            ),
-
-            None => None,
-        };
-
-        let has_completion = completion.is_some();
-
-        Some(
-            h_flex()
-                .h(self.edit_prediction_cursor_popover_height())
-                .max_w(max_width)
-                .flex_1()
-                .px_2()
-                .gap_3()
-                .elevation_2(cx)
-                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                .child(Icon::new(IconName::ZedPredict))
-                .child(completion.unwrap_or_else(|| Label::new("No Prediction").into_any_element()))
-                .child(div().w_full())
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .border_l_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .px_2()
-                        .child(
-                            #[cfg(not(target_os = "macos"))]
-                            "alt",
-                            #[cfg(target_os = "macos")]
-                            Icon::new(IconName::Option),
-                        )
-                        .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child("Preview"),
-                )
-                .into_any(),
-        )
+        }
     }
 
     fn render_context_menu(
