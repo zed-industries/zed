@@ -1003,7 +1003,7 @@ impl settings::Settings for AllLanguageSettings {
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
             .map(|globs| globs.iter().collect())
-            .unwrap_or_default();
+            .ok_or_else(Self::missing_default)?;
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
 
