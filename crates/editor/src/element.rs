@@ -525,12 +525,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        editor.update_inline_completion_preview(&event.modifiers, window, cx);
+
         let mouse_position = window.mouse_position();
         if !text_hitbox.is_hovered(window) {
             return;
         }
-
-        editor.update_inline_completion_preview(&event.modifiers, window, cx);
 
         editor.update_hovered_link(
             position_map.point_for_position(text_hitbox.bounds, mouse_position),
