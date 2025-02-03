@@ -5435,6 +5435,8 @@ impl Editor {
             None => pending_completion_container().child(Label::new("No Prediction")),
         };
 
+        let completion = completion.font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
+
         let completion = if is_refreshing {
             completion
                 .with_animation(
@@ -5459,7 +5461,6 @@ impl Editor {
                 .px_2()
                 .gap_3()
                 .elevation_2(cx)
-                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                 .child(completion)
                 .child(div().w_full())
                 .child(
@@ -5467,15 +5468,15 @@ impl Editor {
                         .gap_1()
                         .border_l_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .px_2()
+                        .pl_2()
                         .child(
                             #[cfg(not(target_os = "macos"))]
                             "alt",
                             #[cfg(target_os = "macos")]
-                            Icon::new(IconName::Option),
+                            Icon::new(IconName::Option).size(IconSize::Small),
                         )
                         .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child("Preview"),
+                        .child(Label::new("Preview").color(Color::Muted)),
                 )
                 .into_any(),
         )
