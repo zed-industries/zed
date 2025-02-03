@@ -4758,6 +4758,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.inline_completions_enabled(cx) {
+            return;
+        }
+
         if !self.has_active_inline_completion() {
             self.refresh_inline_completion(false, true, window, cx);
             return;
