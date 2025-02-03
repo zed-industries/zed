@@ -1845,11 +1845,11 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
         let window = cx.add_window(|_, _| gpui::Empty);
 
-        let editor = window.build_model(cx, |window, cx| {
+        let editor = window.build_entity(cx, |window, cx| {
             Editor::for_buffer(buffer.clone(), None, window, cx)
         });
 
-        let search_bar = window.build_model(cx, |window, cx| {
+        let search_bar = window.build_entity(cx, |window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);

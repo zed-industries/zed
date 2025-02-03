@@ -78,6 +78,8 @@ pub enum Model {
     O1Preview,
     #[serde(rename = "o1-mini", alias = "o1-mini")]
     O1Mini,
+    #[serde(rename = "o3-mini", alias = "o3-mini")]
+    O3Mini,
 
     #[serde(rename = "custom")]
     Custom {
@@ -115,6 +117,7 @@ impl Model {
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
+            Self::O3Mini => "o3-mini",
             Self::Custom { name, .. } => name,
         }
     }
@@ -129,6 +132,7 @@ impl Model {
             Self::O1 => "o1",
             Self::O1Preview => "o1-preview",
             Self::O1Mini => "o1-mini",
+            Self::O3Mini => "o3-mini",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -145,6 +149,7 @@ impl Model {
             Self::O1 => 200000,
             Self::O1Preview => 128000,
             Self::O1Mini => 128000,
+            Self::O3Mini => 200000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }

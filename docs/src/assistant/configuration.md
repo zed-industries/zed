@@ -6,15 +6,13 @@ The following providers are supported:
 
 - [Zed AI (Configured by default when signed in)](#zed-ai)
 - [Anthropic](#anthropic)
-- [GitHub Copilot Chat](#github-copilot-chat) [^1]
-- [Google AI](#google-ai) [^1]
+- [GitHub Copilot Chat](#github-copilot-chat)
+- [Google AI](#google-ai)
 - [Ollama](#ollama)
 - [OpenAI](#openai)
 - [LM Studio](#lmstudio)
 
 To configure different providers, run `assistant: show configuration` in the command palette, or click on the hamburger menu at the top-right of the assistant panel and select "Configure".
-
-[^1]: This provider does not support the [`/workflow`](./commands#workflow-not-generally-available) command.
 
 To further customize providers, you can use `settings.json` to do that as follows:
 

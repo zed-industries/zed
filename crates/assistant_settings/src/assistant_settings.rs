@@ -434,7 +434,7 @@ pub struct LegacyAssistantSettingsContent {
     pub default_open_ai_model: Option<OpenAiModel>,
     /// OpenAI API base URL to use when creating new chats.
     ///
-    /// Default: https://api.openai.com/v1
+    /// Default: <https://api.openai.com/v1>
     pub openai_api_url: Option<String>,
 }
 

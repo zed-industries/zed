@@ -144,11 +144,9 @@ impl ContextStore {
                 this.handle_project_changed(project.clone(), cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
+                this.reload(cx).detach_and_log_err(cx);
                 this
             })?;
-            this.update(&mut cx, |this, cx| this.reload(cx))?
-                .await
-                .log_err();
 
             Ok(this)
         })
