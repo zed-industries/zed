@@ -12060,6 +12060,10 @@ impl Editor {
         self.buffer.read(cx).read(cx).text()
     }
 
+    pub fn is_empty(&self, cx: &App) -> bool {
+        self.buffer.read(cx).read(cx).is_empty()
+    }
+
     pub fn text_option(&self, cx: &App) -> Option<String> {
         let text = self.text(cx);
         let text = text.trim();
