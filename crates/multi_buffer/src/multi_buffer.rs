@@ -1414,20 +1414,19 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-        let key: Arc<Path> = Arc::from(path);
-        let (mut insert_after, excerpt_ids) = if let Some(existing) = self.buffers_by_path.get(&key)
-        {
-            (*existing.last().unwrap(), existing.clone())
-        } else {
-            (
-                self.buffers_by_path
-                    .range(..key.clone())
-                    .next_back()
-                    .map(|(_, value)| *value.last().unwrap())
-                    .unwrap_or(ExcerptId::min()),
-                Vec::default(),
-            )
-        };
+        let (mut insert_after, excerpt_ids) =
+            if let Some(existing) = self.buffers_by_path.get(&path) {
+                (*existing.last().unwrap(), existing.clone())
+            } else {
+                (
+                    self.buffers_by_path
+                        .range(..path.clone())
+                        .next_back()
+                        .map(|(_, value)| *value.last().unwrap())
+                        .unwrap_or(ExcerptId::min()),
+                    Vec::default(),
+                )
+            };
 
         let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
 
@@ -1511,9 +1510,9 @@ impl MultiBuffer {
         ));
         self.remove_excerpts(to_remove, cx);
         if new_excerpt_ids.is_empty() {
-            self.buffers_by_path.remove(&key);
+            self.buffers_by_path.remove(&path);
         } else {
-            self.buffers_by_path.insert(key, new_excerpt_ids);
+            self.buffers_by_path.insert(path, new_excerpt_ids);
         }
     }
 
