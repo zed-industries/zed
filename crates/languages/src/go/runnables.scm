@@ -63,7 +63,7 @@
 (
   (
     (function_declaration name: (_) @run @_name
-      (#match? @_name "^Fuzz.+"))
+      (#match? @_name "^Fuzz"))
   ) @_
   (#set! tag go-fuzz)
 )
