@@ -1,6 +1,6 @@
 # Completions
 
-Zed supports supports two sources for completions:
+Zed supports two sources for completions:
 
 1. "Code Completions" provided by Language Servers (LSPs) automatically installed by Zed or via [Zed Language Extensions](languages.md).
 2. "Inline Completions" provided by external APIs like [GitHub Copilot](#github-copilot) or [Supermaven](#supermaven).
@@ -54,13 +54,13 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 Once you have configured an Inline Completions provider, you can start using inline completions in your code. Inline completions will appear as you type, and you can accept them by pressing `tab` or `enter` or hide them by pressing `esc`.
 
-There a number of actions/shortcuts available to interact with inline completions:
+There are a number of actions/shortcuts available to interact with inline completions:
 
 - `editor: accept inline completion` (`tab`): To accept the current inline completion
-- `editor: accept partial inline completion` (`cmd-right`): To accept the current inline completion up to the next word boundary
-- `editor: show inline completion` (`alt-\`): Trigger a inline completion request manually
-- `editor: next inline completion` (`alt-]`): To cycle to the next inline completion
-- `editor: previous inline completion` (`alt-[`): To cycle to the previous inline completion
+- `editor: accept partial inline completion` (`ctrl-cmd-right`): To accept the current inline completion up to the next word boundary
+- `editor: show inline completion` (`alt-tab`): Trigger an inline completion request manually
+- `editor: next inline completion` (`alt-tab`): To cycle to the next inline completion
+- `editor: previous inline completion` (`alt-shift-tab`): To cycle to the previous inline completion
 
 ### Disabling Inline-Completions
 
@@ -72,7 +72,7 @@ To disable completions that appear automatically as you type, add the following 
 }
 ```
 
-You can trigger inline completions manually by executing `editor: show inline completion` (`alt-\\`).
+You can trigger inline completions manually by executing `editor: show inline completion` (`alt-tab`).
 
 You can also add this as a language-specific setting in your `settings.json` to disable inline completions for a specific language:
 
