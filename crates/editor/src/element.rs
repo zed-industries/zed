@@ -3168,6 +3168,7 @@ impl EditorElement {
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
         cursor: DisplayPoint,
+        cursor_point: Point,
         style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
@@ -3255,8 +3256,12 @@ impl EditorElement {
                 );
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, |editor, cx| {
-                        let mut element =
-                            editor.render_edit_prediction_cursor_popover(max_width, style, cx)?;
+                        let mut element = editor.render_edit_prediction_cursor_popover(
+                            max_width,
+                            cursor_point,
+                            style,
+                            cx,
+                        )?;
                         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                         Some((CursorPopoverType::EditPrediction, element, size))
                     })
@@ -7242,6 +7247,9 @@ impl Element for EditorElement {
                         );
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
+                        let newest_selection_point =
+                            newest_selection_head.to_point(&snapshot.display_snapshot);
+
                         if (start_row..end_row).contains(&newest_selection_head.row()) {
                             self.layout_cursor_popovers(
                                 line_height,
@@ -7251,6 +7259,7 @@ impl Element for EditorElement {
                                 scroll_pixel_position,
                                 &line_layouts,
                                 newest_selection_head,
+                                newest_selection_point,
                                 &style,
                                 window,
                                 cx,

@@ -5370,6 +5370,7 @@ impl Editor {
     fn render_edit_prediction_cursor_popover(
         &self,
         max_width: Pixels,
+        cursor_point: Point,
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -5407,19 +5408,31 @@ impl Editor {
 
         let is_refreshing = provider.provider.is_refreshing(cx);
 
+        fn pending_completion_container() -> Div {
+            h_flex().gap_3().child(Icon::new(IconName::ZedPredict))
+        }
+
         let completion = match &self.active_inline_completion {
-            Some(completion) => {
-                self.render_edit_prediction_cursor_popover_preview(completion, style, cx)?
-            }
+            Some(completion) => self.render_edit_prediction_cursor_popover_preview(
+                completion,
+                cursor_point,
+                style,
+                cx,
+            )?,
 
             None if is_refreshing => match &self.stale_inline_completion_in_menu {
-                Some(stale_completion) => {
-                    self.render_edit_prediction_cursor_popover_preview(stale_completion, style, cx)?
+                Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
+                    stale_completion,
+                    cursor_point,
+                    style,
+                    cx,
+                )?,
+                None => {
+                    pending_completion_container().child(Label::new("...").size(LabelSize::Small))
                 }
-                None => div().child(Label::new("...").size(LabelSize::Small)),
             },
 
-            None => div().child(Label::new("No Prediction")),
+            None => pending_completion_container().child(Label::new("No Prediction")),
         };
 
         let completion = if is_refreshing {
@@ -5447,7 +5460,6 @@ impl Editor {
                 .gap_3()
                 .elevation_2(cx)
                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                .child(Icon::new(IconName::ZedPredict))
                 .child(completion)
                 .child(div().w_full())
                 .child(
@@ -5472,6 +5484,7 @@ impl Editor {
     fn render_edit_prediction_cursor_popover_preview(
         &self,
         completion: &InlineCompletionState,
+        cursor_point: Point,
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
@@ -5482,6 +5495,9 @@ impl Editor {
                 snapshot,
                 display_mode: _,
             } => {
+                use text::ToPoint as _;
+                let first_edit_row = &edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
+
                 let highlighted_edits = crate::inline_completion_edit_text(
                     &snapshot,
                     &edits,
@@ -5523,12 +5539,21 @@ impl Editor {
                 let styled_text = gpui::StyledText::new(SharedString::new(preview_text))
                     .with_highlights(&style.text, highlights);
 
-                Some(
-                    h_flex()
-                        .gap_1()
-                        .child(styled_text)
-                        .when(len_total > first_line_len, |parent| parent.child("…")),
-                )
+                let preview = h_flex()
+                    .gap_1()
+                    .child(styled_text)
+                    .when(len_total > first_line_len, |parent| parent.child("…"));
+
+                let left = if *first_edit_row > cursor_point.row {
+                    // todo! reuse line number rendering?
+                    Label::new(first_edit_row.saturating_add(1).to_string())
+                        .color(Color::Muted)
+                        .into_any_element()
+                } else {
+                    Icon::new(IconName::ZedPredict).into_any_element()
+                };
+
+                Some(h_flex().gap_3().child(left).child(preview))
             }
 
             InlineCompletion::Move(_) => {
