@@ -684,13 +684,14 @@ impl HeadlessProject {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
-        let commit_message = envelope.payload.message;
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .commit_with_message(commit_message, name.zip(email), err_sender)
-            .context("unstaging entries")?;
+        cx.update(|cx| {
+            repository_handle
+                .commit(name.zip(email), err_sender, cx)
+                .context("unstaging entries")
+        })??;
         if let Some(error) = err_receiver.next().await {
             Err(error.context("error during unstaging"))
         } else {

@@ -12,7 +12,6 @@ use gpui::{App, Context, Entity, EventEmitter, SharedString, Subscription, WeakE
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::sync::Arc;
-use text::Rope;
 use util::maybe;
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
@@ -65,12 +64,10 @@ enum Message {
     StageAndCommit {
         git_repo: GitRepo,
         paths: Vec<RepoPath>,
-        message: Rope,
         name_and_email: Option<(SharedString, SharedString)>,
     },
     Commit {
         git_repo: GitRepo,
-        message: Rope,
         name_and_email: Option<(SharedString, SharedString)>,
     },
     Stage(GitRepo, Vec<RepoPath>),
@@ -94,150 +91,140 @@ impl GitState {
             mpsc::unbounded::<(Message, mpsc::Sender<anyhow::Error>)>();
         cx.spawn(|_, cx| async move {
             while let Some((msg, mut err_sender)) = update_receiver.next().await {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move {
-                        match msg {
-                            Message::StageAndCommit {
-                                git_repo,
-                                message,
-                                name_and_email,
-                                paths,
-                            } => {
-                                match git_repo {
-                                    GitRepo::Local(repo) => {
-                                        repo.stage_paths(&paths)?;
-                                        repo.commit(
-                                            &message.to_string(),
-                                            name_and_email.as_ref().map(|(name, email)| {
-                                                (name.as_ref(), email.as_ref())
-                                            }),
-                                        )?;
+                let result =
+                    cx.background_executor()
+                        .spawn(async move {
+                            match msg {
+                                Message::StageAndCommit {
+                                    git_repo,
+                                    name_and_email,
+                                    paths,
+                                } => {
+                                    match git_repo {
+                                        GitRepo::Local(repo) => {
+                                            repo.stage_paths(&paths)?;
+                                            repo.commit(name_and_email.as_ref().map(
+                                                |(name, email)| (name.as_ref(), email.as_ref()),
+                                            ))?;
+                                        }
+                                        GitRepo::Remote {
+                                            project_id,
+                                            client,
+                                            worktree_id,
+                                            work_directory_id,
+                                        } => {
+                                            client
+                                                .request(proto::Stage {
+                                                    project_id: project_id.0,
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    work_directory_id: work_directory_id.to_proto(),
+                                                    paths: paths
+                                                        .into_iter()
+                                                        .map(|repo_path| repo_path.to_proto())
+                                                        .collect(),
+                                                })
+                                                .await
+                                                .context("sending stage request")?;
+                                            let (name, email) = name_and_email.unzip();
+                                            client
+                                                .request(proto::Commit {
+                                                    project_id: project_id.0,
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    work_directory_id: work_directory_id.to_proto(),
+                                                    name: name.map(String::from),
+                                                    email: email.map(String::from),
+                                                })
+                                                .await
+                                                .context("sending commit request")?;
+                                        }
                                     }
-                                    GitRepo::Remote {
-                                        project_id,
-                                        client,
-                                        worktree_id,
-                                        work_directory_id,
-                                    } => {
-                                        client
-                                            .request(proto::Stage {
-                                                project_id: project_id.0,
-                                                worktree_id: worktree_id.to_proto(),
-                                                work_directory_id: work_directory_id.to_proto(),
-                                                paths: paths
-                                                    .into_iter()
-                                                    .map(|repo_path| repo_path.to_proto())
-                                                    .collect(),
-                                            })
-                                            .await
-                                            .context("sending stage request")?;
-                                        let (name, email) = name_and_email.unzip();
-                                        client
-                                            .request(proto::Commit {
-                                                project_id: project_id.0,
-                                                worktree_id: worktree_id.to_proto(),
-                                                work_directory_id: work_directory_id.to_proto(),
-                                                message: message.to_string(),
-                                                name: name.map(String::from),
-                                                email: email.map(String::from),
-                                            })
-                                            .await
-                                            .context("sending commit request")?;
-                                    }
-                                }
 
-                                Ok(())
-                            }
-                            Message::Stage(repo, paths) => {
-                                match repo {
-                                    GitRepo::Local(repo) => repo.stage_paths(&paths)?,
-                                    GitRepo::Remote {
-                                        project_id,
-                                        client,
-                                        worktree_id,
-                                        work_directory_id,
-                                    } => {
-                                        client
-                                            .request(proto::Stage {
-                                                project_id: project_id.0,
-                                                worktree_id: worktree_id.to_proto(),
-                                                work_directory_id: work_directory_id.to_proto(),
-                                                paths: paths
-                                                    .into_iter()
-                                                    .map(|repo_path| repo_path.to_proto())
-                                                    .collect(),
-                                            })
-                                            .await
-                                            .context("sending stage request")?;
-                                    }
+                                    Ok(())
                                 }
-                                Ok(())
-                            }
-                            Message::Unstage(repo, paths) => {
-                                match repo {
-                                    GitRepo::Local(repo) => repo.unstage_paths(&paths)?,
-                                    GitRepo::Remote {
-                                        project_id,
-                                        client,
-                                        worktree_id,
-                                        work_directory_id,
-                                    } => {
-                                        client
-                                            .request(proto::Unstage {
-                                                project_id: project_id.0,
-                                                worktree_id: worktree_id.to_proto(),
-                                                work_directory_id: work_directory_id.to_proto(),
-                                                paths: paths
-                                                    .into_iter()
-                                                    .map(|repo_path| repo_path.to_proto())
-                                                    .collect(),
-                                            })
-                                            .await
-                                            .context("sending unstage request")?;
+                                Message::Stage(repo, paths) => {
+                                    match repo {
+                                        GitRepo::Local(repo) => repo.stage_paths(&paths)?,
+                                        GitRepo::Remote {
+                                            project_id,
+                                            client,
+                                            worktree_id,
+                                            work_directory_id,
+                                        } => {
+                                            client
+                                                .request(proto::Stage {
+                                                    project_id: project_id.0,
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    work_directory_id: work_directory_id.to_proto(),
+                                                    paths: paths
+                                                        .into_iter()
+                                                        .map(|repo_path| repo_path.to_proto())
+                                                        .collect(),
+                                                })
+                                                .await
+                                                .context("sending stage request")?;
+                                        }
                                     }
+                                    Ok(())
                                 }
-                                Ok(())
-                            }
-                            Message::Commit {
-                                git_repo,
-                                message,
-                                name_and_email,
-                            } => {
-                                match git_repo {
-                                    GitRepo::Local(repo) => repo.commit(
-                                        &message.to_string(),
-                                        name_and_email
-                                            .as_ref()
-                                            .map(|(name, email)| (name.as_ref(), email.as_ref())),
-                                    )?,
-                                    GitRepo::Remote {
-                                        project_id,
-                                        client,
-                                        worktree_id,
-                                        work_directory_id,
-                                    } => {
-                                        let (name, email) = name_and_email.unzip();
-                                        client
-                                            .request(proto::Commit {
-                                                project_id: project_id.0,
-                                                worktree_id: worktree_id.to_proto(),
-                                                work_directory_id: work_directory_id.to_proto(),
-                                                // TODO implement collaborative commit message buffer instead and use it
-                                                // If it works, remove `commit_with_message` method.
-                                                message: message.to_string(),
-                                                name: name.map(String::from),
-                                                email: email.map(String::from),
-                                            })
-                                            .await
-                                            .context("sending commit request")?;
+                                Message::Unstage(repo, paths) => {
+                                    match repo {
+                                        GitRepo::Local(repo) => repo.unstage_paths(&paths)?,
+                                        GitRepo::Remote {
+                                            project_id,
+                                            client,
+                                            worktree_id,
+                                            work_directory_id,
+                                        } => {
+                                            client
+                                                .request(proto::Unstage {
+                                                    project_id: project_id.0,
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    work_directory_id: work_directory_id.to_proto(),
+                                                    paths: paths
+                                                        .into_iter()
+                                                        .map(|repo_path| repo_path.to_proto())
+                                                        .collect(),
+                                                })
+                                                .await
+                                                .context("sending unstage request")?;
+                                        }
                                     }
+                                    Ok(())
                                 }
-                                Ok(())
+                                Message::Commit {
+                                    git_repo,
+                                    name_and_email,
+                                } => {
+                                    match git_repo {
+                                        GitRepo::Local(repo) => {
+                                            repo.commit(name_and_email.as_ref().map(
+                                                |(name, email)| (name.as_ref(), email.as_ref()),
+                                            ))?
+                                        }
+                                        GitRepo::Remote {
+                                            project_id,
+                                            client,
+                                            worktree_id,
+                                            work_directory_id,
+                                        } => {
+                                            let (name, email) = name_and_email.unzip();
+                                            client
+                                                .request(proto::Commit {
+                                                    project_id: project_id.0,
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    work_directory_id: work_directory_id.to_proto(),
+                                                    name: name.map(String::from),
+                                                    email: email.map(String::from),
+                                                })
+                                                .await
+                                                .context("sending commit request")?;
+                                        }
+                                    }
+                                    Ok(())
+                                }
                             }
-                        }
-                    })
-                    .await;
+                        })
+                        .await;
                 if let Err(e) = result {
                     err_sender.send(e).await.ok();
                 }
@@ -455,7 +442,6 @@ impl RepositoryHandle {
 
     pub fn commit(
         &self,
-        message: String,
         name_and_email: Option<(SharedString, SharedString)>,
         mut err_sender: mpsc::Sender<anyhow::Error>,
         cx: &mut App,
@@ -463,7 +449,6 @@ impl RepositoryHandle {
         let result = self.update_sender.unbounded_send((
             Message::Commit {
                 git_repo: self.git_repo.clone(),
-                message: Rope::from(message),
                 name_and_email,
             },
             err_sender.clone(),
@@ -482,27 +467,8 @@ impl RepositoryHandle {
         }
     }
 
-    pub fn commit_with_message(
-        &self,
-        message: String,
-        name_and_email: Option<(SharedString, SharedString)>,
-        err_sender: mpsc::Sender<anyhow::Error>,
-    ) -> anyhow::Result<()> {
-        let result = self.update_sender.unbounded_send((
-            Message::Commit {
-                git_repo: self.git_repo.clone(),
-                message: message.into(),
-                name_and_email,
-            },
-            err_sender,
-        ));
-        anyhow::ensure!(result.is_ok(), "Failed to submit commit operation");
-        Ok(())
-    }
-
     pub fn commit_all(
         &self,
-        message: String,
         name_and_email: Option<(SharedString, SharedString)>,
         mut err_sender: mpsc::Sender<anyhow::Error>,
         cx: &mut App,
@@ -517,7 +483,6 @@ impl RepositoryHandle {
             Message::StageAndCommit {
                 git_repo: self.git_repo.clone(),
                 paths: to_stage,
-                message: Rope::from(message),
                 name_and_email,
             },
             err_sender.clone(),

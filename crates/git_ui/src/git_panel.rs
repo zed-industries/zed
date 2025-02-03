@@ -9,7 +9,7 @@ use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
 use futures::channel::mpsc;
-use futures::StreamExt as _;
+use futures::{SinkExt, StreamExt as _};
 use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{
@@ -34,7 +34,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    Workspace,
+    Item, Workspace,
 };
 
 actions!(
@@ -105,6 +105,8 @@ pub struct GitPanel {
     all_staged: Option<bool>,
     width: Option<Pixels>,
     err_sender: mpsc::Sender<anyhow::Error>,
+    commit_task: Task<()>,
+    commit_pending: bool,
 }
 
 fn commit_message_buffer(
@@ -290,6 +292,8 @@ impl GitPanel {
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
                 update_visible_entries_task: Task::ready(()),
+                commit_task: Task::ready(()),
+                commit_pending: false,
                 active_repository,
                 scroll_handle,
                 fs,
@@ -672,23 +676,46 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
         if !active_repository.can_commit(false) {
             return;
         }
-        let message = self.commit_editor.read(cx).text(cx);
-        if message.trim().is_empty() {
+        if self.commit_editor.read(cx).is_empty(cx) {
             return;
         }
-        if active_repository
-            .commit(message, name_and_email, self.err_sender.clone(), cx)
-            .is_ok()
-        {
-            self.commit_editor
-                .update(cx, |editor, cx| editor.clear(window, cx));
-        }
+        self.commit_pending = true;
+        let save_task = self.commit_editor.update(cx, |editor, cx| {
+            editor.save(false, self.project.clone(), window, cx)
+        });
+        let mut err_sender = self.err_sender.clone();
+        let commit_editor = self.commit_editor.clone();
+        self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
+            match save_task.await {
+                Ok(()) => {
+                    if let Some(Ok(())) = cx
+                        .update(|_, cx| {
+                            active_repository.commit(name_and_email, err_sender.clone(), cx)
+                        })
+                        .ok()
+                    {
+                        cx.update(|window, cx| {
+                            commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        })
+                        .ok();
+                    }
+                }
+                Err(e) => {
+                    err_sender.send(e).await.ok();
+                }
+            }
+            git_panel
+                .update(&mut cx, |git_panel, _| {
+                    git_panel.commit_pending = false;
+                })
+                .ok();
+        });
     }
 
     /// Commit all changes, regardless of whether they are staged or not
@@ -699,25 +726,46 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
         if !active_repository.can_commit(true) {
             return;
         }
-        let message = self.commit_editor.read(cx).text(cx);
-        if message.trim().is_empty() {
+        if self.commit_editor.read(cx).is_empty(cx) {
             return;
         }
-        if active_repository
-            .commit_all(message, name_and_email, self.err_sender.clone(), cx)
-            .is_ok()
-        {
-            {
-                self.commit_editor
-                    .update(cx, |editor, cx| editor.clear(window, cx));
+        self.commit_pending = true;
+        let save_task = self.commit_editor.update(cx, |editor, cx| {
+            editor.save(false, self.project.clone(), window, cx)
+        });
+        let mut err_sender = self.err_sender.clone();
+        let commit_editor = self.commit_editor.clone();
+        self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
+            match save_task.await {
+                Ok(()) => {
+                    if let Some(Ok(())) = cx
+                        .update(|_, cx| {
+                            active_repository.commit_all(name_and_email, err_sender.clone(), cx)
+                        })
+                        .ok()
+                    {
+                        cx.update(|window, cx| {
+                            commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        })
+                        .ok();
+                    }
+                }
+                Err(e) => {
+                    err_sender.send(e).await.ok();
+                }
             }
-        }
+            git_panel
+                .update(&mut cx, |git_panel, _| {
+                    git_panel.commit_pending = false;
+                })
+                .ok();
+        });
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
@@ -1091,6 +1139,7 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
+        let can_commit = can_commit && !editor.read(cx).is_empty(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
         let (can_commit, can_commit_all) =
             self.active_repository
@@ -1434,6 +1483,7 @@ impl Render for GitPanel {
             }
             None => (has_write_access, None),
         };
+        let can_commit = !self.commit_pending && can_commit;
 
         let has_co_authors = can_commit
             && has_write_access
