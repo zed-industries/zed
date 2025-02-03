@@ -1001,6 +1001,7 @@ checksum = "8b75356056920673b02621b35afd0f7dda9306d03c79a30f5c56c44cf256e3de"
 [[package]]
 name = "async-tls"
 version = "0.13.0"
+source = "git+https://github.com/zed-industries/async-tls?rev=1e759a4b5e370f87dc15e40756ac4f8815b61d9d#1e759a4b5e370f87dc15e40756ac4f8815b61d9d"
 dependencies = [
  "futures-core",
  "futures-io",
