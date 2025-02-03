@@ -195,11 +195,11 @@ pub fn render_modifiers(
                     PlatformStyle::Mac => Some(modifier.mac),
                     PlatformStyle::Linux => Some(modifier.linux)
                         .into_iter()
-                        .chain(Some(KeyOrIcon::Key("+")).into_iter())
+                        .chain(Some(KeyOrIcon::Key("+")))
                         .next(),
                     PlatformStyle::Windows => Some(modifier.windows)
                         .into_iter()
-                        .chain(Some(KeyOrIcon::Key("+")).into_iter())
+                        .chain(Some(KeyOrIcon::Key("+")))
                         .next(),
                 }
             } else {

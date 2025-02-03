@@ -161,8 +161,8 @@ use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
-    h_flex, prelude::*, render_modifiers, ButtonSize, ButtonStyle, Disclosure, IconButton,
-    IconName, IconSize, Tooltip,
+    h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
+    Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -5426,7 +5426,7 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         style: &EditorStyle,
-        accept_binding: &gpui::KeyBinding,
+        accept_keystroke: &gpui::Keystroke,
         window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
@@ -5511,11 +5511,6 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
-        let keystroke = match &accept_binding.keystrokes() {
-            [keystroke] => keystroke,
-            _ => return None,
-        };
-
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5537,9 +5532,9 @@ impl Editor {
                                 .p_1()
                                 .rounded_sm()
                                 .children(ui::render_modifiers(
-                                    &keystroke.modifiers,
+                                    &accept_keystroke.modifiers,
                                     PlatformStyle::platform(),
-                                    if window.modifiers() == keystroke.modifiers {
+                                    if window.modifiers() == accept_keystroke.modifiers {
                                         Some(Color::Accent)
                                     } else {
                                         None
@@ -5554,7 +5549,7 @@ impl Editor {
                                 .map_or(false, |c| c.is_move())
                             {
                                 div()
-                                    .child(ui::Key::new(&keystroke.key, None))
+                                    .child(ui::Key::new(&accept_keystroke.key, None))
                                     .font(buffer_font.clone())
                                     .into_any()
                             } else {
