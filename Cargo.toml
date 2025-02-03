@@ -423,7 +423,7 @@ jupyter-websocket-client = { version = "0.9.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev="060964da10574cd9bf06463a53bf6e0769c5c45e", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev="811ceae29fabee455f110c56cd66b3f49a7e5003", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
