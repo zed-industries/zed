@@ -135,17 +135,11 @@ impl ExtensionImports for WasmState {
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
         let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                BinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                BinaryStatus::Downloading
-            }
+            LanguageServerInstallationStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
+            LanguageServerInstallationStatus::Downloading => BinaryStatus::Downloading,
             LanguageServerInstallationStatus::Cached
             | LanguageServerInstallationStatus::Downloaded => BinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                BinaryStatus::Failed { error }
-            }
+            LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
         self.host

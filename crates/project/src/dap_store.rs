@@ -39,7 +39,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedStrin
 use http_client::HttpClient;
 use language::{
     proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
-    Buffer, BufferSnapshot, LanguageRegistry, BinaryStatus, LanguageToolchainStore,
+    BinaryStatus, Buffer, BufferSnapshot, LanguageRegistry, LanguageToolchainStore,
 };
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;

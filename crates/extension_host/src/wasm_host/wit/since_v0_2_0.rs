@@ -13,7 +13,7 @@ use extension::{
 };
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
-use language::{language_settings::AllLanguageSettings, LanguageName, BinaryStatus};
+use language::{language_settings::AllLanguageSettings, BinaryStatus, LanguageName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -671,16 +671,10 @@ impl ExtensionImports for WasmState {
         status: LanguageServerInstallationStatus,
     ) -> wasmtime::Result<()> {
         let status = match status {
-            LanguageServerInstallationStatus::CheckingForUpdate => {
-                BinaryStatus::CheckingForUpdate
-            }
-            LanguageServerInstallationStatus::Downloading => {
-                BinaryStatus::Downloading
-            }
+            LanguageServerInstallationStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
+            LanguageServerInstallationStatus::Downloading => BinaryStatus::Downloading,
             LanguageServerInstallationStatus::None => BinaryStatus::None,
-            LanguageServerInstallationStatus::Failed(error) => {
-                BinaryStatus::Failed { error }
-            }
+            LanguageServerInstallationStatus::Failed(error) => BinaryStatus::Failed { error },
         };
 
         self.host

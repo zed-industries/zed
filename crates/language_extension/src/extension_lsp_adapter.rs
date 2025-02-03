@@ -12,8 +12,8 @@ use fs::Fs;
 use futures::{Future, FutureExt};
 use gpui::AsyncApp;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageName, BinaryStatus,
-    LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
+    LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
