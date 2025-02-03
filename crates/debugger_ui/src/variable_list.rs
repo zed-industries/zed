@@ -1,4 +1,4 @@
-use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
+use crate::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
     client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
@@ -324,7 +324,6 @@ impl ScopeVariableIndex {
     }
 }
 
-type StackFrameId = u64;
 type ScopeId = u64;
 
 pub struct VariableList {
@@ -511,13 +510,47 @@ impl VariableList {
         cx: &mut Context<Self>,
     ) {
         match event {
-            StackFrameListEvent::SelectedStackFrameChanged => {
-                self.build_entries(true, true, cx);
+            StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
+                self.handle_selected_stack_frame_changed(*stack_frame_id, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {
                 self.fetch_variables(cx);
             }
         }
+    }
+
+    fn handle_selected_stack_frame_changed(
+        &mut self,
+        stack_frame_id: StackFrameId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.scopes.contains_key(&stack_frame_id) {
+            return self.build_entries(true, true, cx);
+        }
+
+        self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
+            let task = this.update(&mut cx, |variable_list, cx| {
+                variable_list.fetch_variables_for_stack_frame(stack_frame_id, &Vec::default(), cx)
+            })?;
+
+            let (scopes, variables) = task.await?;
+
+            this.update(&mut cx, |variable_list, cx| {
+                variable_list.scopes.insert(stack_frame_id, scopes);
+
+                for (scope_id, variables) in variables.into_iter() {
+                    let mut variable_index = ScopeVariableIndex::new();
+                    variable_index.add_variables(scope_id, variables);
+
+                    variable_list
+                        .variables
+                        .insert((stack_frame_id, scope_id), variable_index);
+                }
+
+                variable_list.build_entries(true, true, cx);
+                variable_list.send_update_proto_message(cx);
+            })
+        }));
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -930,8 +963,6 @@ impl VariableList {
         let stack_frames = self.stack_frame_list.read(cx).stack_frames().clone();
 
         self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
-            let mut tasks = Vec::with_capacity(stack_frames.len());
-
             let open_entries = this.update(&mut cx, |this, _| {
                 this.open_entries
                     .iter()
@@ -940,34 +971,27 @@ impl VariableList {
                     .collect::<Vec<_>>()
             })?;
 
-            for stack_frame in stack_frames.clone().into_iter() {
-                let task = this.update(&mut cx, |this, cx| {
-                    this.fetch_variables_for_stack_frame(stack_frame.id, &open_entries, cx)
-                });
+            let first_stack_frame = stack_frames
+                .first()
+                .ok_or(anyhow!("Expected to find a stackframe"))?;
 
-                tasks.push(
-                    cx.background_executor()
-                        .spawn(async move { anyhow::Ok((stack_frame.id, task?.await?)) }),
-                );
-            }
-
-            let results = futures::future::join_all(tasks).await;
+            let (scopes, variables) = this
+                .update(&mut cx, |this, cx| {
+                    this.fetch_variables_for_stack_frame(first_stack_frame.id, &open_entries, cx)
+                })?
+                .await?;
 
             this.update(&mut cx, |this, cx| {
                 let mut new_variables = BTreeMap::new();
                 let mut new_scopes = HashMap::new();
 
-                for (stack_frame_id, (scopes, variables)) in
-                    results.into_iter().filter_map(|result| result.ok())
-                {
-                    new_scopes.insert(stack_frame_id, scopes);
+                new_scopes.insert(first_stack_frame.id, scopes);
 
-                    for (scope_id, variables) in variables.into_iter() {
-                        let mut variable_index = ScopeVariableIndex::new();
-                        variable_index.add_variables(scope_id, variables);
+                for (scope_id, variables) in variables.into_iter() {
+                    let mut variable_index = ScopeVariableIndex::new();
+                    variable_index.add_variables(scope_id, variables);
 
-                        new_variables.insert((stack_frame_id, scope_id), variable_index);
-                    }
+                    new_variables.insert((first_stack_frame.id, scope_id), variable_index);
                 }
 
                 std::mem::swap(&mut this.variables, &mut new_variables);
@@ -976,23 +1000,27 @@ impl VariableList {
                 this.entries.clear();
                 this.build_entries(true, true, cx);
 
-                if let Some((client, project_id)) = this.dap_store.read(cx).downstream_client() {
-                    let request = UpdateDebugAdapter {
-                        client_id: this.client_id.to_proto(),
-                        session_id: this.session_id.to_proto(),
-                        thread_id: Some(this.stack_frame_list.read(cx).thread_id()),
-                        project_id: *project_id,
-                        variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(
-                            this.to_proto(),
-                        )),
-                    };
-
-                    client.send(request).log_err();
-                };
+                this.send_update_proto_message(cx);
 
                 this.fetch_variables_task.take();
             })
         }));
+    }
+
+    fn send_update_proto_message(&self, cx: &mut Context<Self>) {
+        if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
+            let request = UpdateDebugAdapter {
+                client_id: self.client_id.to_proto(),
+                session_id: self.session_id.to_proto(),
+                thread_id: Some(self.stack_frame_list.read(cx).thread_id()),
+                project_id: *project_id,
+                variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(
+                    self.to_proto(),
+                )),
+            };
+
+            client.send(request).log_err();
+        };
     }
 
     fn deploy_variable_context_menu(

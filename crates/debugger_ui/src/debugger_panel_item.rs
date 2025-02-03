@@ -174,7 +174,7 @@ impl DebugPanelItem {
             cx.subscribe(
                 &stack_frame_list,
                 move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
-                    StackFrameListEvent::SelectedStackFrameChanged
+                    StackFrameListEvent::SelectedStackFrameChanged(_)
                     | StackFrameListEvent::StackFramesUpdated => this.clear_highlights(cx),
                 },
             ),
