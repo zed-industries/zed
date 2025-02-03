@@ -5375,128 +5375,135 @@ impl Editor {
     ) -> Option<AnyElement> {
         let provider = self.inline_completion_provider.as_ref()?;
 
-        let content = if provider.provider.needs_terms_acceptance(cx) {
-            h_flex()
-                .h(self.edit_prediction_cursor_popover_height())
-                .flex_1()
-                .px_2()
-                .gap_3()
-                .elevation_2(cx)
-                .hover(|style| style.bg(cx.theme().colors().element_hover))
-                .id("accept-terms")
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                .on_click(cx.listener(|this, _event, window, cx| {
-                    cx.stop_propagation();
-                    this.toggle_zed_predict_onboarding(window, cx)
-                }))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(Icon::new(IconName::ZedPredict))
-                        .child(Label::new("Accept Terms of Service"))
-                        .child(div().w_full())
-                        .child(Icon::new(IconName::ArrowUpRight))
-                        .into_any_element(),
-                )
-                .into_any()
-        } else {
-            let is_loading = provider.provider.is_refreshing(cx);
+        if provider.provider.needs_terms_acceptance(cx) {
+            return Some(
+                h_flex()
+                    .h(self.edit_prediction_cursor_popover_height())
+                    .flex_1()
+                    .px_2()
+                    .gap_3()
+                    .elevation_2(cx)
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .id("accept-terms")
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .on_click(cx.listener(|this, _event, window, cx| {
+                        cx.stop_propagation();
+                        this.toggle_zed_predict_onboarding(window, cx)
+                    }))
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(Icon::new(IconName::ZedPredict))
+                            .child(Label::new("Accept Terms of Service"))
+                            .child(div().w_full())
+                            .child(Icon::new(IconName::ArrowUpRight))
+                            .into_any_element(),
+                    )
+                    .into_any(),
+            );
+        }
+        let is_loading = provider.provider.is_refreshing(cx);
 
-            let completion = match self
-                .active_inline_completion
-                .as_ref()
-                .or(self.stale_inline_completion_in_menu.as_ref())
-                .map(|completion| &completion.completion)
-            {
-                Some(InlineCompletion::Edit {
-                    edits,
-                    edit_preview,
-                    snapshot,
-                    display_mode: _,
-                }) => {
-                    let highlighted_edits = crate::inline_completion_edit_text(
-                        &snapshot,
-                        &edits,
-                        edit_preview.as_ref()?,
-                        false,
-                        cx,
-                    );
+        let completion = match self
+            .active_inline_completion
+            .as_ref()
+            .or(self.stale_inline_completion_in_menu.as_ref())
+            .map(|completion| &completion.completion)
+        {
+            Some(InlineCompletion::Edit {
+                edits,
+                edit_preview,
+                snapshot,
+                display_mode: _,
+            }) => {
+                let highlighted_edits = crate::inline_completion_edit_text(
+                    &snapshot,
+                    &edits,
+                    edit_preview.as_ref()?,
+                    false,
+                    cx,
+                );
 
-                    let len_total = highlighted_edits.text.len();
-                    let first_line = &highlighted_edits.text
-                        [..highlighted_edits.text.find('\n').unwrap_or(len_total)];
-                    let first_line_len = first_line.len();
+                let len_total = highlighted_edits.text.len();
+                let first_line = &highlighted_edits.text
+                    [..highlighted_edits.text.find('\n').unwrap_or(len_total)];
+                let first_line_len = first_line.len();
 
-                    let first_highlight_start = highlighted_edits
-                        .highlights
-                        .first()
-                        .map_or(0, |(range, _)| range.start);
-                    let drop_prefix_len = first_line
-                        .char_indices()
-                        .find(|(_, c)| !c.is_whitespace())
-                        .map_or(first_highlight_start, |(ix, _)| {
-                            ix.min(first_highlight_start)
-                        });
+                let first_highlight_start = highlighted_edits
+                    .highlights
+                    .first()
+                    .map_or(0, |(range, _)| range.start);
+                let drop_prefix_len = first_line
+                    .char_indices()
+                    .find(|(_, c)| !c.is_whitespace())
+                    .map_or(first_highlight_start, |(ix, _)| {
+                        ix.min(first_highlight_start)
+                    });
 
-                    let preview_text = &first_line[drop_prefix_len..];
-                    let preview_len = preview_text.len();
-                    let highlights = highlighted_edits
-                        .highlights
-                        .into_iter()
-                        .take_until(|(range, _)| range.start > first_line_len)
-                        .map(|(range, style)| {
-                            (
-                                range.start - drop_prefix_len
-                                    ..(range.end - drop_prefix_len).min(preview_len),
-                                style,
-                            )
-                        });
-
-                    let styled_text = gpui::StyledText::new(SharedString::new(preview_text))
-                        .with_highlights(&style.text, highlights);
-
-                    let base = h_flex()
-                        .gap_1()
-                        .child(styled_text)
-                        .when(len_total > first_line_len, |parent| parent.child("…"));
-
-                    if is_loading {
-                        base.with_animation(
-                            "pulsating-stale-completion",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.4, 0.8)),
-                            |label, delta| label.opacity(delta),
+                let preview_text = &first_line[drop_prefix_len..];
+                let preview_len = preview_text.len();
+                let highlights = highlighted_edits
+                    .highlights
+                    .into_iter()
+                    .take_until(|(range, _)| range.start > first_line_len)
+                    .map(|(range, style)| {
+                        (
+                            range.start - drop_prefix_len
+                                ..(range.end - drop_prefix_len).min(preview_len),
+                            style,
                         )
-                        .into_any_element()
-                    } else {
-                        base.into_any_element()
-                    }
-                }
-                Some(InlineCompletion::Move(_)) => {
-                    // TODO handle
-                    return None;
-                }
-                None => {
-                    if is_loading {
-                        Label::new("...")
-                            .size(LabelSize::Small)
-                            .with_animation(
-                                "pulsating-prediction-ellipsis",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
-                                |label, delta| label.alpha(delta),
-                            )
-                            .into_any_element()
-                    } else {
-                        Label::new("No Prediction").into_any_element()
-                    }
-                }
-            };
+                    });
 
+                let styled_text = gpui::StyledText::new(SharedString::new(preview_text))
+                    .with_highlights(&style.text, highlights);
+
+                let base = h_flex()
+                    .gap_1()
+                    .child(styled_text)
+                    .when(len_total > first_line_len, |parent| parent.child("…"));
+
+                let element = if is_loading {
+                    base.with_animation(
+                        "pulsating-stale-completion",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.opacity(delta),
+                    )
+                    .into_any_element()
+                } else {
+                    base.into_any_element()
+                };
+
+                Some(element)
+            }
+
+            Some(InlineCompletion::Move(_)) => {
+                // TODO handle
+                None
+            }
+
+            None if is_loading => Some(
+                Label::new("...")
+                    .size(LabelSize::Small)
+                    .with_animation(
+                        "pulsating-prediction-ellipsis",
+                        Animation::new(Duration::from_secs(2))
+                            .repeat()
+                            .with_easing(pulsating_between(0.4, 0.8)),
+                        |label, delta| label.alpha(delta),
+                    )
+                    .into_any_element(),
+            ),
+
+            None => None,
+        };
+
+        let has_completion = completion.is_some();
+
+        Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
                 .max_w(max_width)
@@ -5506,7 +5513,7 @@ impl Editor {
                 .elevation_2(cx)
                 .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                 .child(Icon::new(IconName::ZedPredict))
-                .child(completion)
+                .child(completion.unwrap_or_else(|| Label::new("No Prediction").into_any_element()))
                 .child(div().w_full())
                 .child(
                     h_flex()
@@ -5520,12 +5527,11 @@ impl Editor {
                             #[cfg(target_os = "macos")]
                             Icon::new(IconName::Option),
                         )
+                        .opacity(if has_completion { 1.0 } else { 0.1 })
                         .child("Preview"),
                 )
-                .into_any()
-        };
-
-        Some(content)
+                .into_any(),
+        )
     }
 
     fn render_context_menu(
