@@ -201,20 +201,8 @@ impl ProjectPicker {
                             });
 
                         cx.new(|cx| {
-                            let workspace = Workspace::new(
-                                None,
-                                project.clone(),
-                                app_state.clone(),
-                                window,
-                                cx,
-                            );
-
-                            workspace
-                                .client()
-                                .telemetry()
-                                .report_app_event("create ssh project".to_string());
-
-                            workspace
+                            telemetry::event!("SSH Project Created");
+                            Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                         })
                     })
                     .log_err();
@@ -420,12 +408,7 @@ impl RemoteServerProjects {
             match connection.await {
                 Some(Some(client)) => this
                     .update(&mut cx, |this, cx| {
-                        let _ = this.workspace.update(cx, |workspace, _| {
-                            workspace
-                                .client()
-                                .telemetry()
-                                .report_app_event("create ssh server".to_string())
-                        });
+                        telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::default_mode(cx);
