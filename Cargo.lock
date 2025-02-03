@@ -12407,7 +12407,6 @@ dependencies = [
  "indoc",
  "libsqlite3-sys",
  "parking_lot",
- "project",
  "smol",
  "sqlformat",
  "thread_local",

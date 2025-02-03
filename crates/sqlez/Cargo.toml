@@ -15,7 +15,6 @@ futures.workspace = true
 indoc.workspace = true
 libsqlite3-sys.workspace = true
 parking_lot.workspace = true
-project.workspace = true
 smol.workspace = true
 sqlformat.workspace = true
 thread_local = "1.1.4"

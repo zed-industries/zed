@@ -1,4 +1,3 @@
-use project::dap_store::BreakpointKind;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -379,40 +378,6 @@ impl Bind for () {
 impl Column for () {
     fn column(_statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         Ok(((), start_index))
-    }
-}
-
-impl StaticColumnCount for BreakpointKind {
-    fn column_count() -> usize {
-        1
-    }
-}
-
-impl Bind for BreakpointKind {
-    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
-        let next_index = statement.bind(&self.to_int(), start_index)?;
-
-        match self {
-            BreakpointKind::Standard => {
-                statement.bind_null(next_index)?;
-                Ok(next_index + 1)
-            }
-            BreakpointKind::Log(message) => statement.bind(message, next_index),
-        }
-    }
-}
-
-impl Column for BreakpointKind {
-    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
-        let kind = statement.column_int(start_index)?;
-        match kind {
-            0 => Ok((BreakpointKind::Standard, start_index + 2)),
-            1 => {
-                let message = statement.column_text(start_index + 1)?.to_string();
-                Ok((BreakpointKind::Log(message.into()), start_index + 1))
-            }
-            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
-        }
     }
 }
 

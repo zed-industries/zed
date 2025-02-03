@@ -1,6 +1,7 @@
 pub mod model;
 
 use std::{
+    borrow::Cow,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -148,6 +149,48 @@ pub struct Breakpoint {
     pub kind: BreakpointKind,
 }
 
+/// Wrapper for DB type of a breakpoint
+struct BreakpointKindWrapper<'a>(Cow<'a, BreakpointKind>);
+
+impl From<BreakpointKind> for BreakpointKindWrapper<'static> {
+    fn from(kind: BreakpointKind) -> Self {
+        BreakpointKindWrapper(Cow::Owned(kind))
+    }
+}
+impl StaticColumnCount for BreakpointKindWrapper<'_> {
+    fn column_count() -> usize {
+        1
+    }
+}
+
+impl Bind for BreakpointKindWrapper<'_> {
+    fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+        let next_index = statement.bind(&self.0.to_int(), start_index)?;
+
+        match self.0.as_ref() {
+            BreakpointKind::Standard => {
+                statement.bind_null(next_index)?;
+                Ok(next_index + 1)
+            }
+            BreakpointKind::Log(message) => statement.bind(&message.as_ref(), next_index),
+        }
+    }
+}
+
+impl Column for BreakpointKindWrapper<'_> {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let kind = statement.column_int(start_index)?;
+        match kind {
+            0 => Ok((BreakpointKind::Standard.into(), start_index + 2)),
+            1 => {
+                let message = statement.column_text(start_index + 1)?.to_string();
+                Ok((BreakpointKind::Log(message.into()).into(), start_index + 1))
+            }
+            _ => Err(anyhow::anyhow!("Invalid BreakpointKind discriminant")),
+        }
+    }
+}
+
 /// This struct is used to implement traits on Vec<breakpoint>
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -155,7 +198,7 @@ struct Breakpoints(Vec<Breakpoint>);
 
 impl sqlez::bindable::StaticColumnCount for Breakpoint {
     fn column_count() -> usize {
-        1 + BreakpointKind::column_count()
+        1 + BreakpointKindWrapper::column_count()
     }
 }
 
@@ -166,7 +209,10 @@ impl sqlez::bindable::Bind for Breakpoint {
         start_index: i32,
     ) -> anyhow::Result<i32> {
         let next_index = statement.bind(&self.position, start_index)?;
-        statement.bind(&self.kind, next_index)
+        statement.bind(
+            &BreakpointKindWrapper(Cow::Borrowed(&self.kind)),
+            next_index,
+        )
     }
 }
 
@@ -177,9 +223,15 @@ impl Column for Breakpoint {
             .with_context(|| format!("Failed to read BreakPoint at index {start_index}"))?
             as u32;
 
-        let (kind, next_index) = BreakpointKind::column(statement, start_index + 1)?;
+        let (kind, next_index) = BreakpointKindWrapper::column(statement, start_index + 1)?;
 
-        Ok((Breakpoint { position, kind }, next_index))
+        Ok((
+            Breakpoint {
+                position,
+                kind: kind.0.into_owned(),
+            },
+            next_index,
+        ))
     }
 }
 
@@ -197,9 +249,12 @@ impl Column for Breakpoints {
                         .with_context(|| format!("Failed to read BreakPoint at index {index}"))?
                         as u32;
 
-                    let (kind, next_index) = BreakpointKind::column(statement, index + 1)?;
+                    let (kind, next_index) = BreakpointKindWrapper::column(statement, index + 1)?;
 
-                    breakpoints.push(Breakpoint { position, kind });
+                    breakpoints.push(Breakpoint {
+                        position,
+                        kind: kind.0.into_owned(),
+                    });
                     index = next_index;
                 }
             }
