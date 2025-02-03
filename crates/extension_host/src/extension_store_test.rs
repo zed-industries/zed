@@ -8,9 +8,9 @@ use collections::BTreeMap;
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
-use gpui::{AppContext as _, SemanticVersion, TestAppContext};
+use gpui::{AppContext as _, SemanticVersion, SharedString, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, BinaryStatus};
+use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -653,18 +653,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             status_updates.next().await.unwrap(),
         ],
         [
-            (
-                LanguageServerName("gleam".into()),
-                BinaryStatus::CheckingForUpdate
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                BinaryStatus::Downloading
-            ),
-            (
-                LanguageServerName("gleam".into()),
-                BinaryStatus::None
-            )
+            (SharedString::new("gleam"), BinaryStatus::CheckingForUpdate),
+            (SharedString::new("gleam"), BinaryStatus::Downloading),
+            (SharedString::new("gleam"), BinaryStatus::None)
         ]
     );
 
