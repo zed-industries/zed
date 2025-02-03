@@ -998,10 +998,11 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.inline_completion_provider);
-        let mut completion_globs = default_value
+        let mut completion_globs: HashSet<&String> = default_value
             .inline_completions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
+            .map(|globs| globs.iter().collect())
             .ok_or_else(Self::missing_default)?;
 
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
@@ -1032,7 +1033,7 @@ impl settings::Settings for AllLanguageSettings {
                 .as_ref()
                 .and_then(|f| f.disabled_globs.as_ref())
             {
-                completion_globs = globs;
+                completion_globs.extend(globs.iter());
             }
 
             // A user's global settings override the default global settings and
