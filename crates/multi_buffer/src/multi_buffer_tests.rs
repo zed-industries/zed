@@ -1565,7 +1565,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2: Arc<Path> = Arc::from(PathBuf::from("path1"));
+    let path2: Arc<Path> = Arc::from(PathBuf::from("path2"));
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1648,7 +1648,13 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     );
 
     multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_excerpts_for_path(buf2.clone(), vec![Point::row_range(2..3)], 2, cx);
+        multibuffer.set_excerpts_for_path(
+            path2.clone(),
+            buf2.clone(),
+            vec![Point::row_range(2..3)],
+            2,
+            cx,
+        );
     });
 
     assert_excerpts_match(
