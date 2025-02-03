@@ -1087,7 +1087,7 @@ mod element {
                         if self.active_pane_ix == Some(ix) {
                             magnification
                         } else {
-                            1.
+                            total_flex / len as f32
                         }
                     })
                     .unwrap_or_else(|| flexes[ix]);
@@ -1115,7 +1115,7 @@ mod element {
             }
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
-                if active_pane_magnification.is_none() && ix < len - 1 {
+                if ix < len - 1 {
                     child_layout.handle = Some(Self::layout_handle(
                         self.axis,
                         child_layout.bounds,
