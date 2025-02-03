@@ -710,11 +710,12 @@ fn get_migrated_action(existing_action: &KeymapAction) -> Option<KeymapAction> {
             };
             match items.get(1) {
                 Some(Value::String(value)) => {
-                    if let Some(new_action) =
+                    let Some(new_action) =
                         TRANSFORM_ARRAY.get(&(old_action_name.as_str(), value.as_str()))
-                    {
-                        return Some(KeymapAction(Value::String(new_action.to_string())));
-                    }
+                    else {
+                        return None;
+                    };
+                    Some(KeymapAction(Value::String(new_action.to_string())))
                 }
                 Some(Value::Object(value)) => {
                     match UNWRAP_OBJECTS
@@ -754,18 +755,16 @@ fn get_migrated_action(existing_action: &KeymapAction) -> Option<KeymapAction> {
                                 Value::Object(new_value),
                             ])))
                         }
-                    };
+                    }
                 }
-                _ => {}
-            };
-            None
+                _ => None,
+            }
         }
         Value::String(value) => {
-            if let Some(new_value) = STRING_REPLACE.get(value.as_str()) {
-                Some(KeymapAction(Value::String(new_value.to_string())))
-            } else {
-                None
-            }
+            let Some(new_value) = STRING_REPLACE.get(value.as_str()) else {
+                return None;
+            };
+            Some(KeymapAction(Value::String(new_value.to_string())))
         }
         _ => None,
     }
