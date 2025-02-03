@@ -312,34 +312,35 @@ message Envelope {
         Stage stage = 293;
         Unstage unstage = 294;
         Commit commit = 295;
+        OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
-        SynchronizeBreakpoints Synchronize_breakpoints = 296;
-        SetActiveDebugLine set_active_debug_line = 297;
-        RemoveActiveDebugLine remove_active_debug_line = 298;
-        SetDebuggerPanelItem set_debugger_panel_item = 299;
-        UpdateDebugAdapter update_debug_adapter = 300;
-        ShutdownDebugClient shutdown_debug_client = 301;
-        SetDebugClientCapabilities set_debug_client_capabilities = 302;
+        SynchronizeBreakpoints synchronize_breakpoints = 297;
+        SetActiveDebugLine set_active_debug_line = 298;
+        RemoveActiveDebugLine remove_active_debug_line = 299;
+        SetDebuggerPanelItem set_debugger_panel_item = 300;
+        UpdateDebugAdapter update_debug_adapter = 301;
+        ShutdownDebugClient shutdown_debug_client = 302;
+        SetDebugClientCapabilities set_debug_client_capabilities = 303;
 
-        DapNextRequest dap_next_request = 303;
-        DapStepInRequest dap_step_in_request = 304;
-        DapStepOutRequest dap_step_out_request = 305;
-        DapStepBackRequest dap_step_back_request = 306;
-        DapContinueRequest dap_continue_request = 307;
-        DapContinueResponse dap_continue_response = 308;
-        DapPauseRequest dap_pause_request = 309;
-        DapDisconnectRequest dap_disconnect_request = 310;
-        DapTerminateThreadsRequest dap_terminate_threads_request = 311;
-        DapTerminateRequest dap_terminate_request = 312;
-        DapRestartRequest dap_restart_request = 313;
-        DapShutdownSession dap_shutdown_session = 314;
-        UpdateThreadStatus update_thread_status = 315;
-        VariablesRequest variables_request = 316;
-        DapVariables dap_variables = 317;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 318;
-        IgnoreBreakpointState ignore_breakpoint_state = 319;
-        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 320;
-        DebuggerSessionEnded debugger_session_ended = 321; // current max
+        DapNextRequest dap_next_request = 304;
+        DapStepInRequest dap_step_in_request = 305;
+        DapStepOutRequest dap_step_out_request = 306;
+        DapStepBackRequest dap_step_back_request = 307;
+        DapContinueRequest dap_continue_request = 308;
+        DapContinueResponse dap_continue_response = 309;
+        DapPauseRequest dap_pause_request = 310;
+        DapDisconnectRequest dap_disconnect_request = 311;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 312;
+        DapTerminateRequest dap_terminate_request = 313;
+        DapRestartRequest dap_restart_request = 314;
+        DapShutdownSession dap_shutdown_session = 315;
+        UpdateThreadStatus update_thread_status = 316;
+        VariablesRequest variables_request = 317;
+        DapVariables dap_variables = 318;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 319;
+        IgnoreBreakpointState ignore_breakpoint_state = 320;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 321;
+        DebuggerSessionEnded debugger_session_ended = 322; // current max
     }
 
     reserved 87 to 88;
@@ -3178,7 +3179,12 @@ message Commit {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    string message = 4;
-    optional string name = 5;
-    optional string email = 6;
+    optional string name = 4;
+    optional string email = 5;
+}
+
+message OpenCommitMessageBuffer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
 }

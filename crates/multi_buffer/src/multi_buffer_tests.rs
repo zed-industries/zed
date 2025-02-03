@@ -6,7 +6,7 @@ use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
-use std::env;
+use std::{env, path::PathBuf};
 use util::test::sample_text;
 
 #[ctor::ctor]
@@ -315,7 +315,8 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
     );
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| {
-        let (buffer_2_excerpt_id, _) = multibuffer.excerpts_for_buffer(&buffer_2, cx)[0].clone();
+        let (buffer_2_excerpt_id, _) =
+            multibuffer.excerpts_for_buffer(buffer_2.read(cx).remote_id(), cx)[0].clone();
         multibuffer.remove_excerpts([buffer_2_excerpt_id], cx);
         multibuffer.snapshot(cx)
     });
@@ -1528,6 +1529,202 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            ",
+            },
+            cx,
+        )
+    });
+    let path1: Arc<Path> = Arc::from(PathBuf::from("path1"));
+    let buf2 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "000
+            111
+            222
+            333
+            444
+            555
+            666
+            777
+            888
+            999
+            "
+            },
+            cx,
+        )
+    });
+    let path2: Arc<Path> = Arc::from(PathBuf::from("path2"));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+        "-----
+        zero
+        one
+        two
+        three
+        "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
+    });
+
+    assert_excerpts_match(&multibuffer, cx, "");
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1), Point::row_range(7..8)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                zero
+                one
+                two
+                three
+                -----
+                five
+                six
+                seven
+                "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(0..1), Point::row_range(5..6)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                    zero
+                    one
+                    two
+                    three
+                    four
+                    five
+                    six
+                    seven
+                    "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path2.clone(),
+            buf2.clone(),
+            vec![Point::row_range(2..3)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                zero
+                one
+                two
+                three
+                four
+                five
+                six
+                seven
+                -----
+                000
+                111
+                222
+                333
+                444
+                555
+                "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(path1.clone(), buf1.clone(), vec![], 2, cx);
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(3..4)],
+            2,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {"-----
+                one
+                two
+                three
+                four
+                five
+                six
+                -----
+                000
+                111
+                222
+                333
+                444
+                555
+                "},
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![Point::row_range(3..4)],
+            2,
+            cx,
+        );
+    });
+}
+
+#[gpui::test]
 fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "
@@ -2698,6 +2895,25 @@ fn format_diff(
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[track_caller]
+fn assert_excerpts_match(
+    multibuffer: &Entity<MultiBuffer>,
+    cx: &mut TestAppContext,
+    expected: &str,
+) {
+    let mut output = String::new();
+    multibuffer.read_with(cx, |multibuffer, cx| {
+        for (_, buffer, range) in multibuffer.snapshot(cx).excerpts() {
+            output.push_str("-----\n");
+            output.extend(buffer.text_for_range(range.context));
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+    });
+    assert_eq!(output, expected);
 }
 
 #[track_caller]

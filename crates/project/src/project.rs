@@ -60,6 +60,7 @@ use ::git::{
     blame::Blame,
     repository::{Branch, GitRepository, RepoPath},
     status::FileStatus,
+    COMMIT_MESSAGE,
 };
 use gpui::{
     AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
@@ -171,7 +172,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Entity<SshRemoteClient>>,
     client_state: ProjectClientState,
-    git_state: Option<Entity<GitState>>,
+    git_state: Entity<GitState>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
@@ -639,6 +640,7 @@ impl Project {
         client.add_model_request_handler(Self::handle_stage);
         client.add_model_request_handler(Self::handle_unstage);
         client.add_model_request_handler(Self::handle_commit);
+        client.add_model_request_handler(Self::handle_open_commit_message_buffer);
 
         client.add_model_message_handler(Self::handle_toggle_ignore_breakpoints);
 
@@ -748,9 +750,7 @@ impl Project {
                 )
             });
 
-            let git_state = Some(
-                cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx)),
-            );
+            let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -873,15 +873,14 @@ impl Project {
 
             let dap_store = cx.new(|_| DapStore::new_remote(SSH_PROJECT_ID, client.clone().into()));
 
-            let git_state = Some(cx.new(|cx| {
+            let git_state = cx.new(|cx| {
                 GitState::new(
                     &worktree_store,
-                    languages.clone(),
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
                 )
-            }));
+            });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -1093,16 +1092,14 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state = Some(cx.new(|cx| {
+        let git_state = cx.new(|cx| {
             GitState::new(
                 &worktree_store,
-                languages.clone(),
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
             )
-        }))
-        .transpose()?;
+        })?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -4430,21 +4427,8 @@ impl Project {
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = this.update(&mut cx, |project, cx| {
-            let repository_handle = project
-                .git_state()
-                .context("missing git state")?
-                .read(cx)
-                .all_repositories()
-                .into_iter()
-                .find(|repository_handle| {
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
-                            == work_directory_id
-                })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
-        })??;
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
         let entries = envelope
             .payload
@@ -4471,21 +4455,8 @@ impl Project {
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = this.update(&mut cx, |project, cx| {
-            let repository_handle = project
-                .git_state()
-                .context("missing git state")?
-                .read(cx)
-                .all_repositories()
-                .into_iter()
-                .find(|repository_handle| {
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
-                            == work_directory_id
-                })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
-        })??;
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
         let entries = envelope
             .payload
@@ -4512,10 +4483,95 @@ impl Project {
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = this.update(&mut cx, |project, cx| {
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let name = envelope.payload.name.map(SharedString::from);
+        let email = envelope.payload.email.map(SharedString::from);
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
+        cx.update(|cx| {
+            repository_handle
+                .commit(name.zip(email), err_sender, cx)
+                .context("unstaging entries")
+        })??;
+        if let Some(error) = err_receiver.next().await {
+            Err(error.context("error during unstaging"))
+        } else {
+            Ok(proto::Ack {})
+        }
+    }
+
+    async fn handle_open_commit_message_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenBufferResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let git_repository = match &repository_handle.git_repo {
+            git::GitRepo::Local(git_repository) => git_repository.clone(),
+            git::GitRepo::Remote { .. } => {
+                anyhow::bail!("Cannot handle open commit message buffer for remote git repo")
+            }
+        };
+        let commit_message_file = git_repository.dot_git_dir().join(*COMMIT_MESSAGE);
+        let fs = this.update(&mut cx, |project, _| project.fs().clone())?;
+        fs.create_file(
+            &commit_message_file,
+            CreateOptions {
+                overwrite: false,
+                ignore_if_exists: true,
+            },
+        )
+        .await
+        .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
+
+        let (worktree, relative_path) = this
+            .update(&mut cx, |headless_project, cx| {
+                headless_project
+                    .worktree_store
+                    .update(cx, |worktree_store, cx| {
+                        worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
+                    })
+            })?
+            .await
+            .with_context(|| {
+                format!("deriving worktree for commit message file {commit_message_file:?}")
+            })?;
+
+        let buffer = this
+            .update(&mut cx, |headless_project, cx| {
+                headless_project
+                    .buffer_store
+                    .update(cx, |buffer_store, cx| {
+                        buffer_store.open_buffer(
+                            ProjectPath {
+                                worktree_id: worktree.read(cx).id(),
+                                path: Arc::from(relative_path),
+                            },
+                            cx,
+                        )
+                    })
+            })
+            .with_context(|| {
+                format!("opening buffer for commit message file {commit_message_file:?}")
+            })?
+            .await?;
+        let peer_id = envelope.original_sender_id()?;
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    fn repository_for_request(
+        this: &Entity<Self>,
+        worktree_id: WorktreeId,
+        work_directory_id: ProjectEntryId,
+        cx: &mut AsyncApp,
+    ) -> Result<RepositoryHandle> {
+        this.update(cx, |project, cx| {
             let repository_handle = project
                 .git_state()
-                .context("missing git state")?
                 .read(cx)
                 .all_repositories()
                 .into_iter()
@@ -4526,20 +4582,7 @@ impl Project {
                 })
                 .context("missing repository handle")?;
             anyhow::Ok(repository_handle)
-        })??;
-
-        let commit_message = envelope.payload.message;
-        let name = envelope.payload.name.map(SharedString::from);
-        let email = envelope.payload.email.map(SharedString::from);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .commit_with_message(commit_message, name.zip(email), err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+        })?
     }
 
     fn respond_to_open_buffer_request(
@@ -4578,7 +4621,7 @@ impl Project {
         buffer.read(cx).remote_id()
     }
 
-    fn wait_for_remote_buffer(
+    pub fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
         cx: &mut Context<Self>,
@@ -4743,19 +4786,16 @@ impl Project {
         &self.buffer_store
     }
 
-    pub fn git_state(&self) -> Option<&Entity<GitState>> {
-        self.git_state.as_ref()
+    pub fn git_state(&self) -> &Entity<GitState> {
+        &self.git_state
     }
 
     pub fn active_repository(&self, cx: &App) -> Option<RepositoryHandle> {
-        self.git_state()
-            .and_then(|git_state| git_state.read(cx).active_repository())
+        self.git_state.read(cx).active_repository()
     }
 
     pub fn all_repositories(&self, cx: &App) -> Vec<RepositoryHandle> {
-        self.git_state()
-            .map(|git_state| git_state.read(cx).all_repositories())
-            .unwrap_or_default()
+        self.git_state.read(cx).all_repositories()
     }
 }
 

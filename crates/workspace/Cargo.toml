@@ -26,8 +26,8 @@ test-support = [
 ]
 
 [dependencies]
-anyhow.workspace = true
 any_vec.workspace = true
+anyhow.workspace = true
 async-recursion.workspace = true
 bincode = "1.2.1"
 call.workspace = true
@@ -47,7 +47,6 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
-task.workspace = true
 remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -56,11 +55,13 @@ session.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 sqlez.workspace = true
+strum.workspace = true
+task.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-strum.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

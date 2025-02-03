@@ -339,13 +339,13 @@ pub fn init(cx: &mut App) {
                 app_state,
                 cx,
                 |workspace, window, cx| {
+                    cx.activate(true);
                     Editor::new_file(workspace, &Default::default(), window, cx)
                 },
             )
             .detach();
         }
     });
-    git::project_diff::init(cx);
 }
 
 pub struct SearchWithinRange;
@@ -4676,7 +4676,7 @@ impl Editor {
                     let mut read_ranges = Vec::new();
                     for highlight in highlights {
                         for (excerpt_id, excerpt_range) in
-                            buffer.excerpts_for_buffer(&cursor_buffer, cx)
+                            buffer.excerpts_for_buffer(cursor_buffer.read(cx).remote_id(), cx)
                         {
                             let start = highlight
                                 .range
@@ -12256,10 +12256,7 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
             return;
         }
-        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
-            return;
-        };
-        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
+        let folded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map
             .update(cx, |display_map, cx| display_map.fold_buffer(buffer_id, cx));
         cx.emit(EditorEvent::BufferFoldToggled {
@@ -12273,10 +12270,7 @@ impl Editor {
         if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
-        let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
-            return;
-        };
-        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(&buffer, cx);
+        let unfolded_excerpts = self.buffer().read(cx).excerpts_for_buffer(buffer_id, cx);
         self.display_map.update(cx, |display_map, cx| {
             display_map.unfold_buffer(buffer_id, cx);
         });
@@ -12567,6 +12561,10 @@ impl Editor {
 
     pub fn text(&self, cx: &App) -> String {
         self.buffer.read(cx).read(cx).text()
+    }
+
+    pub fn is_empty(&self, cx: &App) -> bool {
+        self.buffer.read(cx).read(cx).is_empty()
     }
 
     pub fn text_option(&self, cx: &App) -> Option<String> {

@@ -1017,7 +1017,7 @@ impl OutlinePanel {
                     .map(|buffer| {
                         active_multi_buffer
                             .read(cx)
-                            .excerpts_for_buffer(&buffer, cx)
+                            .excerpts_for_buffer(buffer.read(cx).remote_id(), cx)
                     })
                     .and_then(|excerpts| {
                         let (excerpt_id, excerpt_range) = excerpts.first()?;

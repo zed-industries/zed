@@ -20,7 +20,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
@@ -370,8 +370,6 @@ fn initialize_panels(
 ) {
     let assistant2_feature_flag =
         cx.wait_for_flag_or_timeout::<feature_flags::Assistant2FeatureFlag>(Duration::from_secs(5));
-    let git_ui_feature_flag =
-        cx.wait_for_flag_or_timeout::<feature_flags::GitUiFeatureFlag>(Duration::from_secs(5));
 
     let prompt_builder = prompt_builder.clone();
 
@@ -416,19 +414,10 @@ fn initialize_panels(
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
-        })?;
-
-        let git_ui_enabled = git_ui_feature_flag.await;
-
-        let git_panel = if git_ui_enabled {
-            Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
-        } else {
-            None
-        };
-        workspace_handle.update_in(&mut cx, |workspace, window, cx| {
-            if let Some(git_panel) = git_panel {
+            cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
+                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, None, cx);
                 workspace.add_panel(git_panel, window, cx);
-            }
+            });
         })?;
 
         let is_assistant2_enabled = if cfg!(test) {
@@ -523,10 +512,7 @@ fn register_actions(
         })
         .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, window, cx| {
-            workspace
-                .client()
-                .telemetry()
-                .report_app_event("open project".to_string());
+            telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
                     files: true,
@@ -792,6 +778,7 @@ fn register_actions(
                         app_state,
                         cx,
                         |workspace, window, cx| {
+                            cx.activate(true);
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )

@@ -1,22 +1,27 @@
 use crate::git_panel_settings::StatusStyle;
 use crate::repository_selector::RepositorySelectorPopoverMenu;
+use crate::ProjectDiff;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
 use futures::channel::mpsc;
-use futures::StreamExt as _;
+use futures::{SinkExt, StreamExt as _};
 use git::repository::RepoPath;
 use git::status::FileStatus;
-use git::{CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll};
+use git::{
+    CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll, COMMIT_MESSAGE,
+};
 use gpui::*;
+use language::{Buffer, BufferId};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::git::RepositoryHandle;
-use project::{Fs, Project, ProjectPath};
+use project::git::{GitRepo, RepositoryHandle};
+use project::{CreateOptions, Fs, Project, ProjectPath};
+use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
@@ -30,7 +35,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    Workspace,
+    Item, Workspace,
 };
 
 actions!(
@@ -101,10 +106,69 @@ pub struct GitPanel {
     all_staged: Option<bool>,
     width: Option<Pixels>,
     err_sender: mpsc::Sender<anyhow::Error>,
+    commit_task: Task<()>,
+    commit_pending: bool,
+}
+
+fn commit_message_buffer(
+    project: &Entity<Project>,
+    active_repository: &RepositoryHandle,
+    cx: &mut App,
+) -> Task<Result<Entity<Buffer>>> {
+    match &active_repository.git_repo {
+        GitRepo::Local(repo) => {
+            let commit_message_file = repo.dot_git_dir().join(*COMMIT_MESSAGE);
+            let fs = project.read(cx).fs().clone();
+            let project = project.downgrade();
+            cx.spawn(|mut cx| async move {
+                fs.create_file(
+                    &commit_message_file,
+                    CreateOptions {
+                        overwrite: false,
+                        ignore_if_exists: true,
+                    },
+                )
+                .await
+                .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.open_local_buffer(&commit_message_file, cx)
+                    })?
+                    .await
+                    .with_context(|| {
+                        format!("opening commit message buffer at {commit_message_file:?}",)
+                    })?;
+                Ok(buffer)
+            })
+        }
+        GitRepo::Remote {
+            project_id,
+            client,
+            worktree_id,
+            work_directory_id,
+        } => {
+            let request = client.request(proto::OpenCommitMessageBuffer {
+                project_id: project_id.0,
+                worktree_id: worktree_id.to_proto(),
+                work_directory_id: work_directory_id.to_proto(),
+            });
+            let project = project.downgrade();
+            cx.spawn(|mut cx| async move {
+                let response = request.await.context("requesting to open commit buffer")?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+                let buffer = project
+                    .update(&mut cx, {
+                        |project, cx| project.wait_for_remote_buffer(buffer_id, cx)
+                    })?
+                    .await?;
+                Ok(buffer)
+            })
+        }
+    }
 }
 
 fn commit_message_editor(
-    active_repository: Option<&RepositoryHandle>,
+    commit_message_buffer: Option<Entity<Buffer>>,
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
 ) -> Editor {
@@ -121,8 +185,8 @@ fn commit_message_editor(
     };
     text_style.refine(&refinement);
 
-    let mut commit_editor = if let Some(active_repository) = active_repository.as_ref() {
-        let buffer = cx.new(|cx| MultiBuffer::singleton(active_repository.commit_message(), cx));
+    let mut commit_editor = if let Some(commit_message_buffer) = commit_message_buffer {
+        let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
         Editor::new(
             EditorMode::AutoHeight { max_lines: 10 },
             buffer,
@@ -144,21 +208,15 @@ fn commit_message_editor(
 }
 
 impl GitPanel {
-    pub fn load(
-        workspace: WeakEntity<Workspace>,
-        cx: AsyncWindowContext,
-    ) -> Task<Result<Entity<Self>>> {
-        cx.spawn(|mut cx| async move { workspace.update_in(&mut cx, Self::new) })
-    }
-
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
+        commit_message_buffer: Option<Entity<Buffer>>,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
-        let git_state = project.read(cx).git_state().cloned();
+        let git_state = project.read(cx).git_state().clone();
         let active_repository = project.read(cx).active_repository(cx);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
         let workspace = cx.entity().downgrade();
@@ -172,23 +230,24 @@ impl GitPanel {
             .detach();
 
             let commit_editor =
-                cx.new(|cx| commit_message_editor(active_repository.as_ref(), window, cx));
+                cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+            commit_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+            });
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            if let Some(git_state) = git_state {
-                cx.subscribe_in(
-                    &git_state,
-                    window,
-                    move |this, git_state, event, window, cx| match event {
-                        project::git::Event::RepositoriesUpdated => {
-                            this.active_repository = git_state.read(cx).active_repository();
-                            this.schedule_update(window, cx);
-                        }
-                    },
-                )
-                .detach();
-            }
+            cx.subscribe_in(
+                &git_state,
+                window,
+                move |this, git_state, event, window, cx| match event {
+                    project::git::Event::RepositoriesUpdated => {
+                        this.active_repository = git_state.read(cx).active_repository();
+                        this.schedule_update(window, cx);
+                    }
+                },
+            )
+            .detach();
 
             let repository_selector =
                 cx.new(|cx| RepositorySelector::new(project.clone(), window, cx));
@@ -207,6 +266,8 @@ impl GitPanel {
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
                 update_visible_entries_task: Task::ready(()),
+                commit_task: Task::ready(()),
+                commit_pending: false,
                 active_repository,
                 scroll_handle,
                 fs,
@@ -257,8 +318,24 @@ impl GitPanel {
         git_panel
     }
 
+    pub fn set_focused_path(&mut self, path: ProjectPath, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(git_repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        let Some(repo_path) = git_repo.project_path_to_repo_path(&path) else {
+            return;
+        };
+        let Ok(ix) = self
+            .visible_entries
+            .binary_search_by_key(&&repo_path, |entry| &entry.repo_path)
+        else {
+            return;
+        };
+        self.selected_entry = Some(ix);
+        cx.notify();
+    }
+
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        // TODO: we can store stage status here
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -536,7 +613,7 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(path) = active_repository.unrelativize(&entry.repo_path) else {
+        let Some(path) = active_repository.repo_path_to_project_path(&entry.repo_path) else {
             return;
         };
         let path_exists = self.project.update(cx, |project, cx| {
@@ -586,16 +663,49 @@ impl GitPanel {
         &mut self,
         _: &git::CommitChanges,
         name_and_email: Option<(SharedString, SharedString)>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-        if !active_repository.can_commit(false, cx) {
+        if !active_repository.can_commit(false) {
             return;
         }
-        active_repository.commit(name_and_email, self.err_sender.clone(), cx);
+        if self.commit_editor.read(cx).is_empty(cx) {
+            return;
+        }
+        self.commit_pending = true;
+        let save_task = self.commit_editor.update(cx, |editor, cx| {
+            editor.save(false, self.project.clone(), window, cx)
+        });
+        let mut err_sender = self.err_sender.clone();
+        let commit_editor = self.commit_editor.clone();
+        self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
+            match save_task.await {
+                Ok(()) => {
+                    if let Some(Ok(())) = cx
+                        .update(|_, cx| {
+                            active_repository.commit(name_and_email, err_sender.clone(), cx)
+                        })
+                        .ok()
+                    {
+                        cx.update(|window, cx| {
+                            commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        })
+                        .ok();
+                    }
+                }
+                Err(e) => {
+                    err_sender.send(e).await.ok();
+                }
+            }
+            git_panel
+                .update(&mut cx, |git_panel, _| {
+                    git_panel.commit_pending = false;
+                })
+                .ok();
+        });
     }
 
     /// Commit all changes, regardless of whether they are staged or not
@@ -603,16 +713,49 @@ impl GitPanel {
         &mut self,
         _: &git::CommitAllChanges,
         name_and_email: Option<(SharedString, SharedString)>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-        if !active_repository.can_commit(true, cx) {
+        if !active_repository.can_commit(true) {
             return;
         }
-        active_repository.commit_all(name_and_email, self.err_sender.clone(), cx);
+        if self.commit_editor.read(cx).is_empty(cx) {
+            return;
+        }
+        self.commit_pending = true;
+        let save_task = self.commit_editor.update(cx, |editor, cx| {
+            editor.save(false, self.project.clone(), window, cx)
+        });
+        let mut err_sender = self.err_sender.clone();
+        let commit_editor = self.commit_editor.clone();
+        self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
+            match save_task.await {
+                Ok(()) => {
+                    if let Some(Ok(())) = cx
+                        .update(|_, cx| {
+                            active_repository.commit_all(name_and_email, err_sender.clone(), cx)
+                        })
+                        .ok()
+                    {
+                        cx.update(|window, cx| {
+                            commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        })
+                        .ok();
+                    }
+                }
+                Err(e) => {
+                    err_sender.send(e).await.ok();
+                }
+            }
+            git_panel
+                .update(&mut cx, |git_panel, _| {
+                    git_panel.commit_pending = false;
+                })
+                .ok();
+        });
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
@@ -714,17 +857,40 @@ impl GitPanel {
     }
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.project.clone();
         let handle = cx.entity().downgrade();
         self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
-            if let Some(this) = handle.upgrade() {
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.update_visible_entries(cx);
-                    let active_repository = this.active_repository.as_ref();
-                    this.commit_editor =
-                        cx.new(|cx| commit_message_editor(active_repository, window, cx));
-                })
-                .ok();
+            if let Some(git_panel) = handle.upgrade() {
+                let Ok(commit_message_buffer) = git_panel.update_in(&mut cx, |git_panel, _, cx| {
+                    git_panel
+                        .active_repository
+                        .as_ref()
+                        .map(|active_repository| {
+                            commit_message_buffer(&project, active_repository, cx)
+                        })
+                }) else {
+                    return;
+                };
+                let commit_message_buffer = match commit_message_buffer {
+                    Some(commit_message_buffer) => match commit_message_buffer
+                        .await
+                        .context("opening commit buffer on repo update")
+                        .log_err()
+                    {
+                        Some(buffer) => Some(buffer),
+                        None => return,
+                    },
+                    None => None,
+                };
+
+                git_panel
+                    .update_in(&mut cx, |git_panel, window, cx| {
+                        git_panel.update_visible_entries(cx);
+                        git_panel.commit_editor =
+                            cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+                    })
+                    .ok();
             }
         });
     }
@@ -845,8 +1011,8 @@ impl GitPanel {
             .project
             .read(cx)
             .git_state()
-            .map(|state| state.read(cx).all_repositories())
-            .unwrap_or_default();
+            .read(cx)
+            .all_repositories();
         let entry_count = self
             .active_repository
             .as_ref()
@@ -963,14 +1129,15 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
+        let can_commit = can_commit && !editor.read(cx).is_empty(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
         let (can_commit, can_commit_all) =
             self.active_repository
                 .as_ref()
                 .map_or((false, false), |active_repository| {
                     (
-                        can_commit && active_repository.can_commit(false, cx),
-                        can_commit && active_repository.can_commit(true, cx),
+                        can_commit && active_repository.can_commit(false),
+                        can_commit && active_repository.can_commit(true),
                     )
                 });
 
@@ -1231,17 +1398,26 @@ impl GitPanel {
                 .toggle_state(selected)
                 .disabled(!has_write_access)
                 .on_click({
-                    let handle = cx.entity().downgrade();
-                    move |_, window, cx| {
-                        let Some(this) = handle.upgrade() else {
+                    let repo_path = entry_details.repo_path.clone();
+                    cx.listener(move |this, _, window, cx| {
+                        this.selected_entry = Some(ix);
+                        window.dispatch_action(Box::new(OpenSelected), cx);
+                        cx.notify();
+                        let Some(workspace) = this.workspace.upgrade() else {
                             return;
                         };
-                        this.update(cx, |this, cx| {
-                            this.selected_entry = Some(ix);
-                            window.dispatch_action(Box::new(OpenSelected), cx);
-                            cx.notify();
-                        });
-                    }
+                        let Some(git_repo) = this.active_repository.as_ref() else {
+                            return;
+                        };
+                        let Some(path) = git_repo.repo_path_to_project_path(&repo_path).and_then(
+                            |project_path| this.project.read(cx).absolute_path(&project_path, cx),
+                        ) else {
+                            return;
+                        };
+                        workspace.update(cx, |workspace, cx| {
+                            ProjectDiff::deploy_at(workspace, Some(path.into()), window, cx);
+                        })
+                    })
                 })
                 .child(
                     h_flex()
@@ -1306,6 +1482,7 @@ impl Render for GitPanel {
             }
             None => (has_write_access, None),
         };
+        let can_commit = !self.commit_pending && can_commit;
 
         let has_co_authors = can_commit
             && has_write_access

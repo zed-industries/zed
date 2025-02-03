@@ -39,7 +39,6 @@ collections.workspace = true
 convert_case.workspace = true
 db.workspace = true
 emojis.workspace = true
-feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
