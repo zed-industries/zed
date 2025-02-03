@@ -110,8 +110,6 @@ impl DebugAdapter for LldbDebugAdapter {
         &self,
         processes: &'a HashMap<Pid, Process>,
     ) -> Option<Vec<(&'a Pid, &'a Process)>> {
-        // let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
-
         Some(processes.iter().collect::<Vec<_>>())
     }
 }
