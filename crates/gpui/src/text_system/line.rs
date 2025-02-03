@@ -107,6 +107,7 @@ impl WrappedLine {
         origin: Point<Pixels>,
         line_height: Pixels,
         align: TextAlign,
+        align_width: Option<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
@@ -115,7 +116,7 @@ impl WrappedLine {
             &self.layout.unwrapped_layout,
             line_height,
             align,
-            self.layout.wrap_width,
+            align_width.or(self.wrap_width),
             &self.decoration_runs,
             &self.wrap_boundaries,
             window,
