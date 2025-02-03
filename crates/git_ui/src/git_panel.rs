@@ -253,6 +253,9 @@ impl GitPanel {
 
             let commit_editor =
                 cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+            commit_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+            });
 
             let scroll_handle = UniformListScrollHandle::new();
 
