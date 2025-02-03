@@ -83,8 +83,7 @@ impl HeadlessProject {
             store
         });
 
-        let git_state =
-            cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx));
+        let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
 
         let buffer_store = cx.new(|cx| {
             let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);

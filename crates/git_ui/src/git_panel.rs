@@ -104,6 +104,7 @@ pub struct GitPanel {
 }
 
 fn commit_message_editor(
+    project: &Entity<Project>,
     active_repository: Option<&RepositoryHandle>,
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
@@ -122,7 +123,9 @@ fn commit_message_editor(
     text_style.refine(&refinement);
 
     let mut commit_editor = if let Some(active_repository) = active_repository.as_ref() {
-        let buffer = cx.new(|cx| MultiBuffer::singleton(active_repository.commit_message(), cx));
+        // let buffer = cx.new(|cx| MultiBuffer::singleton(active_repository.commit_message(), cx));
+        // project.read(cx).open_buff
+        let buffer = cx.new(|cx| todo!("TODO kb"));
         Editor::new(
             EditorMode::AutoHeight { max_lines: 10 },
             buffer,
@@ -171,8 +174,8 @@ impl GitPanel {
             })
             .detach();
 
-            let commit_editor =
-                cx.new(|cx| commit_message_editor(active_repository.as_ref(), window, cx));
+            let commit_editor = cx
+                .new(|cx| commit_message_editor(&project, active_repository.as_ref(), window, cx));
 
             let scroll_handle = UniformListScrollHandle::new();
 
@@ -586,16 +589,26 @@ impl GitPanel {
         &mut self,
         _: &git::CommitChanges,
         name_and_email: Option<(SharedString, SharedString)>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        if !active_repository.can_commit(false, cx) {
+        if !active_repository.can_commit(false) {
             return;
         }
-        active_repository.commit(name_and_email, self.err_sender.clone(), cx);
+        let message = self.commit_editor.read(cx).text(cx);
+        if message.trim().is_empty() {
+            return;
+        }
+        if active_repository
+            .commit(message, name_and_email, self.err_sender.clone(), cx)
+            .is_ok()
+        {
+            self.commit_editor
+                .update(cx, |editor, cx| editor.clear(window, cx));
+        }
     }
 
     /// Commit all changes, regardless of whether they are staged or not
@@ -603,16 +616,28 @@ impl GitPanel {
         &mut self,
         _: &git::CommitAllChanges,
         name_and_email: Option<(SharedString, SharedString)>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        if !active_repository.can_commit(true, cx) {
+        if !active_repository.can_commit(true) {
             return;
         }
-        active_repository.commit_all(name_and_email, self.err_sender.clone(), cx);
+        let message = self.commit_editor.read(cx).text(cx);
+        if message.trim().is_empty() {
+            return;
+        }
+        if active_repository
+            .commit_all(message, name_and_email, self.err_sender.clone(), cx)
+            .is_ok()
+        {
+            {
+                self.commit_editor
+                    .update(cx, |editor, cx| editor.clear(window, cx));
+            }
+        }
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
@@ -714,6 +739,7 @@ impl GitPanel {
     }
 
     fn schedule_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.project.clone();
         let handle = cx.entity().downgrade();
         self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
@@ -722,7 +748,7 @@ impl GitPanel {
                     this.update_visible_entries(cx);
                     let active_repository = this.active_repository.as_ref();
                     this.commit_editor =
-                        cx.new(|cx| commit_message_editor(active_repository, window, cx));
+                        cx.new(|cx| commit_message_editor(&project, active_repository, window, cx));
                 })
                 .ok();
             }
@@ -969,8 +995,8 @@ impl GitPanel {
                 .as_ref()
                 .map_or((false, false), |active_repository| {
                     (
-                        can_commit && active_repository.can_commit(false, cx),
-                        can_commit && active_repository.can_commit(true, cx),
+                        can_commit && active_repository.can_commit(false),
+                        can_commit && active_repository.can_commit(true),
                     )
                 });
 

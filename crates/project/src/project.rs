@@ -699,9 +699,7 @@ impl Project {
                 )
             });
 
-            let git_state = Some(
-                cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx)),
-            );
+            let git_state = Some(cx.new(|cx| GitState::new(&worktree_store, None, None, cx)));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -824,7 +822,6 @@ impl Project {
             let git_state = Some(cx.new(|cx| {
                 GitState::new(
                     &worktree_store,
-                    languages.clone(),
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
@@ -1030,7 +1027,6 @@ impl Project {
         let git_state = Some(cx.new(|cx| {
             GitState::new(
                 &worktree_store,
-                languages.clone(),
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
