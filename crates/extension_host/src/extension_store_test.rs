@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
+use language::{LanguageMatcher, LanguageRegistry, BinaryStatus};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -655,15 +655,15 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         [
             (
                 LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::CheckingForUpdate
+                BinaryStatus::CheckingForUpdate
             ),
             (
                 LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::Downloading
+                BinaryStatus::Downloading
             ),
             (
                 LanguageServerName("gleam".into()),
-                LanguageServerBinaryStatus::None
+                BinaryStatus::None
             )
         ]
     );

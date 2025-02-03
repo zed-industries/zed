@@ -38,7 +38,7 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
     CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
-    LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile,
+    LanguageName, LanguageRegistry, BinaryStatus, LanguageToolchainStore, LocalFile,
     LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
 };
@@ -350,7 +350,7 @@ impl LocalLspStore {
                         let log = stderr_capture.lock().take().unwrap_or_default();
                         delegate.update_status(
                             adapter.name(),
-                            LanguageServerBinaryStatus::Failed {
+                            BinaryStatus::Failed {
                                 error: format!("{err}\n-- stderr--\n{}", log),
                             },
                         );
@@ -490,7 +490,7 @@ impl LocalLspStore {
                 )
                 .await;
 
-            delegate.update_status(adapter.name.clone(), LanguageServerBinaryStatus::None);
+            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
             let mut binary = binary_result?;
             if let Some(arguments) = settings.and_then(|b| b.arguments) {
@@ -8625,7 +8625,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     fn update_status(
         &self,
         server_name: LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
+        status: language::BinaryStatus,
     ) {
         self.language_registry
             .update_lsp_status(server_name, status);

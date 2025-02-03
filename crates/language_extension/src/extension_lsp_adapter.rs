@@ -12,7 +12,7 @@ use fs::Fs;
 use futures::{Future, FutureExt};
 use gpui::AsyncApp;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageName, LanguageServerBinaryStatus,
+    CodeLabel, HighlightId, Language, LanguageName, BinaryStatus,
     LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
@@ -80,7 +80,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
-        status: LanguageServerBinaryStatus,
+        status: BinaryStatus,
     ) {
         self.language_registry
             .update_lsp_status(language_server_id, status);

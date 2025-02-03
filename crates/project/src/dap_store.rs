@@ -39,7 +39,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedStrin
 use http_client::HttpClient;
 use language::{
     proto::{deserialize_anchor, serialize_anchor as serialize_text_anchor},
-    Buffer, BufferSnapshot, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore,
+    Buffer, BufferSnapshot, LanguageRegistry, BinaryStatus, LanguageToolchainStore,
 };
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -2428,10 +2428,10 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn update_status(&self, dap_name: DebugAdapterName, status: dap::adapters::DapStatus) {
         let name = SharedString::from(dap_name.to_string());
         let status = match status {
-            DapStatus::None => LanguageServerBinaryStatus::None,
-            DapStatus::Downloading => LanguageServerBinaryStatus::Downloading,
-            DapStatus::Failed { error } => LanguageServerBinaryStatus::Failed { error },
-            DapStatus::CheckingForUpdate => LanguageServerBinaryStatus::CheckingForUpdate,
+            DapStatus::None => BinaryStatus::None,
+            DapStatus::Downloading => BinaryStatus::Downloading,
+            DapStatus::Failed { error } => BinaryStatus::Failed { error },
+            DapStatus::CheckingForUpdate => BinaryStatus::CheckingForUpdate,
         };
 
         self.language_registry

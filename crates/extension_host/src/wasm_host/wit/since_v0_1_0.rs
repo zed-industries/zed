@@ -9,7 +9,7 @@ use extension::{ExtensionLanguageServerProxy, KeyValueStoreDelegate, WorktreeDel
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use language::LanguageName;
-use language::{language_settings::AllLanguageSettings, LanguageServerBinaryStatus};
+use language::{language_settings::AllLanguageSettings, BinaryStatus};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -483,14 +483,14 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<()> {
         let status = match status {
             LanguageServerInstallationStatus::CheckingForUpdate => {
-                LanguageServerBinaryStatus::CheckingForUpdate
+                BinaryStatus::CheckingForUpdate
             }
             LanguageServerInstallationStatus::Downloading => {
-                LanguageServerBinaryStatus::Downloading
+                BinaryStatus::Downloading
             }
-            LanguageServerInstallationStatus::None => LanguageServerBinaryStatus::None,
+            LanguageServerInstallationStatus::None => BinaryStatus::None,
             LanguageServerInstallationStatus::Failed(error) => {
-                LanguageServerBinaryStatus::Failed { error }
+                BinaryStatus::Failed { error }
             }
         };
 
