@@ -10,7 +10,7 @@ use std::{
     },
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
-use ui::{ListItem, ViewContext};
+use ui::{Context, ListItem, Window};
 use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
@@ -26,6 +26,20 @@ pub struct OpenPathDelegate {
     should_dismiss: bool,
 }
 
+impl OpenPathDelegate {
+    pub fn new(tx: oneshot::Sender<Option<Vec<PathBuf>>>, lister: DirectoryLister) -> Self {
+        Self {
+            tx: Some(tx),
+            lister,
+            selected_index: 0,
+            directory_state: None,
+            matches: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            should_dismiss: true,
+        }
+    }
+}
+
 struct DirectoryState {
     path: String,
     match_candidates: Vec<StringMatchCandidate>,
@@ -33,10 +47,14 @@ struct DirectoryState {
 }
 
 impl OpenPathPrompt {
-    pub(crate) fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, cx| {
+    pub(crate) fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut Context<Workspace>,
+    ) {
+        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, tx, cx);
+            Self::prompt_for_open_path(workspace, lister, tx, window, cx);
             rx
         }));
     }
@@ -45,22 +63,15 @@ impl OpenPathPrompt {
         workspace: &mut Workspace,
         lister: DirectoryLister,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     ) {
-        workspace.toggle_modal(cx, |cx| {
-            let delegate = OpenPathDelegate {
-                tx: Some(tx),
-                lister: lister.clone(),
-                selected_index: 0,
-                directory_state: None,
-                matches: Vec::new(),
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                should_dismiss: true,
-            };
+        workspace.toggle_modal(window, cx, |window, cx| {
+            let delegate = OpenPathDelegate::new(tx, lister.clone());
 
-            let picker = Picker::uniform_list(delegate, cx).width(rems(34.));
+            let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
-            picker.set_query(query, cx);
+            picker.set_query(query, window, cx);
             picker
         });
     }
@@ -77,7 +88,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.selected_index = ix;
         cx.notify();
     }
@@ -85,7 +96,8 @@ impl PickerDelegate for OpenPathDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        cx: &mut ViewContext<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let lister = self.lister.clone();
         let (mut dir, suffix) = if let Some(index) = query.rfind('/') {
@@ -110,7 +122,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             if let Some(query) = query {
                 let paths = query.await;
                 if cancel_flag.load(atomic::Ordering::Relaxed) {
@@ -125,7 +137,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 .iter()
                                 .enumerate()
                                 .map(|(ix, path)| {
-                                    StringMatchCandidate::new(ix, path.to_string_lossy().into())
+                                    StringMatchCandidate::new(ix, &path.to_string_lossy())
                                 })
                                 .collect::<Vec<_>>();
 
@@ -214,7 +226,12 @@ impl PickerDelegate for OpenPathDelegate {
         })
     }
 
-    fn confirm_completion(&self, query: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
         Some(
             maybe!({
                 let m = self.matches.get(self.selected_index)?;
@@ -226,7 +243,7 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(m) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -252,7 +269,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.should_dismiss
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }
@@ -263,7 +280,8 @@ impl PickerDelegate for OpenPathDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let m = self.matches.get(ix)?;
         let directory_state = self.directory_state.as_ref()?;
@@ -273,12 +291,12 @@ impl PickerDelegate for OpenPathDelegate {
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(LabelLike::new().child(candidate.string.clone())),
         )
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
         if let Some(error) = self.directory_state.as_ref().and_then(|s| s.error.clone()) {
             error
         } else {
@@ -286,7 +304,7 @@ impl PickerDelegate for OpenPathDelegate {
         }
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         Arc::from("[directory/]filename.ext")
     }
 }

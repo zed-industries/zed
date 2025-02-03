@@ -107,7 +107,7 @@ impl<'a> Dimension<'a, OperationSummary> for OperationKey {
 impl<T: Operation> Item for OperationItem<T> {
     type Summary = OperationSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         OperationSummary {
             key: OperationKey::new(self.0.lamport_timestamp()),
             len: 1,

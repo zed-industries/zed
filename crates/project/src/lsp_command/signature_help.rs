@@ -86,7 +86,7 @@ impl SignatureHelp {
         } else {
             let markdown = markdown.join(str_for_join);
             let language_name = language
-                .map(|n| n.name().0.to_lowercase())
+                .map(|n| n.name().as_ref().to_lowercase())
                 .unwrap_or_default();
 
             let markdown = if function_options_count >= 2 {

@@ -1,7 +1,7 @@
 use crate::{
     display_map::ToDisplayPoint, DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt,
 };
-use gpui::{px, Bounds, Pixels, ViewContext};
+use gpui::{px, Bounds, Context, Pixels, Window};
 use language::Point;
 use std::{cmp, f32};
 
@@ -32,9 +32,15 @@ impl Autoscroll {
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused)
     }
+
     /// Scrolls so that the newest cursor is roughly an n-th line from the top.
     pub fn top_relative(n: usize) -> Self {
         Self::Strategy(AutoscrollStrategy::TopRelative(n))
+    }
+
+    /// Scrolls so that the newest cursor is at the bottom.
+    pub fn bottom() -> Self {
+        Self::Strategy(AutoscrollStrategy::Bottom)
     }
 }
 
@@ -70,7 +76,8 @@ impl Editor {
         bounds: Bounds<Pixels>,
         line_height: Pixels,
         max_scroll_top: f32,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
     ) -> bool {
         let viewport_height = bounds.size.height;
         let visible_lines = viewport_height / line_height;
@@ -90,7 +97,7 @@ impl Editor {
         }
 
         if original_y != scroll_position.y {
-            self.set_scroll_position(scroll_position, cx);
+            self.set_scroll_position(scroll_position, window, cx);
         }
 
         let Some((autoscroll, local)) = self.scroll_manager.autoscroll_request.take() else {
@@ -122,9 +129,9 @@ impl Editor {
                 .next_row()
                 .as_f32();
 
-            // If the selections can't all fit on screen, scroll to the newest.
+            let selections_fit = target_bottom - target_top <= visible_lines;
             if autoscroll == Autoscroll::newest()
-                || autoscroll == Autoscroll::fit() && target_bottom - target_top > visible_lines
+                || (autoscroll == Autoscroll::fit() && !selections_fit)
             {
                 let newest_selection_top = selections
                     .iter()
@@ -177,33 +184,33 @@ impl Editor {
 
                 if needs_scroll_up && !needs_scroll_down {
                     scroll_position.y = target_top;
-                    self.set_scroll_position_internal(scroll_position, local, true, cx);
+                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
                 }
                 if !needs_scroll_up && needs_scroll_down {
                     scroll_position.y = target_bottom - visible_lines;
-                    self.set_scroll_position_internal(scroll_position, local, true, cx);
+                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
                 }
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
             }
             AutoscrollStrategy::Focused => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 scroll_position.y = (target_top - margin).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
             }
             AutoscrollStrategy::Top => {
                 scroll_position.y = (target_top).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
             }
             AutoscrollStrategy::Bottom => {
                 scroll_position.y = (target_bottom - visible_lines).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
             }
             AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as f32;
-                self.set_scroll_position_internal(scroll_position, local, true, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
             }
         }
 
@@ -224,7 +231,7 @@ impl Editor {
         scroll_width: Pixels,
         max_glyph_width: Pixels,
         layouts: &[LineWithInvisibles],
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
@@ -281,7 +288,7 @@ impl Editor {
         }
     }
 
-    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
+    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut Context<Self>) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, true));
         cx.notify();
     }
@@ -289,7 +296,7 @@ impl Editor {
     pub(crate) fn request_autoscroll_remotely(
         &mut self,
         autoscroll: Autoscroll,
-        cx: &mut ViewContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, false));
         cx.notify();

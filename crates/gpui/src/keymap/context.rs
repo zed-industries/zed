@@ -11,9 +11,12 @@ use std::fmt;
 pub struct KeyContext(SmallVec<[ContextEntry; 1]>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct ContextEntry {
-    key: SharedString,
-    value: Option<SharedString>,
+/// An entry in a KeyContext
+pub struct ContextEntry {
+    /// The key (or name if no value)
+    pub key: SharedString,
+    /// The value
+    pub value: Option<SharedString>,
 }
 
 impl<'a> TryFrom<&'a str> for KeyContext {
@@ -30,13 +33,29 @@ impl KeyContext {
         let mut context = Self::default();
         #[cfg(target_os = "macos")]
         context.set("os", "macos");
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         context.set("os", "linux");
         #[cfg(target_os = "windows")]
         context.set("os", "windows");
-        #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "windows"
+        )))]
         context.set("os", "unknown");
         context
+    }
+
+    /// Returns the primary context entry (usually the name of the component)
+    pub fn primary(&self) -> Option<&ContextEntry> {
+        self.0.iter().find(|p| p.value.is_none())
+    }
+
+    /// Returns everything except the primary context entry.
+    pub fn secondary(&self) -> impl Iterator<Item = &ContextEntry> {
+        let primary = self.primary();
+        self.0.iter().filter(move |&p| Some(p) != primary)
     }
 
     /// Parse a key context from a string.
@@ -178,6 +197,20 @@ pub enum KeyBindingContextPredicate {
     ),
 }
 
+impl fmt::Display for KeyBindingContextPredicate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Identifier(name) => write!(f, "{}", name),
+            Self::Equal(left, right) => write!(f, "{} == {}", left, right),
+            Self::NotEqual(left, right) => write!(f, "{} != {}", left, right),
+            Self::Not(pred) => write!(f, "!{}", pred),
+            Self::Child(parent, child) => write!(f, "{} > {}", parent, child),
+            Self::And(left, right) => write!(f, "({} && {})", left, right),
+            Self::Or(left, right) => write!(f, "({} || {})", left, right),
+        }
+    }
+}
+
 impl KeyBindingContextPredicate {
     /// Parse a string in the same format as the keymap's context field.
     ///
@@ -211,7 +244,7 @@ impl KeyBindingContextPredicate {
         let source = skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
         if let Some(next) = rest.chars().next() {
-            Err(anyhow!("unexpected character {next:?}"))
+            Err(anyhow!("unexpected character '{next:?}'"))
         } else {
             Ok(predicate)
         }
@@ -238,6 +271,30 @@ impl KeyBindingContextPredicate {
             }
             Self::And(left, right) => left.eval(contexts) && right.eval(contexts),
             Self::Or(left, right) => left.eval(contexts) || right.eval(contexts),
+        }
+    }
+
+    /// Returns whether or not this predicate matches all possible contexts matched by
+    /// the other predicate.
+    pub fn is_superset(&self, other: &Self) -> bool {
+        if self == other {
+            return true;
+        }
+
+        if let KeyBindingContextPredicate::Or(left, right) = self {
+            return left.is_superset(other) || right.is_superset(other);
+        }
+
+        match other {
+            KeyBindingContextPredicate::Child(_, child) => self.is_superset(child),
+            KeyBindingContextPredicate::And(left, right) => {
+                self.is_superset(left) || self.is_superset(right)
+            }
+            KeyBindingContextPredicate::Identifier(_) => false,
+            KeyBindingContextPredicate::Equal(_, _) => false,
+            KeyBindingContextPredicate::NotEqual(_, _) => false,
+            KeyBindingContextPredicate::Not(_) => false,
+            KeyBindingContextPredicate::Or(_, _) => false,
         }
     }
 
@@ -276,7 +333,7 @@ impl KeyBindingContextPredicate {
         let next = source
             .chars()
             .next()
-            .ok_or_else(|| anyhow!("unexpected eof"))?;
+            .ok_or_else(|| anyhow!("unexpected end"))?;
         match next {
             '(' => {
                 source = skip_whitespace(&source[1..]);
@@ -312,7 +369,7 @@ impl KeyBindingContextPredicate {
                     source,
                 ))
             }
-            _ => Err(anyhow!("unexpected character {next:?}")),
+            _ => Err(anyhow!("unexpected character '{next:?}'")),
         }
     }
 
@@ -332,7 +389,7 @@ impl KeyBindingContextPredicate {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::Equal(left, right))
         } else {
-            Err(anyhow!("operands must be identifiers"))
+            Err(anyhow!("operands of == must be identifiers"))
         }
     }
 
@@ -340,7 +397,7 @@ impl KeyBindingContextPredicate {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::NotEqual(left, right))
         } else {
-            Err(anyhow!("operands must be identifiers"))
+            Err(anyhow!("operands of != must be identifiers"))
         }
     }
 }
@@ -447,7 +504,7 @@ mod tests {
             KeyBindingContextPredicate::parse("c == !d")
                 .unwrap_err()
                 .to_string(),
-            "operands must be identifiers"
+            "operands of == must be identifiers"
         );
     }
 
@@ -530,5 +587,28 @@ mod tests {
                 Box::new(Identifier("b".into())),
             )
         );
+    }
+
+    #[test]
+    fn test_is_superset() {
+        assert_is_superset("editor", "editor", true);
+        assert_is_superset("editor", "workspace", false);
+
+        assert_is_superset("editor", "editor && vim_mode", true);
+        assert_is_superset("editor", "mode == full && editor", true);
+        assert_is_superset("editor && mode == full", "editor", false);
+
+        assert_is_superset("editor", "something > editor", true);
+        assert_is_superset("editor", "editor > menu", false);
+
+        assert_is_superset("foo || bar || baz", "bar", true);
+        assert_is_superset("foo || bar || baz", "quux", false);
+
+        #[track_caller]
+        fn assert_is_superset(a: &str, b: &str, result: bool) {
+            let a = KeyBindingContextPredicate::parse(a).unwrap();
+            let b = KeyBindingContextPredicate::parse(b).unwrap();
+            assert_eq!(a.is_superset(&b), result, "({a:?}).is_superset({b:?})");
+        }
     }
 }

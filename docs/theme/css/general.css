@@ -182,6 +182,7 @@ h6:target::before {
 .content img,
 .content video {
   max-width: 100%;
+  background-color: var(--media-bg);
   border: 1px solid;
   border-color: var(--border);
   border-radius: 8px;

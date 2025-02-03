@@ -13,26 +13,38 @@ pub enum ParsedMarkdownElement {
     BlockQuote(ParsedMarkdownBlockQuote),
     CodeBlock(ParsedMarkdownCodeBlock),
     /// A paragraph of text and other inline elements.
-    Paragraph(ParsedMarkdownText),
+    Paragraph(MarkdownParagraph),
     HorizontalRule(Range<usize>),
 }
 
 impl ParsedMarkdownElement {
-    pub fn source_range(&self) -> Range<usize> {
-        match self {
+    pub fn source_range(&self) -> Option<Range<usize>> {
+        Some(match self {
             Self::Heading(heading) => heading.source_range.clone(),
             Self::ListItem(list_item) => list_item.source_range.clone(),
             Self::Table(table) => table.source_range.clone(),
             Self::BlockQuote(block_quote) => block_quote.source_range.clone(),
             Self::CodeBlock(code_block) => code_block.source_range.clone(),
-            Self::Paragraph(text) => text.source_range.clone(),
+            Self::Paragraph(text) => match text.get(0)? {
+                MarkdownParagraphChunk::Text(t) => t.source_range.clone(),
+                MarkdownParagraphChunk::Image(image) => image.source_range.clone(),
+            },
             Self::HorizontalRule(range) => range.clone(),
-        }
+        })
     }
 
     pub fn is_list_item(&self) -> bool {
         matches!(self, Self::ListItem(_))
     }
+}
+
+pub type MarkdownParagraph = Vec<MarkdownParagraphChunk>;
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub enum MarkdownParagraphChunk {
+    Text(ParsedMarkdownText),
+    Image(Image),
 }
 
 #[derive(Debug)]
@@ -73,7 +85,7 @@ pub struct ParsedMarkdownCodeBlock {
 pub struct ParsedMarkdownHeading {
     pub source_range: Range<usize>,
     pub level: HeadingLevel,
-    pub contents: ParsedMarkdownText,
+    pub contents: MarkdownParagraph,
 }
 
 #[derive(Debug, PartialEq)]
@@ -107,7 +119,7 @@ pub enum ParsedMarkdownTableAlignment {
 #[derive(Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub struct ParsedMarkdownTableRow {
-    pub children: Vec<ParsedMarkdownText>,
+    pub children: Vec<MarkdownParagraph>,
 }
 
 impl Default for ParsedMarkdownTableRow {
@@ -123,7 +135,7 @@ impl ParsedMarkdownTableRow {
         }
     }
 
-    pub fn with_children(children: Vec<ParsedMarkdownText>) -> Self {
+    pub fn with_children(children: Vec<MarkdownParagraph>) -> Self {
         Self { children }
     }
 }
@@ -135,7 +147,7 @@ pub struct ParsedMarkdownBlockQuote {
     pub children: Vec<ParsedMarkdownElement>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParsedMarkdownText {
     /// Where the text is located in the source Markdown document.
     pub source_range: Range<usize>,
@@ -266,10 +278,35 @@ impl Display for Link {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Link::Web { url } => write!(f, "{}", url),
-            Link::Path {
-                display_path,
-                path: _,
-            } => write!(f, "{}", display_path.display()),
+            Link::Path { display_path, .. } => write!(f, "{}", display_path.display()),
         }
+    }
+}
+
+/// A Markdown Image
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct Image {
+    pub link: Link,
+    pub source_range: Range<usize>,
+    pub alt_text: Option<SharedString>,
+}
+
+impl Image {
+    pub fn identify(
+        text: String,
+        source_range: Range<usize>,
+        file_location_directory: Option<PathBuf>,
+    ) -> Option<Self> {
+        let link = Link::identify(file_location_directory, text)?;
+        Some(Self {
+            source_range,
+            link,
+            alt_text: None,
+        })
+    }
+
+    pub fn set_alt_text(&mut self, alt_text: SharedString) {
+        self.alt_text = Some(alt_text);
     }
 }

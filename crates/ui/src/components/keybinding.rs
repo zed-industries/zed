@@ -1,7 +1,9 @@
+#![allow(missing_docs)]
+use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke};
+use gpui::{relative, Action, App, FocusHandle, IntoElement, Keystroke, Window};
 
-#[derive(IntoElement, Clone)]
+#[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -14,19 +16,28 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+    /// Returns the highest precedence keybinding for an action. This is the last binding added to
+    /// the keymap. User bindings are added after built-in bindings so that they take precedence.
+    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
+        let key_binding = window
+            .bindings_for_action(action)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
     }
 
-    // like for_action(), but lets you specify the context from which keybindings
-    // are matched.
+    /// Like `for_action`, but lets you specify the context from which keybindings are matched.
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut Window,
     ) -> Option<Self> {
-        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+        let key_binding = window
+            .bindings_for_action_in(action, focus)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
     }
 
@@ -69,7 +80,7 @@ impl KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -82,7 +93,7 @@ impl RenderOnce for KeyBinding {
                         .join(" ")
                 )
             })
-            .gap(Spacing::Small.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = self.icon_for_key(keystroke);
@@ -145,7 +156,7 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
 
         div()
@@ -180,9 +191,9 @@ pub struct KeyIcon {
 }
 
 impl RenderOnce for KeyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         Icon::new(self.icon)
-            .size(IconSize::Small)
+            .size(IconSize::XSmall)
             .color(Color::Muted)
     }
 }
@@ -190,5 +201,177 @@ impl RenderOnce for KeyIcon {
 impl KeyIcon {
     pub fn new(icon: IconName) -> Self {
         Self { icon }
+    }
+}
+
+/// Returns a textual representation of the key binding for the given [`Action`].
+pub fn text_for_action(action: &dyn Action, window: &Window) -> Option<String> {
+    let bindings = window.bindings_for_action(action);
+    let key_binding = bindings.last()?;
+    Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
+}
+
+/// Returns a textual representation of the key binding for the given [`Action`]
+/// as if the provided [`FocusHandle`] was focused.
+pub fn text_for_action_in(
+    action: &dyn Action,
+    focus: &FocusHandle,
+    window: &mut Window,
+) -> Option<String> {
+    let bindings = window.bindings_for_action_in(action, focus);
+    let key_binding = bindings.last()?;
+    Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
+}
+
+/// Returns a textual representation of the given key binding for the specified platform.
+pub fn text_for_key_binding(
+    key_binding: &gpui::KeyBinding,
+    platform_style: PlatformStyle,
+) -> String {
+    key_binding
+        .keystrokes()
+        .iter()
+        .map(|keystroke| text_for_keystroke(keystroke, platform_style))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Returns a textual representation of the given [`Keystroke`].
+pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) -> String {
+    let mut text = String::new();
+
+    let delimiter = match platform_style {
+        PlatformStyle::Mac => '-',
+        PlatformStyle::Linux | PlatformStyle::Windows => '+',
+    };
+
+    if keystroke.modifiers.function {
+        match platform_style {
+            PlatformStyle::Mac => text.push_str("fn"),
+            PlatformStyle::Linux | PlatformStyle::Windows => text.push_str("Fn"),
+        }
+
+        text.push(delimiter);
+    }
+
+    if keystroke.modifiers.control {
+        match platform_style {
+            PlatformStyle::Mac => text.push_str("Control"),
+            PlatformStyle::Linux | PlatformStyle::Windows => text.push_str("Ctrl"),
+        }
+
+        text.push(delimiter);
+    }
+
+    if keystroke.modifiers.alt {
+        match platform_style {
+            PlatformStyle::Mac => text.push_str("Option"),
+            PlatformStyle::Linux | PlatformStyle::Windows => text.push_str("Alt"),
+        }
+
+        text.push(delimiter);
+    }
+
+    if keystroke.modifiers.platform {
+        match platform_style {
+            PlatformStyle::Mac => text.push_str("Command"),
+            PlatformStyle::Linux => text.push_str("Super"),
+            PlatformStyle::Windows => text.push_str("Win"),
+        }
+
+        text.push(delimiter);
+    }
+
+    if keystroke.modifiers.shift {
+        match platform_style {
+            PlatformStyle::Mac | PlatformStyle::Linux | PlatformStyle::Windows => {
+                text.push_str("Shift")
+            }
+        }
+
+        text.push(delimiter);
+    }
+
+    fn capitalize(str: &str) -> String {
+        let mut chars = str.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    }
+
+    let key = match keystroke.key.as_str() {
+        "pageup" => "PageUp",
+        "pagedown" => "PageDown",
+        key => &capitalize(key),
+    };
+
+    text.push_str(key);
+
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_text_for_keystroke() {
+        assert_eq!(
+            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Mac),
+            "Command-C".to_string()
+        );
+        assert_eq!(
+            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Linux),
+            "Super+C".to_string()
+        );
+        assert_eq!(
+            text_for_keystroke(&Keystroke::parse("cmd-c").unwrap(), PlatformStyle::Windows),
+            "Win+C".to_string()
+        );
+
+        assert_eq!(
+            text_for_keystroke(
+                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                PlatformStyle::Mac
+            ),
+            "Control-Option-Delete".to_string()
+        );
+        assert_eq!(
+            text_for_keystroke(
+                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                PlatformStyle::Linux
+            ),
+            "Ctrl+Alt+Delete".to_string()
+        );
+        assert_eq!(
+            text_for_keystroke(
+                &Keystroke::parse("ctrl-alt-delete").unwrap(),
+                PlatformStyle::Windows
+            ),
+            "Ctrl+Alt+Delete".to_string()
+        );
+
+        assert_eq!(
+            text_for_keystroke(
+                &Keystroke::parse("shift-pageup").unwrap(),
+                PlatformStyle::Mac
+            ),
+            "Shift-PageUp".to_string()
+        );
+        assert_eq!(
+            text_for_keystroke(
+                &Keystroke::parse("shift-pageup").unwrap(),
+                PlatformStyle::Linux
+            ),
+            "Shift+PageUp".to_string()
+        );
+        assert_eq!(
+            text_for_keystroke(
+                &Keystroke::parse("shift-pageup").unwrap(),
+                PlatformStyle::Windows
+            ),
+            "Shift+PageUp".to_string()
+        );
     }
 }

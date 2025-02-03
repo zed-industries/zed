@@ -251,6 +251,7 @@ impl TabSnapshot {
         };
 
         TabChunks {
+            snapshot: self,
             fold_chunks: self.fold_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
@@ -271,8 +272,8 @@ impl TabSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, row: u32) -> fold_map::FoldBufferRows<'_> {
-        self.fold_snapshot.buffer_rows(row)
+    pub fn rows(&self, row: u32) -> fold_map::FoldRows<'_> {
+        self.fold_snapshot.row_infos(row)
     }
 
     #[cfg(test)]
@@ -485,6 +486,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 const SPACES: &str = "                ";
 
 pub struct TabChunks<'a> {
+    snapshot: &'a TabSnapshot,
     fold_chunks: FoldChunks<'a>,
     chunk: Chunk<'a>,
     column: u32,
@@ -494,6 +496,37 @@ pub struct TabChunks<'a> {
     max_output_position: Point,
     tab_size: NonZeroU32,
     inside_leading_tab: bool,
+}
+
+impl<'a> TabChunks<'a> {
+    pub(crate) fn seek(&mut self, range: Range<TabPoint>) {
+        let (input_start, expanded_char_column, to_next_stop) =
+            self.snapshot.to_fold_point(range.start, Bias::Left);
+        let input_column = input_start.column();
+        let input_start = input_start.to_offset(&self.snapshot.fold_snapshot);
+        let input_end = self
+            .snapshot
+            .to_fold_point(range.end, Bias::Right)
+            .0
+            .to_offset(&self.snapshot.fold_snapshot);
+        let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
+            range.end.column() - range.start.column()
+        } else {
+            to_next_stop
+        };
+
+        self.fold_chunks.seek(input_start..input_end);
+        self.input_column = input_column;
+        self.column = expanded_char_column;
+        self.output_position = range.start.0;
+        self.max_output_position = range.end.0;
+        self.chunk = Chunk {
+            text: &SPACES[0..(to_next_stop as usize)],
+            is_tab: true,
+            ..Default::default()
+        };
+        self.inside_leading_tab = to_next_stop > 0;
+    }
 }
 
 impl<'a> Iterator for TabChunks<'a> {
@@ -575,7 +608,7 @@ mod tests {
     use rand::{prelude::StdRng, Rng};
 
     #[gpui::test]
-    fn test_expand_tabs(cx: &mut gpui::AppContext) {
+    fn test_expand_tabs(cx: &mut gpui::App) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -588,7 +621,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines(cx: &mut gpui::AppContext) {
+    fn test_long_lines(cx: &mut gpui::App) {
         let max_expansion_column = 12;
         let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
         let output = "A   BC  DEF G   HI J K L M";
@@ -636,7 +669,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::AppContext) {
+    fn test_long_lines_with_character_spanning_max_expansion_column(cx: &mut gpui::App) {
         let max_expansion_column = 8;
         let input = "abcdefg⋯hij";
 
@@ -651,7 +684,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_marking_tabs(cx: &mut gpui::AppContext) {
+    fn test_marking_tabs(cx: &mut gpui::App) {
         let input = "\t \thello";
 
         let buffer = MultiBuffer::build_simple(input, cx);
@@ -702,7 +735,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_tabs(cx: &mut gpui::AppContext, mut rng: StdRng) {
+    fn test_random_tabs(cx: &mut gpui::App, mut rng: StdRng) {
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let len = rng.gen_range(0..30);
         let buffer = if rng.gen() {

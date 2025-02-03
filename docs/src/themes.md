@@ -34,7 +34,7 @@ By default, Zed maintains two themes: one for light mode and one for dark mode. 
 
 To override specific attributes of a theme, use the `experimental.theme_overrides` setting.
 
-For example, to override the background color of the editor and the font style of comments, add the following to your `settings.json` file:
+For example, add the following to your `settings.json` if you wish to to override the background color of the editor and display comments and doc comments as italics:
 
 ```json
 {
@@ -43,13 +43,18 @@ For example, to override the background color of the editor and the font style o
     "syntax": {
       "comment": {
         "font_style": "italic"
+      },
+      "comment.doc": {
+        "font_style": "italic"
       }
     }
   }
 }
 ```
 
-See which attributes are available to override by looking at the JSON format of your theme. For example, [here is the JSON format for the `One` themes](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json).
+To see a comprehensive list of list of captures (like `comment` and `comment.doc`) see: [Language Extensions: Syntax highlighting](./extensions/languages.md#syntax-highlighting).
+
+To see a list of available theme attributes look at the JSON file for your theme. For example, [assets/themes/one/one.json](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json) for the default One Dark and One Light themes.
 
 ## Local Themes
 

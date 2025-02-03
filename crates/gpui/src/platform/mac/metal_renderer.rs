@@ -1,7 +1,7 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, ContentMask, DevicePixels,
-    Hsla, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
+    point, size, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask,
+    DevicePixels, MonochromeSprite, PaintSurface, Path, PathId, PathVertex, PolychromeSprite,
     PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface, Underline,
 };
 use anyhow::{anyhow, Result};
@@ -28,6 +28,9 @@ pub(crate) type PointF = crate::Point<f32>;
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 #[cfg(feature = "runtime_shaders")]
 const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
+// Use 4x MSAA, all devices support it.
+// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
+const PATH_SAMPLE_COUNT: u32 = 4;
 
 pub type Context = Arc<Mutex<InstanceBufferPool>>;
 pub type Renderer = MetalRenderer;
@@ -170,6 +173,7 @@ impl MetalRenderer {
             "path_rasterization_vertex",
             "path_rasterization_fragment",
             MTLPixelFormat::R16Float,
+            PATH_SAMPLE_COUNT,
         );
         let path_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -229,7 +233,7 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
+        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), PATH_SAMPLE_COUNT));
         let core_video_texture_cache =
             unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
 
@@ -284,11 +288,11 @@ impl MetalRenderer {
         }
     }
 
-    pub fn update_transparency(&mut self, _transparent: bool) {
+    pub fn update_transparency(&self, _transparent: bool) {
         // todo(mac)?
     }
 
-    pub fn destroy(&mut self) {
+    pub fn destroy(&self) {
         // nothing to do
     }
 
@@ -486,7 +490,7 @@ impl MetalRenderer {
     }
 
     fn rasterize_paths(
-        &mut self,
+        &self,
         paths: &[Path<ScaledPixels>],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -531,10 +535,20 @@ impl MetalRenderer {
                 .unwrap();
 
             let texture = self.sprite_atlas.metal_texture(texture_id);
-            color_attachment.set_texture(Some(&texture));
-            color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            let msaa_texture = self.sprite_atlas.msaa_texture(texture_id);
+
+            if let Some(msaa_texture) = msaa_texture {
+                color_attachment.set_texture(Some(&msaa_texture));
+                color_attachment.set_resolve_texture(Some(&texture));
+                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                color_attachment.set_store_action(metal::MTLStoreAction::MultisampleResolve);
+            } else {
+                color_attachment.set_texture(Some(&texture));
+                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            }
             color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+
             let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
             command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
             command_encoder.set_vertex_buffer(
@@ -576,7 +590,7 @@ impl MetalRenderer {
     }
 
     fn draw_shadows(
-        &mut self,
+        &self,
         shadows: &[Shadow],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -639,7 +653,7 @@ impl MetalRenderer {
     }
 
     fn draw_quads(
-        &mut self,
+        &self,
         quads: &[Quad],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -698,7 +712,7 @@ impl MetalRenderer {
     }
 
     fn draw_paths(
-        &mut self,
+        &self,
         paths: &[Path<ScaledPixels>],
         tiles_by_path_id: &HashMap<PathId, AtlasTile>,
         instance_buffer: &mut InstanceBuffer,
@@ -808,7 +822,7 @@ impl MetalRenderer {
     }
 
     fn draw_underlines(
-        &mut self,
+        &self,
         underlines: &[Underline],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -871,7 +885,7 @@ impl MetalRenderer {
     }
 
     fn draw_monochrome_sprites(
-        &mut self,
+        &self,
         texture_id: AtlasTextureId,
         sprites: &[MonochromeSprite],
         instance_buffer: &mut InstanceBuffer,
@@ -945,7 +959,7 @@ impl MetalRenderer {
     }
 
     fn draw_polychrome_sprites(
-        &mut self,
+        &self,
         texture_id: AtlasTextureId,
         sprites: &[PolychromeSprite],
         instance_buffer: &mut InstanceBuffer,
@@ -1160,6 +1174,7 @@ fn build_path_rasterization_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: metal::MTLPixelFormat,
+    path_sample_count: u32,
 ) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(vertex_fn_name, None)
@@ -1172,6 +1187,10 @@ fn build_path_rasterization_pipeline_state(
     descriptor.set_label(label);
     descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    if path_sample_count > 1 {
+        descriptor.set_raster_sample_count(path_sample_count as _);
+        descriptor.set_alpha_to_coverage_enabled(true);
+    }
     let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
     color_attachment.set_pixel_format(pixel_format);
     color_attachment.set_blending_enabled(true);
@@ -1242,7 +1261,7 @@ enum PathRasterizationInputIndex {
 #[repr(C)]
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
-    pub color: Hsla,
+    pub color: Background,
     pub tile: AtlasTile,
 }
 

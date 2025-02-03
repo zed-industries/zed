@@ -1,0 +1,18 @@
+[package]
+name = "schema_generator"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+env_logger.workspace = true
+schemars = { workspace = true, features = ["indexmap2"] }
+serde.workspace = true
+serde_json.workspace = true
+theme.workspace = true

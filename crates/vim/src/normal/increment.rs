@@ -1,20 +1,20 @@
-use std::ops::Range;
-
 use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
-use gpui::{impl_actions, ViewContext};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, Point};
+use schemars::JsonSchema;
 use serde::Deserialize;
+use std::ops::Range;
 
 use crate::{state::Mode, Vim};
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Increment {
     #[serde(default)]
     step: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Decrement {
     #[serde(default)]
@@ -23,25 +23,31 @@ struct Decrement {
 
 impl_actions!(vim, [Increment, Decrement]);
 
-pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
-    Vim::action(editor, cx, |vim, action: &Increment, cx| {
+pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
+    Vim::action(editor, cx, |vim, action: &Increment, window, cx| {
         vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let step = if action.step { 1 } else { 0 };
-        vim.increment(count as i64, step, cx)
+        vim.increment(count as i64, step, window, cx)
     });
-    Vim::action(editor, cx, |vim, action: &Decrement, cx| {
+    Vim::action(editor, cx, |vim, action: &Decrement, window, cx| {
         vim.record_current_action(cx);
-        let count = vim.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let step = if action.step { -1 } else { 0 };
-        vim.increment(-(count as i64), step, cx)
+        vim.increment(-(count as i64), step, window, cx)
     });
 }
 
 impl Vim {
-    fn increment(&mut self, mut delta: i64, step: i32, cx: &mut ViewContext<Self>) {
-        self.store_visual_marks(cx);
-        self.update_editor(cx, |vim, editor, cx| {
+    fn increment(
+        &mut self,
+        mut delta: i64,
+        step: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.store_visual_marks(window, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             let mut edits = Vec::new();
             let mut new_anchors = Vec::new();
 
@@ -76,11 +82,11 @@ impl Vim {
                     }
                 }
             }
-            editor.transact(cx, |editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 editor.edit(edits, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     let mut new_ranges = Vec::new();
                     for (visual, anchor) in new_anchors.iter() {
                         let mut point = anchor.to_point(&snapshot);
@@ -94,36 +100,44 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, cx)
+        self.switch_mode(Mode::Normal, true, window, cx)
     }
 }
 
-fn increment_decimal_string(mut num: &str, mut delta: i64) -> String {
-    let mut negative = false;
-    if num.chars().next() == Some('-') {
-        negative = true;
-        delta = 0 - delta;
-        num = &num[1..];
-    }
-    let result = if let Ok(value) = u64::from_str_radix(num, 10) {
-        let wrapped = value.wrapping_add_signed(delta);
-        if delta < 0 && wrapped > value {
-            negative = !negative;
-            (u64::MAX - wrapped).wrapping_add(1)
-        } else if delta > 0 && wrapped < value {
-            negative = !negative;
-            u64::MAX - wrapped
-        } else {
-            wrapped
+fn increment_decimal_string(num: &str, delta: i64) -> String {
+    let (negative, delta, num_str) = match num.strip_prefix('-') {
+        Some(n) => (true, -delta, n),
+        None => (false, delta, num),
+    };
+    let num_length = num_str.len();
+    let leading_zero = num_str.starts_with('0');
+
+    let (result, new_negative) = match u64::from_str_radix(num_str, 10) {
+        Ok(value) => {
+            let wrapped = value.wrapping_add_signed(delta);
+            if delta < 0 && wrapped > value {
+                ((u64::MAX - wrapped).wrapping_add(1), !negative)
+            } else if delta > 0 && wrapped < value {
+                (u64::MAX - wrapped, !negative)
+            } else {
+                (wrapped, negative)
+            }
         }
-    } else {
-        u64::MAX
+        Err(_) => (u64::MAX, negative),
     };
 
-    if result == 0 || !negative {
-        format!("{}", result)
+    let formatted = format!("{}", result);
+    let new_significant_digits = formatted.len();
+    let padding = if leading_zero {
+        num_length.saturating_sub(new_significant_digits)
     } else {
-        format!("-{}", result)
+        0
+    };
+
+    if new_negative && result != 0 {
+        format!("-{}{}", "0".repeat(padding), formatted)
+    } else {
+        format!("{}{}", "0".repeat(padding), formatted)
     }
 }
 
@@ -213,8 +227,6 @@ fn find_number(
                 begin = Some(offset);
             }
             num.push(ch);
-            println!("pushing {}", ch);
-            println!();
         } else if begin.is_some() {
             end = Some(offset);
             break;
@@ -289,6 +301,63 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_increment_with_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            000ˇ9
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            001ˇ0
+            "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            000ˇ8
+            "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_leading_zeros_and_zero(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            01ˇ1
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            01ˇ2
+            "});
+        cx.simulate_shared_keystrokes("1 2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            00ˇ0
+            "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_changing_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            099ˇ9
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            100ˇ0
+            "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            99ˇ8
+            "});
+    }
+
+    #[gpui::test]
     async fn test_increment_with_two_dots(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -321,6 +390,27 @@ mod test {
         cx.simulate_shared_keystrokes("2 ctrl-a").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 ˇ1
+                "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_sign_change_with_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                00ˇ1
+                "})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                00ˇ0
+                "});
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                -00ˇ1
+                "});
+        cx.simulate_shared_keystrokes("2 ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                00ˇ1
                 "});
     }
 

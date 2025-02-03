@@ -20,7 +20,7 @@ pub const TREE_BASE: usize = 6;
 pub trait Item: Clone {
     type Summary: Summary;
 
-    fn summary(&self) -> Self::Summary;
+    fn summary(&self, cx: &<Self::Summary as Summary>::Context) -> Self::Summary;
 }
 
 /// An [`Item`] whose summary has a specific key that can be used to identify it
@@ -32,14 +32,29 @@ pub trait KeyedItem: Item {
 
 /// A type that describes the Sum of all [`Item`]s in a subtree of the [`SumTree`]
 ///
-/// Each Summary type can have multiple [`Dimensions`] that it measures,
+/// Each Summary type can have multiple [`Dimension`]s that it measures,
 /// which can be used to navigate the tree
-pub trait Summary: Clone + fmt::Debug {
+pub trait Summary: Clone {
     type Context;
 
     fn zero(cx: &Self::Context) -> Self;
 
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
+}
+
+/// This type exists because we can't implement Summary for () without causing
+/// type resolution errors
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Unit;
+
+impl Summary for Unit {
+    type Context = ();
+
+    fn zero(_: &()) -> Self {
+        Unit
+    }
+
+    fn add_summary(&mut self, _: &Self, _: &()) {}
 }
 
 /// Each [`Summary`] type can have more than one [`Dimension`] type that it measures.
@@ -49,7 +64,7 @@ pub trait Summary: Clone + fmt::Debug {
 /// # Example:
 /// Zed's rope has a `TextSummary` type that summarizes lines, characters, and bytes.
 /// Each of these are different dimensions we may want to seek to
-pub trait Dimension<'a, S: Summary>: Clone + fmt::Debug {
+pub trait Dimension<'a, S: Summary>: Clone {
     fn zero(cx: &S::Context) -> Self;
 
     fn add_summary(&mut self, summary: &'a S, cx: &S::Context);
@@ -71,7 +86,7 @@ impl<'a, T: Summary> Dimension<'a, T> for T {
     }
 }
 
-pub trait SeekTarget<'a, S: Summary, D: Dimension<'a, S>>: fmt::Debug {
+pub trait SeekTarget<'a, S: Summary, D: Dimension<'a, S>> {
     fn cmp(&self, cursor_location: &D, cx: &S::Context) -> Ordering;
 }
 
@@ -100,11 +115,26 @@ impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T
     }
 }
 
-impl<'a, S: Summary, D1: SeekTarget<'a, S, D1> + Dimension<'a, S>, D2: Dimension<'a, S>>
-    SeekTarget<'a, S, (D1, D2)> for D1
+impl<'a, S, D1, D2> SeekTarget<'a, S, (D1, D2)> for D1
+where
+    S: Summary,
+    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
+    D2: Dimension<'a, S>,
 {
     fn cmp(&self, cursor_location: &(D1, D2), cx: &S::Context) -> Ordering {
         self.cmp(&cursor_location.0, cx)
+    }
+}
+
+impl<'a, S, D1, D2, D3> SeekTarget<'a, S, ((D1, D2), D3)> for D1
+where
+    S: Summary,
+    D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
+    D2: Dimension<'a, S>,
+    D3: Dimension<'a, S>,
+{
+    fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
+        self.cmp(&cursor_location.0 .0, cx)
     }
 }
 
@@ -173,8 +203,18 @@ impl Bias {
 /// The maximum number of items per node is `TREE_BASE * 2`.
 ///
 /// Any [`Dimension`] supported by the [`Summary`] type can be used to seek to a specific location in the tree.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SumTree<T: Item>(Arc<Node<T>>);
+
+impl<T> fmt::Debug for SumTree<T>
+where
+    T: fmt::Debug + Item,
+    T::Summary: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("SumTree").field(&self.0).finish()
+    }
+}
 
 impl<T: Item> SumTree<T> {
     pub fn new(cx: &<T::Summary as Summary>::Context) -> Self {
@@ -201,7 +241,7 @@ impl<T: Item> SumTree<T> {
         while iter.peek().is_some() {
             let items: ArrayVec<T, { 2 * TREE_BASE }> = iter.by_ref().take(2 * TREE_BASE).collect();
             let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                items.iter().map(|item| item.summary()).collect();
+                items.iter().map(|item| item.summary(cx)).collect();
 
             let mut summary = item_summaries[0].clone();
             for item_summary in &item_summaries[1..] {
@@ -271,7 +311,7 @@ impl<T: Item> SumTree<T> {
             .map(|items| {
                 let items: ArrayVec<T, { 2 * TREE_BASE }> = items.into_iter().collect();
                 let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                    items.iter().map(|item| item.summary()).collect();
+                    items.iter().map(|item| item.summary(cx)).collect();
                 let mut summary = item_summaries[0].clone();
                 for item_summary in &item_summaries[1..] {
                     <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
@@ -335,7 +375,7 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<T, S>
+    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<'a, T, S>
     where
         S: Dimension<'a, T::Summary>,
     {
@@ -348,7 +388,7 @@ impl<T: Item> SumTree<T> {
         &'a self,
         cx: &<T::Summary as Summary>::Context,
         filter_node: F,
-    ) -> FilterCursor<F, T, U>
+    ) -> FilterCursor<'a, F, T, U>
     where
         F: FnMut(&T::Summary) -> bool,
         U: Dimension<'a, T::Summary>,
@@ -395,7 +435,7 @@ impl<T: Item> SumTree<T> {
                 if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
                 {
                     (f)(item);
-                    *item_summary = item.summary();
+                    *item_summary = item.summary(cx);
                     *summary = sum(item_summaries.iter(), cx);
                     Some(summary.clone())
                 } else {
@@ -451,7 +491,7 @@ impl<T: Item> SumTree<T> {
     }
 
     pub fn push(&mut self, item: T, cx: &<T::Summary as Summary>::Context) {
-        let summary = item.summary();
+        let summary = item.summary(cx);
         self.append(
             SumTree(Arc::new(Node::Leaf {
                 summary: summary.clone(),
@@ -751,6 +791,55 @@ impl<T: KeyedItem> SumTree<T> {
             None
         }
     }
+
+    #[inline]
+    pub fn contains(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> bool {
+        self.get(key, cx).is_some()
+    }
+
+    pub fn update<F, R>(
+        &mut self,
+        key: &T::Key,
+        cx: &<T::Summary as Summary>::Context,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut cursor = self.cursor::<T::Key>(cx);
+        let mut new_tree = cursor.slice(key, Bias::Left, cx);
+        let mut result = None;
+        if Ord::cmp(key, &cursor.end(cx)) == Ordering::Equal {
+            let mut updated = cursor.item().unwrap().clone();
+            result = Some(f(&mut updated));
+            new_tree.push(updated, cx);
+            cursor.next(cx);
+        }
+        new_tree.append(cursor.suffix(cx), cx);
+        drop(cursor);
+        *self = new_tree;
+        result
+    }
+
+    pub fn retain<F: FnMut(&T) -> bool>(
+        &mut self,
+        cx: &<T::Summary as Summary>::Context,
+        mut predicate: F,
+    ) {
+        let mut new_map = SumTree::new(cx);
+
+        let mut cursor = self.cursor::<T::Key>(cx);
+        cursor.next(cx);
+        while let Some(item) = cursor.item() {
+            if predicate(&item) {
+                new_map.push(item.clone(), cx);
+            }
+            cursor.next(cx);
+        }
+        drop(cursor);
+
+        *self = new_map;
+    }
 }
 
 impl<T, S> Default for SumTree<T>
@@ -763,7 +852,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Node<T: Item> {
     Internal {
         height: u8,
@@ -776,6 +865,39 @@ pub enum Node<T: Item> {
         items: ArrayVec<T, { 2 * TREE_BASE }>,
         item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
     },
+}
+
+impl<T> fmt::Debug for Node<T>
+where
+    T: Item + fmt::Debug,
+    T::Summary: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Node::Internal {
+                height,
+                summary,
+                child_summaries,
+                child_trees,
+            } => f
+                .debug_struct("Internal")
+                .field("height", height)
+                .field("summary", summary)
+                .field("child_summaries", child_summaries)
+                .field("child_trees", child_trees)
+                .finish(),
+            Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } => f
+                .debug_struct("Leaf")
+                .field("summary", summary)
+                .field("items", items)
+                .field("item_summaries", item_summaries)
+                .finish(),
+        }
+    }
 }
 
 impl<T: Item> Node<T> {
@@ -1309,7 +1431,7 @@ mod tests {
     impl Item for u8 {
         type Summary = IntegersSummary;
 
-        fn summary(&self) -> Self::Summary {
+        fn summary(&self, _cx: &()) -> Self::Summary {
             IntegersSummary {
                 count: 1,
                 sum: *self as usize,

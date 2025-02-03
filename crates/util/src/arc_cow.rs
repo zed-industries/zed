@@ -75,6 +75,12 @@ impl From<String> for ArcCow<'_, str> {
     }
 }
 
+impl From<&String> for ArcCow<'_, str> {
+    fn from(value: &String) -> Self {
+        Self::Owned(value.clone().into())
+    }
+}
+
 impl<'a> From<Cow<'a, str>> for ArcCow<'a, str> {
     fn from(value: Cow<'a, str>) -> Self {
         match value {

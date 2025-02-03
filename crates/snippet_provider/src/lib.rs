@@ -1,4 +1,5 @@
-mod format;
+mod extension_snippet;
+pub mod format;
 mod registry;
 
 use std::{
@@ -12,12 +13,13 @@ use collections::{BTreeMap, BTreeSet, HashMap};
 use format::VSSnippetsFile;
 use fs::Fs;
 use futures::stream::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 pub use registry::*;
 use util::ResultExt;
 
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &mut App) {
     SnippetRegistry::init_global(cx);
+    extension_snippet::init(cx);
 }
 
 // Is `None` if the snippet file is global.
@@ -60,9 +62,9 @@ pub struct Snippet {
 }
 
 async fn process_updates(
-    this: WeakModel<SnippetProvider>,
+    this: WeakEntity<SnippetProvider>,
     entries: Vec<PathBuf>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> Result<()> {
     let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
     for entry_path in entries {
@@ -96,7 +98,8 @@ async fn process_updates(
                 let Some(file_contents) = contents else {
                     return;
                 };
-                let Ok(as_json) = serde_json::from_str::<VSSnippetsFile>(&file_contents) else {
+                let Ok(as_json) = serde_json_lenient::from_str::<VSSnippetsFile>(&file_contents)
+                else {
                     return;
                 };
                 let snippets = file_to_snippets(as_json);
@@ -110,9 +113,9 @@ async fn process_updates(
 }
 
 async fn initial_scan(
-    this: WeakModel<SnippetProvider>,
+    this: WeakEntity<SnippetProvider>,
     path: Arc<Path>,
-    mut cx: AsyncAppContext,
+    mut cx: AsyncApp,
 ) -> Result<()> {
     let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
     let entries = fs.read_dir(&path).await;
@@ -130,38 +133,55 @@ async fn initial_scan(
 pub struct SnippetProvider {
     fs: Arc<dyn Fs>,
     snippets: HashMap<SnippetKind, BTreeMap<PathBuf, Vec<Arc<Snippet>>>>,
+    watch_tasks: Vec<Task<Result<()>>>,
 }
 
+// Watches global snippet directory, is created just once and reused across multiple projects
+struct GlobalSnippetWatcher(Entity<SnippetProvider>);
+
+impl GlobalSnippetWatcher {
+    fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Self {
+        let global_snippets_dir = paths::config_dir().join("snippets");
+        let provider = cx.new(|_cx| SnippetProvider {
+            fs,
+            snippets: Default::default(),
+            watch_tasks: vec![],
+        });
+        provider.update(cx, |this, cx| {
+            this.watch_directory(&global_snippets_dir, cx)
+        });
+        Self(provider)
+    }
+}
+
+impl gpui::Global for GlobalSnippetWatcher {}
+
 impl SnippetProvider {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        dirs_to_watch: BTreeSet<PathBuf>,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(move |cx| {
+    pub fn new(fs: Arc<dyn Fs>, dirs_to_watch: BTreeSet<PathBuf>, cx: &mut App) -> Entity<Self> {
+        cx.new(move |cx| {
+            if !cx.has_global::<GlobalSnippetWatcher>() {
+                let global_watcher = GlobalSnippetWatcher::new(fs.clone(), cx);
+                cx.set_global(global_watcher);
+            }
             let mut this = Self {
                 fs,
+                watch_tasks: Vec::new(),
                 snippets: Default::default(),
             };
 
-            let mut task_handles = vec![];
             for dir in dirs_to_watch {
-                task_handles.push(this.watch_directory(&dir, cx));
+                this.watch_directory(&dir, cx);
             }
-            cx.spawn(|_, _| async move {
-                futures::future::join_all(task_handles).await;
-            })
-            .detach();
 
             this
         })
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+    fn watch_directory(&mut self, path: &Path, cx: &Context<Self>) {
         let path: Arc<Path> = Arc::from(path);
 
-        cx.spawn(|this, mut cx| async move {
+        self.watch_tasks.push(cx.spawn(|this, mut cx| async move {
             let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
             let watched_path = path.clone();
             let watcher = fs.watch(&watched_path, Duration::from_secs(1));
@@ -177,13 +197,13 @@ impl SnippetProvider {
                 .await?;
             }
             Ok(())
-        })
+        }));
     }
 
-    fn lookup_snippets<'a>(
+    fn lookup_snippets<'a, const LOOKUP_GLOBALS: bool>(
         &'a self,
         language: &'a SnippetKind,
-        cx: &AppContext,
+        cx: &App,
     ) -> Vec<Arc<Snippet>> {
         let mut user_snippets: Vec<_> = self
             .snippets
@@ -193,6 +213,16 @@ impl SnippetProvider {
             .into_iter()
             .flat_map(|(_, snippets)| snippets.into_iter())
             .collect();
+        if LOOKUP_GLOBALS {
+            if let Some(global_watcher) = cx.try_global::<GlobalSnippetWatcher>() {
+                user_snippets.extend(
+                    global_watcher
+                        .0
+                        .read(cx)
+                        .lookup_snippets::<false>(language, cx),
+                );
+            }
+        }
 
         let Some(registry) = SnippetRegistry::try_global(cx) else {
             return user_snippets;
@@ -204,12 +234,12 @@ impl SnippetProvider {
         user_snippets
     }
 
-    pub fn snippets_for(&self, language: SnippetKind, cx: &AppContext) -> Vec<Arc<Snippet>> {
-        let mut requested_snippets = self.lookup_snippets(&language, cx);
+    pub fn snippets_for(&self, language: SnippetKind, cx: &App) -> Vec<Arc<Snippet>> {
+        let mut requested_snippets = self.lookup_snippets::<true>(&language, cx);
 
         if language.is_some() {
             // Look up global snippets as well.
-            requested_snippets.extend(self.lookup_snippets(&None, cx));
+            requested_snippets.extend(self.lookup_snippets::<true>(&None, cx));
         }
         requested_snippets
     }

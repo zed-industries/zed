@@ -1,8 +1,8 @@
 [package]
 name = "audio"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -18,5 +18,5 @@ collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
 parking_lot.workspace = true
-rodio = { version = "0.19.0", default-features = false, features = ["wav"] }
+rodio = { version = "0.20.0", default-features = false, features = ["wav"] }
 util.workspace = true

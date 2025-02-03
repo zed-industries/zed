@@ -13,6 +13,7 @@ mod undo_map;
 pub use anchor::*;
 use anyhow::{anyhow, Context as _, Result};
 pub use clock::ReplicaId;
+use clock::LOCAL_BRANCH_REPLICA_ID;
 use collections::{HashMap, HashSet};
 use locator::Locator;
 use operation_queue::OperationQueue;
@@ -42,9 +43,8 @@ use undo_map::UndoMap;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 
-static LINE_SEPARATORS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\r\n|\r|\u{2028}|\u{2029}").expect("Failed to create LINE_SEPARATORS_REGEX")
-});
+static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
 
 pub type TransactionId = clock::Lamport;
 
@@ -227,7 +227,7 @@ impl History {
         if let Some(mut entry) = entries.next_back() {
             while let Some(prev_entry) = entries.next_back() {
                 if !prev_entry.suppress_grouping
-                    && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
+                    && entry.first_edit_at - prev_entry.last_edit_at < self.group_interval
                 {
                     entry = prev_entry;
                     count += 1;
@@ -713,6 +713,19 @@ impl Buffer {
 
     pub fn snapshot(&self) -> BufferSnapshot {
         self.snapshot.clone()
+    }
+
+    pub fn branch(&self) -> Self {
+        Self {
+            snapshot: self.snapshot.clone(),
+            history: History::new(self.base_text().clone()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: HashSet::default(),
+            lamport_clock: clock::Lamport::new(LOCAL_BRANCH_REPLICA_ID),
+            subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
+            wait_for_version_txs: Default::default(),
+        }
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -1413,19 +1426,25 @@ impl Buffer {
     fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {
         let mut counts = HashMap::default();
         for edit_id in transaction.edit_ids {
-            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
+            counts.insert(edit_id, self.undo_map.undo_count(edit_id).saturating_add(1));
         }
 
+        let operation = self.undo_operations(counts);
+        self.history.push(operation.clone());
+        operation
+    }
+
+    pub fn undo_operations(&mut self, counts: HashMap<clock::Lamport, u32>) -> Operation {
+        let timestamp = self.lamport_clock.tick();
+        let version = self.version();
+        self.snapshot.version.observe(timestamp);
         let undo = UndoOperation {
-            timestamp: self.lamport_clock.tick(),
-            version: self.version(),
+            timestamp,
+            version,
             counts,
         };
         self.apply_undo(&undo);
-        self.snapshot.version.observe(undo.timestamp);
-        let operation = Operation::Undo(undo);
-        self.history.push(operation.clone());
-        operation
+        Operation::Undo(undo)
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
@@ -1488,9 +1507,9 @@ impl Buffer {
         let mut rope_cursor = self.visible_text.cursor(0);
         disjoint_ranges.map(move |range| {
             position.add_assign(&rope_cursor.summary(range.start));
-            let start = position.clone();
+            let start = position;
             position.add_assign(&rope_cursor.summary(range.end));
-            let end = position.clone();
+            let end = position;
             start..end
         })
     }
@@ -2010,11 +2029,11 @@ impl BufferSnapshot {
         row_range: Range<u32>,
     ) -> impl Iterator<Item = (u32, LineIndent)> + '_ {
         let start = Point::new(row_range.start, 0).to_offset(self);
-        let end = Point::new(row_range.end - 1, self.line_len(row_range.end - 1)).to_offset(self);
+        let end = Point::new(row_range.end, self.line_len(row_range.end)).to_offset(self);
 
         let mut chunks = self.as_rope().chunks_in_range(start..end);
         let mut row = row_range.start;
-        let mut done = start == end;
+        let mut done = false;
         std::iter::from_fn(move || {
             if done {
                 None
@@ -2052,7 +2071,7 @@ impl BufferSnapshot {
         }
 
         let mut row = end_point.row;
-        let mut done = start == end;
+        let mut done = false;
         std::iter::from_fn(move || {
             if done {
                 None
@@ -2149,7 +2168,7 @@ impl BufferSnapshot {
             }
 
             position.add_assign(&text_cursor.summary(fragment_offset));
-            (position.clone(), payload)
+            (position, payload)
         })
     }
 
@@ -2157,10 +2176,14 @@ impl BufferSnapshot {
     where
         D: TextDimension,
     {
+        self.text_summary_for_range(0..self.offset_for_anchor(anchor))
+    }
+
+    pub fn offset_for_anchor(&self, anchor: &Anchor) -> usize {
         if *anchor == Anchor::MIN {
-            D::zero(&())
+            0
         } else if *anchor == Anchor::MAX {
-            D::from_text_summary(&self.visible_text.summary())
+            self.visible_text.len()
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -2198,7 +2221,7 @@ impl BufferSnapshot {
             if fragment.visible {
                 fragment_offset += anchor.offset - insertion.split_offset;
             }
-            self.text_summary_for_range(0..fragment_offset)
+            fragment_offset
         }
     }
 
@@ -2419,6 +2442,42 @@ impl BufferSnapshot {
         }
         false
     }
+
+    pub fn range_to_version(&self, range: Range<usize>, version: &clock::Global) -> Range<usize> {
+        let mut offsets = self.offsets_to_version([range.start, range.end], version);
+        offsets.next().unwrap()..offsets.next().unwrap()
+    }
+
+    /// Converts the given sequence of offsets into their corresponding offsets
+    /// at a prior version of this buffer.
+    pub fn offsets_to_version<'a>(
+        &'a self,
+        offsets: impl 'a + IntoIterator<Item = usize>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = usize> {
+        let mut edits = self.edits_since(version).peekable();
+        let mut last_old_end = 0;
+        let mut last_new_end = 0;
+        offsets.into_iter().map(move |new_offset| {
+            while let Some(edit) = edits.peek() {
+                if edit.new.start > new_offset {
+                    break;
+                }
+
+                if edit.new.end <= new_offset {
+                    last_new_end = edit.new.end;
+                    last_old_end = edit.old.end;
+                    edits.next();
+                    continue;
+                }
+
+                let overshoot = new_offset - edit.new.start;
+                return (edit.old.start + overshoot).min(edit.old.end);
+            }
+
+            last_old_end + new_offset.saturating_sub(last_new_end)
+        })
+    }
 }
 
 struct RopeBuilder<'a> {
@@ -2525,16 +2584,16 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                 }
 
                 let fragment_summary = self.visible_cursor.summary(visible_end);
-                let mut new_end = self.new_end.clone();
+                let mut new_end = self.new_end;
                 new_end.add_assign(&fragment_summary);
                 if let Some((edit, range)) = pending_edit.as_mut() {
-                    edit.new.end = new_end.clone();
+                    edit.new.end = new_end;
                     range.end = end_anchor;
                 } else {
                     pending_edit = Some((
                         Edit {
-                            old: self.old_end.clone()..self.old_end.clone(),
-                            new: self.new_end.clone()..new_end.clone(),
+                            old: self.old_end..self.old_end,
+                            new: self.new_end..new_end,
                         },
                         start_anchor..end_anchor,
                     ));
@@ -2554,16 +2613,16 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                     self.deleted_cursor.seek_forward(cursor.start().deleted);
                 }
                 let fragment_summary = self.deleted_cursor.summary(deleted_end);
-                let mut old_end = self.old_end.clone();
+                let mut old_end = self.old_end;
                 old_end.add_assign(&fragment_summary);
                 if let Some((edit, range)) = pending_edit.as_mut() {
-                    edit.old.end = old_end.clone();
+                    edit.old.end = old_end;
                     range.end = end_anchor;
                 } else {
                     pending_edit = Some((
                         Edit {
-                            old: self.old_end.clone()..old_end.clone(),
-                            new: self.new_end.clone()..self.new_end.clone(),
+                            old: self.old_end..old_end,
+                            new: self.new_end..self.new_end,
                         },
                         start_anchor..end_anchor,
                     ));
@@ -2603,7 +2662,7 @@ impl Fragment {
 impl sum_tree::Item for Fragment {
     type Summary = FragmentSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &Option<clock::Global>) -> Self::Summary {
         let mut max_version = clock::Global::new();
         max_version.observe(self.timestamp);
         for deletion in &self.deletions {
@@ -2674,7 +2733,7 @@ impl Default for FragmentSummary {
 impl sum_tree::Item for InsertionFragment {
     type Summary = InsertionFragmentKey;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         InsertionFragmentKey {
             timestamp: self.timestamp,
             split_offset: self.split_offset,
@@ -2686,7 +2745,7 @@ impl sum_tree::KeyedItem for InsertionFragment {
     type Key = InsertionFragmentKey;
 
     fn key(&self) -> Self::Key {
-        sum_tree::Item::summary(self)
+        sum_tree::Item::summary(self, &())
     }
 }
 
@@ -2990,6 +3049,12 @@ impl ToOffsetUtf16 for OffsetUtf16 {
 
 pub trait FromAnchor {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self;
+}
+
+impl FromAnchor for Anchor {
+    fn from_anchor(anchor: &Anchor, _snapshot: &BufferSnapshot) -> Self {
+        *anchor
+    }
 }
 
 impl FromAnchor for Point {

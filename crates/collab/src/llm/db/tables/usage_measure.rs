@@ -9,8 +9,6 @@ pub enum UsageMeasure {
     RequestsPerMinute,
     TokensPerMinute,
     TokensPerDay,
-    InputTokensPerMonth,
-    OutputTokensPerMonth,
 }
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]

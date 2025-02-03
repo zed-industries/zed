@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
 use schemars::JsonSchema;
@@ -81,8 +81,10 @@ fn get_max_tokens(name: &str) -> usize {
         "llama2" | "yi" | "vicuna" | "stablelm2" => 4096,
         "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
         "codellama" | "starcoder2" => 16384,
-        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "dolphin-mixtral" => 32768,
-        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" | "yi-coder" => 128000,
+        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "qwen2.5-coder"
+        | "dolphin-mixtral" => 32768,
+        "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
+        | "deepseek-coder-v2" | "deepseek-r1" | "yi-coder" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -261,7 +263,6 @@ pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
     request: ChatRequest,
-    _: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
     let request_builder = http::Request::builder()
@@ -276,7 +277,7 @@ pub async fn stream_chat_completion(
 
         Ok(reader
             .lines()
-            .filter_map(|line| async move {
+            .filter_map(move |line| async move {
                 match line {
                     Ok(line) => {
                         Some(serde_json::from_str(&line).context("Unable to parse chat response"))

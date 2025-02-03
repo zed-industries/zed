@@ -1,7 +1,8 @@
 name = "Markdown"
 grammar = "markdown"
-path_suffixes = ["md", "mdx", "mdwn", "markdown"]
+path_suffixes = ["md", "mdx", "mdwn", "markdown", "MD"]
 word_characters = ["-"]
+block_comment = ["<!-- ", " -->"]
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },
@@ -12,5 +13,7 @@ brackets = [
     { start = "`", end = "`", close = false, newline = false },
 ]
 
+auto_indent_on_paste = false
+auto_indent_using_last_non_empty_line = false
 tab_size = 2
 prettier_parser_name = "markdown"

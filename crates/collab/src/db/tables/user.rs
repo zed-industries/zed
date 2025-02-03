@@ -13,6 +13,7 @@ pub struct Model {
     pub github_user_id: i32,
     pub github_user_created_at: Option<NaiveDateTime>,
     pub email_address: Option<String>,
+    pub name: Option<String>,
     pub admin: bool,
     pub invite_code: Option<String>,
     pub invite_count: i32,
@@ -21,6 +22,7 @@ pub struct Model {
     pub metrics_id: Uuid,
     pub created_at: NaiveDateTime,
     pub accepted_tos_at: Option<NaiveDateTime>,
+    pub custom_llm_monthly_allowance_in_cents: Option<i32>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

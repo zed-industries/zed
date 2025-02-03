@@ -33,7 +33,7 @@ Here's an example of language-specific settings:
   "Python": {
     "tab_size": 4,
     "formatter": "language_server",
-    "format_on_save": true
+    "format_on_save": "on"
   },
   "JavaScript": {
     "tab_size": 2,
@@ -56,6 +56,8 @@ You can customize a wide range of settings for each language, including:
 - [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
 - [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
 - [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
+- [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
+- [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
@@ -151,28 +153,30 @@ Many language servers accept custom configuration options. You can set these in 
 
 This example configures the Rust Analyzer to use Clippy for additional linting when saving files.
 
+#### Nested objects
+
 When configuring language server options in Zed, it's important to use nested objects rather than dot-delimited strings. This is particularly relevant when working with more complex configurations. Let's look at a real-world example using the TypeScript language server:
 
 Suppose you want to configure the following settings for TypeScript:
 
 - Enable strict null checks
 - Set the target ECMAScript version to ES2020
-- Configure import organization preferences
 
 Here's how you would structure these settings in Zed's `settings.json`:
-
-Here's how you might incorrectly attempt to set these options using dot notation:
 
 ```json
 "lsp": {
   "typescript-language-server": {
     "initialization_options": {
-      // This is not supported:
-      //   "preferences.strictNullChecks": true,
-      // You express it like this:
+      // These are not supported (VSCode dotted style):
+      // "preferences.strictNullChecks": true,
+      // "preferences.target": "ES2020"
+      //
+      // These is correct (nested notation):
       "preferences": {
-        "strictNullChecks": true
-      }
+        "strictNullChecks": true,
+        "target": "ES2020"
+      },
     }
   }
 }
@@ -209,11 +213,11 @@ Zed supports both built-in and external formatters. Configure formatters globall
         "arguments": ["--stdin-filepath", "{buffer_path}"]
       }
     },
-    "format_on_save": true
+    "format_on_save": "on"
   },
   "Rust": {
     "formatter": "language_server",
-    "format_on_save": true
+    "format_on_save": "on"
   }
 }
 ```
@@ -225,7 +229,7 @@ To disable formatting for a specific language:
 ```json
 "languages": {
   "Markdown": {
-    "format_on_save": false
+    "format_on_save": "off"
   }
 }
 ```
@@ -276,7 +280,7 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
     "code_actions_on_format": {
       "source.fixAll.eslint": true
     },
-    "format_on_save": true
+    "format_on_save": "on"
   }
 }
 ```

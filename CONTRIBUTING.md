@@ -2,7 +2,7 @@
 
 Thanks for your interest in contributing to Zed, the collaborative platform that is also a code editor!
 
-All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/docs/code-of-conduct). Additionally, contributors must sign our [Contributor License Agreement](https://zed.dev/cla) before their contributions can be merged.
+All activity in Zed forums is subject to our [Code of Conduct](https://zed.dev/code-of-conduct). Additionally, contributors must sign our [Contributor License Agreement](https://zed.dev/cla) before their contributions can be merged.
 
 ## Contribution ideas
 

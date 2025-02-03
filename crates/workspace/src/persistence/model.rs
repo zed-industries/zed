@@ -2,14 +2,14 @@ use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     item::ItemHandle, Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
-use client::DevServerProjectId;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, View, WeakView};
+use gpui::{AsyncWindowContext, Entity, WeakEntity};
+use itertools::Itertools as _;
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::SharedString;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -26,24 +25,29 @@ pub struct SerializedSshProject {
     pub id: SshProjectId,
     pub host: String,
     pub port: Option<u16>,
-    pub path: String,
+    pub paths: Vec<String>,
     pub user: Option<String>,
 }
 
 impl SerializedSshProject {
-    pub fn ssh_url(&self) -> String {
-        let mut result = String::from("ssh://");
-        if let Some(user) = &self.user {
-            result.push_str(user);
-            result.push('@');
-        }
-        result.push_str(&self.host);
-        if let Some(port) = &self.port {
-            result.push(':');
-            result.push_str(&port.to_string());
-        }
-        result.push_str(&self.path);
-        result
+    pub fn ssh_urls(&self) -> Vec<PathBuf> {
+        self.paths
+            .iter()
+            .map(|path| {
+                let mut result = String::new();
+                if let Some(user) = &self.user {
+                    result.push_str(user);
+                    result.push('@');
+                }
+                result.push_str(&self.host);
+                if let Some(port) = &self.port {
+                    result.push(':');
+                    result.push_str(&port.to_string());
+                }
+                result.push_str(path);
+                PathBuf::from(result)
+            })
+            .collect()
     }
 }
 
@@ -58,7 +62,8 @@ impl Bind for &SerializedSshProject {
         let next_index = statement.bind(&self.id.0, start_index)?;
         let next_index = statement.bind(&self.host, next_index)?;
         let next_index = statement.bind(&self.port, next_index)?;
-        let next_index = statement.bind(&self.path, next_index)?;
+        let raw_paths = serde_json::to_string(&self.paths)?;
+        let next_index = statement.bind(&raw_paths, next_index)?;
         statement.bind(&self.user, next_index)
     }
 }
@@ -68,7 +73,9 @@ impl Column for SerializedSshProject {
         let id = statement.column_int64(start_index)?;
         let host = statement.column_text(start_index + 1)?.to_string();
         let (port, _) = Option::<u16>::column(statement, start_index + 2)?;
-        let path = statement.column_text(start_index + 3)?.to_string();
+        let raw_paths = statement.column_text(start_index + 3)?.to_string();
+        let paths: Vec<String> = serde_json::from_str(&raw_paths)?;
+
         let (user, _) = Option::<String>::column(statement, start_index + 4)?;
 
         Ok((
@@ -76,19 +83,12 @@ impl Column for SerializedSshProject {
                 id: SshProjectId(id as u64),
                 host,
                 port,
-                path,
+                paths,
                 user,
             },
             start_index + 5,
         ))
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedDevServerProject {
-    pub id: DevServerProjectId,
-    pub dev_server_name: String,
-    pub paths: Vec<SharedString>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -168,49 +168,10 @@ impl Column for LocalPathsOrder {
     }
 }
 
-impl From<SerializedDevServerProject> for SerializedWorkspaceLocation {
-    fn from(dev_server_project: SerializedDevServerProject) -> Self {
-        Self::DevServer(dev_server_project)
-    }
-}
-
-impl StaticColumnCount for SerializedDevServerProject {}
-impl Bind for &SerializedDevServerProject {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&self.id.0, start_index)?;
-        let next_index = statement.bind(&self.dev_server_name, next_index)?;
-        let paths = serde_json::to_string(&self.paths)?;
-        statement.bind(&paths, next_index)
-    }
-}
-
-impl Column for SerializedDevServerProject {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let id = statement.column_int64(start_index)?;
-        let dev_server_name = statement.column_text(start_index + 1)?.to_string();
-        let paths = statement.column_text(start_index + 2)?.to_string();
-        let paths: Vec<SharedString> = if paths.starts_with('[') {
-            serde_json::from_str(&paths).context("JSON deserialization of paths failed")?
-        } else {
-            vec![paths.into()]
-        };
-
-        Ok((
-            Self {
-                id: DevServerProjectId(id as u64),
-                dev_server_name,
-                paths,
-            },
-            start_index + 3,
-        ))
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local(LocalPaths, LocalPathsOrder),
     Ssh(SerializedSshProject),
-    DevServer(SerializedDevServerProject),
 }
 
 impl SerializedWorkspaceLocation {
@@ -267,6 +228,28 @@ impl SerializedWorkspaceLocation {
         let order: Vec<_> = indexed_paths.iter().map(|(index, _)| *index).collect();
 
         Self::Local(LocalPaths::new(sorted_paths), LocalPathsOrder::new(order))
+    }
+
+    /// Get sorted paths
+    pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
+        match self {
+            SerializedWorkspaceLocation::Local(paths, order) => {
+                if order.order().len() == 0 {
+                    paths.paths().clone()
+                } else {
+                    Arc::new(
+                        order
+                            .order()
+                            .iter()
+                            .zip(paths.paths().iter())
+                            .sorted_by_key(|(i, _)| **i)
+                            .map(|(_, p)| p.clone())
+                            .collect(),
+                    )
+                }
+            }
+            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
+        }
     }
 }
 
@@ -370,11 +353,15 @@ impl SerializedPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
-        project: &Model<Project>,
+        project: &Entity<Project>,
         workspace_id: WorkspaceId,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
-    ) -> Option<(Member, Option<View<Pane>>, Vec<Option<Box<dyn ItemHandle>>>)> {
+    ) -> Option<(
+        Member,
+        Option<Entity<Pane>>,
+        Vec<Option<Box<dyn ItemHandle>>>,
+    )> {
         match self {
             SerializedPaneGroup::Group {
                 axis,
@@ -411,7 +398,9 @@ impl SerializedPaneGroup {
             }
             SerializedPaneGroup::Pane(serialized_pane) => {
                 let pane = workspace
-                    .update(cx, |workspace, cx| workspace.add_pane(cx).downgrade())
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.add_pane(window, cx).downgrade()
+                    })
                     .log_err()?;
                 let active = serialized_pane.active;
                 let new_items = serialized_pane
@@ -429,8 +418,8 @@ impl SerializedPaneGroup {
                 } else {
                     let pane = pane.upgrade()?;
                     workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.force_remove_pane(&pane, &None, cx)
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.force_remove_pane(&pane, &None, window, cx)
                         })
                         .log_err()?;
                     None
@@ -458,10 +447,10 @@ impl SerializedPane {
 
     pub async fn deserialize_to(
         &self,
-        project: &Model<Project>,
-        pane: &WeakView<Pane>,
+        project: &Entity<Project>,
+        pane: &WeakEntity<Pane>,
         workspace_id: WorkspaceId,
-        workspace: WeakView<Workspace>,
+        workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
         let mut item_tasks = Vec::new();
@@ -469,13 +458,14 @@ impl SerializedPane {
         let mut preview_item_index = None;
         for (index, item) in self.children.iter().enumerate() {
             let project = project.clone();
-            item_tasks.push(pane.update(cx, |_, cx| {
+            item_tasks.push(pane.update_in(cx, |_, window, cx| {
                 SerializableItemRegistry::deserialize(
                     &item.kind,
                     project,
                     workspace.clone(),
                     workspace_id,
                     item.item_id,
+                    window,
                     cx,
                 )
             })?);
@@ -493,15 +483,15 @@ impl SerializedPane {
             items.push(item_handle.clone());
 
             if let Some(item_handle) = item_handle {
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(item_handle.clone(), true, true, None, cx);
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.add_item(item_handle.clone(), true, true, None, window, cx);
                 })?;
             }
         }
 
         if let Some(active_item_index) = active_item_index {
-            pane.update(cx, |pane, cx| {
-                pane.activate_item(active_item_index, false, false, cx);
+            pane.update_in(cx, |pane, window, cx| {
+                pane.activate_item(active_item_index, false, false, window, cx);
             })?;
         }
 
@@ -513,7 +503,7 @@ impl SerializedPane {
             })?;
         }
         pane.update(cx, |pane, _| {
-            pane.set_pinned_count(self.pinned_count);
+            pane.set_pinned_count(self.pinned_count.min(items.len()));
         })?;
 
         anyhow::Ok(items)
@@ -601,6 +591,64 @@ mod tests {
             SerializedWorkspaceLocation::Local(
                 LocalPaths::new(vec!["a", "b", "c"]),
                 LocalPathsOrder::new(vec![1, 0, 2])
+            )
+        );
+    }
+
+    #[test]
+    fn test_sorted_paths() {
+        let paths = vec!["b", "a", "c"];
+        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
+        assert_eq!(
+            serialized.sorted_paths(),
+            Arc::new(vec![
+                PathBuf::from("b"),
+                PathBuf::from("a"),
+                PathBuf::from("c"),
+            ])
+        );
+
+        let paths = Arc::new(vec![
+            PathBuf::from("a"),
+            PathBuf::from("b"),
+            PathBuf::from("c"),
+        ]);
+        let order = vec![2, 0, 1];
+        let serialized =
+            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+        assert_eq!(
+            serialized.sorted_paths(),
+            Arc::new(vec![
+                PathBuf::from("b"),
+                PathBuf::from("c"),
+                PathBuf::from("a"),
+            ])
+        );
+
+        let paths = Arc::new(vec![
+            PathBuf::from("a"),
+            PathBuf::from("b"),
+            PathBuf::from("c"),
+        ]);
+        let order = vec![];
+        let serialized =
+            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+        assert_eq!(serialized.sorted_paths(), paths);
+
+        let urls = ["/a", "/b", "/c"];
+        let serialized = SerializedWorkspaceLocation::Ssh(SerializedSshProject {
+            id: SshProjectId(0),
+            host: "host".to_string(),
+            port: Some(22),
+            paths: urls.iter().map(|s| s.to_string()).collect(),
+            user: Some("user".to_string()),
+        });
+        assert_eq!(
+            serialized.sorted_paths(),
+            Arc::new(
+                urls.iter()
+                    .map(|p| PathBuf::from(format!("user@host:22{}", p)))
+                    .collect()
             )
         );
     }

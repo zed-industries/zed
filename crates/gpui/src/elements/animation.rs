@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, Element, ElementId, GlobalElementId, IntoElement};
+use crate::{AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, Window};
 
 pub use easing::*;
 
@@ -104,9 +104,10 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut crate::WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
-        cx.with_element_state(global_id.unwrap(), |state, cx| {
+        window.with_element_state(global_id.unwrap(), |state, window| {
             let state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
             });
@@ -133,17 +134,10 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut element = (self.animator)(element, delta).into_any_element();
 
             if !done {
-                let parent_id = cx.parent_view_id();
-                cx.on_next_frame(move |cx| {
-                    if let Some(parent_id) = parent_id {
-                        cx.notify(parent_id)
-                    } else {
-                        cx.refresh()
-                    }
-                })
+                window.request_animation_frame();
             }
 
-            ((element.request_layout(cx), element), state)
+            ((element.request_layout(window, cx), element), state)
         })
     }
 
@@ -152,9 +146,10 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         _id: Option<&GlobalElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
-        cx: &mut crate::WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) -> Self::PrepaintState {
-        element.prepaint(cx);
+        element.prepaint(window, cx);
     }
 
     fn paint(
@@ -163,9 +158,10 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        cx: &mut crate::WindowContext,
+        window: &mut Window,
+        cx: &mut App,
     ) {
-        element.paint(cx);
+        element.paint(window, cx);
     }
 }
 

@@ -1,8 +1,8 @@
 [package]
 name = "lsp"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -27,12 +27,10 @@ parking_lot.workspace = true
 postage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+schemars.workspace = true
 smol.workspace = true
 util.workspace = true
 release_channel.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true

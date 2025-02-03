@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     ops::{Deref, DerefMut, Range},
+    path::Path,
     sync::Arc,
 };
 
@@ -10,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{View, ViewContext, VisualTestContext};
+use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -26,10 +27,58 @@ use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
-    pub workspace: View<Workspace>,
+    pub workspace: Entity<Workspace>,
     pub buffer_lsp_url: lsp::Url,
 }
 
+pub(crate) fn rust_lang() -> Arc<Language> {
+    let language = Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        indents: Some(Cow::from(indoc! {r#"
+            [
+                ((where_clause) _ @end)
+                (field_expression)
+                (call_expression)
+                (assignment_expression)
+                (let_declaration)
+                (let_chain)
+                (await_expression)
+            ] @indent
+
+            (_ "[" "]" @end) @indent
+            (_ "<" ">" @end) @indent
+            (_ "{" "}" @end) @indent
+            (_ "(" ")" @end) @indent"#})),
+        brackets: Some(Cow::from(indoc! {r#"
+            ("(" @open ")" @close)
+            ("[" @open "]" @close)
+            ("{" @open "}" @close)
+            ("<" @open ">" @close)
+            ("\"" @open "\"" @close)
+            (closure_parameters "|" @open "|" @close)"#})),
+        text_objects: Some(Cow::from(indoc! {r#"
+            (function_item
+                body: (_
+                    "{"
+                    (_)* @function.inside
+                    "}" )) @function.around
+        "#})),
+        ..Default::default()
+    })
+    .expect("Could not parse queries");
+    Arc::new(language)
+}
 impl EditorLspTestContext {
     pub async fn new(
         language: Language,
@@ -66,20 +115,30 @@ impl EditorLspTestContext {
         );
         language_registry.add(Arc::new(language));
 
+        let root = Self::root_path();
+
         app_state
             .fs
             .as_fake()
-            .insert_tree("/root", json!({ "dir": { file_name.clone(): "" }}))
+            .insert_tree(
+                root,
+                json!({
+                    ".git": {},
+                    "dir": {
+                        file_name.clone(): ""
+                    }
+                }),
+            )
             .await;
 
-        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let workspace = window.root_view(cx).unwrap();
+        let workspace = window.root(cx).unwrap();
 
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree("/root", true, cx)
+                project.find_or_create_worktree(root, true, cx)
             })
             .await
             .unwrap();
@@ -87,16 +146,18 @@ impl EditorLspTestContext {
             .await;
         let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let item = workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.open_path(file, None, true, cx)
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path(file, None, true, window, cx)
             })
             .await
             .expect("Could not open test file");
-        let editor = cx.update(|cx| {
+        let editor = cx.update(|_, cx| {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update(&mut cx, |editor, cx| editor.focus(cx));
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx))
+        });
 
         let lsp = fake_servers.next().await.unwrap();
         Self {
@@ -108,7 +169,7 @@ impl EditorLspTestContext {
             },
             lsp,
             workspace,
-            buffer_lsp_url: lsp::Url::from_file_path(format!("/root/dir/{file_name}")).unwrap(),
+            buffer_lsp_url: lsp::Url::from_file_path(root.join("dir").join(file_name)).unwrap(),
         }
     }
 
@@ -116,45 +177,7 @@ impl EditorLspTestContext {
         capabilities: lsp::ServerCapabilities,
         cx: &mut gpui::TestAppContext,
     ) -> EditorLspTestContext {
-        let language = Language::new(
-            LanguageConfig {
-                name: "Rust".into(),
-                matcher: LanguageMatcher {
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::LANGUAGE.into()),
-        )
-        .with_queries(LanguageQueries {
-            indents: Some(Cow::from(indoc! {r#"
-                [
-                    ((where_clause) _ @end)
-                    (field_expression)
-                    (call_expression)
-                    (assignment_expression)
-                    (let_declaration)
-                    (let_chain)
-                    (await_expression)
-                ] @indent
-
-                (_ "[" "]" @end) @indent
-                (_ "<" ">" @end) @indent
-                (_ "{" "}" @end) @indent
-                (_ "(" ")" @end) @indent"#})),
-            brackets: Some(Cow::from(indoc! {r#"
-                ("(" @open ")" @close)
-                ("[" @open "]" @close)
-                ("{" @open "}" @close)
-                ("<" @open ">" @close)
-                ("\"" @open "\"" @close)
-                (closure_parameters "|" @open "|" @close)"#})),
-            ..Default::default()
-        })
-        .expect("Could not parse queries");
-
-        Self::new(language, capabilities, cx).await
+        Self::new(Arc::into_inner(rust_lang()).unwrap(), capabilities, cx).await
     }
 
     pub async fn new_typescript(
@@ -230,22 +253,32 @@ impl EditorLspTestContext {
                 ..Default::default()
             },
             Some(tree_sitter_html::language()),
-        );
+        )
+        .with_queries(LanguageQueries {
+            brackets: Some(Cow::from(indoc! {r#"
+                ("<" @open "/>" @close)
+                ("</" @open ">" @close)
+                ("<" @open ">" @close)
+                ("\"" @open "\"" @close)"#})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries");
         Self::new(language, Default::default(), cx).await
     }
 
-    // Constructs lsp range using a marked string with '[', ']' range delimiters
+    /// Constructs lsp range using a marked string with '[', ']' range delimiters
+    #[track_caller]
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let ranges = self.ranges(marked_text);
         self.to_lsp_range(ranges[0].clone())
     }
 
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let start_point = range.start.to_point(&snapshot.buffer_snapshot);
         let end_point = range.end.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, cx| {
+        self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
             let start = point_to_lsp(
                 buffer
@@ -267,10 +300,10 @@ impl EditorLspTestContext {
     }
 
     pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
-        let snapshot = self.update_editor(|editor, cx| editor.snapshot(cx));
+        let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, cx| {
+        self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
             point_to_lsp(
                 buffer
@@ -284,9 +317,9 @@ impl EditorLspTestContext {
 
     pub fn update_workspace<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut Workspace, &mut ViewContext<Workspace>) -> T,
+        F: FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> T,
     {
-        self.workspace.update(&mut self.cx.cx, update)
+        self.workspace.update_in(&mut self.cx.cx, update)
     }
 
     pub fn handle_request<T, F, Fut>(
@@ -296,7 +329,7 @@ impl EditorLspTestContext {
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncAppContext) -> Fut,
+        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncApp) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
@@ -307,7 +340,17 @@ impl EditorLspTestContext {
     }
 
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.lsp.notify::<T>(params);
+        self.lsp.notify::<T>(&params);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn root_path() -> &'static Path {
+        Path::new("C:\\root")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn root_path() -> &'static Path {
+        Path::new("/root")
     }
 }
 

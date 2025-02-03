@@ -2,19 +2,25 @@ use gpui::AnyView;
 
 use crate::prelude::*;
 
+/// The audio status of an player, for use in representing
+/// their status visually on their avatar.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub enum AudioStatus {
+    /// The player's microphone is muted.
     Muted,
+    /// The player's microphone is muted, and collaboration audio is disabled.
     Deafened,
 }
 
+/// An indicator that shows the audio status of a player.
 #[derive(IntoElement)]
 pub struct AvatarAudioStatusIndicator {
     audio_status: AudioStatus,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl AvatarAudioStatusIndicator {
+    /// Creates a new `AvatarAudioStatusIndicator`
     pub fn new(audio_status: AudioStatus) -> Self {
         Self {
             audio_status,
@@ -22,17 +28,18 @@ impl AvatarAudioStatusIndicator {
         }
     }
 
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    /// Sets the tooltip for the indicator.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
 }
 
 impl RenderOnce for AvatarAudioStatusIndicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let icon_size = IconSize::Indicator;
 
-        let width_in_px = icon_size.rems() * cx.rem_size();
+        let width_in_px = icon_size.rems() * window.rem_size();
         let padding_x = px(4.);
 
         div()
@@ -58,7 +65,7 @@ impl RenderOnce for AvatarAudioStatusIndicator {
                         .color(Color::Error),
                     )
                     .when_some(self.tooltip, |this, tooltip| {
-                        this.tooltip(move |cx| tooltip(cx))
+                        this.tooltip(move |window, cx| tooltip(window, cx))
                     }),
             )
     }

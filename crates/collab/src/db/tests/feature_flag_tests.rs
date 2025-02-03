@@ -15,6 +15,7 @@ async fn test_get_user_flags(db: &Arc<Database>) {
     let user_1 = db
         .create_user(
             "user1@example.com",
+            None,
             false,
             NewUserParams {
                 github_login: "user1".to_string(),
@@ -28,6 +29,7 @@ async fn test_get_user_flags(db: &Arc<Database>) {
     let user_2 = db
         .create_user(
             "user2@example.com",
+            None,
             false,
             NewUserParams {
                 github_login: "user2".to_string(),

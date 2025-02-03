@@ -1,7 +1,8 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
-use language::{LanguageName, LanguageServerName};
+use language::LanguageName;
+use lsp::LanguageServerName;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -69,11 +70,15 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub themes: Vec<PathBuf>,
     #[serde(default)]
+    pub icon_themes: Vec<PathBuf>,
+    #[serde(default)]
     pub languages: Vec<PathBuf>,
     #[serde(default)]
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
+    #[serde(default)]
+    pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
     #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
@@ -135,6 +140,9 @@ impl LanguageServerManifestEntry {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct ContextServerManifestEntry {}
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SlashCommandManifestEntry {
     pub description: String,
     pub requires_argument: bool,
@@ -169,7 +177,7 @@ impl ExtensionManifest {
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
             toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .with_context(|| format!("invalid extension.toml for extension {extension_name}"))
         }
     }
 }
@@ -193,6 +201,7 @@ fn manifest_from_old_manifest(
             themes.dedup();
             themes
         },
+        icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
             languages.sort();
@@ -205,6 +214,7 @@ fn manifest_from_old_manifest(
             .map(|grammar_name| (grammar_name, Default::default()))
             .collect(),
         language_servers: Default::default(),
+        context_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,

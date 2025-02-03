@@ -2,7 +2,7 @@ use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore
 use anyhow::{anyhow, Result};
 use chrono::Duration;
 use futures::{stream::BoxStream, StreamExt};
-use gpui::{BackgroundExecutor, Context, Model, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, Entity, TestAppContext};
 use parking_lot::Mutex;
 use rpc::{
     proto::{self, GetPrivateUserInfo, GetPrivateUserInfoResponse},
@@ -49,7 +49,7 @@ impl FakeServer {
                         let mut state = state.lock();
                         state.auth_count += 1;
                         let access_token = state.access_token.to_string();
-                        Ok(Credentials::User {
+                        Ok(Credentials {
                             user_id: client_user_id,
                             access_token,
                         })
@@ -73,7 +73,7 @@ impl FakeServer {
                         }
 
                         if credentials
-                            != (Credentials::User {
+                            != (Credentials {
                                 user_id: client_user_id,
                                 access_token: state.lock().access_token.to_string(),
                             })
@@ -203,8 +203,8 @@ impl FakeServer {
         &self,
         client: Arc<Client>,
         cx: &mut TestAppContext,
-    ) -> Model<UserStore> {
-        let user_store = cx.new_model(|cx| UserStore::new(client, cx));
+    ) -> Entity<UserStore> {
+        let user_store = cx.new(|cx| UserStore::new(client, cx));
         assert_eq!(
             self.receive::<proto::GetUsers>()
                 .await

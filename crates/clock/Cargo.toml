@@ -1,8 +1,8 @@
 [package]
 name = "clock"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -16,7 +16,6 @@ doctest = false
 test-support = ["dep:parking_lot"]
 
 [dependencies]
-chrono.workspace = true
 parking_lot = { workspace = true, optional = true }
 serde.workspace = true
 smallvec.workspace = true

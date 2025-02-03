@@ -1,6 +1,11 @@
+use std::str::FromStr;
+
 use url::Url;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 pub struct Sourcehut;
 
@@ -25,21 +30,27 @@ impl GitHostingProvider for Sourcehut {
         format!("L{start_line}-{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.starts_with("git@git.sr.ht:") || url.starts_with("https://git.sr.ht/") {
-            // sourcehut indicates a repo with '.git' suffix as a separate repo.
-            // For example, "git@git.sr.ht:~username/repo" and "git@git.sr.ht:~username/repo.git"
-            // are two distinct repositories.
-            let repo_with_owner = url
-                .trim_start_matches("git@git.sr.ht:~")
-                .trim_start_matches("https://git.sr.ht/~");
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote { owner, repo });
+        let host = url.host_str()?;
+        if host != "git.sr.ht" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?.trim_start_matches('~');
+        // We don't trim the `.git` suffix here like we do elsewhere, as
+        // sourcehut treats a repo with `.git` suffix as a separate repo.
+        //
+        // For example, `git@git.sr.ht:~username/repo` and `git@git.sr.ht:~username/repo.git`
+        // are two distinct repositories.
+        let repo = path_segments.next()?;
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(
@@ -78,16 +89,62 @@ impl GitHostingProvider for Sourcehut {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    fn test_build_sourcehut_permalink_from_ssh_url() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
-        };
+    fn test_parse_remote_url_given_ssh_url() {
+        let parsed_remote = Sourcehut
+            .parse_remote_url("git@git.sr.ht:~zed-industries/zed")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_ssh_url_with_git_suffix() {
+        let parsed_remote = Sourcehut
+            .parse_remote_url("git@git.sr.ht:~zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed.git".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_https_url() {
+        let parsed_remote = Sourcehut
+            .parse_remote_url("https://git.sr.ht/~zed-industries/zed")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_build_sourcehut_permalink() {
         let permalink = Sourcehut.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -95,18 +152,17 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_sourcehut_permalink_from_ssh_url_with_git_prefix() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed.git",
-        };
+    fn test_build_sourcehut_permalink_with_git_suffix() {
         let permalink = Sourcehut.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed.git".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -114,18 +170,17 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://git.sr.ht/~zed-industries/zed.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_sourcehut_permalink_from_ssh_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
-        };
+    fn test_build_sourcehut_permalink_with_single_line_selection() {
         let permalink = Sourcehut.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -133,18 +188,17 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L7";
+        let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_sourcehut_permalink_from_ssh_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
-        };
+    fn test_build_sourcehut_permalink_with_multi_line_selection() {
         let permalink = Sourcehut.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -152,64 +206,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L24-48";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_sourcehut_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
-        };
-        let permalink = Sourcehut.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/zed/src/main.rs",
-                selection: None,
-            },
-        );
-
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/zed/src/main.rs";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_sourcehut_permalink_from_https_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
-        };
-        let permalink = Sourcehut.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/zed/src/main.rs",
-                selection: Some(6..6),
-            },
-        );
-
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/zed/src/main.rs#L7";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_sourcehut_permalink_from_https_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
-        };
-        let permalink = Sourcehut.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/zed/src/main.rs",
-                selection: Some(23..47),
-            },
-        );
-
-        let expected_url = "https://git.sr.ht/~rajveermalviya/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/zed/src/main.rs#L24-48";
+        let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

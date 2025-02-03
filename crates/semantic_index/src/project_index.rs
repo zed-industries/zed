@@ -3,13 +3,11 @@ use crate::{
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use futures::{stream::StreamExt, FutureExt};
-use gpui::{
-    AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel,
-};
+use futures::FutureExt;
+use gpui::{App, Context, Entity, EntityId, EventEmitter, Subscription, Task, WeakEntity};
 use language::LanguageRegistry;
 use log;
 use project::{Project, Worktree, WorktreeId};
@@ -27,24 +25,27 @@ use util::ResultExt;
 
 #[derive(Debug)]
 pub struct SearchResult {
-    pub worktree: Model<Worktree>,
+    pub worktree: Entity<Worktree>,
     pub path: Arc<Path>,
     pub range: Range<usize>,
     pub score: f32,
+    pub query_index: usize,
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct LoadedSearchResult {
     pub path: Arc<Path>,
-    pub range: Range<usize>,
     pub full_path: PathBuf,
-    pub file_content: String,
+    pub excerpt_content: String,
     pub row_range: RangeInclusive<u32>,
+    pub query_index: usize,
 }
 
 pub struct WorktreeSearchResult {
     pub worktree_id: WorktreeId,
     pub path: Arc<Path>,
     pub range: Range<usize>,
+    pub query_index: usize,
     pub score: f32,
 }
 
@@ -57,7 +58,7 @@ pub enum Status {
 
 pub struct ProjectIndex {
     db_connection: heed::Env,
-    project: WeakModel<Project>,
+    project: WeakEntity<Project>,
     worktree_indices: HashMap<EntityId, WorktreeIndexHandle>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
@@ -70,14 +71,14 @@ pub struct ProjectIndex {
 
 impl ProjectIndex {
     pub fn new(
-        project: Model<Project>,
+        project: Entity<Project>,
         db_connection: heed::Env,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
-        let (status_tx, mut status_rx) = channel::unbounded();
+        let (status_tx, status_rx) = channel::unbounded();
         let mut this = ProjectIndex {
             db_connection,
             project: project.downgrade(),
@@ -89,7 +90,7 @@ impl ProjectIndex {
             embedding_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
             _maintain_status: cx.spawn(|this, mut cx| async move {
-                while status_rx.next().await.is_some() {
+                while status_rx.recv().await.is_ok() {
                     if this
                         .update(&mut cx, |this, cx| this.update_status(cx))
                         .is_err()
@@ -107,7 +108,7 @@ impl ProjectIndex {
         self.last_status
     }
 
-    pub fn project(&self) -> WeakModel<Project> {
+    pub fn project(&self) -> WeakEntity<Project> {
         self.project.clone()
     }
 
@@ -117,19 +118,19 @@ impl ProjectIndex {
 
     fn handle_project_event(
         &mut self,
-        _: Model<Project>,
+        _: Entity<Project>,
         event: &project::Event,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) {
         match event {
-            project::Event::WorktreeAdded | project::Event::WorktreeRemoved(_) => {
+            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
                 self.update_worktree_indices(cx);
             }
             _ => {}
         }
     }
 
-    fn update_worktree_indices(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_worktree_indices(&mut self, cx: &mut Context<Self>) {
         let Some(project) = self.project.upgrade() else {
             return;
         };
@@ -195,7 +196,7 @@ impl ProjectIndex {
         self.update_status(cx);
     }
 
-    fn update_status(&mut self, cx: &mut ModelContext<Self>) {
+    fn update_status(&mut self, cx: &mut Context<Self>) {
         let mut indexing_count = 0;
         let mut any_loading = false;
 
@@ -227,9 +228,9 @@ impl ProjectIndex {
 
     pub fn search(
         &self,
-        query: String,
+        queries: Vec<String>,
         limit: usize,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<Vec<SearchResult>>> {
         let (chunks_tx, chunks_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
@@ -275,15 +276,18 @@ impl ProjectIndex {
         cx.spawn(|cx| async move {
             #[cfg(debug_assertions)]
             let embedding_query_start = std::time::Instant::now();
-            log::info!("Searching for {query}");
+            log::info!("Searching for {queries:?}");
+            let queries: Vec<TextToEmbed> = queries
+                .iter()
+                .map(|s| TextToEmbed::new(s.as_str()))
+                .collect();
 
-            let query_embeddings = embedding_provider
-                .embed(&[TextToEmbed::new(&query)])
-                .await?;
-            let query_embedding = query_embeddings
-                .into_iter()
-                .next()
-                .ok_or_else(|| anyhow!("no embedding for query"))?;
+            let query_embeddings = embedding_provider.embed(&queries[..]).await?;
+            if query_embeddings.len() != queries.len() {
+                return Err(anyhow!(
+                    "The number of query embeddings does not match the number of queries"
+                ));
+            }
 
             let mut results_by_worker = Vec::new();
             for _ in 0..cx.background_executor().num_cpus() {
@@ -292,28 +296,34 @@ impl ProjectIndex {
 
             #[cfg(debug_assertions)]
             let search_start = std::time::Instant::now();
-
             cx.background_executor()
                 .scoped(|cx| {
                     for results in results_by_worker.iter_mut() {
                         cx.spawn(async {
                             while let Ok((worktree_id, path, chunk)) = chunks_rx.recv().await {
-                                let score = chunk.embedding.similarity(&query_embedding);
+                                let (score, query_index) =
+                                    chunk.embedding.similarity(&query_embeddings);
+
                                 let ix = match results.binary_search_by(|probe| {
                                     score.partial_cmp(&probe.score).unwrap_or(Ordering::Equal)
                                 }) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
-                                results.insert(
-                                    ix,
-                                    WorktreeSearchResult {
-                                        worktree_id,
-                                        path: path.clone(),
-                                        range: chunk.chunk.range.clone(),
-                                        score,
-                                    },
-                                );
-                                results.truncate(limit);
+                                if ix < limit {
+                                    results.insert(
+                                        ix,
+                                        WorktreeSearchResult {
+                                            worktree_id,
+                                            path: path.clone(),
+                                            range: chunk.chunk.range.clone(),
+                                            query_index,
+                                            score,
+                                        },
+                                    );
+                                    if results.len() > limit {
+                                        results.pop();
+                                    }
+                                }
                             }
                         });
                     }
@@ -333,6 +343,7 @@ impl ProjectIndex {
                             path: result.path,
                             range: result.range,
                             score: result.score,
+                            query_index: result.query_index,
                         })
                     }));
                 }
@@ -359,7 +370,7 @@ impl ProjectIndex {
     }
 
     #[cfg(test)]
-    pub fn path_count(&self, cx: &AppContext) -> Result<u64> {
+    pub fn path_count(&self, cx: &App) -> Result<u64> {
         let mut result = 0;
         for worktree_index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = worktree_index {
@@ -372,8 +383,8 @@ impl ProjectIndex {
     pub(crate) fn worktree_index(
         &self,
         worktree_id: WorktreeId,
-        cx: &AppContext,
-    ) -> Option<Model<WorktreeIndex>> {
+        cx: &App,
+    ) -> Option<Entity<WorktreeIndex>> {
         for index in self.worktree_indices.values() {
             if let WorktreeIndexHandle::Loaded { index, .. } = index {
                 if index.read(cx).worktree().read(cx).id() == worktree_id {
@@ -384,7 +395,7 @@ impl ProjectIndex {
         None
     }
 
-    pub(crate) fn worktree_indices(&self, cx: &AppContext) -> Vec<Model<WorktreeIndex>> {
+    pub(crate) fn worktree_indices(&self, cx: &App) -> Vec<Entity<WorktreeIndex>> {
         let mut result = self
             .worktree_indices
             .values()
@@ -400,7 +411,7 @@ impl ProjectIndex {
         result
     }
 
-    pub fn all_summaries(&self, cx: &AppContext) -> Task<Result<Vec<FileSummary>>> {
+    pub fn all_summaries(&self, cx: &App) -> Task<Result<Vec<FileSummary>>> {
         let (summaries_tx, summaries_rx) = channel::bounded(1024);
         let mut worktree_scan_tasks = Vec::new();
         for worktree_index in self.worktree_indices.values() {
@@ -490,7 +501,7 @@ impl ProjectIndex {
     }
 
     /// Empty out the backlogs of all the worktrees in the project
-    pub fn flush_summary_backlogs(&self, cx: &AppContext) -> impl Future<Output = ()> {
+    pub fn flush_summary_backlogs(&self, cx: &App) -> impl Future<Output = ()> {
         let flush_start = std::time::Instant::now();
 
         futures::future::join_all(self.worktree_indices.values().map(|worktree_index| {
@@ -527,7 +538,7 @@ impl ProjectIndex {
         })
     }
 
-    pub fn remaining_summaries(&self, cx: &mut ModelContext<Self>) -> usize {
+    pub fn remaining_summaries(&self, cx: &mut Context<Self>) -> usize {
         self.worktree_indices(cx)
             .iter()
             .map(|index| index.read(cx).summary_index().backlog_len())

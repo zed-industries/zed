@@ -18,4 +18,4 @@ case $channel in
     ;;
 esac
 
-curl -s https://zed.dev/api/releases/latest?asset=Zed.dmg$query | jq -r .version
+curl -s "https://zed.dev/api/releases/latest?asset=zed&os=macos&arch=aarch64$query" | jq -r .version

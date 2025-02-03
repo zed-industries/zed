@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{div, Div};
 
 use crate::StyledExt;

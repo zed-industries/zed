@@ -107,36 +107,85 @@ impl ElixirLs {
     }
 
     pub fn label_for_completion(&self, completion: Completion) -> Option<CodeLabel> {
+        let name = &completion.label;
+        let detail = completion
+            .detail
+            .filter(|detail| detail != "alias")
+            .map(|detail| format!(": {detail}"))
+            .unwrap_or("".to_string());
+
+        let detail_span = CodeLabelSpan::literal(detail, Some("comment.unused".to_string()));
+
         match completion.kind? {
-            CompletionKind::Module
-            | CompletionKind::Class
-            | CompletionKind::Interface
-            | CompletionKind::Struct => {
-                let name = completion.label;
+            CompletionKind::Module | CompletionKind::Class | CompletionKind::Struct => {
                 let defmodule = "defmodule ";
-                let code = format!("{defmodule}{name}");
+                let alias = completion
+                    .label_details
+                    .and_then(|details| details.description)
+                    .filter(|description| description.starts_with("alias"))
+                    .map(|description| format!(" ({description})"))
+                    .unwrap_or("".to_string());
+
+                let code = format!("{defmodule}{name}{alias}");
+                let name_start = defmodule.len();
+                let name_end = name_start + name.len();
 
                 Some(CodeLabel {
                     code,
-                    spans: vec![CodeLabelSpan::code_range(
-                        defmodule.len()..defmodule.len() + name.len(),
-                    )],
+                    spans: vec![
+                        CodeLabelSpan::code_range(name_start..name_end),
+                        detail_span,
+                        CodeLabelSpan::code_range(name_end..(name_end + alias.len())),
+                    ],
                     filter_range: (0..name.len()).into(),
                 })
             }
+            CompletionKind::Interface => Some(CodeLabel {
+                code: name.to_string(),
+                spans: vec![CodeLabelSpan::code_range(0..name.len()), detail_span],
+                filter_range: (0..name.len()).into(),
+            }),
+            CompletionKind::Field => Some(CodeLabel {
+                code: name.to_string(),
+                spans: vec![
+                    CodeLabelSpan::literal(name, Some("function".to_string())),
+                    detail_span,
+                ],
+                filter_range: (0..name.len()).into(),
+            }),
             CompletionKind::Function | CompletionKind::Constant => {
-                let name = completion.label;
+                let detail = completion
+                    .label_details
+                    .clone()
+                    .and_then(|details| details.detail)
+                    .unwrap_or("".to_string());
+
+                let description = completion
+                    .label_details
+                    .clone()
+                    .and_then(|details| details.description)
+                    .map(|description| format!(" ({description})"))
+                    .unwrap_or("".to_string());
+
                 let def = "def ";
-                let code = format!("{def}{name}");
+                let code = format!("{def}{name}{detail}{description}");
+
+                let name_start = def.len();
+                let name_end = name_start + name.len();
+                let detail_end = name_end + detail.len();
+                let description_end = detail_end + description.len();
 
                 Some(CodeLabel {
                     code,
-                    spans: vec![CodeLabelSpan::code_range(def.len()..def.len() + name.len())],
+                    spans: vec![
+                        CodeLabelSpan::code_range(name_start..name_end),
+                        CodeLabelSpan::code_range(name_end..detail_end),
+                        CodeLabelSpan::code_range(detail_end..description_end),
+                    ],
                     filter_range: (0..name.len()).into(),
                 })
             }
             CompletionKind::Operator => {
-                let name = completion.label;
                 let def_a = "def a ";
                 let code = format!("{def_a}{name} b");
 

@@ -13,3 +13,7 @@ This directory contains two subdirectories:
 
 - `installed`, which contains the source code for each extension.
 - `work` which contains files created by the extension itself, such as downloaded language servers.
+
+## Auto installing
+
+To automate extension installation/uninstallation see the docs for [auto_install_extensions](../configuring-zed.md#auto-install-extensions).

@@ -1,4 +1,5 @@
 /.direnv
+.envrc
 .idea
 **/target
 **/cargo-target
@@ -10,7 +11,7 @@
 /crates/collab/seed.json
 /crates/zed/resources/flatpak/flatpak-cargo-sources.json
 /dev.zed.Zed*.json
-/assets/*licenses.md
+/assets/*licenses.*
 **/venv
 .build
 *.wasm
@@ -29,6 +30,7 @@ DerivedData/
 .vscode
 .wrangler
 .flatpak-builder
+.envrc
 
 # Don't commit any secrets to the repo.
 .env.secret.toml

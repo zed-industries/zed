@@ -14,7 +14,7 @@ Report issues to: [https://github.com/grndctrl/zed-gdscript/issues](https://gith
 4. In Godot, Editor Menu -> Editor Settings; scroll down the left sidebar to `Text Editor -> External`
    1. Use External Editor: "✅ On"
    2. Exec path: `/Applications/Zed.app/Contents/MacOS/zed`
-   3. Exec flags: `{project} {file}`
+   3. Exec flags: `{project} {file}:{line}:{col}`
    4. Close settings to save.
 5. In Godot double click on a \*.gd script and Zed will launch
 

@@ -29,7 +29,7 @@ impl ParentElement for ExtensionCard {
 }
 
 impl RenderOnce for ExtensionCard {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div().w_full().child(
             v_flex()
                 .w_full()
@@ -48,7 +48,8 @@ impl RenderOnce for ExtensionCard {
                             .absolute()
                             .top_0()
                             .left_0()
-                            .occlude()
+                            .block_mouse_down()
+                            .cursor_default()
                             .size_full()
                             .items_center()
                             .justify_center()

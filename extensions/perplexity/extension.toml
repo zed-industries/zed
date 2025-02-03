@@ -3,7 +3,7 @@ name = "Perplexity"
 version = "0.1.0"
 description = "Ask questions to Perplexity AI directly from Zed"
 authors = ["Zed Industries <support@zed.dev>"]
-repository = "https://github.com/zed-industries/zed-perplexity"
+repository = "https://github.com/zed-industries/zed"
 schema_version = 1
 
 [slash_commands.perplexity]

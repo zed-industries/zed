@@ -1,8 +1,8 @@
 [package]
 name = "sum_tree"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -14,7 +14,7 @@ doctest = false
 
 [dependencies]
 arrayvec = "0.7.1"
-rayon = "1.8"
+rayon.workspace = true
 log.workspace = true
 
 [dev-dependencies]

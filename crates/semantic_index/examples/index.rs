@@ -1,8 +1,7 @@
 use client::Client;
 use futures::channel::oneshot;
-use gpui::App;
+use gpui::Application;
 use http_client::HttpClientWithUrl;
-use isahc_http_client::IsahcHttpClient;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticDb};
@@ -17,7 +16,7 @@ fn main() {
 
     use clock::FakeSystemClock;
 
-    App::new().run(|cx| {
+    Application::new().run(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         language::init(cx);
@@ -26,10 +25,12 @@ fn main() {
             store.update_user_settings::<AllLanguageSettings>(cx, |_| {});
         });
 
-        let clock = Arc::new(FakeSystemClock::default());
+        let clock = Arc::new(FakeSystemClock::new());
 
         let http = Arc::new(HttpClientWithUrl::new(
-            IsahcHttpClient::new(None, None),
+            Arc::new(
+                reqwest_client::ReqwestClient::user_agent("Zed semantic index example").unwrap(),
+            ),
             "http://localhost:11434",
             None,
         ));
@@ -98,7 +99,7 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query.into(), 4, cx)
+                    project_index.search(vec![query.into()], 4, cx)
                 })
                 .unwrap()
                 .await

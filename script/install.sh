@@ -33,11 +33,11 @@ main() {
             ;;
     esac
 
-    if which curl >/dev/null 2>&1; then
+    if command -v curl >/dev/null 2>&1; then
         curl () {
             command curl -fL "$@"
         }
-    elif which wget >/dev/null 2>&1; then
+    elif command -v wget >/dev/null 2>&1; then
         curl () {
             wget -O- "$@"
         }
@@ -48,7 +48,7 @@ main() {
 
     "$platform" "$@"
 
-    if [ "$(which "zed")" = "$HOME/.local/bin/zed" ]; then
+    if [ "$(command -v zed)" = "$HOME/.local/bin/zed" ]; then
         echo "Zed has been installed. Run with 'zed'"
     else
         echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
@@ -125,7 +125,7 @@ linux() {
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
     cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
     sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/libexec/zed-editor|g" "${desktop_file_path}"
+    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
 }
 
 macos() {

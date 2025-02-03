@@ -121,7 +121,7 @@ impl Link {
 /// Parses a string of Markdown.
 pub async fn parse_markdown(
     markdown: &str,
-    language_registry: &Arc<LanguageRegistry>,
+    language_registry: Option<&Arc<LanguageRegistry>>,
     language: Option<Arc<Language>>,
 ) -> ParsedMarkdown {
     let mut text = String::new();
@@ -151,7 +151,7 @@ pub async fn parse_markdown(
 /// Parses a Markdown block.
 pub async fn parse_markdown_block(
     markdown: &str,
-    language_registry: &Arc<LanguageRegistry>,
+    language_registry: Option<&Arc<LanguageRegistry>>,
     language: Option<Arc<Language>>,
     text: &mut String,
     highlights: &mut Vec<(Range<usize>, MarkdownHighlight)>,
@@ -239,12 +239,7 @@ pub async fn parse_markdown_block(
             Event::Start(tag) => match tag {
                 Tag::Paragraph => new_paragraph(text, &mut list_stack),
 
-                Tag::Heading {
-                    level: _,
-                    id: _,
-                    classes: _,
-                    attrs: _,
-                } => {
+                Tag::Heading { .. } => {
                     new_paragraph(text, &mut list_stack);
                     bold_depth += 1;
                 }
@@ -252,10 +247,13 @@ pub async fn parse_markdown_block(
                 Tag::CodeBlock(kind) => {
                     new_paragraph(text, &mut list_stack);
                     current_language = if let CodeBlockKind::Fenced(language) = kind {
-                        language_registry
-                            .language_for_name_or_extension(language.as_ref())
-                            .await
-                            .ok()
+                        match language_registry {
+                            None => None,
+                            Some(language_registry) => language_registry
+                                .language_for_name_or_extension(language.as_ref())
+                                .await
+                                .ok(),
+                        }
                     } else {
                         language.clone()
                     }
@@ -267,12 +265,7 @@ pub async fn parse_markdown_block(
 
                 Tag::Strikethrough => strikethrough_depth += 1,
 
-                Tag::Link {
-                    link_type: _,
-                    dest_url,
-                    title: _,
-                    id: _,
-                } => link_url = Some(dest_url.to_string()),
+                Tag::Link { dest_url, .. } => link_url = Some(dest_url.to_string()),
 
                 Tag::List(number) => {
                     list_stack.push((number, false));

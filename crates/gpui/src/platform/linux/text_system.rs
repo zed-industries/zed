@@ -3,7 +3,7 @@ use crate::{
     FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
     ShapedGlyph, SharedString, Size, SUBPIXEL_VARIANTS,
 };
-use anyhow::{anyhow, Context, Ok, Result};
+use anyhow::{anyhow, Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, CacheKey, Family, Font as CosmicTextFont, FontSystem, ShapeBuffer, ShapeLine,
@@ -36,10 +36,8 @@ struct CosmicTextSystemState {
 
 impl CosmicTextSystem {
     pub(crate) fn new() -> Self {
-        let mut font_system = FontSystem::new();
-
         // todo(linux) make font loading non-blocking
-        font_system.db_mut().load_system_fonts();
+        let mut font_system = FontSystem::new();
 
         Self(RwLock::new(CosmicTextSystemState {
             font_system,

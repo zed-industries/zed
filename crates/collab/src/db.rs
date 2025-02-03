@@ -35,12 +35,17 @@ use std::{
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use worktree_repository_statuses::StatusKind;
+use worktree_settings_file::LocalSettingsKind;
 
 #[cfg(test)]
 pub use tests::TestDb;
 
 pub use ids::*;
 pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
+pub use queries::billing_preferences::{
+    CreateBillingPreferencesParams, UpdateBillingPreferencesParams,
+};
 pub use queries::billing_subscriptions::{
     CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
 };
@@ -613,7 +618,6 @@ pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub hosted_projects: Vec<proto::HostedProject>,
     pub invited_channels: Vec<Channel>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
@@ -722,7 +726,6 @@ pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
-    pub dev_server_project_id: Option<DevServerProjectId>,
 }
 
 pub struct ProjectCollaborator {
@@ -738,6 +741,7 @@ impl ProjectCollaborator {
             peer_id: Some(self.connection_id.into()),
             replica_id: self.replica_id.0 as u32,
             user_id: self.user_id.to_proto(),
+            is_host: self.is_host,
         }
     }
 }
@@ -766,6 +770,7 @@ pub struct Worktree {
 pub struct WorktreeSettingsFile {
     pub path: String,
     pub content: String,
+    pub kind: LocalSettingsKind,
 }
 
 pub struct NewExtensionVersion {
@@ -782,4 +787,111 @@ pub struct NewExtensionVersion {
 pub struct ExtensionVersionConstraints {
     pub schema_versions: RangeInclusive<i32>,
     pub wasm_api_versions: RangeInclusive<SemanticVersion>,
+}
+
+impl LocalSettingsKind {
+    pub fn from_proto(proto_kind: proto::LocalSettingsKind) -> Self {
+        match proto_kind {
+            proto::LocalSettingsKind::Settings => Self::Settings,
+            proto::LocalSettingsKind::Tasks => Self::Tasks,
+            proto::LocalSettingsKind::Editorconfig => Self::Editorconfig,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::LocalSettingsKind {
+        match self {
+            Self::Settings => proto::LocalSettingsKind::Settings,
+            Self::Tasks => proto::LocalSettingsKind::Tasks,
+            Self::Editorconfig => proto::LocalSettingsKind::Editorconfig,
+        }
+    }
+}
+
+fn db_status_to_proto(
+    entry: worktree_repository_statuses::Model,
+) -> anyhow::Result<proto::StatusEntry> {
+    use proto::git_file_status::{Tracked, Unmerged, Variant};
+
+    let (simple_status, variant) =
+        match (entry.status_kind, entry.first_status, entry.second_status) {
+            (StatusKind::Untracked, None, None) => (
+                proto::GitStatus::Added as i32,
+                Variant::Untracked(Default::default()),
+            ),
+            (StatusKind::Ignored, None, None) => (
+                proto::GitStatus::Added as i32,
+                Variant::Ignored(Default::default()),
+            ),
+            (StatusKind::Unmerged, Some(first_head), Some(second_head)) => (
+                proto::GitStatus::Conflict as i32,
+                Variant::Unmerged(Unmerged {
+                    first_head,
+                    second_head,
+                }),
+            ),
+            (StatusKind::Tracked, Some(index_status), Some(worktree_status)) => {
+                let simple_status = if worktree_status != proto::GitStatus::Unmodified as i32 {
+                    worktree_status
+                } else if index_status != proto::GitStatus::Unmodified as i32 {
+                    index_status
+                } else {
+                    proto::GitStatus::Unmodified as i32
+                };
+                (
+                    simple_status,
+                    Variant::Tracked(Tracked {
+                        index_status,
+                        worktree_status,
+                    }),
+                )
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Unexpected combination of status fields: {entry:?}"
+                ))
+            }
+        };
+    Ok(proto::StatusEntry {
+        repo_path: entry.repo_path,
+        simple_status,
+        status: Some(proto::GitFileStatus {
+            variant: Some(variant),
+        }),
+    })
+}
+
+fn proto_status_to_db(
+    status_entry: proto::StatusEntry,
+) -> (String, StatusKind, Option<i32>, Option<i32>) {
+    use proto::git_file_status::{Tracked, Unmerged, Variant};
+
+    let (status_kind, first_status, second_status) = status_entry
+        .status
+        .clone()
+        .and_then(|status| status.variant)
+        .map_or(
+            (StatusKind::Untracked, None, None),
+            |variant| match variant {
+                Variant::Untracked(_) => (StatusKind::Untracked, None, None),
+                Variant::Ignored(_) => (StatusKind::Ignored, None, None),
+                Variant::Unmerged(Unmerged {
+                    first_head,
+                    second_head,
+                }) => (StatusKind::Unmerged, Some(first_head), Some(second_head)),
+                Variant::Tracked(Tracked {
+                    index_status,
+                    worktree_status,
+                }) => (
+                    StatusKind::Tracked,
+                    Some(index_status),
+                    Some(worktree_status),
+                ),
+            },
+        );
+    (
+        status_entry.repo_path,
+        status_kind,
+        first_status,
+        second_status,
+    )
 }

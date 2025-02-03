@@ -1,6 +1,6 @@
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
-use gpui::ViewContext;
+use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 
@@ -24,14 +24,16 @@ impl Vim {
         motion: Motion,
         times: Option<usize>,
         mode: CaseTarget,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.set_clip_at_line_ends(false, cx);
+            let text_layout_details = editor.text_layout_details(window);
+            editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
                         selection_starts.insert(selection.id, anchor);
@@ -39,19 +41,24 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => editor.convert_to_lower_case(&Default::default(), cx),
-                    CaseTarget::Uppercase => editor.convert_to_upper_case(&Default::default(), cx),
+                    CaseTarget::Lowercase => {
+                        editor.convert_to_lower_case(&Default::default(), window, cx)
+                    }
+                    CaseTarget::Uppercase => {
+                        editor.convert_to_upper_case(&Default::default(), window, cx)
+                    }
                     CaseTarget::OppositeCase => {
-                        editor.convert_to_opposite_case(&Default::default(), cx)
+                        editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
                 }
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = selection_starts.remove(&selection.id).unwrap();
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
                     });
                 });
             });
+            editor.set_clip_at_line_ends(true, cx);
         });
     }
 
@@ -60,13 +67,14 @@ impl Vim {
         object: Object,
         around: bool,
         mode: CaseTarget,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         object.expand_selection(map, selection, around);
                         original_positions.insert(
@@ -76,13 +84,17 @@ impl Vim {
                     });
                 });
                 match mode {
-                    CaseTarget::Lowercase => editor.convert_to_lower_case(&Default::default(), cx),
-                    CaseTarget::Uppercase => editor.convert_to_upper_case(&Default::default(), cx),
+                    CaseTarget::Lowercase => {
+                        editor.convert_to_lower_case(&Default::default(), window, cx)
+                    }
+                    CaseTarget::Uppercase => {
+                        editor.convert_to_upper_case(&Default::default(), window, cx)
+                    }
                     CaseTarget::OppositeCase => {
-                        editor.convert_to_opposite_case(&Default::default(), cx)
+                        editor.convert_to_opposite_case(&Default::default(), window, cx)
                     }
                 }
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let anchor = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
@@ -92,8 +104,8 @@ impl Vim {
         });
     }
 
-    pub fn change_case(&mut self, _: &ChangeCase, cx: &mut ViewContext<Self>) {
-        self.manipulate_text(cx, |c| {
+    pub fn change_case(&mut self, _: &ChangeCase, window: &mut Window, cx: &mut Context<Self>) {
+        self.manipulate_text(window, cx, |c| {
             if c.is_lowercase() {
                 c.to_uppercase().collect::<Vec<char>>()
             } else {
@@ -102,23 +114,33 @@ impl Vim {
         })
     }
 
-    pub fn convert_to_upper_case(&mut self, _: &ConvertToUpperCase, cx: &mut ViewContext<Self>) {
-        self.manipulate_text(cx, |c| c.to_uppercase().collect::<Vec<char>>())
+    pub fn convert_to_upper_case(
+        &mut self,
+        _: &ConvertToUpperCase,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| c.to_uppercase().collect::<Vec<char>>())
     }
 
-    pub fn convert_to_lower_case(&mut self, _: &ConvertToLowerCase, cx: &mut ViewContext<Self>) {
-        self.manipulate_text(cx, |c| c.to_lowercase().collect::<Vec<char>>())
+    pub fn convert_to_lower_case(
+        &mut self,
+        _: &ConvertToLowerCase,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |c| c.to_lowercase().collect::<Vec<char>>())
     }
 
-    fn manipulate_text<F>(&mut self, cx: &mut ViewContext<Self>, transform: F)
+    fn manipulate_text<F>(&mut self, window: &mut Window, cx: &mut Context<Self>, transform: F)
     where
         F: Fn(char) -> Vec<char> + Copy,
     {
         self.record_current_action(cx);
-        self.store_visual_marks(cx);
-        let count = self.take_count(cx).unwrap_or(1) as u32;
+        self.store_visual_marks(window, cx);
+        let count = Vim::take_count(cx).unwrap_or(1) as u32;
 
-        self.update_editor(cx, |vim, editor, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             let mut ranges = Vec::new();
             let mut cursor_positions = Vec::new();
             let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -143,6 +165,8 @@ impl Vim {
                             cursor_positions.push(selection.start..selection.start);
                         }
                     }
+
+                    Mode::HelixNormal => {}
                     Mode::Insert | Mode::Normal | Mode::Replace => {
                         let start = selection.start;
                         let mut end = start;
@@ -158,25 +182,22 @@ impl Vim {
                     }
                 }
             }
-            editor.transact(cx, |editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 for range in ranges.into_iter().rev() {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    editor.buffer().update(cx, |buffer, cx| {
-                        let text = snapshot
-                            .text_for_range(range.start..range.end)
-                            .flat_map(|s| s.chars())
-                            .flat_map(transform)
-                            .collect::<String>();
-
-                        buffer.edit([(range, text)], None, cx)
-                    })
+                    let text = snapshot
+                        .text_for_range(range.start..range.end)
+                        .flat_map(|s| s.chars())
+                        .flat_map(transform)
+                        .collect::<String>();
+                    editor.edit([(range, text)], cx)
                 }
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.select_ranges(cursor_positions)
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, cx)
+        self.switch_mode(Mode::Normal, true, window, cx)
     }
 }
 
@@ -225,17 +246,17 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // works in visual mode
         cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
-        cx.simulate_shared_keystrokes("U").await;
+        cx.simulate_shared_keystrokes("shift-u").await;
         cx.shared_state().await.assert_eq("a😀CˇDÉ1*F\n");
 
         // works with line selections
         cx.set_shared_state("abˇC\n").await;
-        cx.simulate_shared_keystrokes("shift-v U").await;
+        cx.simulate_shared_keystrokes("shift-v shift-u").await;
         cx.shared_state().await.assert_eq("ˇABC\n");
 
         // works in visual block mode
         cx.set_shared_state("ˇaa\nbb\ncc").await;
-        cx.simulate_shared_keystrokes("ctrl-v j U").await;
+        cx.simulate_shared_keystrokes("ctrl-v j shift-u").await;
         cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
     }
 
@@ -261,7 +282,7 @@ mod test {
     #[gpui::test]
     async fn test_change_case_motion(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        // works in visual mode
+
         cx.set_shared_state("ˇabc def").await;
         cx.simulate_shared_keystrokes("g shift-u w").await;
         cx.shared_state().await.assert_eq("ˇABC def");
@@ -281,5 +302,8 @@ mod test {
 
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("ˇabc def");
+
+        cx.simulate_shared_keystrokes("g shift-u $").await;
+        cx.shared_state().await.assert_eq("ˇABC DEF");
     }
 }

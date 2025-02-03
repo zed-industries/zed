@@ -1,4 +1,4 @@
-use crate::{AppContext, BorrowAppContext};
+use crate::{App, BorrowAppContext};
 
 /// A marker trait for types that can be stored in GPUI's global state.
 ///
@@ -31,11 +31,11 @@ pub trait ReadGlobal {
     /// Returns the global instance of the implementing type.
     ///
     /// Panics if a global for that type has not been assigned.
-    fn global(cx: &AppContext) -> &Self;
+    fn global(cx: &App) -> &Self;
 }
 
 impl<T: Global> ReadGlobal for T {
-    fn global(cx: &AppContext) -> &Self {
+    fn global(cx: &App) -> &Self {
         cx.global::<T>()
     }
 }
@@ -57,6 +57,7 @@ pub trait UpdateGlobal {
 }
 
 impl<T: Global> UpdateGlobal for T {
+    #[track_caller]
     fn update_global<C, F, R>(cx: &mut C, update: F) -> R
     where
         C: BorrowAppContext,

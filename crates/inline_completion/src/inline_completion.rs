@@ -1,0 +1,221 @@
+use gpui::{App, Context, Entity};
+use language::Buffer;
+use std::ops::Range;
+
+// TODO: Find a better home for `Direction`.
+//
+// This should live in an ancestor crate of `editor` and `inline_completion`,
+// but at time of writing there isn't an obvious spot.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Direction {
+    Prev,
+    Next,
+}
+
+#[derive(Clone)]
+pub struct InlineCompletion {
+    pub edits: Vec<(Range<language::Anchor>, String)>,
+    pub edit_preview: Option<language::EditPreview>,
+}
+
+pub enum DataCollectionState {
+    /// The provider doesn't support data collection.
+    Unsupported,
+    /// When there's a file not saved yet. In this case, we can't tell to which project it belongs.
+    Unknown,
+    /// Data collection is enabled
+    Enabled,
+    /// Data collection is disabled or unanswered.
+    Disabled,
+}
+
+impl DataCollectionState {
+    pub fn is_supported(&self) -> bool {
+        !matches!(self, DataCollectionState::Unsupported)
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, DataCollectionState::Unknown)
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, DataCollectionState::Enabled)
+    }
+}
+
+pub trait InlineCompletionProvider: 'static + Sized {
+    fn name() -> &'static str;
+    fn display_name() -> &'static str;
+    fn show_completions_in_menu() -> bool;
+    fn show_completions_in_normal_mode() -> bool;
+    fn show_tab_accept_marker() -> bool {
+        false
+    }
+    fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
+        DataCollectionState::Unsupported
+    }
+    fn toggle_data_collection(&mut self, _cx: &mut App) {}
+    fn is_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &App,
+    ) -> bool;
+    fn is_refreshing(&self) -> bool;
+    fn refresh(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut Context<Self>,
+    );
+    fn needs_terms_acceptance(&self, _cx: &App) -> bool {
+        false
+    }
+    fn cycle(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        direction: Direction,
+        cx: &mut Context<Self>,
+    );
+    fn accept(&mut self, cx: &mut Context<Self>);
+    fn discard(&mut self, cx: &mut Context<Self>);
+    fn suggest(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Option<InlineCompletion>;
+}
+
+pub trait InlineCompletionProviderHandle {
+    fn name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
+    fn is_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &App,
+    ) -> bool;
+    fn show_completions_in_menu(&self) -> bool;
+    fn show_completions_in_normal_mode(&self) -> bool;
+    fn show_tab_accept_marker(&self) -> bool;
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState;
+    fn toggle_data_collection(&self, cx: &mut App);
+    fn needs_terms_acceptance(&self, cx: &App) -> bool;
+    fn is_refreshing(&self, cx: &App) -> bool;
+    fn refresh(
+        &self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut App,
+    );
+    fn cycle(
+        &self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        direction: Direction,
+        cx: &mut App,
+    );
+    fn accept(&self, cx: &mut App);
+    fn discard(&self, cx: &mut App);
+    fn suggest(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut App,
+    ) -> Option<InlineCompletion>;
+}
+
+impl<T> InlineCompletionProviderHandle for Entity<T>
+where
+    T: InlineCompletionProvider,
+{
+    fn name(&self) -> &'static str {
+        T::name()
+    }
+
+    fn display_name(&self) -> &'static str {
+        T::display_name()
+    }
+
+    fn show_completions_in_menu(&self) -> bool {
+        T::show_completions_in_menu()
+    }
+
+    fn show_completions_in_normal_mode(&self) -> bool {
+        T::show_completions_in_normal_mode()
+    }
+
+    fn show_tab_accept_marker(&self) -> bool {
+        T::show_tab_accept_marker()
+    }
+
+    fn data_collection_state(&self, cx: &App) -> DataCollectionState {
+        self.read(cx).data_collection_state(cx)
+    }
+
+    fn toggle_data_collection(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.toggle_data_collection(cx))
+    }
+
+    fn is_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &App,
+    ) -> bool {
+        self.read(cx).is_enabled(buffer, cursor_position, cx)
+    }
+
+    fn needs_terms_acceptance(&self, cx: &App) -> bool {
+        self.read(cx).needs_terms_acceptance(cx)
+    }
+
+    fn is_refreshing(&self, cx: &App) -> bool {
+        self.read(cx).is_refreshing()
+    }
+
+    fn refresh(
+        &self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        debounce: bool,
+        cx: &mut App,
+    ) {
+        self.update(cx, |this, cx| {
+            this.refresh(buffer, cursor_position, debounce, cx)
+        })
+    }
+
+    fn cycle(
+        &self,
+        buffer: Entity<Buffer>,
+        cursor_position: language::Anchor,
+        direction: Direction,
+        cx: &mut App,
+    ) {
+        self.update(cx, |this, cx| {
+            this.cycle(buffer, cursor_position, direction, cx)
+        })
+    }
+
+    fn accept(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.accept(cx))
+    }
+
+    fn discard(&self, cx: &mut App) {
+        self.update(cx, |this, cx| this.discard(cx))
+    }
+
+    fn suggest(
+        &self,
+        buffer: &Entity<Buffer>,
+        cursor_position: language::Anchor,
+        cx: &mut App,
+    ) -> Option<InlineCompletion> {
+        self.update(cx, |this, cx| this.suggest(buffer, cursor_position, cx))
+    }
+}

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::AnyElement;
 use smallvec::SmallVec;
 
@@ -26,7 +28,7 @@ impl ParentElement for SettingsGroup {
 }
 
 impl RenderOnce for SettingsGroup {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         v_flex()
             .p_1()
             .gap_2()

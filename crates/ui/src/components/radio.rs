@@ -1,14 +1,18 @@
+#![allow(missing_docs)]
+
 use std::sync::Arc;
 
 use crate::prelude::*;
 
 /// A [`Checkbox`] that has a [`Label`].
+///
+/// [`Checkbox`]: crate::components::Checkbox
 #[derive(IntoElement)]
 pub struct RadioWithLabel {
     id: ElementId,
     label: Label,
     selected: bool,
-    on_click: Arc<dyn Fn(&bool, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
 }
 
 impl RadioWithLabel {
@@ -16,7 +20,7 @@ impl RadioWithLabel {
         id: impl Into<ElementId>,
         label: Label,
         selected: bool,
-        on_click: impl Fn(&bool, &mut WindowContext) + 'static,
+        on_click: impl Fn(&bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -28,13 +32,13 @@ impl RadioWithLabel {
 }
 
 impl RenderOnce for RadioWithLabel {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let inner_diameter = rems_from_px(6.);
         let outer_diameter = rems_from_px(16.);
         let border_width = rems_from_px(1.);
         h_flex()
             .id(self.id)
-            .gap(Spacing::Large.rems(cx))
+            .gap(DynamicSpacing::Base08.rems(cx))
             .group("")
             .child(
                 div()
@@ -54,8 +58,8 @@ impl RenderOnce for RadioWithLabel {
                     }),
             )
             .child(self.label)
-            .on_click(move |_event, cx| {
-                (self.on_click)(&true, cx);
+            .on_click(move |_event, window, cx| {
+                (self.on_click)(&true, window, cx);
             })
     }
 }

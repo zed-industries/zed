@@ -5,6 +5,7 @@ pub mod extensions;
 pub mod ips_file;
 pub mod slack;
 
+use crate::api::events::SnowflakeRow;
 use crate::{
     auth,
     db::{User, UserId},
@@ -61,11 +62,45 @@ impl std::fmt::Display for CloudflareIpCountryHeader {
     }
 }
 
+pub struct SystemIdHeader(String);
+
+impl Header for SystemIdHeader {
+    fn name() -> &'static HeaderName {
+        static SYSTEM_ID_HEADER: OnceLock<HeaderName> = OnceLock::new();
+        SYSTEM_ID_HEADER.get_or_init(|| HeaderName::from_static("x-zed-system-id"))
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        let system_id = values
+            .next()
+            .ok_or_else(axum::headers::Error::invalid)?
+            .to_str()
+            .map_err(|_| axum::headers::Error::invalid())?;
+
+        Ok(Self(system_id.to_string()))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, _values: &mut E) {
+        unimplemented!()
+    }
+}
+
+impl std::fmt::Display for SystemIdHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
         .route("/user", get(get_authenticated_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
+        .route("/snowflake/events", post(write_snowflake_event))
         .merge(billing::router())
         .merge(contributors::router())
         .layer(
@@ -111,6 +146,7 @@ struct AuthenticatedUserParams {
     github_user_id: i32,
     github_login: String,
     github_email: Option<String>,
+    github_name: Option<String>,
     github_user_created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -132,6 +168,7 @@ async fn get_authenticated_user(
             &params.github_login,
             params.github_user_id,
             params.github_email.as_deref(),
+            params.github_name.as_deref(),
             params.github_user_created_at,
             initial_channel_id,
         )
@@ -209,4 +246,20 @@ async fn create_access_token(
         user_id: impersonated_user_id.unwrap_or(user_id),
         encrypted_access_token,
     }))
+}
+
+/// An endpoint that writes a Snowflake event to our event stream.
+///
+/// This endpoint is exposed such that other internal services can write
+/// telemetry events without needing to talk to AWS Kinesis directly.
+async fn write_snowflake_event(
+    Extension(app): Extension<Arc<AppState>>,
+    Json(event): Json<SnowflakeRow>,
+) -> Result<()> {
+    let kinesis_client = app.kinesis_client.clone();
+    let kinesis_stream = app.config.kinesis_stream.clone();
+
+    event.write(&kinesis_client, &kinesis_stream).await?;
+
+    Ok(())
 }

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::sync::Arc;
 
 use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
@@ -9,6 +11,7 @@ use crate::{prelude::*, Disclosure};
 pub enum ListItemSpacing {
     #[default]
     Dense,
+    ExtraDense,
     Sparse,
 }
 
@@ -30,12 +33,15 @@ pub struct ListItem {
     end_hover_slot: Option<AnyElement>,
     toggle: Option<bool>,
     inset: bool,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView + 'static>>,
-    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    outlined: bool,
+    overflow_x: bool,
+    focused: Option<bool>,
 }
 
 impl ListItem {
@@ -58,6 +64,9 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            outlined: false,
+            overflow_x: false,
+            focused: None,
         }
     }
 
@@ -71,20 +80,23 @@ impl ListItem {
         self
     }
 
-    pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    pub fn on_click(
+        mut self,
+        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
 
     pub fn on_secondary_mouse_down(
         mut self,
-        handler: impl Fn(&MouseDownEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_secondary_mouse_down = Some(Box::new(handler));
         self
     }
 
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
@@ -111,7 +123,7 @@ impl ListItem {
 
     pub fn on_toggle(
         mut self,
-        on_toggle: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_toggle = Some(Arc::new(on_toggle));
         self
@@ -131,6 +143,21 @@ impl ListItem {
         self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
         self
     }
+
+    pub fn outlined(mut self) -> Self {
+        self.outlined = true;
+        self
+    }
+
+    pub fn overflow_x(mut self) -> Self {
+        self.overflow_x = true;
+        self
+    }
+
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = Some(focused);
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -140,8 +167,8 @@ impl Disableable for ListItem {
     }
 }
 
-impl Selectable for ListItem {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListItem {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -154,7 +181,7 @@ impl ParentElement for ListItem {
 }
 
 impl RenderOnce for ListItem {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(self.id)
             .w_full()
@@ -162,18 +189,24 @@ impl RenderOnce for ListItem {
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
-                    .px(Spacing::Small.rems(cx))
+                    .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset && !self.disabled, |this| {
                 this
                     // TODO: Add focus state
                     // .when(self.state == InteractionState::Focused, |this| {
-                    //     this.border_1()
-                    //         .border_color(cx.theme().colors().border_focused)
-                    // })
+                    .when_some(self.focused, |this, focused| {
+                        if focused {
+                            this.border_1()
+                                .border_color(cx.theme().colors().border_focused)
+                        } else {
+                            this.border_1()
+                        }
+                    })
                     .when(self.selectable, |this| {
                         this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                             .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                            .when(self.outlined, |this| this.rounded_md())
                             .when(self.selected, |this| {
                                 this.bg(cx.theme().colors().ghost_element_selected)
                             })
@@ -182,22 +215,29 @@ impl RenderOnce for ListItem {
             .child(
                 h_flex()
                     .id("inner_list_item")
+                    .group("list_item")
                     .w_full()
                     .relative()
+                    .items_center()
                     .gap_1()
-                    .px(Spacing::Medium.rems(cx))
+                    .px(DynamicSpacing::Base06.rems(cx))
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
+                        ListItemSpacing::ExtraDense => this.py_neg_px(),
                         ListItemSpacing::Sparse => this.py_1(),
                     })
-                    .group("list_item")
                     .when(self.inset && !self.disabled, |this| {
                         this
                             // TODO: Add focus state
-                            // .when(self.state == InteractionState::Focused, |this| {
-                            //     this.border_1()
-                            //         .border_color(cx.theme().colors().border_focused)
-                            // })
+                            //.when(self.state == InteractionState::Focused, |this| {
+                            .when_some(self.focused, |this, focused| {
+                                if focused {
+                                    this.border_1()
+                                        .border_color(cx.theme().colors().border_focused)
+                                } else {
+                                    this.border_1()
+                                }
+                            })
                             .when(self.selectable, |this| {
                                 this.hover(|style| {
                                     style.bg(cx.theme().colors().ghost_element_hover)
@@ -208,12 +248,19 @@ impl RenderOnce for ListItem {
                                 })
                             })
                     })
-                    .when_some(self.on_click, |this, on_click| {
-                        this.cursor_pointer().on_click(on_click)
+                    .when_some(
+                        self.on_click.filter(|_| !self.disabled),
+                        |this, on_click| this.cursor_pointer().on_click(on_click),
+                    )
+                    .when(self.outlined, |this| {
+                        this.border_1()
+                            .border_color(cx.theme().colors().border)
+                            .rounded_md()
+                            .overflow_hidden()
                     })
                     .when_some(self.on_secondary_mouse_down, |this, on_mouse_down| {
-                        this.on_mouse_down(MouseButton::Right, move |event, cx| {
-                            (on_mouse_down)(event, cx)
+                        this.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            (on_mouse_down)(event, window, cx)
                         })
                     })
                     .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
@@ -238,8 +285,14 @@ impl RenderOnce for ListItem {
                             .flex_grow()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
-                            .gap(Spacing::Small.rems(cx))
-                            .overflow_hidden()
+                            .gap(DynamicSpacing::Base06.rems(cx))
+                            .map(|list_content| {
+                                if self.overflow_x {
+                                    list_content
+                                } else {
+                                    list_content.overflow_hidden()
+                                }
+                            })
                             .children(self.start_slot)
                             .children(self.children),
                     )
@@ -260,7 +313,7 @@ impl RenderOnce for ListItem {
                             h_flex()
                                 .h_full()
                                 .absolute()
-                                .right(Spacing::Medium.rems(cx))
+                                .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
                                 .child(end_hover_slot),

@@ -6,10 +6,14 @@ use std::{
 
 use calloop::{LoopHandle, PostAction};
 use filedescriptor::Pipe;
+use strum::IntoEnumIterator;
 use wayland_client::{protocol::wl_data_offer::WlDataOffer, Connection};
 use wayland_protocols::wp::primary_selection::zv1::client::zwp_primary_selection_offer_v1::ZwpPrimarySelectionOfferV1;
 
-use crate::{platform::linux::platform::read_fd, ClipboardItem, WaylandClientStatePtr};
+use crate::{
+    hash, platform::linux::platform::read_fd, ClipboardEntry, ClipboardItem, Image, ImageFormat,
+    WaylandClientStatePtr,
+};
 
 pub(crate) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
@@ -33,14 +37,30 @@ pub(crate) struct Clipboard {
     current_primary_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
 }
 
+pub(crate) trait ReceiveData {
+    fn receive_data(&self, mime_type: String, fd: BorrowedFd<'_>);
+}
+
+impl ReceiveData for WlDataOffer {
+    fn receive_data(&self, mime_type: String, fd: BorrowedFd<'_>) {
+        self.receive(mime_type, fd);
+    }
+}
+
+impl ReceiveData for ZwpPrimarySelectionOfferV1 {
+    fn receive_data(&self, mime_type: String, fd: BorrowedFd<'_>) {
+        self.receive(mime_type, fd);
+    }
+}
+
 #[derive(Clone, Debug)]
 /// Wrapper for `WlDataOffer` and `ZwpPrimarySelectionOfferV1`, used to help track mime types.
-pub(crate) struct DataOffer<T> {
+pub(crate) struct DataOffer<T: ReceiveData> {
     pub inner: T,
     mime_types: Vec<String>,
 }
 
-impl<T> DataOffer<T> {
+impl<T: ReceiveData> DataOffer<T> {
     pub fn new(offer: T) -> Self {
         Self {
             inner: offer,
@@ -52,17 +72,71 @@ impl<T> DataOffer<T> {
         self.mime_types.push(mime_type)
     }
 
-    pub fn has_mime_type(&self, mime_type: &str) -> bool {
+    fn has_mime_type(&self, mime_type: &str) -> bool {
         self.mime_types.iter().any(|t| t == mime_type)
     }
 
-    pub fn find_text_mime_type(&self) -> Option<String> {
-        for offered_mime_type in &self.mime_types {
-            if let Some(offer_text_mime_type) = ALLOWED_TEXT_MIME_TYPES
-                .into_iter()
-                .find(|text_mime_type| text_mime_type == offered_mime_type)
-            {
-                return Some(offer_text_mime_type.to_owned());
+    fn read_bytes(&self, connection: &Connection, mime_type: &str) -> Option<Vec<u8>> {
+        let pipe = Pipe::new().unwrap();
+        self.inner.receive_data(mime_type.to_string(), unsafe {
+            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+        });
+        let fd = pipe.read;
+        drop(pipe.write);
+
+        connection.flush().unwrap();
+
+        match unsafe { read_fd(fd) } {
+            Ok(bytes) => Some(bytes),
+            Err(err) => {
+                log::error!("error reading clipboard pipe: {err:?}");
+                None
+            }
+        }
+    }
+
+    fn read_text(&self, connection: &Connection) -> Option<ClipboardItem> {
+        let mime_type = self.mime_types.iter().find(|&mime_type| {
+            ALLOWED_TEXT_MIME_TYPES
+                .iter()
+                .any(|&allowed| allowed == mime_type)
+        })?;
+        let bytes = self.read_bytes(connection, mime_type)?;
+        let text_content = match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(e) => {
+                log::error!("Failed to convert clipboard content to UTF-8: {}", e);
+                return None;
+            }
+        };
+
+        // Normalize the text to unix line endings, otherwise
+        // copying from eg: firefox inserts a lot of blank
+        // lines, and that is super annoying.
+        let result = text_content.replace("\r\n", "\n");
+        Some(ClipboardItem::new_string(result))
+    }
+
+    fn read_image(&self, connection: &Connection) -> Option<ClipboardItem> {
+        for format in ImageFormat::iter() {
+            let mime_type = match format {
+                ImageFormat::Png => "image/png",
+                ImageFormat::Jpeg => "image/jpeg",
+                ImageFormat::Webp => "image/webp",
+                ImageFormat::Gif => "image/gif",
+                ImageFormat::Svg => "image/svg+xml",
+                ImageFormat::Bmp => "image/bmp",
+                ImageFormat::Tiff => "image/tiff",
+            };
+            if !self.has_mime_type(mime_type) {
+                continue;
+            }
+
+            if let Some(bytes) = self.read_bytes(connection, mime_type) {
+                let id = hash(&bytes);
+                return Some(ClipboardItem {
+                    entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
+                });
             }
         }
         None
@@ -128,7 +202,7 @@ impl Clipboard {
     }
 
     pub fn read(&mut self) -> Option<ClipboardItem> {
-        let offer = self.current_offer.clone()?;
+        let offer = self.current_offer.as_ref()?;
         if let Some(cached) = self.cached_read.clone() {
             return Some(cached);
         }
@@ -137,30 +211,16 @@ impl Clipboard {
             return self.contents.clone();
         }
 
-        let mime_type = offer.find_text_mime_type()?;
-        let pipe = Pipe::new().unwrap();
-        offer.inner.receive(mime_type, unsafe {
-            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
-        });
-        let fd = pipe.read;
-        drop(pipe.write);
+        let item = offer
+            .read_text(&self.connection)
+            .or_else(|| offer.read_image(&self.connection))?;
 
-        self.connection.flush().unwrap();
-
-        match unsafe { read_fd(fd) } {
-            Ok(v) => {
-                self.cached_read = Some(ClipboardItem::new_string(v));
-                self.cached_read.clone()
-            }
-            Err(err) => {
-                log::error!("error reading clipboard pipe: {err:?}");
-                None
-            }
-        }
+        self.cached_read = Some(item.clone());
+        Some(item)
     }
 
     pub fn read_primary(&mut self) -> Option<ClipboardItem> {
-        let offer = self.current_primary_offer.clone()?;
+        let offer = self.current_primary_offer.as_ref()?;
         if let Some(cached) = self.cached_primary_read.clone() {
             return Some(cached);
         }
@@ -169,26 +229,12 @@ impl Clipboard {
             return self.primary_contents.clone();
         }
 
-        let mime_type = offer.find_text_mime_type()?;
-        let pipe = Pipe::new().unwrap();
-        offer.inner.receive(mime_type, unsafe {
-            BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
-        });
-        let fd = pipe.read;
-        drop(pipe.write);
+        let item = offer
+            .read_text(&self.connection)
+            .or_else(|| offer.read_image(&self.connection))?;
 
-        self.connection.flush().unwrap();
-
-        match unsafe { read_fd(fd) } {
-            Ok(v) => {
-                self.cached_primary_read = Some(ClipboardItem::new_string(v.clone()));
-                self.cached_primary_read.clone()
-            }
-            Err(err) => {
-                log::error!("error reading clipboard pipe: {err:?}");
-                None
-            }
-        }
+        self.cached_primary_read = Some(item.clone());
+        Some(item)
     }
 
     fn send_internal(&self, fd: OwnedFd, bytes: Vec<u8>) {

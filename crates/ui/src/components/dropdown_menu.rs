@@ -1,4 +1,5 @@
-use gpui::{AnchorCorner, ClickEvent, CursorStyle, MouseButton, View};
+#![allow(missing_docs)]
+use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};
 
@@ -6,7 +7,7 @@ use crate::{prelude::*, ContextMenu, PopoverMenu};
 pub struct DropdownMenu {
     id: ElementId,
     label: SharedString,
-    menu: View<ContextMenu>,
+    menu: Entity<ContextMenu>,
     full_width: bool,
     disabled: bool,
 }
@@ -15,7 +16,7 @@ impl DropdownMenu {
     pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
-        menu: View<ContextMenu>,
+        menu: Entity<ContextMenu>,
     ) -> Self {
         Self {
             id: id.into(),
@@ -40,12 +41,12 @@ impl Disableable for DropdownMenu {
 }
 
 impl RenderOnce for DropdownMenu {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         PopoverMenu::new(self.id)
             .full_width(self.full_width)
-            .menu(move |_cx| Some(self.menu.clone()))
+            .menu(move |_window, _cx| Some(self.menu.clone()))
             .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
-            .attach(AnchorCorner::BottomLeft)
+            .attach(Corner::BottomLeft)
     }
 }
 
@@ -56,7 +57,7 @@ struct DropdownMenuTrigger {
     selected: bool,
     disabled: bool,
     cursor_style: CursorStyle,
-    on_click: Option<Box<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
 impl DropdownMenuTrigger {
@@ -84,15 +85,15 @@ impl Disableable for DropdownMenuTrigger {
     }
 }
 
-impl Selectable for DropdownMenuTrigger {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for DropdownMenuTrigger {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
 }
 
 impl Clickable for DropdownMenuTrigger {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Box::new(handler));
         self
     }
@@ -104,7 +105,7 @@ impl Clickable for DropdownMenuTrigger {
 }
 
 impl RenderOnce for DropdownMenuTrigger {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let disabled = self.disabled;
 
         h_flex()
@@ -146,10 +147,10 @@ impl RenderOnce for DropdownMenuTrigger {
                     }),
             )
             .when_some(self.on_click.filter(|_| !disabled), |el, on_click| {
-                el.on_mouse_down(MouseButton::Left, |_, cx| cx.prevent_default())
-                    .on_click(move |event, cx| {
+                el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .on_click(move |event, window, cx| {
                         cx.stop_propagation();
-                        (on_click)(event, cx)
+                        (on_click)(event, window, cx)
                     })
             })
     }

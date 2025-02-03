@@ -150,6 +150,13 @@
   "}"
 ]  @punctuation.bracket
 
+(ternary_expression
+  [
+    "?"
+    ":"
+  ] @operator
+)
+
 [
   "as"
   "async"
@@ -187,6 +194,7 @@
   "throw"
   "try"
   "typeof"
+  "using"
   "var"
   "void"
   "while"

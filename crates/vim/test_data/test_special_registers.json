@@ -10,6 +10,13 @@
 {"Key":"d"}
 {"Get":{"state":"The quick brown\nthe ˇlazy dog","mode":"Normal"}}
 {"ReadRegister":{"name":"_","value":""}}
+{"Key":"shift-v"}
+{"Key":"\""}
+{"Key":"_"}
+{"Key":"y"}
+{"Key":"w"}
+{"Get":{"state":"The quick brown\nthe ˇlazy dog","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"jumps"}}
 {"Get":{"state":"The quick brown\nthe ˇlazy dog","mode":"Normal"}}
 {"Key":"\""}
 {"Key":"\""}

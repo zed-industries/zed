@@ -1,9 +1,9 @@
 [package]
 description = "Shared logic for communication between the Zed app and the zed.dev server"
-edition = "2021"
+edition.workspace = true
 name = "rpc"
 version = "0.1.0"
-publish = false
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -35,10 +35,7 @@ sha2.workspace = true
 strum.workspace = true
 tracing = { version = "0.1.34", features = ["log"] }
 util.workspace = true
-zstd = "0.11"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-zstd = { version = "0.11", features = [ "pkg-config" ] }
+zstd.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

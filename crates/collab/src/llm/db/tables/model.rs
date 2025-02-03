@@ -14,6 +14,8 @@ pub struct Model {
     pub max_tokens_per_minute: i64,
     pub max_tokens_per_day: i64,
     pub price_per_million_input_tokens: i32,
+    pub price_per_million_cache_creation_input_tokens: i32,
+    pub price_per_million_cache_read_input_tokens: i32,
     pub price_per_million_output_tokens: i32,
 }
 
@@ -27,6 +29,8 @@ pub enum Relation {
     Provider,
     #[sea_orm(has_many = "super::usage::Entity")]
     Usages,
+    #[sea_orm(has_many = "super::billing_event::Entity")]
+    BillingEvents,
 }
 
 impl Related<super::provider::Entity> for Entity {
@@ -38,6 +42,12 @@ impl Related<super::provider::Entity> for Entity {
 impl Related<super::usage::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Usages.def()
+    }
+}
+
+impl Related<super::billing_event::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::BillingEvents.def()
     }
 }
 

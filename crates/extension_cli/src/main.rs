@@ -13,9 +13,8 @@ use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };
-use isahc_http_client::IsahcHttpClient;
 use language::LanguageConfig;
-use theme::ThemeRegistry;
+use reqwest_client::ReqwestClient;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
@@ -66,12 +65,7 @@ async fn main() -> Result<()> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let http_client = Arc::new(
-        IsahcHttpClient::builder()
-            .default_header("User-Agent", user_agent)
-            .build()
-            .map(IsahcHttpClient::from)?,
-    );
+    let http_client = Arc::new(ReqwestClient::user_agent(&user_agent)?);
 
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
@@ -173,6 +167,38 @@ async fn copy_extension_resources(
         }
     }
 
+    if !manifest.icon_themes.is_empty() {
+        let output_icon_themes_dir = output_dir.join("icon_themes");
+        fs::create_dir_all(&output_icon_themes_dir)?;
+        for icon_theme_path in &manifest.icon_themes {
+            fs::copy(
+                extension_path.join(icon_theme_path),
+                output_icon_themes_dir.join(
+                    icon_theme_path
+                        .file_name()
+                        .ok_or_else(|| anyhow!("invalid icon theme path"))?,
+                ),
+            )
+            .with_context(|| {
+                format!("failed to copy icon theme '{}'", icon_theme_path.display())
+            })?;
+        }
+
+        let output_icons_dir = output_dir.join("icons");
+        fs::create_dir_all(&output_icons_dir)?;
+        copy_recursive(
+            fs.as_ref(),
+            &extension_path.join("icons"),
+            &output_icons_dir,
+            CopyOptions {
+                overwrite: true,
+                ignore_if_exists: false,
+            },
+        )
+        .await
+        .with_context(|| "failed to copy icons")?;
+    }
+
     if !manifest.languages.is_empty() {
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;
@@ -272,7 +298,7 @@ async fn test_themes(
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
-        let theme_family = ThemeRegistry::read_user_theme(&theme_path, fs.clone()).await?;
+        let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
         log::info!("loaded theme family {}", theme_family.name);
     }
 

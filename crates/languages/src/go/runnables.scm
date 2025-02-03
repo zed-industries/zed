@@ -7,6 +7,13 @@
   (#set! tag go-test)
 )
 
+; `go:generate` comments
+(
+    ((comment) @_comment @run
+    (#match? @_comment "^//go:generate"))
+    (#set! tag go-generate)
+)
+
 ; `t.Run`
 (
   (

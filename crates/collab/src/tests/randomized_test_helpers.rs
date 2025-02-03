@@ -220,6 +220,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                 .db
                 .create_user(
                     &format!("{username}@example.com"),
+                    None,
                     false,
                     NewUserParams {
                         github_login: username.clone(),
@@ -532,9 +533,9 @@ impl<T: RandomizedTest> TestPlan<T> {
                 server.allow_connections();
 
                 for project in client.dev_server_projects().iter() {
-                    project.read_with(&client_cx, |project, _| {
+                    project.read_with(&client_cx, |project, cx| {
                         assert!(
-                            project.is_disconnected(),
+                            project.is_disconnected(cx),
                             "project {:?} should be read only",
                             project.remote_id()
                         )

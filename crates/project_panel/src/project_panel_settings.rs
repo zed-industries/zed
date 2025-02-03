@@ -1,3 +1,4 @@
+use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
@@ -10,47 +11,80 @@ pub enum ProjectPanelDockPosition {
     Right,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowIndentGuides {
+    Always,
+    Never,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EntrySpacing {
+    /// Comfortable spacing of entries.
+    #[default]
+    Comfortable,
+    /// The standard spacing of entries.
+    Standard,
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
     pub default_width: Pixels,
     pub dock: ProjectPanelDockPosition,
+    pub entry_spacing: EntrySpacing,
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
+    pub indent_guides: IndentGuidesSettings,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+    pub show_diagnostics: ShowDiagnostics,
 }
 
-/// When to show the scrollbar in the project panel.
-///
-/// Default: always
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowScrollbar {
-    #[default]
-    /// Always show the scrollbar.
-    Always,
-    /// Never show the scrollbar.
-    Never,
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettings {
+    pub show: ShowIndentGuides,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettingsContent {
+    /// When to show the scrollbar in the project panel.
+    pub show: Option<ShowIndentGuides>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     /// When to show the scrollbar in the project panel.
     ///
-    /// Default: always
-    pub show: ShowScrollbar,
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the project panel.
     ///
-    /// Default: always
-    pub show: Option<ShowScrollbar>,
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<Option<ShowScrollbar>>,
+}
+
+/// Whether to indicate diagnostic errors and/or warnings in project panel items.
+///
+/// Default: all
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowDiagnostics {
+    /// Never mark the diagnostic errors/warnings in the project panel.
+    Off,
+    /// Mark files containing only diagnostic errors in the project panel.
+    Errors,
+    #[default]
+    /// Mark files containing diagnostic errors or warnings in the project panel.
+    All,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -67,6 +101,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: left
     pub dock: Option<ProjectPanelDockPosition>,
+    /// Spacing between worktree entries in the project panel.
+    ///
+    /// Default: comfortable
+    pub entry_spacing: Option<EntrySpacing>,
     /// Whether to show file icons in the project panel.
     ///
     /// Default: true
@@ -92,10 +130,16 @@ pub struct ProjectPanelSettingsContent {
     /// Whether to fold directories automatically
     /// when directory has only one directory inside.
     ///
-    /// Default: false
+    /// Default: true
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
+    ///
+    /// Default: all
+    pub show_diagnostics: Option<ShowDiagnostics>,
+    /// Settings related to indent guides in the project panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
 }
 
 impl Settings for ProjectPanelSettings {
@@ -105,7 +149,7 @@ impl Settings for ProjectPanelSettings {
 
     fn load(
         sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::AppContext,
+        _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }

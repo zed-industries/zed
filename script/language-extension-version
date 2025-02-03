@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euox pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <language> [version]"
+  exit 1
+fi
+
+LANGUAGE=$1
+VERSION=${2:-}
+
+EXTENSION_DIR="extensions/$LANGUAGE"
+EXTENSION_TOML="$EXTENSION_DIR/extension.toml"
+CARGO_TOML="$EXTENSION_DIR/Cargo.toml"
+
+if [ ! -d "$EXTENSION_DIR" ]; then
+  echo "Directory $EXTENSION_DIR does not exist."
+  exit 1
+fi
+
+if [ -z "$VERSION" ]; then
+  grep -m 1 'version =' "$EXTENSION_TOML" | awk -F\" '{print $2}'
+  exit 0
+fi
+
+sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$EXTENSION_TOML"
+sed -i '' -e "s/^version = \".*\"/version = \"$VERSION\"/" "$CARGO_TOML"

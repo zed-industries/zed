@@ -6,18 +6,19 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use anyhow::{Context as _, Result};
+use clap::Parser;
 use indexmap::IndexMap;
 use log::LevelFilter;
-use schemars::schema_for;
 use serde::Deserialize;
 use simplelog::ColorChoice;
 use simplelog::{TermLogger, TerminalMode};
-use theme::{Appearance, AppearanceContent, ThemeFamilyContent};
+use theme::{Appearance, AppearanceContent};
 
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
+
+const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.0.json";
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -79,15 +80,6 @@ struct Args {
     /// The path to write the output to.
     #[arg(long, short)]
     output: Option<PathBuf>,
-
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand)]
-enum Command {
-    /// Prints the JSON schema for a theme.
-    PrintSchema,
 }
 
 fn main() -> Result<()> {
@@ -111,21 +103,6 @@ fn main() -> Result<()> {
     )
     .expect("could not initialize logger");
 
-    if let Some(command) = args.command {
-        match command {
-            Command::PrintSchema => {
-                let theme_family_schema = schema_for!(ThemeFamilyContent);
-
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&theme_family_schema).unwrap()
-                );
-
-                return Ok(());
-            }
-        }
-    }
-
     let theme_file_path = args.theme_path;
 
     let theme_file = match File::open(&theme_file_path) {
@@ -148,7 +125,11 @@ fn main() -> Result<()> {
     let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::new());
 
     let theme = converter.convert()?;
-
+    let mut theme = serde_json::to_value(theme).unwrap();
+    theme.as_object_mut().unwrap().insert(
+        "$schema".to_string(),
+        serde_json::Value::String(ZED_THEME_SCHEMA_URL.to_string()),
+    );
     let theme_json = serde_json::to_string_pretty(&theme).unwrap();
 
     if let Some(output) = args.output {

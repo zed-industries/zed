@@ -1,6 +1,6 @@
 use crate::Editor;
 
-use gpui::{Task as AsyncTask, WindowContext};
+use gpui::{App, Task as AsyncTask, Window};
 use project::Location;
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{ToOffset, ToPoint};
@@ -8,21 +8,22 @@ use workspace::Workspace;
 
 fn task_context_with_editor(
     editor: &mut Editor,
-    cx: &mut WindowContext<'_>,
+    window: &mut Window,
+    cx: &mut App,
 ) -> AsyncTask<Option<TaskContext>> {
     let Some(project) = editor.project.clone() else {
         return AsyncTask::ready(None);
     };
     let (selection, buffer, editor_snapshot) = {
         let selection = editor.selections.newest_adjusted(cx);
-        let Some((buffer, _, _)) = editor
+        let Some((buffer, _)) = editor
             .buffer()
             .read(cx)
             .point_to_buffer_offset(selection.start, cx)
         else {
             return AsyncTask::ready(None);
         };
-        let snapshot = editor.snapshot(cx);
+        let snapshot = editor.snapshot(window, cx);
         (selection, buffer, snapshot)
     };
     let selection_range = selection.range();
@@ -67,13 +68,18 @@ fn task_context_with_editor(
         variables
     };
 
-    let context_task = project.update(cx, |project, cx| {
-        project.task_context_for_location(captured_variables, location.clone(), cx)
-    });
-    cx.spawn(|_| context_task)
+    project.update(cx, |project, cx| {
+        project.task_store().update(cx, |task_store, cx| {
+            task_store.task_context_for_location(captured_variables, location, cx)
+        })
+    })
 }
 
-pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> AsyncTask<TaskContext> {
+pub fn task_context(
+    workspace: &Workspace,
+    window: &mut Window,
+    cx: &mut App,
+) -> AsyncTask<TaskContext> {
     let Some(editor) = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))
@@ -81,7 +87,7 @@ pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> AsyncT
         return AsyncTask::ready(TaskContext::default());
     };
     editor.update(cx, |editor, cx| {
-        let context_task = task_context_with_editor(editor, cx);
+        let context_task = task_context_with_editor(editor, window, cx);
         cx.background_executor()
             .spawn(async move { context_task.await.unwrap_or_default() })
     })

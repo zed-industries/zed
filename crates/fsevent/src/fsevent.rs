@@ -398,8 +398,15 @@ mod tests {
             assert!(event.flags.contains(StreamFlags::ITEM_CREATED));
 
             fs::remove_file(path.join("existing-file-5")).unwrap();
-            let events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-            let event = events.last().unwrap();
+            let mut events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            let mut event = events.last().unwrap();
+            // we see this duplicate about 1/100 test runs.
+            if event.path == path.join("new-file")
+                && event.flags.contains(StreamFlags::ITEM_CREATED)
+            {
+                events = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+                event = events.last().unwrap();
+            }
             assert_eq!(event.path, path.join("existing-file-5"));
             assert!(event.flags.contains(StreamFlags::ITEM_REMOVED));
             drop(handle);

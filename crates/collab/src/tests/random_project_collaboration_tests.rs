@@ -6,9 +6,8 @@ use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
-use futures::StreamExt;
-use git::repository::GitFileStatus;
-use gpui::{BackgroundExecutor, Model, TestAppContext};
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
+use gpui::{BackgroundExecutor, Entity, TestAppContext};
 use language::{
     range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
 };
@@ -128,7 +127,7 @@ enum GitOperation {
     },
     WriteGitStatuses {
         repo_path: PathBuf,
-        statuses: Vec<(PathBuf, GitFileStatus)>,
+        statuses: Vec<(PathBuf, FileStatus)>,
         git_operation: bool,
     },
 }
@@ -298,8 +297,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 continue;
                             };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let is_local =
-                                project.read_with(cx, |project, _| project.is_local_or_ssh());
+                            let is_local = project.read_with(cx, |project, _| project.is_local());
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
                                     .worktrees(cx)
@@ -335,7 +333,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         continue;
                     };
                     let project_root_name = root_name_for_project(&project, cx);
-                    let is_local = project.read_with(cx, |project, _| project.is_local_or_ssh());
+                    let is_local = project.read_with(cx, |project, _| project.is_local());
 
                     match rng.gen_range(0..100_u32) {
                         // Manipulate an existing buffer
@@ -836,7 +834,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         .map_ok(|_| ())
                         .boxed(),
                     LspRequestKind::CodeAction => project
-                        .code_actions(&buffer, offset..offset, cx)
+                        .code_actions(&buffer, offset..offset, None, cx)
                         .map(|_| Ok(()))
                         .boxed(),
                     LspRequestKind::Definition => project
@@ -874,7 +872,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if detach { "detaching" } else { "awaiting" }
                 );
 
-                let mut search = project.update(cx, |project, cx| {
+                let search = project.update(cx, |project, cx| {
                     project.search(
                         SearchQuery::text(
                             query,
@@ -892,7 +890,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 drop(project);
                 let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
-                    while let Some(result) = search.next().await {
+                    while let Ok(result) = search.recv().await {
                         if let SearchResult::Buffer { buffer, ranges } = result {
                             results.entry(buffer).or_insert(ranges);
                         }
@@ -1135,7 +1133,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let end = PointUtf16::new(end_row, end_column);
                                     let range = if start > end { end..start } else { start..end };
                                     highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()),
+                                        range: range_to_lsp(range.clone()).unwrap(),
                                         kind: Some(lsp::DocumentHighlightKind::READ),
                                     });
                                 }
@@ -1169,7 +1167,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_disconnected() {
+                        if !guest_project.is_disconnected(cx) {
                             if let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
@@ -1223,7 +1221,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         id,
                                         guest_project.remote_id(),
                                     );
-                                    assert_eq!(guest_snapshot.repositories().collect::<Vec<_>>(), host_snapshot.repositories().collect::<Vec<_>>(),
+                                    assert_eq!(guest_snapshot.repositories().iter().collect::<Vec<_>>(), host_snapshot.repositories().iter().collect::<Vec<_>>(),
                                         "{} has different repositories than the host for worktree {:?} and project {:?}",
                                         client.username,
                                         host_snapshot.abs_path(),
@@ -1255,8 +1253,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
-                let project_id = if guest_project.read_with(client_cx, |project, _| {
-                    project.is_local_or_ssh() || project.is_disconnected()
+                let project_id = if guest_project.read_with(client_cx, |project, cx| {
+                    project.is_local() || project.is_disconnected(cx)
                 }) {
                     continue;
                 } else {
@@ -1324,11 +1322,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                     match (host_file, guest_file) {
                         (Some(host_file), Some(guest_file)) => {
                             assert_eq!(guest_file.path(), host_file.path());
-                            assert_eq!(guest_file.is_deleted(), host_file.is_deleted());
-                            assert_eq!(
-                                guest_file.mtime(),
-                                host_file.mtime(),
-                                "guest {} mtime does not match host {} for path {:?} in project {}",
+                            assert_eq!(guest_file.disk_state(), host_file.disk_state(),
+                                "guest {} disk_state does not match host {} for path {:?} in project {}",
                                 guest_user_id,
                                 host_user_id,
                                 guest_file.path(),
@@ -1340,10 +1335,24 @@ impl RandomizedTest for ProjectCollaborationTest {
                         (_, None) => panic!("guest's file is None, hosts's isn't"),
                     }
 
-                    let host_diff_base = host_buffer
-                        .read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
-                    let guest_diff_base = guest_buffer
-                        .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
+                    let host_diff_base = host_project.read_with(host_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string()
+                    });
+                    let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string()
+                    });
                     assert_eq!(
                             guest_diff_base, host_diff_base,
                             "guest {} diff base does not match host's for path {path:?} in project {project_id}",
@@ -1449,17 +1458,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
             let statuses = file_paths
                 .into_iter()
-                .map(|paths| {
-                    (
-                        paths,
-                        match rng.gen_range(0..3_u32) {
-                            0 => GitFileStatus::Added,
-                            1 => GitFileStatus::Modified,
-                            2 => GitFileStatus::Conflict,
-                            _ => unreachable!(),
-                        },
-                    )
-                })
+                .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
 
             let git_operation = rng.gen::<bool>();
@@ -1476,10 +1475,10 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
 fn buffer_for_full_path(
     client: &TestClient,
-    project: &Model<Project>,
+    project: &Entity<Project>,
     full_path: &PathBuf,
     cx: &TestAppContext,
-) -> Option<Model<language::Buffer>> {
+) -> Option<Entity<language::Buffer>> {
     client
         .buffers_for_project(project)
         .iter()
@@ -1495,7 +1494,7 @@ fn project_for_root_name(
     client: &TestClient,
     root_name: &str,
     cx: &TestAppContext,
-) -> Option<Model<Project>> {
+) -> Option<Entity<Project>> {
     if let Some(ix) = project_ix_for_root_name(client.local_projects().deref(), root_name, cx) {
         return Some(client.local_projects()[ix].clone());
     }
@@ -1507,7 +1506,7 @@ fn project_for_root_name(
 }
 
 fn project_ix_for_root_name(
-    projects: &[Model<Project>],
+    projects: &[Entity<Project>],
     root_name: &str,
     cx: &TestAppContext,
 ) -> Option<usize> {
@@ -1519,7 +1518,7 @@ fn project_ix_for_root_name(
     })
 }
 
-fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> String {
+fn root_name_for_project(project: &Entity<Project>, cx: &TestAppContext) -> String {
     project.read_with(cx, |project, cx| {
         project
             .visible_worktrees(cx)
@@ -1532,7 +1531,7 @@ fn root_name_for_project(project: &Model<Project>, cx: &TestAppContext) -> Strin
 }
 
 fn project_path_for_full_path(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     full_path: &Path,
     cx: &TestAppContext,
 ) -> Option<ProjectPath> {
@@ -1553,16 +1552,14 @@ fn project_path_for_full_path(
 }
 
 async fn ensure_project_shared(
-    project: &Model<Project>,
+    project: &Entity<Project>,
     client: &TestClient,
     cx: &mut TestAppContext,
 ) {
     let first_root_name = root_name_for_project(project, cx);
     let active_call = cx.read(ActiveCall::global);
     if active_call.read_with(cx, |call, _| call.room().is_some())
-        && project.read_with(cx, |project, _| {
-            project.is_local_or_ssh() && !project.is_shared()
-        })
+        && project.read_with(cx, |project, _| project.is_local() && !project.is_shared())
     {
         match active_call
             .update(cx, |call, cx| call.share_project(project.clone(), cx))
@@ -1588,7 +1585,7 @@ async fn ensure_project_shared(
     }
 }
 
-fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Model<Project>> {
+fn choose_random_project(client: &TestClient, rng: &mut StdRng) -> Option<Entity<Project>> {
     client
         .local_projects()
         .deref()
@@ -1605,4 +1602,42 @@ fn gen_file_name(rng: &mut StdRng) -> String {
         name.push(letter);
     }
     name
+}
+
+fn gen_status(rng: &mut StdRng) -> FileStatus {
+    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
+        match rng.gen_range(0..7) {
+            0 => StatusCode::Modified,
+            1 => StatusCode::TypeChanged,
+            2 => StatusCode::Added,
+            3 => StatusCode::Deleted,
+            4 => StatusCode::Renamed,
+            5 => StatusCode::Copied,
+            6 => StatusCode::Unmodified,
+            _ => unreachable!(),
+        }
+    }
+
+    fn gen_unmerged_status_code(rng: &mut StdRng) -> UnmergedStatusCode {
+        match rng.gen_range(0..3) {
+            0 => UnmergedStatusCode::Updated,
+            1 => UnmergedStatusCode::Added,
+            2 => UnmergedStatusCode::Deleted,
+            _ => unreachable!(),
+        }
+    }
+
+    match rng.gen_range(0..4) {
+        0 => FileStatus::Untracked,
+        1 => FileStatus::Ignored,
+        2 => FileStatus::Unmerged(UnmergedStatus {
+            first_head: gen_unmerged_status_code(rng),
+            second_head: gen_unmerged_status_code(rng),
+        }),
+        3 => FileStatus::Tracked(TrackedStatus {
+            index_status: gen_status_code(rng),
+            worktree_status: gen_status_code(rng),
+        }),
+        _ => unreachable!(),
+    }
 }

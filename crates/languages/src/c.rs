@@ -1,64 +1,39 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use gpui::AsyncAppContext;
+use gpui::AsyncApp;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use lsp::LanguageServerBinary;
-use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
+use serde_json::json;
 use smol::fs::{self, File};
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
-use util::{fs::remove_matching, maybe, ResultExt};
+use util::{fs::remove_matching, maybe, merge_json_value_into, ResultExt};
 
 pub struct CLspAdapter;
 
 impl CLspAdapter {
-    const SERVER_NAME: &'static str = "clangd";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 }
 
 #[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
-        });
-
-        match configured_binary {
-            Ok(Some(BinarySettings {
-                path: Some(path),
-                arguments,
-                ..
-            })) => Some(LanguageServerBinary {
-                path: path.into(),
-                arguments: arguments
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|arg| arg.into())
-                    .collect(),
-                env: None,
-            }),
-            Ok(Some(BinarySettings {
-                path_lookup: Some(false),
-                ..
-            })) => None,
-            _ => {
-                let env = delegate.shell_env().await;
-                let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                Some(LanguageServerBinary {
-                    path,
-                    arguments: vec![],
-                    env: Some(env),
-                })
-            }
-        }
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: vec![],
+            env: None,
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -112,7 +87,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = smol::process::Command::new("unzip")
+            let unzip_status = util::command::new_smol_command("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
                 .output()
@@ -138,18 +113,6 @@ impl super::LspAdapter for CLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--help".into()];
-                binary
-            })
     }
 
     async fn label_for_completion(
@@ -295,6 +258,26 @@ impl super::LspAdapter for CLspAdapter {
             filter_range,
         })
     }
+
+    fn prepare_initialize_params(
+        &self,
+        mut original: InitializeParams,
+    ) -> Result<InitializeParams> {
+        // enable clangd's dot-to-arrow feature.
+        let experimental = json!({
+            "textDocument": {
+                "completion" : {
+                    "editsNearCursor": true
+                }
+            }
+        });
+        if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
+        }
+        Ok(original)
+    }
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
@@ -328,7 +311,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
 
 #[cfg(test)]
 mod tests {
-    use gpui::{BorrowAppContext, Context, TestAppContext};
+    use gpui::{AppContext as _, BorrowAppContext, TestAppContext};
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
@@ -348,7 +331,7 @@ mod tests {
         });
         let language = crate::language("c", tree_sitter_c::LANGUAGE.into());
 
-        cx.new_model(|cx| {
+        cx.new(|cx| {
             let mut buffer = Buffer::local("", cx).with_language(language, cx);
 
             // empty function

@@ -17,14 +17,6 @@ fn retrieve_app_instance_event_identifier() -> &'static str {
 }
 
 pub fn check_single_instance() -> bool {
-    if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-        return true;
-    }
-
-    check_single_instance_event()
-}
-
-fn check_single_instance_event() -> bool {
     unsafe {
         CreateEventW(
             None,

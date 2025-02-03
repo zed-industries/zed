@@ -18,3 +18,15 @@ include = ["Cargo.toml", "some_directory/**/*.toml"]
 align_entries = true
 reorder_keys = true
 ```
+
+Alternatively, you can pass taplo configuration options via [Zed LSP Settings](../configuring-zed.md#lsp)
+
+```json
+  "lsp": {
+    "taplo": {
+      "settings": {
+        "array_auto_collapse": false
+      }
+    }
+  }
+```

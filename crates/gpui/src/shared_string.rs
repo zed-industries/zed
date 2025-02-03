@@ -1,5 +1,6 @@
 use derive_more::{Deref, DerefMut};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, sync::Arc};
 use util::arc_cow::ArcCow;
@@ -8,6 +9,28 @@ use util::arc_cow::ArcCow;
 /// tasks. Essentially an abstraction over an `Arc<str>` and `&'static str`,
 #[derive(Deref, DerefMut, Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
 pub struct SharedString(ArcCow<'static, str>);
+
+impl SharedString {
+    /// Creates a static [`SharedString`] from a `&'static str`.
+    pub const fn new_static(str: &'static str) -> Self {
+        Self(ArcCow::Borrowed(str))
+    }
+
+    /// Creates a [`SharedString`] from anything that can become an `Arc<str>`
+    pub fn new(str: impl Into<Arc<str>>) -> Self {
+        SharedString(ArcCow::Owned(str.into()))
+    }
+}
+
+impl JsonSchema for SharedString {
+    fn schema_name() -> String {
+        String::schema_name()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(gen)
+    }
+}
 
 impl Default for SharedString {
     fn default() -> Self {
@@ -60,6 +83,12 @@ impl PartialEq<str> for SharedString {
 impl<'a> PartialEq<&'a str> for SharedString {
     fn eq(&self, other: &&'a str) -> bool {
         self.as_ref() == *other
+    }
+}
+
+impl From<&SharedString> for SharedString {
+    fn from(value: &SharedString) -> Self {
+        value.clone()
     }
 }
 

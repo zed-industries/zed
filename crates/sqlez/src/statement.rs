@@ -58,12 +58,12 @@ impl<'a> Statement<'a> {
                     &mut remaining_sql_ptr,
                 );
 
-                remaining_sql = CStr::from_ptr(remaining_sql_ptr);
-                statement.raw_statements.push(raw_statement);
-
                 connection.last_error().with_context(|| {
                     format!("Prepare call failed for query:\n{}", query.as_ref())
                 })?;
+
+                remaining_sql = CStr::from_ptr(remaining_sql_ptr);
+                statement.raw_statements.push(raw_statement);
 
                 if !connection.can_write() && sqlite3_stmt_readonly(raw_statement) == 0 {
                     let sql = CStr::from_ptr(sqlite3_sql(raw_statement));

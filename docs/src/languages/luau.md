@@ -1,11 +1,11 @@
 # Luau
 
-[Luau](https://luau-lang.org/) is a fast, small, safe, gradually typed embeddable scripting language derived from Lua. Luau was developed by Roblox and available under the MIT license.
+[Luau](https://luau.org/) is a fast, small, safe, gradually typed, embeddable scripting language derived from Lua. Luau was developed by Roblox and is available under the MIT license.
 
 Luau language support in Zed is provided by the community-maintained [Luau extension](https://github.com/4teapo/zed-luau).
 Report issues to: [https://github.com/4teapo/zed-luau/issues](https://github.com/4teapo/zed-luau/issues)
 
-- Tree Sitter: [tree-sitter-grammars/tree-sitter-luau](https://github.com/tree-sitter-grammars/tree-sitter-luau)
+- Tree Sitter: [4teapo/tree-sitter-luau](https://github.com/4teapo/tree-sitter-luau)
 - Language Server: [JohnnyMorganz/luau-lsp](https://github.com/JohnnyMorganz/luau-lsp)
 
 ## Configuration

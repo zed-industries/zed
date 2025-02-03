@@ -1,10 +1,12 @@
-use crate::one_themes::one_dark;
-use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
+use crate::fallback_themes::zed_default_dark;
+use crate::{
+    Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
+    DEFAULT_ICON_THEME_NAME,
+};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, ViewContext, WindowContext,
+    px, App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels, Window,
 };
 use refineable::Refineable;
 use schemars::{
@@ -35,6 +37,9 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
     Deserialize,
     JsonSchema,
 )]
+
+/// Specifies the density of the UI.
+/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     /// A denser UI with tighter spacing and smaller elements.
@@ -50,6 +55,8 @@ pub enum UiDensity {
 }
 
 impl UiDensity {
+    /// The spacing ratio of a given density.
+    /// TODO: Standardize usage throughout the app or remove
     pub fn spacing_ratio(self) -> f32 {
         match self {
             UiDensity::Compact => 0.75,
@@ -80,17 +87,45 @@ impl From<UiDensity> for String {
     }
 }
 
-#[derive(Clone)]
+/// Customizable settings for the UI and theme system.
+#[derive(Clone, PartialEq)]
 pub struct ThemeSettings {
+    /// The UI font size. Determines the size of text in the UI,
+    /// as well as the size of a [gpui::Rems] unit.
+    ///
+    /// Changing this will impact the size of all UI elements.
     pub ui_font_size: Pixels,
+    /// The font used for UI elements.
     pub ui_font: Font,
-    pub buffer_font: Font,
+    /// The font size used for buffers, and the terminal.
+    ///
+    /// The terminal font size can be overridden using it's own setting.
     pub buffer_font_size: Pixels,
+    /// The font used for buffers, and the terminal.
+    ///
+    /// The terminal font family can be overridden using it's own setting.
+    pub buffer_font: Font,
+    /// The line height for buffers, and the terminal.
+    ///
+    /// Changing this may affect the spacing of some UI elements.
+    ///
+    /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
+    /// The current theme selection.
+    /// TODO: Document this further
     pub theme_selection: Option<ThemeSelection>,
+    /// The active theme.
     pub active_theme: Arc<Theme>,
+    /// Manual overrides for the active theme.
+    ///
+    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The active icon theme.
+    pub active_icon_theme: Arc<IconTheme>,
+    /// The density of the UI.
+    /// Note: This setting is still experimental. See [this tracking issue](
     pub ui_density: UiDensity,
+    /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
 }
 
@@ -110,7 +145,7 @@ impl ThemeSettings {
     ///
     /// Reads the [`ThemeSettings`] to know which theme should be loaded,
     /// taking into account the current [`SystemAppearance`].
-    pub fn reload_current_theme(cx: &mut AppContext) {
+    pub fn reload_current_theme(cx: &mut App) {
         let mut theme_settings = ThemeSettings::get_global(cx).clone();
         let system_appearance = SystemAppearance::global(cx);
 
@@ -148,7 +183,7 @@ impl Global for GlobalSystemAppearance {}
 
 impl SystemAppearance {
     /// Initializes the [`SystemAppearance`] for the application.
-    pub fn init(cx: &mut AppContext) {
+    pub fn init(cx: &mut App) {
         *cx.default_global::<GlobalSystemAppearance>() =
             GlobalSystemAppearance(SystemAppearance(cx.window_appearance().into()));
     }
@@ -156,40 +191,36 @@ impl SystemAppearance {
     /// Returns the global [`SystemAppearance`].
     ///
     /// Inserts a default [`SystemAppearance`] if one does not yet exist.
-    pub(crate) fn default_global(cx: &mut AppContext) -> Self {
+    pub(crate) fn default_global(cx: &mut App) -> Self {
         cx.default_global::<GlobalSystemAppearance>().0
     }
 
     /// Returns the global [`SystemAppearance`].
-    pub fn global(cx: &AppContext) -> Self {
+    pub fn global(cx: &App) -> Self {
         cx.global::<GlobalSystemAppearance>().0
     }
 
     /// Returns a mutable reference to the global [`SystemAppearance`].
-    pub fn global_mut(cx: &mut AppContext) -> &mut Self {
+    pub fn global_mut(cx: &mut App) -> &mut Self {
         cx.global_mut::<GlobalSystemAppearance>()
     }
 }
 
-#[derive(Default)]
-pub(crate) struct AdjustedBufferFontSize(Pixels);
-
-impl Global for AdjustedBufferFontSize {}
-
-#[derive(Default)]
-pub(crate) struct AdjustedUiFontSize(Pixels);
-
-impl Global for AdjustedUiFontSize {}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+/// Represents the selection of a theme, which can be either static or dynamic.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ThemeSelection {
+    /// A static theme selection, represented by a single theme name.
     Static(#[schemars(schema_with = "theme_name_ref")] String),
+    /// A dynamic theme selection, which can change based the [ThemeMode].
     Dynamic {
+        /// The mode used to determine which theme to use.
         #[serde(default)]
         mode: ThemeMode,
+        /// The theme to use for light mode.
         #[schemars(schema_with = "theme_name_ref")]
         light: String,
+        /// The theme to use for dark mode.
         #[schemars(schema_with = "theme_name_ref")]
         dark: String,
     },
@@ -199,6 +230,12 @@ fn theme_name_ref(_: &mut SchemaGenerator) -> Schema {
     Schema::new_ref("#/definitions/ThemeName".into())
 }
 
+// TODO: Rename ThemeMode -> ThemeAppearanceMode
+/// The mode use to select a theme.
+///
+/// `Light` and `Dark` will select their respective themes.
+///
+/// `System` will select the theme based on the system's appearance.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
@@ -214,6 +251,7 @@ pub enum ThemeMode {
 }
 
 impl ThemeSelection {
+    /// Returns the theme name for the selected [ThemeMode].
     pub fn theme(&self, system_appearance: Appearance) -> &str {
         match self {
             Self::Static(theme) => theme,
@@ -228,6 +266,7 @@ impl ThemeSelection {
         }
     }
 
+    /// Returns the [ThemeMode] for the [ThemeSelection].
     pub fn mode(&self) -> Option<ThemeMode> {
         match self {
             ThemeSelection::Static(_) => None,
@@ -279,6 +318,9 @@ pub struct ThemeSettingsContent {
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
+    /// The name of the icon theme to use.
+    #[serde(default)]
+    pub icon_theme: Option<String>,
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
@@ -327,6 +369,7 @@ impl ThemeSettingsContent {
         }
     }
 
+    /// Sets the mode for the theme.
     pub fn set_mode(&mut self, mode: ThemeMode) {
         if let Some(selection) = self.theme.as_mut() {
             match selection {
@@ -355,16 +398,23 @@ impl ThemeSettingsContent {
     }
 }
 
+/// The buffer's line height.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
+    /// A less dense line height.
     #[default]
     Comfortable,
+    /// The default line height.
     Standard,
+    /// A custom line height.
+    ///
+    /// A line height of 1.0 is the height of the buffer's font size.
     Custom(f32),
 }
 
 impl BufferLineHeight {
+    /// Returns the value of the line height.
     pub fn value(&self) -> f32 {
         match self {
             BufferLineHeight::Comfortable => 1.618,
@@ -375,12 +425,18 @@ impl BufferLineHeight {
 }
 
 impl ThemeSettings {
-    pub fn buffer_font_size(&self, cx: &AppContext) -> Pixels {
-        cx.try_global::<AdjustedBufferFontSize>()
-            .map_or(self.buffer_font_size, |size| size.0)
-            .max(MIN_FONT_SIZE)
+    /// Returns the buffer font size.
+    pub fn buffer_font_size(&self) -> Pixels {
+        Self::clamp_font_size(self.buffer_font_size)
     }
 
+    /// Ensures that the font size is within the valid range.
+    pub fn clamp_font_size(size: Pixels) -> Pixels {
+        size.max(MIN_FONT_SIZE)
+    }
+
+    // TODO: Rename: `line_height` -> `buffer_line_height`
+    /// Returns the buffer's line height.
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
@@ -389,7 +445,7 @@ impl ThemeSettings {
     ///
     /// Returns a `Some` containing the new theme if it was successful.
     /// Returns `None` otherwise.
-    pub fn switch_theme(&mut self, theme: &str, cx: &mut AppContext) -> Option<Arc<Theme>> {
+    pub fn switch_theme(&mut self, theme: &str, cx: &mut App) -> Option<Arc<Theme>> {
         let themes = ThemeRegistry::default_global(cx);
 
         let mut new_theme = None;
@@ -433,91 +489,21 @@ impl ThemeSettings {
     }
 }
 
-pub fn observe_buffer_font_size_adjustment<V: 'static>(
-    cx: &mut ViewContext<V>,
-    f: impl 'static + Fn(&mut V, &mut ViewContext<V>),
-) -> Subscription {
-    cx.observe_global::<AdjustedBufferFontSize>(f)
-}
-
-pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
-    if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
-        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        let delta = *adjusted_size - buffer_font_size;
-        size + delta
-    } else {
-        size
-    }
-    .max(MIN_FONT_SIZE)
-}
-
-pub fn get_buffer_font_size(cx: &AppContext) -> Pixels {
-    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    cx.try_global::<AdjustedBufferFontSize>()
-        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0)
-}
-
-pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
-    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    let mut adjusted_size = cx
-        .try_global::<AdjustedBufferFontSize>()
-        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedBufferFontSize(adjusted_size));
-    cx.refresh();
-}
-
-pub fn has_adjusted_buffer_font_size(cx: &mut AppContext) -> bool {
-    cx.has_global::<AdjustedBufferFontSize>()
-}
-
-pub fn reset_buffer_font_size(cx: &mut AppContext) {
-    if cx.has_global::<AdjustedBufferFontSize>() {
-        cx.remove_global::<AdjustedBufferFontSize>();
-        cx.refresh();
-    }
-}
-
-pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
+// TODO: Make private, change usages to use `get_ui_font_size` instead.
+#[allow(missing_docs)]
+pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
     let (ui_font, ui_font_size) = {
         let theme_settings = ThemeSettings::get_global(cx);
         let font = theme_settings.ui_font.clone();
-        (font, get_ui_font_size(cx))
+        (font, theme_settings.ui_font_size)
     };
 
-    cx.set_rem_size(ui_font_size);
+    window.set_rem_size(ui_font_size);
     ui_font
 }
 
-pub fn get_ui_font_size(cx: &AppContext) -> Pixels {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-    cx.try_global::<AdjustedUiFontSize>()
-        .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
-}
-
-pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-    let mut adjusted_size = cx
-        .try_global::<AdjustedUiFontSize>()
-        .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedUiFontSize(adjusted_size));
-    cx.refresh();
-}
-
-pub fn has_adjusted_ui_font_size(cx: &mut AppContext) -> bool {
-    cx.has_global::<AdjustedUiFontSize>()
-}
-
-pub fn reset_ui_font_size(cx: &mut AppContext) {
-    if cx.has_global::<AdjustedUiFontSize>() {
-        cx.remove_global::<AdjustedUiFontSize>();
-        cx.refresh();
-    }
+fn clamp_font_weight(weight: f32) -> FontWeight {
+    FontWeight(weight.clamp(100., 950.))
 }
 
 impl settings::Settings for ThemeSettings {
@@ -525,7 +511,7 @@ impl settings::Settings for ThemeSettings {
 
     type FileContent = ThemeSettingsContent;
 
-    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut AppContext) -> Result<Self> {
+    fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self> {
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
 
@@ -557,14 +543,24 @@ impl settings::Settings for ThemeSettings {
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
-                .or(themes.get(&one_dark().name))
+                .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            active_icon_theme: defaults
+                .icon_theme
+                .as_ref()
+                .and_then(|name| themes.get_icon_theme(name).ok())
+                .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
-        for value in sources.user.into_iter().chain(sources.release_channel) {
+        for value in sources
+            .user
+            .into_iter()
+            .chain(sources.release_channel)
+            .chain(sources.server)
+        {
             if let Some(value) = value.ui_density {
                 this.ui_density = value;
             }
@@ -579,7 +575,7 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.buffer_font_weight {
-                this.buffer_font.weight = FontWeight(value);
+                this.buffer_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
@@ -592,7 +588,7 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.ui_font_weight {
-                this.ui_font.weight = FontWeight(value);
+                this.ui_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = &value.theme {
@@ -607,6 +603,12 @@ impl settings::Settings for ThemeSettings {
 
             this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
+
+            if let Some(value) = &value.icon_theme {
+                if let Some(icon_theme) = themes.get_icon_theme(value).log_err() {
+                    this.active_icon_theme = icon_theme.clone();
+                }
+            }
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
             this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
@@ -630,11 +632,11 @@ impl settings::Settings for ThemeSettings {
     fn json_schema(
         generator: &mut SchemaGenerator,
         params: &SettingsJsonSchemaParams,
-        cx: &AppContext,
+        cx: &App,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
         let theme_names = ThemeRegistry::global(cx)
-            .list_names(params.staff_mode)
+            .list_names()
             .into_iter()
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();

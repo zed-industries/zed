@@ -26,7 +26,6 @@ async fn test_initialize_providers(db: &mut LlmDatabase) {
             LanguageModelProvider::Anthropic,
             LanguageModelProvider::Google,
             LanguageModelProvider::OpenAi,
-            LanguageModelProvider::Zed
         ]
     )
 }

@@ -1,5 +1,8 @@
+#![allow(missing_docs)]
+
+use gpui::Axis;
+
 use crate::prelude::*;
-use gpui::*;
 
 #[derive(IntoElement)]
 pub struct ToolStrip {
@@ -33,7 +36,7 @@ impl ToolStrip {
 }
 
 impl RenderOnce for ToolStrip {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let group = format!("tool_strip_{}", self.id.clone());
 
         div()
@@ -44,8 +47,8 @@ impl RenderOnce for ToolStrip {
                 Axis::Horizontal => element.h_flex(),
             })
             .flex_none()
-            .gap(Spacing::Small.rems(cx))
-            .p(Spacing::XSmall.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .p(DynamicSpacing::Base02.rems(cx))
             .border_1()
             .border_color(cx.theme().colors().border)
             .rounded(rems_from_px(6.0))
