@@ -4073,12 +4073,10 @@ impl Project {
         .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
 
         let (worktree, relative_path) = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .worktree_store
-                    .update(cx, |worktree_store, cx| {
-                        worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
-                    })
+            .update(&mut cx, |project, cx| {
+                project.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
+                })
             })?
             .await
             .with_context(|| {
@@ -4086,18 +4084,16 @@ impl Project {
             })?;
 
         let buffer = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(
-                            ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: Arc::from(relative_path),
-                            },
-                            cx,
-                        )
-                    })
+            .update(&mut cx, |project, cx| {
+                project.buffer_store.update(cx, |buffer_store, cx| {
+                    buffer_store.open_buffer(
+                        ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: Arc::from(relative_path),
+                        },
+                        cx,
+                    )
+                })
             })
             .with_context(|| {
                 format!("opening buffer for commit message file {commit_message_file:?}")
