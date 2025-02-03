@@ -274,25 +274,24 @@ impl Render for ZedPredictModal {
                 SignInStatus::Waiting => unreachable!(),
             };
 
+            fn label_item(label_text: impl Into<SharedString>) -> impl Element {
+                Label::new(label_text).color(Color::Muted).into_element()
+            }
+
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
                 h_flex()
                     .gap_2()
                     .child(Icon::new(IconName::Check).size(IconSize::XSmall))
-                    .child(Label::new(label_text).color(Color::Muted))
+                    .child(label_item(label_text))
             }
 
             fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
-                label_element: E1,
-                label_element_second: E2,
+                first_line: E1,
+                second_line: E2,
             ) -> impl Element {
                 v_flex()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(Icon::new(IconName::Check).size(IconSize::XSmall))
-                            .child(Label::new(label_element).color(Color::Muted)),
-                    )
-                    .child(div().pl_5().child(label_element_second))
+                    .child(info_item(first_line))
+                    .child(div().pl_5().child(second_line))
             }
 
             base.child(Label::new(copy).color(Color::Muted))
@@ -371,30 +370,29 @@ impl Render for ZedPredictModal {
                                     .bg(cx.theme().colors().editor_background.opacity(0.5))
                                     .border_1()
                                     .border_color(cx.theme().colors().border_variant)
-                                    .child(info_item(
-                                        "Help fine-tune Zed's model to enable better predictions.",
-                                    ))
+                                    .child(
+                                        div().child(
+                                            Label::new("To get better predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
+                                                .mb_1()
+                                        )
+                                    )
                                     .child(info_item(
                                         "We ask this exclusively for open-source projects.",
                                     ))
-                                    .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(info_item(
-                                        "No data is ever captured for non-OSS projects.",
+                                        "This setting is valid for all OSS projects you open in Zed.",
                                     ))
-                                    .child(info_item("This is a per-project setting."))
+                                    .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
                                         "Files that can contain sensitive data, like `.env`, are",
                                         h_flex()
-                                            .child(
-                                                Label::new("excluded by default via the")
-                                                    .color(Color::Muted),
-                                            )
+                                            .child(label_item("excluded by default via the"))
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
                                                     cx.listener(Self::inline_completions_doc),
                                                 ),
                                             )
-                                            .child(Label::new("setting.").color(Color::Muted)),
+                                            .child(label_item("setting.")),
                                     )),
                             )
                         }),
