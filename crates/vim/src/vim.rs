@@ -23,7 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
-    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorMode, MultiBuffer, ToOffset, ToPoint,
 };
 use gpui::{
     actions, impl_actions, Action, App, AppContext as _, Axis, Context, Entity, EventEmitter,
@@ -41,6 +41,7 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimDb, VimGlobals};
+use std::path::{Path, PathBuf};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
@@ -835,68 +836,71 @@ impl Vim {
     }
 
     fn set_mark(&mut self, name: String, positions: Vec<Anchor>, cx: &mut App) {
+        let Some(editor) = self.editor() else {
+            return;
+        };
         match name {
             m if m.starts_with(|c: char| c.is_uppercase()) => {
-                // VimGlobals::set_global_mark(m, positions);
+                editor.update(cx, |editor, cx| {
+                    VimGlobals::set_global_mark(editor, m.clone(), &positions, cx);
+                });
             } // global mark
             m => {
-                let Some(editor) = self.editor() else {
-                    return;
-                };
                 editor.update(cx, |editor, cx| {
                     VimGlobals::set_local_mark(editor, m.clone(), &positions, cx);
                 });
-                let _ = self.marks.insert(m, positions);
+                // let _ = self.marks.insert(m, positions);
             } // local mark
         };
     }
 
-    fn get_mark(&self, name: String, window: &mut Window, cx: &App) -> Option<Vec<Anchor>> {
-        if let Some(absolute_path) = self
+    fn get_local_mark(
+        &self,
+        name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Vec<Anchor>> {
+        let workspace_id = self
             .workspace(window)
-            .unwrap()
+            .and_then(|w| w.read(cx).database_id())?;
+
+        let editor = self.editor()?.read(cx);
+        let path = editor
+            .buffer()
             .read(cx)
-            .active_item(cx)
-            .and_then(|item| {
-                if item.is_singleton(cx) {
-                    if let Some(&entry_id) = item.project_entry_ids(cx).first() {
-                        let project = self.workspace(window).unwrap().read(cx).project().read(cx);
-                        return project
-                            .path_for_entry(entry_id, cx)
-                            .and_then(|pp| project.absolute_path(&pp, cx));
-                    }
-                }
-                None
-            })
-        {
-            if let Some(workspace_id) = self
-                .workspace(window)
-                .and_then(|w| w.read(cx).database_id())
-            {
-                println!("abs path {:?}", absolute_path.to_str());
-                if let Some(m) = cx
-                    .global::<VimGlobals>()
-                    .local_marks
-                    .get(&(workspace_id, absolute_path.into()))
-                {
-                    let editor = self.editor()?.read(cx);
-                    if let Some(points) = m.get(&name) {
-                        return Some(
-                            points
-                                .iter()
-                                .map(|point| {
-                                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                                    Anchor::min().bias_left(&snapshot)
-                                })
-                                .collect(),
-                        );
-                    }
-                } else {
-                    println!("failed to get mark");
-                }
-            };
-        }
-        None
+            .as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())?
+            .path()
+            .to_path_buf();
+        let map = cx
+            .global::<VimGlobals>()
+            .local_marks
+            .get(&(workspace_id, path.into()))?;
+
+        let points = map.get(&name)?;
+        Some(
+            points
+                .iter()
+                .map(|point| {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    snapshot.anchor_before(point.to_offset(&snapshot))
+                })
+                .collect(),
+        )
+    }
+
+    fn get_global_mark(
+        &self,
+        name: String,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<(Arc<Path>, Vec<Point>)> {
+        let workspace_id = self.workspace(window)?.read(cx).database_id()?;
+        cx.global::<VimGlobals>()
+            .global_marks
+            .get(&workspace_id)?
+            .get(&name)
+            .and_then(|t| Some(t.clone()))
     }
 
     fn handle_editor_event(
