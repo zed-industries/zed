@@ -796,6 +796,7 @@ fn register_actions(
                         app_state,
                         cx,
                         |workspace, window, cx| {
+                            cx.activate(true);
                             Editor::new_file(workspace, &Default::default(), window, cx)
                         },
                     )
