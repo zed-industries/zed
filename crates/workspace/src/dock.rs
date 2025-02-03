@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
-use ui::{h_flex, ContextMenu, Divider, IconButton, Tooltip};
+use ui::{h_flex, ContextMenu, Divider, DividerColor, IconButton, Tooltip};
 use ui::{prelude::*, right_click_menu};
 
 pub(crate) const RESIZE_HANDLE_SIZE: Pixels = Pixels(6.);
@@ -874,10 +874,10 @@ impl Render for PanelButtons {
 
         let has_buttons = !buttons.is_empty();
         h_flex()
-            .gap_0p5()
+            .gap_1()
             .children(buttons)
             .when(has_buttons, |this| {
-                this.h_flex().gap_1().child(Divider::vertical())
+                this.child(Divider::vertical().color(DividerColor::Border))
             })
     }
 }
