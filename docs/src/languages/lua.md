@@ -23,7 +23,7 @@ See [LuaLS Settings Documentation](https://luals.github.io/wiki/settings/) for a
     "indent_style": "space",
     "indent_size": "4"
   },
-  "workspace.library": ["../soemdir/library"]
+  "workspace.library": ["../somedir/library"]
 }
 ```
 
