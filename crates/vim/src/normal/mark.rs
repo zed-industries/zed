@@ -4,7 +4,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint,
+    Anchor, Bias, DisplayPoint, ToOffset,
 };
 use gpui::{Context, Window};
 use language::SelectionGoal;
@@ -102,7 +102,42 @@ impl Vim {
                     .collect::<Vec<Anchor>>()
             }),
             "." => self.change_list.last().cloned(),
-            _ => self.get_mark(text.to_string(), window, cx), //self.marks.get(&*text).cloned(),
+            m if m.starts_with(|c: char| c.is_uppercase()) => {
+                if let Some((path, points)) = self.get_global_mark(text.to_string(), window, cx) {
+                    if let Some(workspace) = self.workspace(window) {
+                        workspace.update(cx, |workspace, cx| {
+                            let Some(worktree) = workspace.worktrees(cx).next() else {
+                                return;
+                            };
+                            let worktree_id = worktree.read(cx).id();
+                            let Some(path_str) = path.to_str() else {
+                                return;
+                            };
+                            println!("1234");
+                            workspace
+                                .open_path((worktree_id, path_str), None, true, window, cx)
+                                .detach();
+                        });
+                    }
+                    if let Some(editor) = self.editor() {
+                        let editor = editor.read(cx);
+                        Some(
+                            points
+                                .iter()
+                                .map(|&point| {
+                                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                                    snapshot.anchor_before(point.to_offset(&snapshot))
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => self.get_local_mark(text.to_string(), window, cx), //self.marks.get(&*text).cloned(),
         };
 
         let Some(anchors) = anchors else { return };
