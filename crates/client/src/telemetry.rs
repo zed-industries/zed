@@ -413,7 +413,6 @@ impl Telemetry {
                 .collect()
         };
 
-        // Done on purpose to avoid calling `self.state.lock()` multiple times
         for project_type_name in project_type_names {
             telemetry::event!("Project Opened", project_type = project_type_name);
         }
