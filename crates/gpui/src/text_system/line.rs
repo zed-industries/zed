@@ -107,15 +107,21 @@ impl WrappedLine {
         origin: Point<Pixels>,
         line_height: Pixels,
         align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        let align_width = match bounds {
+            Some(bounds) => Some(bounds.size.width),
+            None => self.layout.wrap_width,
+        };
+
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
             line_height,
             align,
-            self.layout.wrap_width,
+            align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
             window,
