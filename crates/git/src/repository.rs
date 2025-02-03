@@ -292,7 +292,13 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
         let commit_file = self.dot_git_dir().join(*COMMIT_MESSAGE);
         let commit_file_path = commit_file.to_string_lossy();
-        let mut args = vec!["commit", "--quiet", "-f", dbg!(commit_file_path.as_ref())];
+        let mut args = vec![
+            "commit",
+            "--quiet",
+            "-F",
+            commit_file_path.as_ref(),
+            "--cleanup=strip",
+        ];
         let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
         if let Some(author) = author.as_deref() {
             args.push("--author");
