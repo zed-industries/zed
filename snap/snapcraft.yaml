@@ -8,6 +8,7 @@ description: |
   It's open source and written in Rust.
 grade: stable
 confinement: classic
+compression: lzo
 icon: crates/zed/resources/app-icon.png
 website: https://zed.dev/
 source-code: https://github.com/zed-industries/zed
