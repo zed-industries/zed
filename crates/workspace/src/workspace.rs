@@ -969,7 +969,7 @@ impl Workspace {
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
-                Some(NewFile.boxed_clone()),
+                NewFile.boxed_clone(),
                 window,
                 cx,
             );
@@ -2661,7 +2661,7 @@ impl Workspace {
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
-                Some(NewFile.boxed_clone()),
+                NewFile.boxed_clone(),
                 window,
                 cx,
             );

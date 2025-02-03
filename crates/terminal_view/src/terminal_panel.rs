@@ -910,7 +910,7 @@ pub fn new_terminal_pane(
             project.clone(),
             Default::default(),
             None,
-            Some(NewTerminal.boxed_clone()),
+            NewTerminal.boxed_clone(),
             window,
             cx,
         );

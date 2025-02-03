@@ -135,7 +135,7 @@ impl DebugPanel {
                     workspace.project().clone(),
                     Default::default(),
                     None,
-                    None,
+                    gpui::NoAction.boxed_clone(),
                     window,
                     cx,
                 );
