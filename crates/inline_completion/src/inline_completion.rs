@@ -38,7 +38,7 @@ impl DataCollectionState {
     }
 }
 
-pub trait InlineCompletionProvider: 'static + Sized {
+pub trait EditPredictionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
     fn show_completions_in_menu() -> bool;
@@ -126,7 +126,7 @@ pub trait InlineCompletionProviderHandle {
 
 impl<T> InlineCompletionProviderHandle for Entity<T>
 where
-    T: InlineCompletionProvider,
+    T: EditPredictionProvider,
 {
     fn name(&self) -> &'static str {
         T::name()

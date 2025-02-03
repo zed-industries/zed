@@ -1,7 +1,7 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
+use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
 use project::Project;
 use settings::Settings;
@@ -48,7 +48,7 @@ impl CopilotCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for CopilotCompletionProvider {
+impl EditPredictionProvider for CopilotCompletionProvider {
     fn name() -> &'static str {
         "copilot"
     }
@@ -930,7 +930,7 @@ mod tests {
     async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx, |settings| {
             settings
-                .inline_completions
+                .edit_predictions
                 .get_or_insert(Default::default())
                 .disabled_globs = Some(vec![".env*".to_string()]);
         });

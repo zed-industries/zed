@@ -1,6 +1,6 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
-use inline_completion::InlineCompletionProvider;
+use inline_completion::EditPredictionProvider;
 use language::{Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use project::Project;
@@ -363,7 +363,7 @@ impl FakeInlineCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for FakeInlineCompletionProvider {
+impl EditPredictionProvider for FakeInlineCompletionProvider {
     fn name() -> &'static str {
         "fake-completion-provider"
     }

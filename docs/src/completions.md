@@ -29,7 +29,7 @@ To use GitHub Copilot (enabled by default), add the following to your `settings.
 ```json
 {
   "features": {
-    "inline_completion_provider": "copilot"
+    "edit_prediction_provider": "copilot"
   }
 }
 ```
@@ -43,7 +43,7 @@ To use Supermaven, add the following to your `settings.json`:
 ```json
 {
   "features": {
-    "inline_completion_provider": "supermaven"
+    "edit_prediction_provider": "supermaven"
   }
 }
 ```
@@ -62,13 +62,13 @@ There are a number of actions/shortcuts available to interact with edit predicti
 - `editor: next inline completion` (`alt-tab`): To cycle to the next edit prediction
 - `editor: previous inline completion` (`alt-shift-tab`): To cycle to the previous edit prediction
 
-### Disabling Inline-Completions
+### Disabling Edit Prediction
 
-To disable completions that appear automatically as you type, add the following to your `settings.json`:
+To disable predictions that appear automatically as you type, add the following to your `settings.json`:
 
 ```json
 {
-  "show_inline_completions": false
+  "show_edit_predictions": false
 }
 ```
 
@@ -80,7 +80,7 @@ You can also add this as a language-specific setting in your `settings.json` to 
 {
   "language": {
     "python": {
-      "show_inline_completions": false
+      "show_edit_predictions": false
     }
   }
 }

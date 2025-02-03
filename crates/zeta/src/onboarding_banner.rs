@@ -19,7 +19,7 @@ impl ZedPredictBanner {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             dismissed: get_dismissed(),
-            provider: all_language_settings(None, cx).inline_completions.provider,
+            provider: all_language_settings(None, cx).edit_predictions.provider,
             _subscription: cx.observe_global::<SettingsStore>(Self::handle_settings_changed),
         }
     }
@@ -29,7 +29,7 @@ impl ZedPredictBanner {
     }
 
     fn handle_settings_changed(&mut self, cx: &mut Context<Self>) {
-        let new_provider = all_language_settings(None, cx).inline_completions.provider;
+        let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
         if new_provider == self.provider {
             return;

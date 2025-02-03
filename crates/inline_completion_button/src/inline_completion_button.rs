@@ -13,9 +13,7 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    language_settings::{
-        self, all_language_settings, AllLanguageSettings, InlineCompletionProvider,
-    },
+    language_settings::{self, all_language_settings, AllLanguageSettings, EditPredictionProvider},
     File, Language,
 };
 use regex::Regex;
@@ -67,10 +65,10 @@ impl Render for InlineCompletionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
 
-        match all_language_settings.inline_completions.provider {
-            InlineCompletionProvider::None => div(),
+        match all_language_settings.edit_predictions.provider {
+            EditPredictionProvider::None => div(),
 
-            InlineCompletionProvider::Copilot => {
+            EditPredictionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
                     return div();
                 };
@@ -146,7 +144,7 @@ impl Render for InlineCompletionButton {
                 )
             }
 
-            InlineCompletionProvider::Supermaven => {
+            EditPredictionProvider::Supermaven => {
                 let Some(supermaven) = Supermaven::global(cx) else {
                     return div();
                 };
@@ -196,7 +194,7 @@ impl Render for InlineCompletionButton {
                                             set_completion_provider(
                                                 fs.clone(),
                                                 cx,
-                                                InlineCompletionProvider::Copilot,
+                                                EditPredictionProvider::Copilot,
                                             )
                                         },
                                     )
@@ -226,7 +224,7 @@ impl Render for InlineCompletionButton {
                 );
             }
 
-            InlineCompletionProvider::Zed => {
+            EditPredictionProvider::Zed => {
                 if !cx.has_flag::<PredictEditsFeatureFlag>() {
                     return div();
                 }
@@ -352,7 +350,7 @@ impl InlineCompletionButton {
             editor_focus_handle: None,
             language: None,
             file: None,
-            inline_completion_provider: None,
+            edit_prediction_provider: None,
             popover_menu_handle,
             workspace,
             fs,
@@ -375,11 +373,7 @@ impl InlineCompletionButton {
                 .entry("Use Supermaven", None, {
                     let fs = fs.clone();
                     move |_window, cx| {
-                        set_completion_provider(
-                            fs.clone(),
-                            cx,
-                            InlineCompletionProvider::Supermaven,
-                        )
+                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Supermaven)
                     }
                 })
         })
@@ -394,7 +388,7 @@ impl InlineCompletionButton {
             let fs = fs.clone();
             let language_enabled =
                 language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_inline_completions;
+                    .show_edit_predictions;
 
             menu = menu.toggleable_entry(
                 language.name(),
@@ -579,7 +573,7 @@ impl InlineCompletionButton {
                 .unwrap_or(true),
             )
         };
-        self.inline_completion_provider = editor.inline_completion_provider();
+        self.edit_prediction_provider = editor.edit_prediction_provider();
         self.language = language.cloned();
         self.file = file;
         self.editor_focus_handle = Some(editor.focus_handle(cx));
@@ -698,15 +692,15 @@ async fn open_disabled_globs_setting_in_editor(
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
     let show_inline_completions = all_language_settings(None, cx).show_inline_completions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.defaults.show_inline_completions = Some(!show_inline_completions)
+        file.defaults.show_edit_predictions = Some(!show_edit_predictions)
     });
 }
 
-fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: InlineCompletionProvider) {
+fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
-            .inline_completion_provider = Some(provider);
+            .edit_prediction_provider = Some(provider);
     });
 }
 
@@ -721,7 +715,7 @@ fn toggle_show_inline_completions_for_language(
         file.languages
             .entry(language.name())
             .or_default()
-            .show_inline_completions = Some(!show_inline_completions);
+            .show_edit_predictions = Some(!show_edit_predictions);
     });
 }
 
@@ -729,6 +723,6 @@ fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
             .get_or_insert(Default::default())
-            .inline_completion_provider = Some(InlineCompletionProvider::None);
+            .edit_prediction_provider = Some(EditPredictionProvider::None);
     });
 }

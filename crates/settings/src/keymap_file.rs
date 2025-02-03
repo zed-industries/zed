@@ -710,11 +710,8 @@ fn get_migrated_action(existing_action: &KeymapAction) -> Option<KeymapAction> {
             };
             match items.get(1) {
                 Some(Value::String(value)) => {
-                    let Some(new_action) =
-                        TRANSFORM_ARRAY.get(&(old_action_name.as_str(), value.as_str()))
-                    else {
-                        return None;
-                    };
+                    let new_action =
+                        TRANSFORM_ARRAY.get(&(old_action_name.as_str(), value.as_str()))?;
                     Some(KeymapAction(Value::String(new_action.to_string())))
                 }
                 Some(Value::Object(value)) => {
@@ -761,9 +758,7 @@ fn get_migrated_action(existing_action: &KeymapAction) -> Option<KeymapAction> {
             }
         }
         Value::String(value) => {
-            let Some(new_value) = STRING_REPLACE.get(value.as_str()) else {
-                return None;
-            };
+            let new_value = STRING_REPLACE.get(value.as_str())?;
             Some(KeymapAction(Value::String(new_value.to_string())))
         }
         _ => None,

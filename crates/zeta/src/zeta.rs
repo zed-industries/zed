@@ -1500,7 +1500,7 @@ impl ZetaInlineCompletionProvider {
     }
 }
 
-impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
+impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
         "zed-predict"
     }
