@@ -103,7 +103,6 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
     }
 
     pub(super) fn remove(&mut self, path: &TriePath) {
-        debug_assert_ne!(path.0.len(), 0);
         let mut current = self;
         for path in path.0.iter().take(path.0.len().saturating_sub(1)) {
             current = match current.children.get_mut(path) {
