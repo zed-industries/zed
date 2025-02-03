@@ -287,6 +287,7 @@ impl ExcerptBoundary {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
+    pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<git::diff::DiffHunkStatus>,
@@ -3284,7 +3285,7 @@ impl MultiBufferSnapshot {
             )
         })
         .filter_map(move |(range, hunk, excerpt)| {
-            if range.end == query_range.start {
+            if range.end == query_range.start && !hunk.row_range.is_empty() {
                 return None;
             }
             let end_row = if range.end.column == 0 {
@@ -6770,6 +6771,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         if self.is_empty && self.point.row == 0 {
             self.point += Point::new(1, 0);
             return Some(RowInfo {
+                buffer_id: None,
                 buffer_row: Some(0),
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
@@ -6797,6 +6799,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                         .to_point(&last_excerpt.buffer)
                         .row;
                     return Some(RowInfo {
+                        buffer_id: Some(last_excerpt.buffer_id),
                         buffer_row: Some(last_row),
                         multibuffer_row: Some(multibuffer_row),
                         diff_status: None,
@@ -6810,6 +6813,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
         let result = Some(RowInfo {
+            buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
             multibuffer_row: Some(MultiBufferRow(self.point.row)),
             diff_status: if region.is_inserted_hunk && self.point < region.range.end {

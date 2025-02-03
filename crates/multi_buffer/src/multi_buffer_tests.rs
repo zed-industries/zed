@@ -25,6 +25,7 @@ fn test_empty_singleton(cx: &mut App) {
     assert_eq!(
         snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>(),
         [RowInfo {
+            buffer_id: None,
             buffer_row: Some(0),
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None
@@ -1736,6 +1737,7 @@ struct ReferenceMultibuffer {
     change_sets: HashMap<BufferId, Entity<BufferChangeSet>>,
 }
 
+#[derive(Debug)]
 struct ReferenceExcerpt {
     id: ExcerptId,
     buffer: Entity<Buffer>,
@@ -1745,6 +1747,7 @@ struct ReferenceExcerpt {
 
 #[derive(Debug)]
 struct ReferenceRegion {
+    buffer_id: Option<BufferId>,
     range: Range<usize>,
     buffer_start: Option<Point>,
     status: Option<DiffHunkStatus>,
@@ -1897,6 +1900,7 @@ impl ReferenceMultibuffer {
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.start));
                     regions.push(ReferenceRegion {
+                        buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: None,
@@ -1913,6 +1917,7 @@ impl ReferenceMultibuffer {
                         let len = text.len();
                         text.push_str(&base_text);
                         regions.push(ReferenceRegion {
+                            buffer_id: Some(base_buffer.remote_id()),
                             range: len..text.len(),
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
@@ -1929,6 +1934,7 @@ impl ReferenceMultibuffer {
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.end));
                     regions.push(ReferenceRegion {
+                        buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
                         status: Some(DiffHunkStatus::Added),
@@ -1942,6 +1948,7 @@ impl ReferenceMultibuffer {
             text.extend(buffer.text_for_range(offset..buffer_range.end));
             text.push('\n');
             regions.push(ReferenceRegion {
+                buffer_id: Some(buffer.remote_id()),
                 range: len..text.len(),
                 buffer_start: Some(buffer.offset_to_point(offset)),
                 status: None,
@@ -1951,6 +1958,7 @@ impl ReferenceMultibuffer {
         // Remove final trailing newline.
         if self.excerpts.is_empty() {
             regions.push(ReferenceRegion {
+                buffer_id: None,
                 range: 0..1,
                 buffer_start: Some(Point::new(0, 0)),
                 status: None,
@@ -1974,6 +1982,7 @@ impl ReferenceMultibuffer {
                                 + text[region.range.start..ix].matches('\n').count() as u32
                         });
                         RowInfo {
+                            buffer_id: region.buffer_id,
                             diff_status: region.status,
                             buffer_row,
                             multibuffer_row: Some(MultiBufferRow(
