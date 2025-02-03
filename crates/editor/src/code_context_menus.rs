@@ -507,21 +507,23 @@ impl CompletionsMenu {
 
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_highlights(&style.text, highlights);
-                        let documentation_label =
-                            if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
-                                if text.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(
-                                        Label::new(text.clone())
-                                            .ml_4()
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                }
-                            } else {
+                        let documentation_label = if let Some(
+                            CompletionDocumentation::SingleLine(text),
+                        ) = documentation
+                        {
+                            if text.trim().is_empty() {
                                 None
-                            };
+                            } else {
+                                Some(
+                                    Label::new(text.clone())
+                                        .ml_4()
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                            }
+                        } else {
+                            None
+                        };
 
                         let color_swatch = completion
                             .color()
@@ -580,9 +582,14 @@ impl CompletionsMenu {
             CompletionDocumentation::MultiLinePlainText(text) => {
                 div().child(SharedString::from(text.clone()))
             }
-            CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.text.is_empty() => div().child(
-                render_parsed_markdown("completions_markdown", parsed, &style, workspace, cx),
-            ),
+            CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.text.is_empty() => div()
+                .child(render_parsed_markdown(
+                    "completions_markdown",
+                    parsed,
+                    &style,
+                    workspace,
+                    cx,
+                )),
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
             CompletionDocumentation::Undocumented => return None,

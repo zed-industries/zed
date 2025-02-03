@@ -5409,7 +5409,6 @@ impl Editor {
     }
 
     fn edit_prediction_cursor_popover_height(&self) -> Pixels {
-        // todo! base this off of the font.
         px(32.)
     }
 
