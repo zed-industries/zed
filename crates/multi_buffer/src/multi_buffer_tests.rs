@@ -1003,7 +1003,7 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     });
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.set_all_diff_hunks_expanded(cx);
-        multibuffer.add_change_set(change_set, cx);
+        multibuffer.add_change_set(change_set.clone(), cx);
         multibuffer.push_excerpts(
             buffer.clone(),
             [ExcerptRange {
@@ -1017,6 +1017,49 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     assert_eq!(snapshot.text(), "a\nb\nc\n");
+
+    let hunk = snapshot
+        .diff_hunks_in_range(Point::new(1, 1)..Point::new(1, 1))
+        .next()
+        .unwrap();
+
+    assert_eq!(hunk.diff_base_byte_range.start, 0);
+
+    let buf2 = cx.new(|cx| Buffer::local("X", cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buf2,
+            [ExcerptRange {
+                context: 0..1,
+                primary: None,
+            }],
+            cx,
+        );
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a\nb\nc")], None, cx);
+        change_set.update(cx, |change_set, cx| {
+            let _ = change_set.recalculate_diff(buffer.snapshot().text, cx);
+        });
+        assert_eq!(buffer.text(), "a\nb\nc")
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\nX");
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        change_set.update(cx, |change_set, cx| {
+            let _ = change_set.recalculate_diff(buffer.snapshot().text, cx);
+        });
+        assert_eq!(buffer.text(), "")
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\n\nX");
 }
 
 #[gpui::test]
