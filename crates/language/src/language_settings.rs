@@ -59,7 +59,7 @@ pub fn all_language_settings<'a>(
 /// The settings for all languages.
 #[derive(Debug, Clone)]
 pub struct AllLanguageSettings {
-    /// The inline completion settings.
+    /// The edit prediction settings.
     pub inline_completions: InlineCompletionSettings,
     defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
@@ -109,10 +109,10 @@ pub struct LanguageSettings {
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     pub language_servers: Vec<String>,
-    /// Controls whether inline completions are shown immediately (true)
+    /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
-    /// Controls whether inline completions are shown in the given language
+    /// Controls whether edit predictions are shown in the given language
     /// scopes.
     pub inline_completions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
@@ -195,7 +195,7 @@ impl LanguageSettings {
     }
 }
 
-/// The provider that supplies inline completions.
+/// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InlineCompletionProvider {
@@ -206,13 +206,13 @@ pub enum InlineCompletionProvider {
     Zed,
 }
 
-/// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)
+/// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
 pub struct InlineCompletionSettings {
-    /// The provider that supplies inline completions.
+    /// The provider that supplies edit predictions.
     pub provider: InlineCompletionProvider,
-    /// A list of globs representing files that inline completions should be disabled for.
+    /// A list of globs representing files that edit predictions should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
 }
 
@@ -222,7 +222,7 @@ pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
     pub features: Option<FeaturesContent>,
-    /// The inline completion settings.
+    /// The edit prediction settings.
     #[serde(default)]
     pub inline_completions: Option<InlineCompletionSettingsContent>,
     /// The default language settings.
@@ -322,13 +322,13 @@ pub struct LanguageSettingsContent {
     /// Default: ["..."]
     #[serde(default)]
     pub language_servers: Option<Vec<String>>,
-    /// Controls whether inline completions are shown immediately (true)
+    /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
     /// Default: true
     #[serde(default)]
     pub show_inline_completions: Option<bool>,
-    /// Controls whether inline completions are shown in the given language
+    /// Controls whether edit predictions are shown in the given language
     /// scopes.
     ///
     /// Example: ["string", "comment"]
@@ -400,10 +400,10 @@ pub struct LanguageSettingsContent {
     pub show_completion_documentation: Option<bool>,
 }
 
-/// The contents of the inline completion settings.
+/// The contents of the edit prediction settings.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct InlineCompletionSettingsContent {
-    /// A list of globs representing files that inline completions should be disabled for.
+    /// A list of globs representing files that edit predictions should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
 }
@@ -414,7 +414,7 @@ pub struct InlineCompletionSettingsContent {
 pub struct FeaturesContent {
     /// Whether the GitHub Copilot feature is enabled.
     pub copilot: Option<bool>,
-    /// Determines which inline completion provider to use.
+    /// Determines which edit prediction provider to use.
     pub inline_completion_provider: Option<InlineCompletionProvider>,
 }
 
@@ -876,7 +876,7 @@ impl AllLanguageSettings {
         }
     }
 
-    /// Returns whether inline completions are enabled for the given path.
+    /// Returns whether edit predictions are enabled for the given path.
     pub fn inline_completions_enabled_for_path(&self, path: &Path) -> bool {
         !self
             .inline_completions
@@ -885,7 +885,7 @@ impl AllLanguageSettings {
             .any(|glob| glob.is_match(path))
     }
 
-    /// Returns whether inline completions are enabled for the given language and path.
+    /// Returns whether edit predictions are enabled for the given language and path.
     pub fn inline_completions_enabled(
         &self,
         language: Option<&Arc<Language>>,
