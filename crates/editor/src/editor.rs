@@ -5421,6 +5421,7 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
@@ -5473,6 +5474,7 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
+                start_row,
                 line_layouts,
                 style,
                 cx,
@@ -5482,6 +5484,7 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
+                    start_row,
                     line_layouts,
                     style,
                     cx,
@@ -5568,6 +5571,7 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         cx: &mut Context<Editor>,
@@ -5675,8 +5679,9 @@ impl Editor {
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let cursor_relative_position =
-                    line_layouts.get(start_point.row as usize).map(|line| {
+                let cursor_relative_position = line_layouts
+                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                    .map(|line| {
                         let start_column_x = line.x_for_index(start_point.column as usize);
                         let target_column_x = line.x_for_index(target_point.column as usize);
                         target_column_x - start_column_x
