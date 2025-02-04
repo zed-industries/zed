@@ -5801,14 +5801,14 @@ fn header_jump_data(
 
     let excerpt_start = range.context.start;
     let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+    let rows_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_row = language::ToPoint::to_point(&excerpt_start, buffer).row;
-        jump_position.row - excerpt_start_row
+        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
+        jump_position.row.saturating_sub(excerpt_start_point.row)
     };
 
-    let line_offset_from_top = (block_row_start.0 + height + offset_from_excerpt_start)
+    let line_offset_from_top = (block_row_start.0 + height + rows_from_excerpt_start)
         .saturating_sub(
             snapshot
                 .scroll_anchor
@@ -5819,7 +5819,7 @@ fn header_jump_data(
     JumpData::MultiBufferPoint {
         excerpt_id: for_excerpt.id,
         anchor: jump_anchor,
-        position: language::ToPoint::to_point(&jump_anchor, buffer),
+        position: jump_position,
         line_offset_from_top,
     }
 }
