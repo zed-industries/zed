@@ -135,6 +135,11 @@ impl Checkbox {
             ToggleStyle::Custom(color) => color.opacity(0.3),
         }
     }
+
+    /// container size
+    pub fn container_size(cx: &App) -> Rems {
+        DynamicSpacing::Base20.rems(cx)
+    }
 }
 
 impl RenderOnce for Checkbox {
@@ -163,9 +168,13 @@ impl RenderOnce for Checkbox {
         let bg_color = self.bg_color(cx);
         let border_color = self.border_color(cx);
 
+        let size = Self::container_size(cx);
+
         let checkbox = h_flex()
+            .id(self.id.clone())
             .justify_center()
-            .size(DynamicSpacing::Base20.rems(cx))
+            .items_center()
+            .size(size)
             .group(group_id.clone())
             .child(
                 div()

@@ -4006,15 +4006,9 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .stage_entries(entries, err_sender)
-            .context("staging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during staging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.stage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_unstage(
@@ -4034,15 +4028,9 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .unstage_entries(entries, err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.unstage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_commit(
@@ -4057,17 +4045,8 @@ impl Project {
 
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        cx.update(|cx| {
-            repository_handle
-                .commit(name.zip(email), err_sender, cx)
-                .context("unstaging entries")
-        })??;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+        repository_handle.commit(name.zip(email)).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_open_commit_message_buffer(
