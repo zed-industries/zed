@@ -2876,10 +2876,7 @@ impl MultiBuffer {
         let mut did_expand_hunks = false;
         while let Some(excerpt) = excerpts.item() {
             if excerpt.text_summary.len == 0 {
-                if excerpts.end(&()) <= edit.new.end {
-                    excerpts.next(&());
-                    continue;
-                } else {
+                if excerpts.end(&()) > edit.new.end {
                     break;
                 }
             }
