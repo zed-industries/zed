@@ -364,7 +364,7 @@ impl Zeta {
         &mut self,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
-        data_collection_permission: bool,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
@@ -429,7 +429,7 @@ impl Zeta {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
-                data_collection_permission,
+                can_collect_data,
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
@@ -609,13 +609,13 @@ and then another
         &mut self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
-        data_collection_permission: bool,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         self.request_completion_impl(
             buffer,
             position,
-            data_collection_permission,
+            can_collect_data,
             cx,
             Self::perform_predict_edits,
         )
@@ -1365,7 +1365,7 @@ impl ProviderDataCollection {
             .map_or(false, |choice| choice.read(cx).is_enabled())
     }
 
-    pub fn data_collection_permission(&self, cx: &App) -> bool {
+    pub fn can_collect_data(&self, cx: &App) -> bool {
         self.choice
             .as_ref()
             .is_some_and(|choice| choice.read(cx).is_enabled())
@@ -1499,8 +1499,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
-        let data_collection_permission =
-            self.provider_data_collection.data_collection_permission(cx);
+        let can_collect_data = self.provider_data_collection.can_collect_data(cx);
         let last_request_timestamp = self.last_request_timestamp;
 
         let task = cx.spawn(|this, mut cx| async move {
@@ -1513,7 +1512,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, data_collection_permission, cx)
+                    zeta.request_completion(&buffer, position, can_collect_data, cx)
                 })
             });
 
