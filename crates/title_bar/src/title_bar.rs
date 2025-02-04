@@ -15,7 +15,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
+use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, App, Context, Decorations, Element, Entity,
     InteractiveElement, Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
@@ -25,10 +25,7 @@ use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
@@ -298,14 +295,6 @@ impl TitleBar {
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
-
-        let is_git_ui_enabled = Arc::new(AtomicBool::new(false));
-        subscriptions.push(cx.observe_flag::<GitUiFeatureFlag, _>({
-            let is_git_ui_enabled = is_git_ui_enabled.clone();
-            move |enabled, _cx| {
-                is_git_ui_enabled.store(enabled, Ordering::SeqCst);
-            }
-        }));
 
         let zed_predict_banner = cx.new(ZedPredictBanner::new);
 
