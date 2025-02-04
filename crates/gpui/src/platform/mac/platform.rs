@@ -602,7 +602,7 @@ impl Platform for MacPlatform {
             let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
             msg_send![workspace, openURL: url]
         }
-    }
+    }a
 
     fn register_url_scheme(&self, scheme: &str) -> Task<anyhow::Result<()>> {
         // API only available post Monterey
