@@ -4,6 +4,7 @@ mod key_equivalents;
 mod keymap_file;
 mod settings_file;
 mod settings_store;
+mod utils;
 
 use gpui::App;
 use rust_embed::RustEmbed;
@@ -16,9 +17,10 @@ pub use key_equivalents::*;
 pub use keymap_file::{KeymapFile, KeymapFileLoadResult};
 pub use settings_file::*;
 pub use settings_store::{
-    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsSources, SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
+    SettingsStore,
 };
+pub use utils::parse_json_with_comments;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);

@@ -8,7 +8,7 @@ pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> String {
-    let mut value = crate::settings_store::parse_json_with_comments::<serde_json::Value>(
+    let mut value = crate::utils::parse_json_with_comments::<serde_json::Value>(
         crate::default_settings().as_ref(),
     )
     .unwrap();

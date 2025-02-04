@@ -1149,13 +1149,18 @@ pub fn handle_keymap_file_changes(
                     KeymapFileLoadResult::Success { key_bindings } => {
                         reload_keymaps(cx, key_bindings);
                         dismiss_app_notification(&notification_id, cx);
-                        if KeymapFile::are_actions_deprecated(&user_keymap_content) {
-                            show_keymap_migration_notification(
-                                notification_id.clone(),
-                                fs.clone(),
-                                cx,
-                            )
-                        }
+                        match KeymapFile::parse(&user_keymap_content) {
+                            Ok(keymap) => {
+                                if KeymapFile::should_migrate_keymap(&keymap) {
+                                    show_keymap_migration_notification(
+                                        notification_id.clone(),
+                                        fs.clone(),
+                                        cx,
+                                    )
+                                }
+                            }
+                            Err(_) => {}
+                        };
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
@@ -1165,15 +1170,20 @@ pub fn handle_keymap_file_changes(
                             reload_keymaps(cx, key_bindings);
                         }
                         dismiss_app_notification(&notification_id, cx);
-                        if KeymapFile::are_actions_deprecated(&user_keymap_content) {
-                            show_keymap_migration_notification(
-                                notification_id.clone(),
-                                fs.clone(),
-                                cx,
-                            )
-                        } else {
-                            show_keymap_file_load_error(notification_id.clone(), error_message, cx)
-                        }
+                        match KeymapFile::parse(&user_keymap_content) {
+                            Ok(keymap) => {
+                                if KeymapFile::should_migrate_keymap(&keymap) {
+                                    show_keymap_migration_notification(
+                                        notification_id.clone(),
+                                        fs.clone(),
+                                        cx,
+                                    );
+                                    return;
+                                }
+                            }
+                            Err(_) => {}
+                        };
+                        show_keymap_file_load_error(notification_id.clone(), error_message, cx)
                     }
                     KeymapFileLoadResult::JsonParseFailure { error } => {
                         show_keymap_file_json_error(notification_id.clone(), &error, cx)
@@ -1220,18 +1230,9 @@ fn show_keymap_migration_notification(
             .on_click(move |_, cx| {
                 let fs = fs.clone();
                 cx.spawn(move |weak_notification, mut cx| async move {
-                    match fs.load(&paths::keymap_file()).await {
-                        Ok(keymap_content) => {
-                            if let Some(keymap_file) = KeymapFile::migrate_keymap_content(&keymap_content) {
-                                if let Ok(serialized_keymap) = serde_json::to_string_pretty(&keymap_file) {
-                                    if fs.atomic_write(paths::home_dir().join("zed_keymap_backup.json"), keymap_content).await.is_ok() {
-                                        fs.atomic_write(paths::keymap_file().clone(), serialized_keymap).await.ok();
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
+                    KeymapFile::update_keymap_file(fs, move |keymap , _| {
+                        keymap.migrate_keymap()
+                    }, &cx).await.ok();
                     weak_notification.update(&mut cx, |_, cx| {
                         cx.emit(DismissEvent);
                     }).ok();

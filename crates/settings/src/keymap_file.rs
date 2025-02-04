@@ -1,12 +1,10 @@
-use std::{rc::Rc, sync::LazyLock};
-
-use crate::{settings_store::parse_json_with_comments, SettingsAssets};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, IndexMap};
 use convert_case::{Case, Casing};
+use fs::Fs;
 use gpui::{
-    Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
-    NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
+    Action, ActionBuildError, App, AsyncApp, InvalidKeystrokeError, KeyBinding,
+    KeyBindingContextPredicate, NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
@@ -15,8 +13,14 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fmt::Write;
+use std::{fmt::Write, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::LazyLock};
 use util::{asset_str, markdown::MarkdownString};
+
+use crate::{
+    utils::{parse_json_with_comments, update_value_in_json_text},
+    SettingsAssets,
+};
 
 // Note that the doc comments on these are shown by json-language-server when editing the keymap, so
 // they should be considered user-facing documentation. Documentation is not handled well with
@@ -553,12 +557,95 @@ impl KeymapFile {
         self.0.iter()
     }
 
-    pub fn are_actions_deprecated(content: &str) -> bool {
-        let keymap_file = match KeymapFile::parse(content) {
+    fn json_tab_size() -> usize {
+        const DEFAULT_JSON_TAB_SIZE: usize = 2;
+        // todo: use from settings
+        DEFAULT_JSON_TAB_SIZE
+    }
+
+    async fn load_keymap_file(fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(paths::keymap_file()).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        return Ok(crate::initial_keymap_content().to_string());
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn update_keymap_file(
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut Self, &App),
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let old_text = Self::load_keymap_file(&fs).await?;
+        let new_text =
+            cx.update(|cx| Self::new_text_for_update(old_text, |content| update(content, cx)))?;
+        let initial_path = paths::keymap_file().as_path();
+        if fs.is_file(initial_path).await {
+            let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
+                format!("Failed to canonicalize keymap path {:?}", initial_path)
+            })?;
+            fs.atomic_write(resolved_path.clone(), new_text)
+                .await
+                .with_context(|| format!("Failed to write keymap to file {:?}", resolved_path))?;
+        } else {
+            fs.atomic_write(initial_path.to_path_buf(), new_text)
+                .await
+                .with_context(|| format!("Failed to write keymap to file {:?}", initial_path))?;
+        }
+        anyhow::Ok(())
+    }
+
+    /// Updates the value of a keymap in a JSON file, returning the new text
+    /// for that JSON file.
+    pub fn new_text_for_update(old_text: String, update: impl FnOnce(&mut Self)) -> String {
+        let edits = Self::edits_for_update(&old_text, update);
+        let mut new_text = old_text;
+        for (range, replacement) in edits.into_iter() {
+            new_text.replace_range(range, &replacement);
+        }
+        new_text
+    }
+
+    /// Updates the value of a keymap in a JSON file, returning a list
+    /// of edits to apply to the JSON file.
+    pub fn edits_for_update(
+        text: &str,
+        update: impl FnOnce(&mut Self),
+    ) -> Vec<(Range<usize>, String)> {
+        let old_keymap_file = match Self::parse(text) {
             Ok(keymap) => keymap,
-            Err(_) => return false, // let load handle parse errors
+            Err(_) => return Vec::new(),
         };
-        for section in keymap_file.0.iter() {
+        let mut new_keymap_file = old_keymap_file.clone();
+        update(&mut new_keymap_file);
+
+        let old_value = serde_json::to_value(&old_keymap_file).unwrap();
+        let new_value = serde_json::to_value(new_keymap_file).unwrap();
+
+        let mut key_path = Vec::new();
+        let mut edits = Vec::new();
+        let tab_size = Self::json_tab_size();
+        let mut text = text.to_string();
+        update_value_in_json_text(
+            &mut text,
+            &mut key_path,
+            tab_size,
+            &old_value,
+            &new_value,
+            &[],
+            &mut edits,
+        );
+        edits
+    }
+
+    pub fn should_migrate_keymap(&self) -> bool {
+        for section in self.0.iter() {
             if get_migrated_context(&section.context).is_some() {
                 return true;
             }
@@ -573,15 +660,8 @@ impl KeymapFile {
         return false;
     }
 
-    pub fn migrate_keymap_content(content: &str) -> Option<KeymapFile> {
-        if content.is_empty() {
-            return None;
-        }
-        let mut keymap_file = match KeymapFile::parse(content) {
-            Ok(keymap) => keymap,
-            Err(_) => return None,
-        };
-        for section in keymap_file.0.iter_mut() {
+    pub fn migrate_keymap(&mut self) {
+        for section in self.0.iter_mut() {
             if let Some(migrated_context) = get_migrated_context(&section.context) {
                 section.context = migrated_context;
             }
@@ -593,7 +673,6 @@ impl KeymapFile {
                 }
             }
         }
-        Some(keymap_file)
     }
 }
 
