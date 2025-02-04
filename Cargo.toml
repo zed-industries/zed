@@ -513,6 +513,7 @@ tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.23"
 tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
+tree-sitter-gitcommit = {git  = "https://github.com/the-mikedavis/tree-sitter-git-commit", rev = "6f193a66e9aa872760823dff020960c6cedc37b3"}
 tree-sitter-go = "0.23"
 tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }

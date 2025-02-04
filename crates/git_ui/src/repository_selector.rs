@@ -4,7 +4,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{
-    git::{GitState, RepositoryHandle},
+    git::{GitState, Repository},
     Project,
 };
 use std::sync::Arc;
@@ -117,13 +117,13 @@ impl<T: PopoverTrigger> RenderOnce for RepositorySelectorPopoverMenu<T> {
 pub struct RepositorySelectorDelegate {
     project: WeakEntity<Project>,
     repository_selector: WeakEntity<RepositorySelector>,
-    repository_entries: Vec<RepositoryHandle>,
-    filtered_repositories: Vec<RepositoryHandle>,
+    repository_entries: Vec<Entity<Repository>>,
+    filtered_repositories: Vec<Entity<Repository>>,
     selected_index: usize,
 }
 
 impl RepositorySelectorDelegate {
-    pub fn update_repository_entries(&mut self, all_repositories: Vec<RepositoryHandle>) {
+    pub fn update_repository_entries(&mut self, all_repositories: Vec<Entity<Repository>>) {
         self.repository_entries = all_repositories.clone();
         self.filtered_repositories = all_repositories;
         self.selected_index = 0;

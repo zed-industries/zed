@@ -9,7 +9,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::{GitRepo, GitState, RepositoryHandle},
+    git::{GitRepo, GitState, Repository},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -759,7 +759,7 @@ impl HeadlessProject {
         worktree_id: WorktreeId,
         work_directory_id: ProjectEntryId,
         cx: &mut AsyncApp,
-    ) -> Result<RepositoryHandle> {
+    ) -> Result<Entity<Repository>> {
         this.update(cx, |project, cx| {
             let repository_handle = project
                 .git_state

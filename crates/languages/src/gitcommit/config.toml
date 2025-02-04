@@ -1,0 +1,19 @@
+# TODO kb credits to original extension (git-firefly)
+name = "Git Commit"
+grammar = "git_commit"
+path_suffixes = [
+  "TAG_EDITMSG",
+  "MERGE_MSG",
+  "COMMIT_EDITMSG",
+  "NOTES_EDITMSG",
+  "EDIT_DESCRIPTION",
+]
+line_comments = ["#"]
+brackets = [
+  { start = "(", end = ")", close = true, newline = false },
+  { start = "`", end = "`", close = true, newline = false },
+  { start = "\"", end = "\"", close = true, newline = false },
+  { start = "'", end = "'", close = true, newline = false },
+  { start = "{", end = "}", close = true, newline = false },
+  { start = "[", end = "]", close = true, newline = false },
+]

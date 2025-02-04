@@ -16,7 +16,7 @@ use git::{CommitAllChanges, CommitChanges, ToggleStaged, COMMIT_MESSAGE};
 use gpui::*;
 use language::{Buffer, BufferId};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::git::{GitEvent, GitRepo, RepositoryHandle};
+use project::git::{GitEvent, GitRepo, Repository};
 use project::{CreateOptions, Fs, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use rpc::proto;
 use serde::{Deserialize, Serialize};
@@ -145,7 +145,7 @@ pub struct GitPanel {
     pending_serialization: Task<Option<()>>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    active_repository: Option<RepositoryHandle>,
+    active_repository: Option<Entity<Repository>>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
@@ -166,10 +166,11 @@ pub struct GitPanel {
 
 fn commit_message_buffer(
     project: &Entity<Project>,
-    active_repository: &RepositoryHandle,
+    active_repository: &Entity<Repository>,
     cx: &mut App,
 ) -> Task<Result<Entity<Buffer>>> {
-    match &active_repository.git_repo {
+    let git_repo = active_repository.read(cx).git_repo.clone();
+    match &git_repo {
         GitRepo::Local(repo) => {
             let commit_message_file = repo.dot_git_dir().join(*COMMIT_MESSAGE);
             let fs = project.read(cx).fs().clone();
@@ -215,6 +216,7 @@ fn commit_message_buffer(
                         |project, cx| project.wait_for_remote_buffer(buffer_id, cx)
                     })?
                     .await?;
+                buffer.update(&mut cx, |buffer, cx| buffer.set_language("git commit"));
                 Ok(buffer)
             })
         }
@@ -892,62 +894,43 @@ impl GitPanel {
     ) {
         let project = self.project.clone();
         let handle = cx.entity().downgrade();
-        self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
+        self.reopen_commit_buffer(window, cx);
+        self.update_visible_entries_task = cx.spawn_in(window, |git_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
-                let Ok(commit_message_buffer) = git_panel.update_in(&mut cx, |git_panel, _, cx| {
-                    match git_panel.active_repository.as_ref() {
-                        Some(active_repository) => {
-                            let new_repository_id = (
-                                active_repository.worktree_id,
-                                active_repository.repository_entry.work_directory_id(),
-                            );
-                            if git_panel.commit_editor_for_repository != Some(new_repository_id) {
-                                git_panel.commit_editor_for_repository = Some(new_repository_id);
-                                return ControlFlow::Continue(Some(commit_message_buffer(
-                                    &project,
-                                    active_repository,
-                                    cx,
-                                )));
-                            }
-                        }
-                        None => {
-                            if git_panel.commit_editor_for_repository.is_some() {
-                                git_panel.commit_editor_for_repository = None;
-                                return ControlFlow::Continue(None);
-                            }
-                        }
-                    }
-                    ControlFlow::Break(())
-                }) else {
-                    return;
-                };
-
-                let commit_message_buffer = match commit_message_buffer {
-                    ControlFlow::Continue(Some(commit_message_buffer)) => {
-                        match commit_message_buffer.await.log_err() {
-                            Some(buffer) => ControlFlow::Continue(Some(buffer)),
-                            None => return,
-                        }
-                    }
-                    ControlFlow::Continue(None) => ControlFlow::Continue(None),
-                    ControlFlow::Break(()) => ControlFlow::Break(()),
-                };
                 git_panel
                     .update_in(&mut cx, |git_panel, window, cx| {
-                        git_panel.update_visible_entries(cx);
                         if clear_pending {
                             git_panel.clear_pending();
                         }
-                        if let ControlFlow::Continue(commit_message_buffer) = commit_message_buffer
-                        {
-                            git_panel.commit_editor = cx
-                                .new(|cx| commit_message_editor(commit_message_buffer, window, cx))
-                        }
+                        git_panel.update_visible_entries(cx);
                     })
                     .ok();
             }
         });
+    }
+
+    fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        let project = self.project.clone();
+
+        let load_buffer = active_repo.update(cx, |active_repo, cx| {
+            active_repo.open_commit_buffer(project, cx)
+        });
+
+        cx.spawn(|this, mut cx| async move {
+            let buffer = load_buffer.await?;
+            this.update(&mut cx, |this, cx| {
+                this.commit_editor.update(cx, |editor, cx| {
+                    if editor.buffer().read(cx).as_singleton() != Some(buffer) {
+                        this.commit_editor =
+                            cx.new(|cx| commit_message_editor(Some(buffer), window, cx));
+                    }
+                })
+            });
+        })
     }
 
     fn clear_pending(&mut self) {
@@ -1140,7 +1123,7 @@ impl GitPanel {
         let entry_count = self
             .active_repository
             .as_ref()
-            .map_or(0, RepositoryHandle::entry_count);
+            .map_or(0, |repo| repo.read(cx).entry_count());
 
         let changes_string = match entry_count {
             0 => "No changes".to_string(),

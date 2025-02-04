@@ -1423,7 +1423,7 @@ impl Buffer {
     /// If the buffer or grammar changed since the start of the background parse,
     /// initiate an additional reparse recursively. To avoid concurrent parses
     /// for the same buffer, we only initiate a new parse if we are not already
-    /// parsing in the background.
+    /// parsing in the bilde.
     pub fn reparse(&mut self, cx: &mut Context<Self>) {
         if self.parsing_in_background {
             return;
