@@ -228,10 +228,20 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                fn icon_button() -> IconButton {
-                    IconButton::new("zed-predict-pending-button", IconName::ZedPredict)
+                let enabled = self
+                    .editor_enabled
+                    .unwrap_or_else(|| all_language_settings.show_inline_completions(None, cx));
+
+                let zeta_icon = if enabled {
+                    IconName::ZedPredict
+                } else {
+                    IconName::ZedPredictDisabled
+                };
+
+                let icon_button = || {
+                    IconButton::new("zed-predict-pending-button", zeta_icon)
                         .shape(IconButtonShape::Square)
-                }
+                };
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
@@ -266,7 +276,7 @@ impl Render for InlineCompletionButton {
 
                 let this = cx.entity().clone();
 
-                if !self.popover_menu_handle.is_deployed() {
+                if self.popover_menu_handle.is_deployed() {
                     icon_button().tooltip(|window, cx| {
                         Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
                     });
