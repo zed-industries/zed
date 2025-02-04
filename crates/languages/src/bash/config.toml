@@ -6,8 +6,23 @@ line_comments = ["# "]
 first_line_pattern = '^#!.*\b(?:ash|bash|dash|sh|zsh)\b'
 brackets = [
     { start = "[", end = "]", close = true, newline = false },
-    { start = "(", end = ")", close = true, newline = false },
-    { start = "{", end = "}", close = true, newline = false },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "{", end = "}", close = true, newline = true },
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
     { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
 ]
+
+### WARN: the following is not working when you insert an `elif` just before an else
+### example: (^ is cursor after hitting enter)
+### ```
+### if true; then
+###     foo
+###     elif
+###         ^
+### else
+###     bar
+### fi
+### ```
+increase_indent_pattern = "(\\s*|;)(do|then|in|else|elif)\\b.*$"
+decrease_indent_pattern = "(\\s*|;)(fi|done|esac|else|elif)\\b.*$"
+# make sure to test each line mode & block mode

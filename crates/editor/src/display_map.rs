@@ -508,7 +508,7 @@ impl DisplayMap {
 
     pub(crate) fn splice_inlays(
         &mut self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
         cx: &mut Context<Self>,
     ) {

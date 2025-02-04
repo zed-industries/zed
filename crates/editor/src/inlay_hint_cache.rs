@@ -1253,7 +1253,7 @@ fn apply_hint_update(
         editor.inlay_hint_cache.version += 1;
     }
     if displayed_inlays_changed {
-        editor.splice_inlays(to_remove, to_insert, cx)
+        editor.splice_inlays(&to_remove, to_insert, cx)
     }
 }
 

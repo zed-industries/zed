@@ -341,7 +341,6 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion());
             // Since we have both, the copilot suggestion is not shown inline
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
@@ -399,7 +398,6 @@ mod tests {
         executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
@@ -419,7 +417,6 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
@@ -934,7 +931,6 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion(),);
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
