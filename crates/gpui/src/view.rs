@@ -155,8 +155,10 @@ impl Element for AnyView {
             let layout_id = window.request_layout(root_style, None, cx);
             (layout_id, None)
         } else {
+            window.push_rendered_view(self.entity_id());
             let mut element = (self.render)(self, window, cx);
             let layout_id = element.request_layout(window, cx);
+            window.pop_rendered_view();
             (layout_id, Some(element))
         }
     }
@@ -197,12 +199,14 @@ impl Element for AnyView {
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     let prepaint_start = window.prepaint_index();
+                    window.push_rendered_view(self.entity_id());
                     let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                         let mut element = (self.render)(self, window, cx);
                         element.layout_as_root(bounds.size.into(), window, cx);
                         element.prepaint_at(bounds.origin, window, cx);
                         element
                     });
+                    window.pop_rendered_view();
                     let prepaint_end = window.prepaint_index();
                     window.refreshing = refreshing;
 
@@ -223,7 +227,9 @@ impl Element for AnyView {
             )
         } else {
             let mut element = element.take().unwrap();
+            window.push_rendered_view(self.entity_id());
             element.prepaint(window, cx);
+            window.pop_rendered_view();
             Some(element)
         }
     }
@@ -247,7 +253,9 @@ impl Element for AnyView {
 
                     if let Some(element) = element {
                         let refreshing = mem::replace(&mut window.refreshing, true);
+                        window.push_rendered_view(self.entity_id());
                         element.paint(window, cx);
+                        window.pop_rendered_view();
                         window.refreshing = refreshing;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
