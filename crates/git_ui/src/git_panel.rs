@@ -1017,7 +1017,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn header_state<'a>(&self, header_type: Section) -> ToggleState {
+    fn header_state(&self, header_type: Section) -> ToggleState {
         let mut count = 0;
         let mut staged_count = 0;
         'outer: for entry in &self.entries {
