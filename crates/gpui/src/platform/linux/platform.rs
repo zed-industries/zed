@@ -773,7 +773,7 @@ impl crate::Keystroke {
 
     /**
      * Returns which symbol the dead key represents
-     * https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux
+     * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
      */
     pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
         match keysym {

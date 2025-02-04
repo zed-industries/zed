@@ -42,9 +42,9 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::Surface)
     }
 
-    /// See [`elevation_1`].
+    /// See [`elevation_1`](Self::elevation_1).
     ///
-    /// Renders a borderless version [`elevation_1`].
+    /// Renders a borderless version [`elevation_1`](Self::elevation_1).
     fn elevation_1_borderless(self, cx: &mut App) -> Self {
         elevated_borderless(self, cx, ElevationIndex::Surface)
     }
@@ -58,9 +58,9 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::ElevatedSurface)
     }
 
-    /// See [`elevation_2`].
+    /// See [`elevation_2`](Self::elevation_2).
     ///
-    /// Renders a borderless version [`elevation_2`].
+    /// Renders a borderless version [`elevation_2`](Self::elevation_2).
     fn elevation_2_borderless(self, cx: &mut App) -> Self {
         elevated_borderless(self, cx, ElevationIndex::ElevatedSurface)
     }
@@ -78,9 +78,9 @@ pub trait StyledExt: Styled + Sized {
         elevated(self, cx, ElevationIndex::ModalSurface)
     }
 
-    /// See [`elevation_3`].
+    /// See [`elevation_3`](Self::elevation_3).
     ///
-    /// Renders a borderless version [`elevation_3`].
+    /// Renders a borderless version [`elevation_3`](Self::elevation_3).
     fn elevation_3_borderless(self, cx: &mut App) -> Self {
         elevated_borderless(self, cx, ElevationIndex::ModalSurface)
     }

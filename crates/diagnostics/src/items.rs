@@ -86,9 +86,6 @@ impl Render for DiagnosticIndicator {
 
         h_flex()
             .gap_2()
-            .pl_1()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)

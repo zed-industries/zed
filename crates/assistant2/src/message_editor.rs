@@ -12,6 +12,7 @@ use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
 use std::time::Duration;
+use text::Bias;
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor, Tooltip,
@@ -239,7 +240,10 @@ impl MessageEditor {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let newest_cursor = editor.selections.newest::<Point>(cx).head();
                     if newest_cursor.column > 0 {
-                        let behind_cursor = Point::new(newest_cursor.row, newest_cursor.column - 1);
+                        let behind_cursor = snapshot.clip_point(
+                            Point::new(newest_cursor.row, newest_cursor.column - 1),
+                            Bias::Left,
+                        );
                         let char_behind_cursor = snapshot.chars_at(behind_cursor).next();
                         if char_behind_cursor == Some('@') {
                             self.inline_context_picker_menu_handle.show(window, cx);

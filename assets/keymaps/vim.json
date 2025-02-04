@@ -421,7 +421,8 @@
       "i": "vim::IndentObj",
       "shift-i": ["vim::IndentObj", { "includeBelow": true }],
       "f": "vim::Method",
-      "c": "vim::Class"
+      "c": "vim::Class",
+      "e": "vim::EntireFile"
     }
   },
   {

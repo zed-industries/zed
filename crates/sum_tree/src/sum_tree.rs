@@ -32,7 +32,7 @@ pub trait KeyedItem: Item {
 
 /// A type that describes the Sum of all [`Item`]s in a subtree of the [`SumTree`]
 ///
-/// Each Summary type can have multiple [`Dimensions`] that it measures,
+/// Each Summary type can have multiple [`Dimension`]s that it measures,
 /// which can be used to navigate the tree
 pub trait Summary: Clone {
     type Context;

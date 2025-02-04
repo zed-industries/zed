@@ -1284,10 +1284,7 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, cx| {
-                    window.activate_window();
-                    cx.activate(true);
-                })
+                .update(&mut cx, |_, window, _| window.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })
@@ -2710,9 +2707,7 @@ impl Workspace {
         cx: &mut App,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
-            self.client()
-                .telemetry()
-                .report_app_event(format!("{}: open", text));
+            telemetry::event!(text);
         }
 
         pane.update(cx, |pane, cx| {
@@ -3240,9 +3235,31 @@ impl Workspace {
         }
     }
 
-    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut Context<Self>) {
-        self.center
-            .resize(&self.active_pane, axis, amount, &self.bounds);
+    pub fn resize_pane(
+        &mut self,
+        axis: gpui::Axis,
+        amount: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let docks = self.all_docks();
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+
+        if let Some(dock) = active_dock {
+            let Some(panel_size) = dock.read(cx).active_panel_size(window, cx) else {
+                return;
+            };
+            match dock.read(cx).position() {
+                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
+                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
+                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+            }
+        } else {
+            self.center
+                .resize(&self.active_pane, axis, amount, &self.bounds);
+        }
         cx.notify();
     }
 
@@ -6146,14 +6163,10 @@ pub fn open_ssh_project(
 
         cx.update_window(window.into(), |_, window, cx| {
             window.replace_root(cx, |window, cx| {
+                telemetry::event!("SSH Project Opened");
+
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
-
-                workspace
-                    .client()
-                    .telemetry()
-                    .report_app_event("open ssh project".to_string());
-
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
                 workspace
             });
