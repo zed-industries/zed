@@ -1369,6 +1369,12 @@ impl Sub<u32> for DisplayRow {
 }
 
 impl DisplayPoint {
+    pub fn offset_plus(&self, map: &DisplaySnapshot, count: usize) -> DisplayPoint {
+        let line_len = map.line_len(self.row()) as usize;
+        let new_col = (self.column() as usize + count).min(line_len);
+        DisplayPoint::new(self.row(), new_col as u32)
+    }
+
     pub fn new(row: DisplayRow, column: u32) -> Self {
         Self(BlockPoint(Point::new(row.0, column)))
     }
