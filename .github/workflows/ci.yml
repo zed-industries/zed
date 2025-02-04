@@ -237,7 +237,7 @@ jobs:
     steps:
       - name: Test
         run: |
-          cd E:\
+          cd C:\
           ls
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       # - name: Create Dev Drive using ReFS
