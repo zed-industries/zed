@@ -61,11 +61,6 @@ impl PartialEq<RepositoryEntry> for RepositoryHandle {
 }
 
 enum Message {
-    StageAndCommit {
-        git_repo: GitRepo,
-        paths: Vec<RepoPath>,
-        name_and_email: Option<(SharedString, SharedString)>,
-    },
     Commit {
         git_repo: GitRepo,
         name_and_email: Option<(SharedString, SharedString)>,
@@ -412,30 +407,6 @@ impl RepositoryHandle {
             },
             result_tx,
         ))?;
-        result_rx.await?
-    }
-
-    pub async fn commit_all(
-        &self,
-        name_and_email: Option<(SharedString, SharedString)>,
-    ) -> anyhow::Result<()> {
-        let to_stage = self
-            .repository_entry
-            .status()
-            .filter(|entry| !entry.status.is_staged().unwrap_or(false))
-            .map(|entry| entry.repo_path.clone())
-            .collect();
-
-        let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        self.update_sender.unbounded_send((
-            Message::StageAndCommit {
-                git_repo: self.git_repo.clone(),
-                paths: to_stage,
-                name_and_email,
-            },
-            result_tx,
-        ))?;
-
         result_rx.await?
     }
 }

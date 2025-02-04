@@ -29,7 +29,7 @@ use ui::{
     prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, IndentGuideColors,
     ListHeader, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
-use util::{ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
@@ -77,28 +77,34 @@ struct SerializedGitPanel {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-enum SectionHeader {
+enum Section {
     Changed,
     New,
 }
 
+impl Section {
+    pub fn contains(&self, status: FileStatus) -> bool {
+        match self {
+            Section::Changed => !status.is_created(),
+            Section::New => status.is_created(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct GitHeaderEntry {
-    header: SectionHeader,
+    header: Section,
     all_staged: ToggleState,
 }
 
 impl GitHeaderEntry {
     pub fn contains(&self, status_entry: &GitStatusEntry) -> bool {
-        match self.header {
-            SectionHeader::Changed => !status_entry.status.is_created(),
-            SectionHeader::New => status_entry.status.is_created(),
-        }
+        self.header.contains(status_entry.status)
     }
     pub fn title(&self) -> &'static str {
         match self.header {
-            SectionHeader::Changed => "Changed",
-            SectionHeader::New => "New",
+            Section::Changed => "Changed",
+            Section::New => "New",
         }
     }
 }
@@ -147,7 +153,7 @@ pub struct GitPanel {
     entries_by_path: collections::HashMap<RepoPath, usize>,
     width: Option<Pixels>,
     pending: HashMap<RepoPath, bool>,
-    commit_task: Task<()>,
+    commit_task: Task<Result<()>>,
     commit_pending: bool,
 }
 
@@ -307,7 +313,7 @@ impl GitPanel {
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
                 update_visible_entries_task: Task::ready(()),
-                commit_task: Task::ready(()),
+                commit_task: Task::ready(Ok(())),
                 commit_pending: false,
                 active_repository,
                 scroll_handle,
@@ -626,32 +632,36 @@ impl GitPanel {
                 (!section.all_staged.selected(), entries)
             }
         };
-        for repo_path in repo_paths {
+        for repo_path in repo_paths.iter() {
             self.pending.insert(repo_path.clone(), stage);
         }
 
-        let future = if stage {
-            active_repository.stage_entries(repo_paths.clone())
-        } else {
-            active_repository.unstage_entries(repo_paths.clone())
-        };
-        cx.spawn(|this, cx| async move {
-            let result = future.await;
-            this.update(&mut cx, |this, cx| {
-                for repo_path in repo_paths {
-                    if this.pending.get(&repo_path) == Some(&stage) {
-                        this.pending.remove(&repo_path);
-                    }
-                    match result {
-                        Err(e) => {
-                            this.show_err_toast("git-operation-error", e, cx);
+        cx.spawn({
+            let repo_paths = repo_paths.clone();
+            let active_repository = active_repository.clone();
+            |this, mut cx| async move {
+                let result = if stage {
+                    active_repository.stage_entries(repo_paths.clone()).await
+                } else {
+                    active_repository.unstage_entries(repo_paths.clone()).await
+                };
+
+                this.update(&mut cx, |this, cx| {
+                    for repo_path in repo_paths {
+                        if this.pending.get(&repo_path) == Some(&stage) {
+                            this.pending.remove(&repo_path);
                         }
-                        _ => {}
                     }
-                }
-                cx.notify();
-            });
-        });
+                    result
+                        .map_err(|e| {
+                            this.show_err_toast(e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
     }
 
     fn toggle_staged_for_selected(
@@ -687,32 +697,59 @@ impl GitPanel {
     }
 
     fn stage_all(&mut self, _: &git::StageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.as_ref().cloned() else {
             return;
         };
-        for entry in &mut self.entries {
-            if let Some(mut status_entry) = entry.status_entry() {
-                status_entry.is_staged = Some(true);
+        let mut pending_paths = Vec::new();
+        for entry in self.entries.iter() {
+            if let Some(status_entry) = entry.status_entry() {
+                self.pending.insert(status_entry.repo_path.clone(), true);
+                pending_paths.push(status_entry.repo_path.clone());
             }
         }
 
-        if let Err(e) = active_repository.stage_all(self.err_sender.clone()) {
-            self.show_err_toast("stage all error", e, cx);
-        };
+        cx.spawn(|this, mut cx| async move {
+            if let Err(e) = active_repository.stage_all().await {
+                this.update(&mut cx, |this, cx| {
+                    this.show_err_toast(e, cx);
+                })
+                .ok();
+            };
+            this.update(&mut cx, |this, _cx| {
+                for repo_path in pending_paths {
+                    this.pending.remove(&repo_path);
+                }
+            })
+        })
+        .detach();
     }
 
     fn unstage_all(&mut self, _: &git::UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(active_repository) = self.active_repository.as_ref() else {
+        let Some(active_repository) = self.active_repository.as_ref().cloned() else {
             return;
         };
-        for entry in &mut self.entries {
-            if let Some(mut status_entry) = entry.status_entry() {
-                status_entry.is_staged = Some(false);
+        let mut pending_paths = Vec::new();
+        for entry in self.entries.iter() {
+            if let Some(status_entry) = entry.status_entry() {
+                self.pending.insert(status_entry.repo_path.clone(), false);
+                pending_paths.push(status_entry.repo_path.clone());
             }
         }
-        if let Err(e) = active_repository.unstage_all(self.err_sender.clone()) {
-            self.show_err_toast("unstage all error", e, cx);
-        };
+
+        cx.spawn(|this, mut cx| async move {
+            if let Err(e) = active_repository.unstage_all().await {
+                this.update(&mut cx, |this, cx| {
+                    this.show_err_toast(e, cx);
+                })
+                .ok();
+            };
+            this.update(&mut cx, |this, _cx| {
+                for repo_path in pending_paths {
+                    this.pending.remove(&repo_path);
+                }
+            })
+        })
+        .detach();
     }
 
     fn discard_all(&mut self, _: &git::RevertAll, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -741,37 +778,30 @@ impl GitPanel {
         let save_task = self.commit_editor.update(cx, |editor, cx| {
             editor.save(false, self.project.clone(), window, cx)
         });
-        let mut err_sender = self.err_sender.clone();
         let commit_editor = self.commit_editor.clone();
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
-            match save_task.await {
-                Ok(()) => {
-                    if let Some(Ok(())) = cx
-                        .update(|_, cx| {
-                            active_repository.commit(name_and_email, err_sender.clone(), cx)
-                        })
-                        .ok()
-                    {
-                        cx.update(|window, cx| {
-                            commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
-                        })
-                        .ok();
-                    }
-                }
-                Err(e) => {
-                    err_sender.send(e).await.ok();
-                }
-            }
-            git_panel
-                .update(&mut cx, |git_panel, _| {
-                    git_panel.commit_pending = false;
+            let result = maybe!(async {
+                save_task.await?;
+                active_repository.commit(name_and_email).await?;
+                cx.update(|window, cx| {
+                    commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
                 })
-                .ok();
+            })
+            .await;
+
+            git_panel.update(&mut cx, |git_panel, cx| {
+                git_panel.commit_pending = false;
+                result
+                    .map_err(|e| {
+                        git_panel.show_err_toast(e, cx);
+                    })
+                    .ok();
+            })
         });
     }
 
     /// Commit all changes, regardless of whether they are staged or not
-    fn commit_all_changes(
+    fn commit_tracked_changes(
         &mut self,
         _: &git::CommitAllChanges,
         name_and_email: Option<(SharedString, SharedString)>,
@@ -791,33 +821,43 @@ impl GitPanel {
         let save_task = self.commit_editor.update(cx, |editor, cx| {
             editor.save(false, self.project.clone(), window, cx)
         });
-        let mut err_sender = self.err_sender.clone();
+
         let commit_editor = self.commit_editor.clone();
+        let tracked_files = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| {
+                Section::Changed.contains(status_entry.status)
+                    && !status_entry.is_staged.unwrap_or(false)
+            })
+            .map(|status_entry| status_entry.repo_path)
+            .collect::<Vec<_>>();
+
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
-            match save_task.await {
-                Ok(()) => {
-                    // TODO:
-                    // - pending: HashMap<RepoPath, bool> ->  When rendering UI, check pending map
-                    // - stage all tracked files, then run git commit
-                    if let Some(Ok(())) = cx
-                        .update(|_, cx| active_repository.commit_all(name_and_email, cx))
-                        .ok()
-                    {
-                        cx.update(|window, cx| {
-                            commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
+            let result = maybe!(async {
+                save_task.await?;
+                active_repository.stage_entries(tracked_files).await?;
+                active_repository.commit(name_and_email).await
+            })
+            .await;
+            cx.update(|window, cx| match result {
+                Ok(_) => commit_editor.update(cx, |editor, cx| {
+                    editor.clear(window, cx);
+                }),
+
+                Err(e) => {
+                    git_panel
+                        .update(cx, |git_panel, cx| {
+                            git_panel.show_err_toast(e, cx);
                         })
                         .ok();
-                    }
                 }
-                Err(e) => {
-                    err_sender.send(e).await.ok();
-                }
-            }
-            git_panel
-                .update(&mut cx, |git_panel, _| {
-                    git_panel.commit_pending = false;
-                })
-                .ok();
+            })?;
+
+            git_panel.update(&mut cx, |git_panel, _| {
+                git_panel.commit_pending = false;
+            })
         });
     }
 
@@ -1004,7 +1044,7 @@ impl GitPanel {
             let toggle_state =
                 ToggleState::from_any_and_all(changed_any_staged, changed_all_staged);
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
-                header: SectionHeader::Changed,
+                header: Section::Changed,
                 all_staged: toggle_state,
             }));
             self.entries.extend(
@@ -1016,7 +1056,7 @@ impl GitPanel {
         if new_entries.len() > 0 {
             let toggle_state = ToggleState::from_any_and_all(new_any_staged, new_all_staged);
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
-                header: SectionHeader::New,
+                header: Section::New,
                 all_staged: toggle_state,
             }));
             self.entries.extend(
@@ -1037,11 +1077,11 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn show_err_toast(&self, id: &'static str, e: anyhow::Error, cx: &mut Context<Self>) {
+    fn show_err_toast(&self, e: anyhow::Error, cx: &mut App) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
-        let notif_id = NotificationId::Named(id.into());
+        let notif_id = NotificationId::Named("git-operation-error".into());
         let message = e.to_string();
         workspace.update(cx, |workspace, cx| {
             let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
@@ -1217,7 +1257,12 @@ impl GitPanel {
             .on_click({
                 let name_and_email = name_and_email.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.commit_all_changes(&CommitAllChanges, name_and_email.clone(), window, cx)
+                    this.commit_tracked_changes(
+                        &CommitAllChanges,
+                        name_and_email.clone(),
+                        window,
+                        cx,
+                    )
                 })
             });
 
@@ -1468,6 +1513,7 @@ impl GitPanel {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| entry.repo_path.to_string_lossy().into_owned());
 
+        let pending = self.pending.get(&entry.repo_path).copied();
         let repo_path = entry.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -1499,22 +1545,25 @@ impl GitPanel {
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
 
-        let checkbox = Checkbox::new(
-            id,
-            entry
-                .is_staged
-                .map_or(ToggleState::Indeterminate, ToggleState::from),
-        )
-        .disabled(!has_write_access)
-        .fill()
-        .elevation(ElevationIndex::Surface)
-        .on_click({
-            let repo_path = repo_path.clone();
-            let entry = entry.clone();
-            cx.listener(move |this, toggle, _window, cx| {
-                self.toggle_staged_for_entry(entry, window, cx);
-            })
-        });
+        let is_staged = pending
+            .or_else(|| entry.is_staged)
+            .map(ToggleState::from)
+            .unwrap_or(ToggleState::Indeterminate);
+
+        let checkbox = Checkbox::new(id, is_staged)
+            .disabled(!has_write_access)
+            .fill()
+            .elevation(ElevationIndex::Surface)
+            .on_click({
+                let entry = entry.clone();
+                cx.listener(move |this, _, window, cx| {
+                    this.toggle_staged_for_entry(
+                        &GitListEntry::GitStatusEntry(entry.clone()),
+                        window,
+                        cx,
+                    );
+                })
+            });
 
         let start_slot = h_flex()
             .gap(DynamicSpacing::Base04.rems(cx))
@@ -1672,7 +1721,7 @@ impl Render for GitPanel {
                         .on_action({
                             let name_and_email = name_and_email.clone();
                             cx.listener(move |git_panel, &CommitAllChanges, window, cx| {
-                                git_panel.commit_all_changes(
+                                git_panel.commit_tracked_changes(
                                     &CommitAllChanges,
                                     name_and_email.clone(),
                                     window,
