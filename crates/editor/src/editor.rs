@@ -466,7 +466,7 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 pub(crate) enum EditDisplayMode {
-    TabAccept,
+    TabAccept(bool),
     DiffPopover,
     Inline,
 }
@@ -4953,6 +4953,13 @@ impl Editor {
         true
     }
 
+    pub fn is_previewing_inline_completion(&self) -> bool {
+        matches!(
+            self.context_menu.borrow().as_ref(),
+            Some(CodeContextMenu::Completions(menu)) if !menu.is_empty() && menu.previewing_inline_completion
+        )
+    }
+
     fn update_inline_completion_preview(
         &mut self,
         modifiers: &Modifiers,
@@ -5117,7 +5124,7 @@ impl Editor {
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept
+                    EditDisplayMode::TabAccept(self.is_previewing_inline_completion())
                 } else {
                     EditDisplayMode::Inline
                 }
