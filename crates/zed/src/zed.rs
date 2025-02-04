@@ -4029,6 +4029,7 @@ mod tests {
                 app_state.client.http_client().clone(),
                 cx,
             );
+            image_viewer::init(cx);
             language_model::init(cx);
             language_models::init(
                 app_state.user_store.clone(),

@@ -787,6 +787,7 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
+            image_viewer::init(cx);
         });
     }
 
