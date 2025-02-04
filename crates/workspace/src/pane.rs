@@ -582,6 +582,11 @@ impl Pane {
 
         if let Some(active_item) = self.active_item() {
             if self.focus_handle.is_focused(window) {
+                // Schedule a redraw next frame, so that the focus changes below take effect
+                cx.on_next_frame(window, |_, _, cx| {
+                    cx.notify();
+                });
+
                 // Pane was focused directly. We need to either focus a view inside the active item,
                 // or focus the active item itself
                 if let Some(weak_last_focus_handle) =
