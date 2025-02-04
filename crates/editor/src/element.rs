@@ -3241,11 +3241,15 @@ impl EditorElement {
                 } else {
                     None
                 };
+                let min_width = context_menu
+                    .as_ref()
+                    .map_or(px(0.), |(_, _, size)| size.width);
                 let max_width = max_width_for_stable_x.max(
                     context_menu
                         .as_ref()
                         .map_or(px(0.), |(_, _, size)| size.width),
                 );
+
                 let edit_prediction = if edit_prediction_popover_visible {
                     let accept_keystroke: Option<Keystroke>;
 
@@ -3299,6 +3303,7 @@ impl EditorElement {
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
+                            min_width,
                             max_width,
                             cursor_point,
                             &line_layouts,
