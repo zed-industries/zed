@@ -876,7 +876,7 @@ impl Render for PanelButtons {
         h_flex()
             .gap_1()
             .children(buttons)
-            .when(has_buttons, |this| {
+            .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))
             })
     }
