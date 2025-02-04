@@ -4059,7 +4059,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "zed_predict_onboarding",
+ "zed_actions",
 ]
 
 [[package]]
@@ -6454,7 +6454,6 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
- "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -13590,7 +13589,7 @@ dependencies = [
  "windows 0.58.0",
  "workspace",
  "zed_actions",
- "zed_predict_onboarding",
+ "zeta",
 ]
 
 [[package]]
@@ -16588,7 +16587,6 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
- "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -16700,25 +16698,6 @@ name = "zed_php"
 version = "0.2.4"
 dependencies = [
  "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_predict_onboarding"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "client",
- "db",
- "feature_flags",
- "fs",
- "gpui",
- "language",
- "menu",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -16906,6 +16885,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "call",
+ "chrono",
  "client",
  "clock",
  "collections",
@@ -16915,6 +16895,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.6",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -16924,6 +16905,8 @@ dependencies = [
  "language_models",
  "log",
  "menu",
+ "postage",
+ "regex",
  "reqwest_client",
  "rpc",
  "serde",
@@ -16936,10 +16919,12 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
+ "unindent",
  "util",
  "uuid",
  "workspace",
  "worktree",
+ "zed_actions",
 ]
 
 [[package]]

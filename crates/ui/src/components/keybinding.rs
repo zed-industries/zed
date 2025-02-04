@@ -97,15 +97,7 @@ pub fn render_key(
     let key_icon = icon_for_key(keystroke, platform_style);
     match key_icon {
         Some(icon) => KeyIcon::new(icon, color).into_any_element(),
-        None => Key::new(
-            if keystroke.key.len() > 1 {
-                keystroke.key.clone()
-            } else {
-                keystroke.key.to_uppercase()
-            },
-            color,
-        )
-        .into_any_element(),
+        None => Key::new(capitalize(&keystroke.key), color).into_any_element(),
     }
 }
 
@@ -119,7 +111,7 @@ fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<
         "delete" => Some(IconName::Delete),
         "return" => Some(IconName::Return),
         "enter" => Some(IconName::Return),
-        // "tab" => Some(IconName::Tab),
+        "tab" => Some(IconName::Tab),
         "space" => Some(IconName::Space),
         "escape" => Some(IconName::Escape),
         "pagedown" => Some(IconName::PageDown),
@@ -192,18 +184,12 @@ pub fn render_modifiers(
         .flat_map(move |modifier| {
             if modifier.enabled {
                 match platform_style {
-                    PlatformStyle::Mac => Some(modifier.mac),
-                    PlatformStyle::Linux => Some(modifier.linux)
-                        .into_iter()
-                        .chain(Some(KeyOrIcon::Key("+")))
-                        .next(),
-                    PlatformStyle::Windows => Some(modifier.windows)
-                        .into_iter()
-                        .chain(Some(KeyOrIcon::Key("+")))
-                        .next(),
+                    PlatformStyle::Mac => vec![modifier.mac],
+                    PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
+                    PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
                 }
             } else {
-                None
+                vec![]
             }
         })
         .map(move |key_or_icon| match key_or_icon {
@@ -359,14 +345,6 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
         text.push(delimiter);
     }
 
-    fn capitalize(str: &str) -> String {
-        let mut chars = str.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-        }
-    }
-
     let key = match keystroke.key.as_str() {
         "pageup" => "PageUp",
         "pagedown" => "PageDown",
@@ -376,6 +354,14 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
     text.push_str(key);
 
     text
+}
+
+fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 #[cfg(test)]

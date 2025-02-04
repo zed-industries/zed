@@ -87,7 +87,7 @@ url.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
-zed_predict_onboarding.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
