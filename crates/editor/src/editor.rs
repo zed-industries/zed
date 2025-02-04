@@ -678,7 +678,7 @@ pub struct Editor {
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
-    // inline completions based on its mode.
+    // edit predictions based on its mode.
     enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
@@ -4927,8 +4927,8 @@ impl Editor {
             .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
 
         let event_type = match accepted {
-            true => "Inline Completion Accepted",
-            false => "Inline Completion Discarded",
+            true => "Edit Prediction Accepted",
+            false => "Edit Prediction Discarded",
         };
         telemetry::event!(
             event_type,
@@ -5415,6 +5415,7 @@ impl Editor {
     #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
+        min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
         line_layouts: &[LineWithInvisibles],
@@ -5429,6 +5430,7 @@ impl Editor {
             return Some(
                 h_flex()
                     .h(self.edit_prediction_cursor_popover_height())
+                    .min_w(min_width)
                     .flex_1()
                     .px_2()
                     .gap_3()
@@ -5458,7 +5460,10 @@ impl Editor {
         let is_refreshing = provider.provider.is_refreshing(cx);
 
         fn pending_completion_container() -> Div {
-            h_flex().gap_3().child(Icon::new(IconName::ZedPredict))
+            h_flex()
+                .flex_1()
+                .gap_3()
+                .child(Icon::new(IconName::ZedPredict))
         }
 
         let completion = match &self.active_inline_completion {
@@ -5506,16 +5511,21 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_move = self
+            .active_inline_completion
+            .as_ref()
+            .map_or(false, |c| c.is_move());
+
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
+                .min_w(min_width)
                 .max_w(max_width)
                 .flex_1()
                 .px_2()
                 .gap_3()
                 .elevation_2(cx)
                 .child(completion)
-                .child(div().w_full())
                 .child(
                     h_flex()
                         .border_l_1()
@@ -5534,23 +5544,18 @@ impl Editor {
                                     } else {
                                         None
                                     },
+                                    !is_move,
                                 )),
                         )
                         .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(
-                            if self
-                                .active_inline_completion
-                                .as_ref()
-                                .map_or(false, |c| c.is_move())
-                            {
-                                div()
-                                    .child(ui::Key::new(&accept_keystroke.key, None))
-                                    .font(buffer_font.clone())
-                                    .into_any()
-                            } else {
-                                Label::new("Preview").color(Color::Muted).into_any_element()
-                            },
-                        ),
+                        .child(if is_move {
+                            div()
+                                .child(ui::Key::new(&accept_keystroke.key, None))
+                                .font(buffer_font.clone())
+                                .into_any()
+                        } else {
+                            Label::new("Preview").color(Color::Muted).into_any_element()
+                        }),
                 )
                 .into_any(),
         )
@@ -5648,7 +5653,7 @@ impl Editor {
                     Icon::new(IconName::ZedPredict).into_any_element()
                 };
 
-                Some(h_flex().gap_3().child(left).child(preview))
+                Some(h_flex().flex_1().gap_3().child(left).child(preview))
             }
 
             InlineCompletion::Move {
@@ -5681,6 +5686,7 @@ impl Editor {
                 Some(
                     h_flex()
                         .gap_3()
+                        .flex_1()
                         .child(render_relative_row_jump(
                             "Jump ",
                             cursor_point.row,

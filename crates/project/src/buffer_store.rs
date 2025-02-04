@@ -645,7 +645,6 @@ impl RemoteBufferStore {
         &self,
         path: Arc<Path>,
         worktree: Entity<Worktree>,
-        skip_file_contents: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         let worktree_id = worktree.read(cx).id().to_proto();
@@ -658,7 +657,6 @@ impl RemoteBufferStore {
                     project_id,
                     worktree_id,
                     path: path_string,
-                    skip_file_contents,
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
@@ -1193,11 +1191,10 @@ impl LocalBufferStore {
         &self,
         path: Arc<Path>,
         worktree: Entity<Worktree>,
-        skip_file_contents: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
-            let load_file = worktree.load_file(path.as_ref(), skip_file_contents, cx);
+            let load_file = worktree.load_file(path.as_ref(), cx);
             let reservation = cx.reserve_entity();
             let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
             cx.spawn(move |_, mut cx| async move {
@@ -1299,16 +1296,16 @@ impl LocalBufferStore {
 
 impl BufferStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_message_handler(Self::handle_buffer_reloaded);
-        client.add_model_message_handler(Self::handle_buffer_saved);
-        client.add_model_message_handler(Self::handle_update_buffer_file);
-        client.add_model_request_handler(Self::handle_save_buffer);
-        client.add_model_request_handler(Self::handle_blame_buffer);
-        client.add_model_request_handler(Self::handle_reload_buffers);
-        client.add_model_request_handler(Self::handle_get_permalink_to_line);
-        client.add_model_request_handler(Self::handle_open_unstaged_changes);
-        client.add_model_request_handler(Self::handle_open_uncommitted_changes);
-        client.add_model_message_handler(Self::handle_update_diff_bases);
+        client.add_entity_message_handler(Self::handle_buffer_reloaded);
+        client.add_entity_message_handler(Self::handle_buffer_saved);
+        client.add_entity_message_handler(Self::handle_update_buffer_file);
+        client.add_entity_request_handler(Self::handle_save_buffer);
+        client.add_entity_request_handler(Self::handle_blame_buffer);
+        client.add_entity_request_handler(Self::handle_reload_buffers);
+        client.add_entity_request_handler(Self::handle_get_permalink_to_line);
+        client.add_entity_request_handler(Self::handle_open_unstaged_changes);
+        client.add_entity_request_handler(Self::handle_open_uncommitted_changes);
+        client.add_entity_message_handler(Self::handle_update_diff_bases);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
@@ -1382,7 +1379,6 @@ impl BufferStore {
     pub fn open_buffer(
         &mut self,
         project_path: ProjectPath,
-        skip_file_contents: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         if let Some(buffer) = self.get_by_path(&project_path, cx) {
@@ -1401,12 +1397,8 @@ impl BufferStore {
                     return Task::ready(Err(anyhow!("no such worktree")));
                 };
                 let load_buffer = match &self.state {
-                    BufferStoreState::Local(this) => {
-                        this.open_buffer(path, worktree, skip_file_contents, cx)
-                    }
-                    BufferStoreState::Remote(this) => {
-                        this.open_buffer(path, worktree, skip_file_contents, cx)
-                    }
+                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, cx),
+                    BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
                 };
 
                 entry
@@ -2026,7 +2018,7 @@ impl BufferStore {
                 let buffers = this.update(&mut cx, |this, cx| {
                     project_paths
                         .into_iter()
-                        .map(|project_path| this.open_buffer(project_path, false, cx))
+                        .map(|project_path| this.open_buffer(project_path, cx))
                         .collect::<Vec<_>>()
                 })?;
                 for buffer_task in buffers {
