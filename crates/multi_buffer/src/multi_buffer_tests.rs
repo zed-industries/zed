@@ -19,13 +19,14 @@ fn init_logger() {
 #[gpui::test]
 fn test_empty_singleton(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local("", cx));
+    let buffer_id = buffer.read(cx).remote_id();
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
     assert_eq!(snapshot.text(), "");
     assert_eq!(
         snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>(),
         [RowInfo {
-            buffer_id: None,
+            buffer_id: Some(buffer_id),
             buffer_row: Some(0),
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None
