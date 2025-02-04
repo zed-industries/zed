@@ -376,7 +376,7 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
     let actual_text = snapshot.text();
     let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
+    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(
         actual_diff,
         indoc! {
@@ -1833,6 +1833,9 @@ impl ReferenceMultibuffer {
         }
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
+            if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
+                continue;
+            }
             if let Err(ix) = excerpt
                 .expanded_diff_hunks
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))
@@ -1875,7 +1878,7 @@ impl ReferenceMultibuffer {
 
                 hunk_range.end = hunk_range.end.min(buffer_range.end);
                 if hunk_range.start > buffer_range.end
-                    || hunk_range.end < buffer_range.start
+                    || hunk_range.start < buffer_range.start
                     || buffer_range.is_empty()
                 {
                     log::trace!("skipping hunk outside excerpt range");
@@ -2064,7 +2067,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                             multibuffer.change_set_for(buf.remote_id())
                         })
                         .unwrap();
-                    log::debug!("change set: {:#?}", change_set.read(cx));
 
                     needs_diff_calculation = true;
                 });
@@ -2269,12 +2271,28 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             .filter_map(|b| if b.next.is_some() { Some(b.row) } else { None })
             .collect::<HashSet<_>>();
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-        let actual_diff = format_diff(&actual_text, &actual_row_infos, &actual_boundary_rows);
 
         let (expected_text, expected_row_infos, expected_boundary_rows) =
             cx.update(|cx| reference.expected_content(cx));
-        let expected_diff =
-            format_diff(&expected_text, &expected_row_infos, &expected_boundary_rows);
+
+        let has_diff = actual_row_infos
+            .iter()
+            .any(|info| info.diff_status.is_some())
+            || expected_row_infos
+                .iter()
+                .any(|info| info.diff_status.is_some());
+        let actual_diff = format_diff(
+            &actual_text,
+            &actual_row_infos,
+            &actual_boundary_rows,
+            Some(has_diff),
+        );
+        let expected_diff = format_diff(
+            &expected_text,
+            &expected_row_infos,
+            &expected_boundary_rows,
+            Some(has_diff),
+        );
 
         log::info!("Multibuffer content:\n{}", actual_diff);
 
@@ -2653,8 +2671,10 @@ fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,
     boundary_rows: &HashSet<MultiBufferRow>,
+    has_diff: Option<bool>,
 ) -> String {
-    let has_diff = row_infos.iter().any(|info| info.diff_status.is_some());
+    let has_diff =
+        has_diff.unwrap_or_else(|| row_infos.iter().any(|info| info.diff_status.is_some()));
     text.split('\n')
         .enumerate()
         .zip(row_infos)
@@ -2699,7 +2719,7 @@ fn assert_new_snapshot(
     let line_infos = new_snapshot
         .row_infos(MultiBufferRow(0))
         .collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &line_infos, &Default::default());
+    let actual_diff = format_diff(&actual_text, &line_infos, &Default::default(), None);
     pretty_assertions::assert_eq!(actual_diff, expected_diff);
     check_edits(
         snapshot,

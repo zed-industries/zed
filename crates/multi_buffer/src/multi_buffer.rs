@@ -2660,6 +2660,19 @@ impl MultiBuffer {
                     old_diff_transforms.next(&());
                 }
                 old_expanded_hunks.clear();
+
+                if let Some(DiffTransform::BufferContent {
+                    inserted_hunk_anchor: Some(hunk_anchor),
+                    ..
+                }) = old_diff_transforms.item()
+                {
+                    if let Some(excerpt) = excerpts.item() {
+                        if !hunk_anchor.1.is_valid(&excerpt.buffer) {
+                            old_diff_transforms.next(&());
+                        }
+                    }
+                }
+
                 self.push_buffer_content_transform(
                     &snapshot,
                     &mut new_diff_transforms,
@@ -2769,8 +2782,8 @@ impl MultiBuffer {
                     let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
 
                     let hunk_anchor = (excerpt.id, hunk.buffer_range.start);
-                    if !hunk_anchor.1.is_valid(buffer) {
-                        log::trace!("skipping hunk with deleted beginning {:?}", hunk.row_range,);
+                    if hunk_buffer_range.start < excerpt_buffer_start {
+                        log::trace!("skipping hunk that starts before excerpt");
                         continue;
                     }
 
