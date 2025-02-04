@@ -1063,7 +1063,6 @@ impl GitPanel {
     }
 }
 
-// GitPanel –– Render
 impl GitPanel {
     pub fn panel_button(
         &self,
