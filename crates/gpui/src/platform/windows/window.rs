@@ -534,7 +534,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        let scale_factor = self.scale_factor();
+        let scale_factor = self.scale_factor().0;
         let point = unsafe {
             let mut point: POINT = std::mem::zeroed();
             GetCursorPos(&mut point)

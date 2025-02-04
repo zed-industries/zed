@@ -10,12 +10,9 @@ struct MainView {}
 impl Render for MainView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
-            .flex()
             .size_full()
-            .p_5()
+            .p(px(200.0))
             .bg(rgb(0x202020))
-            .justify_between()
-            .items_center()
             .font_family("Sans")
             .with_animation(
                 "main-view",

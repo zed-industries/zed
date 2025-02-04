@@ -1603,7 +1603,7 @@ impl Interactivity {
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
-                    window.with_scale(style.scale_multiplier, |window| {
+                    window.with_scale(style.scale_multiplier, bounds.origin, |window| {
                         style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
                             window.with_text_style(style.text_style().cloned(), |window| {
                                 window.with_content_mask(

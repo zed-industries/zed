@@ -715,6 +715,25 @@ impl Path<Pixels> {
         }
     }
 
+    /// Offsets this path by an x and y offset
+    pub fn offset(&self, offset: Point<Pixels>) -> Path<Pixels> {
+        Path {
+            id: self.id,
+            order: self.order,
+            bounds: self.bounds + offset,
+            content_mask: self.content_mask.clone() + offset,
+            vertices: self
+                .vertices
+                .iter()
+                .map(|vertex| vertex.offset(offset))
+                .collect(),
+            start: self.start + offset,
+            current: self.current + offset,
+            contour_count: self.contour_count,
+            color: self.color,
+        }
+    }
+
     /// Move the start, current point to the given point.
     pub fn move_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
@@ -810,6 +829,16 @@ impl PathVertex<Pixels> {
             xy_position: self.xy_position.scale(factor),
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
+        }
+    }
+
+    pub fn offset(&self, offset: Point<Pixels>) -> PathVertex<Pixels> {
+        PathVertex {
+            xy_position: self.xy_position + offset,
+            st_position: self.st_position,
+            content_mask: ContentMask {
+                bounds: self.content_mask.bounds + offset,
+            },
         }
     }
 }
