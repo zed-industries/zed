@@ -125,10 +125,8 @@ impl ProjectDiff {
         let git_state_subscription = cx.subscribe_in(
             &git_state,
             window,
-            move |this, _git_state, event, _window, _cx| match event {
-                project::git::Event::RepositoriesUpdated => {
-                    *this.update_needed.borrow_mut() = ();
-                }
+            move |this, _git_state, _event, _window, _cx| {
+                *this.update_needed.borrow_mut() = ();
             },
         );
 

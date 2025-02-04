@@ -69,11 +69,13 @@ enum Message {
     Unstage(GitRepo, Vec<RepoPath>),
 }
 
-pub enum Event {
-    RepositoriesUpdated,
+pub enum GitEvent {
+    ActiveRepositoryChanged,
+    FileSystemUpdated,
+    GitStateUpdated,
 }
 
-impl EventEmitter<Event> for GitState {}
+impl EventEmitter<GitEvent> for GitState {}
 
 impl GitState {
     pub fn new(
@@ -103,7 +105,7 @@ impl GitState {
     fn on_worktree_store_event(
         &mut self,
         worktree_store: Entity<WorktreeStore>,
-        _event: &WorktreeStoreEvent,
+        event: &WorktreeStoreEvent,
         cx: &mut Context<'_, Self>,
     ) {
         // TODO inspect the event
@@ -172,7 +174,14 @@ impl GitState {
         self.repositories = new_repositories;
         self.active_index = new_active_index;
 
-        cx.emit(Event::RepositoriesUpdated);
+        match event {
+            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_) => {
+                cx.emit(GitEvent::GitStateUpdated);
+            }
+            _ => {
+                cx.emit(GitEvent::FileSystemUpdated);
+            }
+        }
     }
 
     pub fn all_repositories(&self) -> Vec<RepositoryHandle> {
@@ -314,7 +323,7 @@ impl RepositoryHandle {
                 return;
             };
             git_state.active_index = Some(index);
-            cx.emit(Event::RepositoriesUpdated);
+            cx.emit(GitEvent::ActiveRepositoryChanged);
         });
     }
 
