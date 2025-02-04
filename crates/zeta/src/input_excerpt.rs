@@ -8,6 +8,7 @@ use std::{fmt::Write, ops::Range};
 pub struct InputExcerpt {
     pub editable_range: Range<Point>,
     pub prompt: String,
+    pub speculated_output: String,
 }
 
 pub fn excerpt_for_cursor_position(
@@ -41,6 +42,7 @@ pub fn excerpt_for_cursor_position(
     let context_range = expand_range(snapshot, editable_range.clone(), context_token_limit);
 
     let mut prompt = String::new();
+    let mut speculated_output = String::new();
 
     writeln!(&mut prompt, "```{path}").unwrap();
     if context_range.start == Point::zero() {
@@ -50,15 +52,15 @@ pub fn excerpt_for_cursor_position(
     for chunk in snapshot.chunks(context_range.start..editable_range.start, false) {
         prompt.push_str(chunk.text);
     }
-    writeln!(&mut prompt, "{EDITABLE_REGION_START_MARKER}").unwrap();
-    for chunk in snapshot.chunks(editable_range.start..position, false) {
-        prompt.push_str(chunk.text);
-    }
-    prompt.push_str(CURSOR_MARKER);
-    for chunk in snapshot.chunks(position..editable_range.end, false) {
-        prompt.push_str(chunk.text);
-    }
-    write!(&mut prompt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
+
+    push_editable_range(position, snapshot, editable_range.clone(), &mut prompt);
+    push_editable_range(
+        position,
+        snapshot,
+        editable_range.clone(),
+        &mut speculated_output,
+    );
+
     for chunk in snapshot.chunks(editable_range.end..context_range.end, false) {
         prompt.push_str(chunk.text);
     }
@@ -67,7 +69,25 @@ pub fn excerpt_for_cursor_position(
     InputExcerpt {
         editable_range,
         prompt,
+        speculated_output,
     }
+}
+
+fn push_editable_range(
+    cursor_position: Point,
+    snapshot: &BufferSnapshot,
+    editable_range: Range<Point>,
+    prompt: &mut String,
+) {
+    writeln!(prompt, "{EDITABLE_REGION_START_MARKER}").unwrap();
+    for chunk in snapshot.chunks(editable_range.start..cursor_position, false) {
+        prompt.push_str(chunk.text);
+    }
+    prompt.push_str(CURSOR_MARKER);
+    for chunk in snapshot.chunks(cursor_position..editable_range.end, false) {
+        prompt.push_str(chunk.text);
+    }
+    write!(prompt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
 }
 
 fn expand_range(

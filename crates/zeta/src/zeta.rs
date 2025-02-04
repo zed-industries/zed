@@ -66,7 +66,7 @@ const BYTES_PER_TOKEN_GUESS: usize = 3;
 /// `crates/collab/src/llm.rs`.
 const MAX_INPUT_TOKENS: usize = 2048;
 
-const MAX_CONTEXT_TOKENS: usize = 128;
+const MAX_CONTEXT_TOKENS: usize = 64;
 const MAX_OUTPUT_TOKENS: usize = 256;
 
 /// Total bytes limit for editable region of buffer excerpt.
@@ -390,45 +390,47 @@ impl Zeta {
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
-            let (input_events, input_excerpt, editable_range, input_outline) = cx
-                .background_executor()
-                .spawn({
-                    let snapshot = snapshot.clone();
-                    let path = path.clone();
-                    async move {
-                        let path = path.to_string_lossy();
-                        let input_excerpt = input_excerpt::excerpt_for_cursor_position(
-                            cursor_position,
-                            &path,
-                            &snapshot,
-                            MAX_OUTPUT_TOKENS,
-                            MAX_CONTEXT_TOKENS,
-                        );
+            let (input_events, input_excerpt, editable_range, input_outline, speculated_output) =
+                cx.background_executor()
+                    .spawn({
+                        let snapshot = snapshot.clone();
+                        let path = path.clone();
+                        async move {
+                            let path = path.to_string_lossy();
+                            let input_excerpt = input_excerpt::excerpt_for_cursor_position(
+                                cursor_position,
+                                &path,
+                                &snapshot,
+                                MAX_OUTPUT_TOKENS,
+                                MAX_CONTEXT_TOKENS,
+                            );
 
-                        let bytes_remaining =
-                            TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.prompt.len());
-                        let input_events = prompt_for_events(events.iter(), bytes_remaining);
+                            let bytes_remaining =
+                                TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.prompt.len());
+                            let input_events = prompt_for_events(events.iter(), bytes_remaining);
 
-                        // Note that input_outline is not currently used in prompt generation and so
-                        // is not counted towards TOTAL_BYTE_LIMIT.
-                        let input_outline = prompt_for_outline(&snapshot);
+                            // Note that input_outline is not currently used in prompt generation and so
+                            // is not counted towards TOTAL_BYTE_LIMIT.
+                            let input_outline = prompt_for_outline(&snapshot);
 
-                        let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
-                        anyhow::Ok((
-                            input_events,
-                            input_excerpt.prompt,
-                            editable_range,
-                            input_outline,
-                        ))
-                    }
-                })
-                .await?;
+                            let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
+                            anyhow::Ok((
+                                input_events,
+                                input_excerpt.prompt,
+                                editable_range,
+                                input_outline,
+                                input_excerpt.speculated_output,
+                            ))
+                        }
+                    })
+                    .await?;
 
             log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
             let body = PredictEditsParams {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
+                speculated_output,
                 outline: Some(input_outline.clone()),
                 data_collection_permission,
             };
