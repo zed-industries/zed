@@ -170,8 +170,8 @@ impl RenderOnce for Checkbox {
 
         let size = Self::container_size(cx);
 
-        h_flex()
-            .id(self.id)
+        let checkbox = h_flex()
+            .id(self.id.clone())
             .justify_center()
             .items_center()
             .size(size)
