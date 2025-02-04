@@ -428,13 +428,13 @@ impl InlineCompletionButton {
                 let provider = provider.clone();
                 menu = menu
                     .separator()
-                    .header("OSS Projects: Help Improve The Model");
+                    .header("Help Improve The Model")
+                    .header("For OSS Projects Only");
                 menu = menu.item(
+                    // TODO: We want to add something later that communicates whether
+                    // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
-                        .toggleable(IconPosition::Start, data_collection.is_enabled())
-                        // .disabled(data_collection.is_unknown())
-                        // TO DO: We don't want to disable this item anymore
-                        // but we want to say something here in case the project is OSS
+                        .toggleable(IconPosition::Start, dbg!(data_collection.is_enabled()))
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
                         }),

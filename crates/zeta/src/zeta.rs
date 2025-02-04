@@ -235,18 +235,15 @@ impl Zeta {
         });
 
         this.update(cx, move |this, cx| {
-            let mut watchers = HashMap::default();
-
             if let Some(worktree) = worktree {
                 worktree.update(cx, |worktree, cx| {
                     if !this.license_detection_watchers.contains_key(&worktree.id()) {
                         let new_watcher = Rc::new(LicenseDetectionWatcher::new(worktree, cx));
-                        watchers.insert(worktree.id(), new_watcher);
+                        this.license_detection_watchers
+                            .insert(worktree.id(), new_watcher);
                     }
                 });
             }
-
-            this.license_detection_watchers = watchers;
         });
 
         this
@@ -369,7 +366,7 @@ impl Zeta {
         &mut self,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
-        can_collect_data: bool,
+        data_collection_permission: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
@@ -434,7 +431,7 @@ impl Zeta {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
-                can_collect_data,
+                data_collection_permission,
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
@@ -614,13 +611,13 @@ and then another
         &mut self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
-        can_collect_data: bool,
+        data_collection_permission: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         self.request_completion_impl(
             buffer,
             position,
-            can_collect_data,
+            data_collection_permission,
             cx,
             Self::perform_predict_edits,
         )
@@ -930,29 +927,6 @@ and then another
         new_snapshot
     }
 
-    // fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
-    //     let toggled = self.data_collection_choice.read(cx).toggle();
-    //     self.update_data_collection_choice(toggled.is_enabled(), cx);
-    // }
-
-    fn update_data_collection_choice(&mut self, new_choice_bool: bool, cx: &mut Context<Self>) {
-        let new_choice = match new_choice_bool {
-            true => DataCollectionChoice::Enabled,
-            false => DataCollectionChoice::Disabled,
-        };
-
-        self.data_collection_choice.update(cx, |choice, _| {
-            *choice = new_choice;
-        });
-
-        db::write_and_log(cx, move || {
-            KEY_VALUE_STORE.write_kvp(
-                ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
-                new_choice_bool.to_string(),
-            )
-        });
-    }
-
     fn load_data_collection_choices() -> DataCollectionChoice {
         let choice = KEY_VALUE_STORE
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
@@ -993,13 +967,7 @@ impl LicenseDetectionWatcher {
                 let is_loaded_file_open_source_thing: bool =
                     is_license_eligible_for_data_collection(&loaded_file.text);
 
-                println!(
-                    "arquivo {:?} is_loaded_file_open_source_thing deu {} ",
-                    loaded_file.file.path, is_loaded_file_open_source_thing
-                );
-
                 *is_open_source_tx.borrow_mut() = is_loaded_file_open_source_thing;
-                println!("conteudos: '{}'", loaded_file.text);
             }),
         }
     }
@@ -1370,12 +1338,15 @@ impl ProviderDataCollection {
 
             let zeta = zeta.read(cx);
             let choice = zeta.data_collection_choice.clone();
-            // Unwrap safety:
-            //   there should be a watcher for each worktree
-            let license_detection_watcher = zeta
+
+            // Unwrap safety: there should be a watcher for each worktree
+            let Some(license_detection_watcher) = zeta
                 .license_detection_watchers
                 .get(&file.worktree_id(cx))
-                .cloned()?;
+                .cloned()
+            else {
+                return None;
+            };
 
             Some((choice, license_detection_watcher))
         });
@@ -1393,7 +1364,7 @@ impl ProviderDataCollection {
         }
     }
 
-    pub fn can_collect_data(&self, cx: &App) -> bool {
+    pub fn data_collection_permission(&self, cx: &App) -> bool {
         self.choice
             .as_ref()
             .is_some_and(|choice| choice.read(cx).is_enabled())
@@ -1405,8 +1376,17 @@ impl ProviderDataCollection {
 
     pub fn toggle(&mut self, cx: &mut App) {
         if let Some(choice) = self.choice.as_mut() {
-            choice.update(cx, |choice, _cx| {
-                *choice = choice.toggle();
+            let new_choice = choice.update(cx, |choice, _cx| {
+                let new_choice = choice.toggle();
+                *choice = new_choice;
+                new_choice
+            });
+
+            db::write_and_log(cx, move || {
+                KEY_VALUE_STORE.write_kvp(
+                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    new_choice.is_enabled().to_string(),
+                )
             });
         }
     }
@@ -1457,24 +1437,12 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
-        if let Some(choice) = self.provider_data_collection.choice.as_ref() {
-            if let DataCollectionChoice::Enabled = choice.read(cx) {
-                return DataCollectionState::Enabled;
-            }
-        };
-
-        DataCollectionState::Disabled
+        if self.provider_data_collection.data_collection_permission(cx) {
+            DataCollectionState::Enabled
+        } else {
+            DataCollectionState::Disabled
+        }
     }
-
-    // fn is_worktree_eligible_for_data_collection(
-    //     &self,
-    //     worktree: &Worktree,
-    //     cx: &mut Context<Worktree>,
-    // ) -> bool {
-    //     let loaded_file: Task<Result<LoadedFile>> = worktree.load_file(Path::new("LICENSE"), cx);
-    //     let check = |loaded_file: LoadedFile| -> bool { todo!() };
-    //     todo!("how to wait for Task to end to check result...")
-    // }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
         self.provider_data_collection.toggle(cx);
@@ -1525,7 +1493,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
-        let can_collect_data = self.provider_data_collection.can_collect_data(cx);
+        let data_collection_permission =
+            self.provider_data_collection.data_collection_permission(cx);
 
         let task = cx.spawn(|this, mut cx| async move {
             if debounce {
@@ -1534,7 +1503,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, can_collect_data, cx)
+                    zeta.request_completion(&buffer, position, data_collection_permission, cx)
                 })
             });
 

@@ -284,11 +284,6 @@ impl Render for ZedPredictModal {
             } else {
                 (IconName::ChevronDown, IconName::ChevronUp)
             };
-            let accordion_label = if self.data_collection_expanded {
-                "Hide Details"
-            } else {
-                "Show Details"
-            };
 
             fn label_item(label_text: impl Into<SharedString>) -> impl Element {
                 Label::new(label_text).color(Color::Muted).into_element()
@@ -362,7 +357,7 @@ impl Render for ZedPredictModal {
                                 )
                                 // TODO: show each worktree if more than 1
                                 .child(
-                                    Button::new("learn-more", accordion_label)
+                                    Button::new("learn-more", "Learn More")
                                         .icon(accordion_icons.0)
                                         .icon_size(IconSize::Indicator)
                                         .icon_color(Color::Muted)
