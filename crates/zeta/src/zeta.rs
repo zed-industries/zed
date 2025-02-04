@@ -1,5 +1,6 @@
 mod completion_diff_element;
 mod init;
+mod input_excerpt;
 mod license_detection;
 mod onboarding_banner;
 mod onboarding_modal;
