@@ -163,7 +163,7 @@ use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
     Tooltip,
 };
-use util::{defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
+use util::{capitalize, defer, maybe, post_inc, RangeExt, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
@@ -5513,6 +5513,7 @@ impl Editor {
                 .child(div().w_full())
                 .child(
                     h_flex()
+                        .opacity(if has_completion { 1.0 } else { 0.1 })
                         .border_l_1()
                         .border_color(cx.theme().colors().border_variant)
                         .pl_2()
@@ -5529,22 +5530,8 @@ impl Editor {
                                     } else {
                                         None
                                     },
-                                )),
-                        )
-                        .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(
-                            if self
-                                .active_inline_completion
-                                .as_ref()
-                                .map_or(false, |c| c.is_move())
-                            {
-                                div()
-                                    .child(ui::Key::new(&accept_keystroke.key, None))
-                                    .font(buffer_font.clone())
-                                    .into_any()
-                            } else {
-                                Label::new("Preview").color(Color::Muted).into_any_element()
-                            },
+                                ))
+                                .child(ui::Key::new(capitalize(&accept_keystroke.key), None)),
                         ),
                 )
                 .into_any(),

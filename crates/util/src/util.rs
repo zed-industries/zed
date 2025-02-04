@@ -41,6 +41,14 @@ macro_rules! debug_panic {
     };
 }
 
+pub fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
+    }
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         None => s,

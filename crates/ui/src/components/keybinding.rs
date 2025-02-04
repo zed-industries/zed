@@ -4,6 +4,7 @@ use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{
     relative, Action, AnyElement, App, FocusHandle, IntoElement, Keystroke, Modifiers, Window,
 };
+use util::capitalize;
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -354,14 +355,6 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
     text.push_str(key);
 
     text
-}
-
-fn capitalize(str: &str) -> String {
-    let mut chars = str.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-    }
 }
 
 #[cfg(test)]

@@ -73,7 +73,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{RangeExt, ResultExt};
+use util::{capitalize, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -5839,7 +5839,7 @@ fn inline_completion_accept_indicator(
             PlatformStyle::platform(),
             Some(Color::Default),
         ))
-        .child(accept_keystroke.key.clone());
+        .child(capitalize(&accept_keystroke.key));
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
