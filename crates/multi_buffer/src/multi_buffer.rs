@@ -28,7 +28,7 @@ use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
-    cell::{Ref, RefCell, RefMut},
+    cell::{Ref, RefCell},
     cmp, fmt,
     future::Future,
     io,
@@ -2888,15 +2888,6 @@ impl MultiBuffer {
         // Visit each excerpt that intersects the edit.
         let mut did_expand_hunks = false;
         while let Some(excerpt) = excerpts.item() {
-            if excerpt.text_summary.len == 0 {
-                if excerpts.end(&()) <= edit.new.end {
-                    excerpts.next(&());
-                    continue;
-                } else {
-                    break;
-                }
-            }
-
             // Recompute the expanded hunks in the portion of the excerpt that
             // intersects the edit.
             if let Some(diff_state) = snapshot.diffs.get(&excerpt.buffer_id) {
@@ -3619,8 +3610,10 @@ impl MultiBufferSnapshot {
 
         cursor.seek(&query_range.start);
 
-        if cursor.region().is_some_and(|region| !region.is_main_buffer) {
-            cursor.prev();
+        if let Some(region) = cursor.region().filter(|region| !region.is_main_buffer) {
+            if region.range.start > D::zero(&()) {
+                cursor.prev()
+            }
         }
 
         iter::from_fn(move || loop {
@@ -6089,17 +6082,13 @@ where
     }
 
     fn main_buffer_position(&self) -> Option<D> {
-        if let DiffTransform::BufferContent { .. } = self.diff_transforms.next_item()? {
-            let excerpt = self.excerpts.item()?;
-            let buffer = &excerpt.buffer;
-            let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
-            let mut buffer_start = buffer_context_start;
-            let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
-            buffer_start.add_assign(&overshoot);
-            Some(buffer_start)
-        } else {
-            None
-        }
+        let excerpt = self.excerpts.item()?;
+        let buffer = &excerpt.buffer;
+        let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
+        let mut buffer_start = buffer_context_start;
+        let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
+        buffer_start.add_assign(&overshoot);
+        Some(buffer_start)
     }
 
     fn build_region(&self) -> Option<MultiBufferRegion<'a, D>> {

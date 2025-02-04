@@ -44,6 +44,7 @@ use settings::{
 };
 use std::any::TypeId;
 use std::path::PathBuf;
+use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
@@ -176,7 +177,6 @@ pub fn initialize_workspace(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                app_state.client.clone(),
                 popover_menu_handle.clone(),
                 cx,
             )
@@ -404,7 +404,7 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, None, cx);
+                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
                 workspace.add_panel(git_panel, window, cx);
             });
         })?;
@@ -938,7 +938,12 @@ fn install_cli(
     .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);
 }
 
+static WAITING_QUIT_CONFIRMATION: AtomicBool = AtomicBool::new(false);
 fn quit(_: &Quit, cx: &mut App) {
+    if WAITING_QUIT_CONFIRMATION.load(atomic::Ordering::Acquire) {
+        return;
+    }
+
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     cx.spawn(|mut cx| async move {
         let mut workspace_windows = cx.update(|cx| {
@@ -955,23 +960,27 @@ fn quit(_: &Quit, cx: &mut App) {
         })
         .log_err();
 
-        if let (true, Some(workspace)) = (should_confirm, workspace_windows.first().copied()) {
-            let answer = workspace
-                .update(&mut cx, |_, window, cx| {
-                    window.prompt(
-                        PromptLevel::Info,
-                        "Are you sure you want to quit?",
-                        None,
-                        &["Quit", "Cancel"],
-                        cx,
-                    )
-                })
-                .log_err();
+        if should_confirm {
+            if let Some(workspace) = workspace_windows.first() {
+                let answer = workspace
+                    .update(&mut cx, |_, window, cx| {
+                        window.prompt(
+                            PromptLevel::Info,
+                            "Are you sure you want to quit?",
+                            None,
+                            &["Quit", "Cancel"],
+                            cx,
+                        )
+                    })
+                    .log_err();
 
-            if let Some(answer) = answer {
-                let answer = answer.await.ok();
-                if answer != Some(0) {
-                    return Ok(());
+                if let Some(answer) = answer {
+                    WAITING_QUIT_CONFIRMATION.store(true, atomic::Ordering::Release);
+                    let answer = answer.await.ok();
+                    WAITING_QUIT_CONFIRMATION.store(false, atomic::Ordering::Release);
+                    if answer != Some(0) {
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -1239,12 +1248,13 @@ pub fn load_default_keymap(cx: &mut App) {
     }
 
     cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
-    if VimModeSetting::get_global(cx).0 {
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
-    }
 
     if let Some(asset_path) = base_keymap.asset_path() {
         cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+    }
+
+    if VimModeSetting::get_global(cx).0 {
+        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
     }
 }
 

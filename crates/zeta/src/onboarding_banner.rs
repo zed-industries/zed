@@ -1,40 +1,20 @@
-use std::sync::Arc;
-
-use crate::ZedPredictModal;
 use chrono::Utc;
-use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsFeatureFlag};
-use fs::Fs;
-use gpui::{Entity, Subscription, WeakEntity};
+use gpui::Subscription;
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;
-use workspace::Workspace;
 
-/// Prompts user to try AI inline prediction feature
+/// Prompts the user to try Zed's Edit Prediction feature
 pub struct ZedPredictBanner {
-    workspace: WeakEntity<Workspace>,
-    user_store: Entity<UserStore>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
     dismissed: bool,
     _subscription: Subscription,
 }
 
 impl ZedPredictBanner {
-    pub fn new(
-        workspace: WeakEntity<Workspace>,
-        user_store: Entity<UserStore>,
-        client: Arc<Client>,
-        fs: Arc<dyn Fs>,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
-            workspace,
-            user_store,
-            client,
-            fs,
             dismissed: get_dismissed(),
             _subscription: cx.observe_global::<SettingsStore>(Self::handle_settings_changed),
         }
@@ -126,24 +106,8 @@ impl Render for ZedPredictBanner {
                                     .child(Label::new("Edit Prediction").size(LabelSize::Small)),
                             ),
                     )
-                    .on_click({
-                        let workspace = self.workspace.clone();
-                        let user_store = self.user_store.clone();
-                        let client = self.client.clone();
-                        let fs = self.fs.clone();
-                        move |_, window, cx| {
-                            let Some(workspace) = workspace.upgrade() else {
-                                return;
-                            };
-                            ZedPredictModal::toggle(
-                                workspace,
-                                user_store.clone(),
-                                client.clone(),
-                                fs.clone(),
-                                window,
-                                cx,
-                            );
-                        }
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(zed_actions::OpenZedPredictOnboarding), cx)
                     }),
             )
             .child(
@@ -163,6 +127,6 @@ impl Render for ZedPredictBanner {
                 ),
             );
 
-        div().pr_1().child(banner)
+        div().pr_2().child(banner)
     }
 }

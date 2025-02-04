@@ -87,7 +87,7 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// May correspond to a directory or a single file.
 /// Possible examples:
 /// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
-/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+/// * a directory opened in Zed — may be added as a visible entry to the current worktree
 ///
 /// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
@@ -862,9 +862,14 @@ impl Worktree {
         }
     }
 
-    pub fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    pub fn load_file(
+        &self,
+        path: &Path,
+        skip_file_contents: bool,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Local(this) => this.load_file(path, skip_file_contents, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -1606,7 +1611,12 @@ impl LocalWorktree {
         })
     }
 
-    fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    fn load_file(
+        &self,
+        path: &Path,
+        skip_file_contents: bool,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1615,7 +1625,11 @@ impl LocalWorktree {
 
         cx.spawn(|this, _cx| async move {
             let abs_path = abs_path?;
-            let text = fs.load(&abs_path).await?;
+            let text = if skip_file_contents {
+                String::new()
+            } else {
+                fs.load(&abs_path).await?
+            };
 
             let worktree = this
                 .upgrade()

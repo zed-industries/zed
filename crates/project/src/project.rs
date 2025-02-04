@@ -1933,7 +1933,21 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_buffer(path.into(), cx)
+            buffer_store.open_buffer(path.into(), false, cx)
+        })
+    }
+
+    pub fn open_buffer_without_contents(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_buffer(path.into(), true, cx)
         })
     }
 
@@ -3951,14 +3965,25 @@ impl Project {
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let skip_file_contents = envelope.payload.skip_file_contents;
         let open_buffer = this.update(&mut cx, |this, cx| {
-            this.open_buffer(
-                ProjectPath {
-                    worktree_id,
-                    path: PathBuf::from(envelope.payload.path).into(),
-                },
-                cx,
-            )
+            if skip_file_contents {
+                this.open_buffer_without_contents(
+                    ProjectPath {
+                        worktree_id,
+                        path: PathBuf::from(envelope.payload.path).into(),
+                    },
+                    cx,
+                )
+            } else {
+                this.open_buffer(
+                    ProjectPath {
+                        worktree_id,
+                        path: PathBuf::from(envelope.payload.path).into(),
+                    },
+                    cx,
+                )
+            }
         })?;
 
         let buffer = open_buffer.await?;
@@ -3995,15 +4020,9 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .stage_entries(entries, err_sender)
-            .context("staging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during staging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.stage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_unstage(
@@ -4023,15 +4042,9 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .unstage_entries(entries, err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.unstage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_commit(
@@ -4046,17 +4059,8 @@ impl Project {
 
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        cx.update(|cx| {
-            repository_handle
-                .commit(name.zip(email), err_sender, cx)
-                .context("unstaging entries")
-        })??;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+        repository_handle.commit(name.zip(email)).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_open_commit_message_buffer(
@@ -4087,12 +4091,10 @@ impl Project {
         .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
 
         let (worktree, relative_path) = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .worktree_store
-                    .update(cx, |worktree_store, cx| {
-                        worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
-                    })
+            .update(&mut cx, |project, cx| {
+                project.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
+                })
             })?
             .await
             .with_context(|| {
@@ -4100,18 +4102,17 @@ impl Project {
             })?;
 
         let buffer = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(
-                            ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: Arc::from(relative_path),
-                            },
-                            cx,
-                        )
-                    })
+            .update(&mut cx, |project, cx| {
+                project.buffer_store.update(cx, |buffer_store, cx| {
+                    buffer_store.open_buffer(
+                        ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: Arc::from(relative_path),
+                        },
+                        true,
+                        cx,
+                    )
+                })
             })
             .with_context(|| {
                 format!("opening buffer for commit message file {commit_message_file:?}")

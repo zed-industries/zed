@@ -385,6 +385,11 @@ impl ButtonLike {
         Self::new(id).rounding(ButtonLikeRounding::Right)
     }
 
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.base = self.base.opacity(opacity);
+        self
+    }
+
     pub(crate) fn height(mut self, height: DefiniteLength) -> Self {
         self.height = Some(height);
         self
