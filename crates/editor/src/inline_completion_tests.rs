@@ -345,7 +345,7 @@ fn assign_editor_completion_provider(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_inline_completion_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
     })
 }
 

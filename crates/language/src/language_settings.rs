@@ -1026,7 +1026,7 @@ impl settings::Settings for AllLanguageSettings {
             .ok_or_else(Self::missing_default)?;
 
         let mut completion_globs: HashSet<&String> = default_value
-            .inline_completions
+            .edit_predictions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
             .map(|globs| globs.iter().collect())

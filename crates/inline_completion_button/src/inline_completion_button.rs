@@ -47,7 +47,7 @@ pub struct InlineCompletionButton {
     editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
-    inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
+    edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
@@ -305,7 +305,7 @@ impl Render for InlineCompletionButton {
                     .with_handle(self.popover_menu_handle.clone());
 
                 let is_refreshing = self
-                    .inline_completion_provider
+                    .edit_prediction_provider
                     .as_ref()
                     .map_or(false, |provider| provider.is_refreshing(cx));
 
