@@ -76,14 +76,14 @@ use code_context_menus::{
 };
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry,
-    ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveText, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement,
-    Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
-    WeakFocusHandle, Window,
+    div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
+    px, relative, size, Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext,
+    AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
+    FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
+    MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
+    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -5672,8 +5672,10 @@ impl Editor {
                     .x_for_index(target_point.column as usize);
                 let cursor_relative_position = target_column_x - start_column_x;
 
-                let ellipsis_before = start_point.column > 0;
-                let ellipsis_after = end_point.column < snapshot.line_len(end_point.row);
+                let fade_before = start_point.column > 0;
+                let fade_after = end_point.column < snapshot.line_len(end_point.row);
+
+                let background = cx.theme().colors().elevated_surface_background;
 
                 Some(
                     h_flex()
@@ -5686,10 +5688,30 @@ impl Editor {
                         .when(!highlighted_text.text.is_empty(), |parent| {
                             parent.child(
                                 h_flex()
-                                    .when(ellipsis_before, |parent| parent.child("…"))
-                                    .child(highlighted_text.to_styled_text(&style.text))
-                                    .when(ellipsis_after, |parent| parent.child("…"))
                                     .relative()
+                                    .child(highlighted_text.to_styled_text(&style.text))
+                                    .when(fade_before, |parent| {
+                                        parent.child(
+                                            div().absolute().top_0().left_0().w_4().h_full().bg(
+                                                linear_gradient(
+                                                    90.,
+                                                    linear_color_stop(background, 0.),
+                                                    linear_color_stop(background.opacity(0.), 1.),
+                                                ),
+                                            ),
+                                        )
+                                    })
+                                    .when(fade_after, |parent| {
+                                        parent.child(
+                                            div().absolute().top_0().right_0().w_4().h_full().bg(
+                                                linear_gradient(
+                                                    -90.,
+                                                    linear_color_stop(background, 0.),
+                                                    linear_color_stop(background.opacity(0.), 1.),
+                                                ),
+                                            ),
+                                        )
+                                    })
                                     .child(
                                         div()
                                             .w(px(2.))
