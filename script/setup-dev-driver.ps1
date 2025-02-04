@@ -13,7 +13,7 @@ $Drive = "$($Volume.DriveLetter):"
 
 # Show some debug information
 Write-Output $Volume
-Write-Output "Using Dev Drive at $Volume"
+Write-Output "Using Dev Drive at $Drive"
     
 # Move Cargo to the dev drive
 New-Item -Path "$($Drive)/.cargo/bin" -ItemType Directory -Force
