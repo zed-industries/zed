@@ -5468,7 +5468,7 @@ impl Editor {
         let is_refreshing = provider.provider.is_refreshing(cx);
 
         fn pending_completion_container() -> Div {
-            h_flex().gap_3().child(Icon::new(IconName::ZedPredict))
+            h_flex().gap_3()
         }
 
         let completion = match &self.active_inline_completion {
@@ -5518,22 +5518,22 @@ impl Editor {
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
                 .max_w(max_width)
+                .w_full()
                 .flex_1()
                 .px_2()
                 .gap_3()
                 .elevation_2(cx)
-                .child(completion)
-                .child(div().w_full())
+                .child(div().flex_1().w_full().child(completion))
+                // .child(div().w_full())
+                .child(ui::Divider::vertical())
                 .child(
                     h_flex()
-                        .border_l_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .pl_2()
+                        .h_full()
+                        .gap_1()
+                        // .pl_2()
                         .child(
-                            h_flex()
+                            div()
                                 .font(buffer_font.clone())
-                                .p_1()
-                                .rounded_sm()
                                 .children(ui::render_modifiers(
                                     &accept_keystroke.modifiers,
                                     PlatformStyle::platform(),
@@ -5544,7 +5544,6 @@ impl Editor {
                                     },
                                 )),
                         )
-                        .opacity(if has_completion { 1.0 } else { 0.1 })
                         .child(
                             if self
                                 .active_inline_completion
@@ -5556,9 +5555,10 @@ impl Editor {
                                     .font(buffer_font.clone())
                                     .into_any()
                             } else {
-                                Label::new("Preview").color(Color::Muted).into_any_element()
+                                Label::new("Preview").into_any_element()
                             },
-                        ),
+                        )
+                        .opacity(if has_completion { 1.0 } else { 0.1 }),
                 )
                 .into_any(),
         )
