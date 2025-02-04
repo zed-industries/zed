@@ -19,12 +19,14 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
+chrono.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 db.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -34,6 +36,8 @@ language.workspace = true
 language_models.workspace = true
 log.workspace = true
 menu.workspace = true
+postage.workspace = true
+regex.workspace = true
 rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -46,6 +50,8 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+worktree.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
@@ -64,6 +70,7 @@ settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-go.workspace = true
 tree-sitter-rust.workspace = true
+unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }

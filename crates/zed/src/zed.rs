@@ -176,7 +176,6 @@ pub fn initialize_workspace(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                app_state.client.clone(),
                 popover_menu_handle.clone(),
                 cx,
             )
@@ -404,7 +403,7 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, None, cx);
+                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
                 workspace.add_panel(git_panel, window, cx);
             });
         })?;
@@ -1239,12 +1238,13 @@ pub fn load_default_keymap(cx: &mut App) {
     }
 
     cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
-    if VimModeSetting::get_global(cx).0 {
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
-    }
 
     if let Some(asset_path) = base_keymap.asset_path() {
         cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+    }
+
+    if VimModeSetting::get_global(cx).0 {
+        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
     }
 }
 

@@ -11707,10 +11707,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
                         .entries
                         .borrow()
                         .iter()
-                        .flat_map(|c| match c {
-                            CompletionEntry::Match(mat) => Some(mat.string.clone()),
-                            _ => None,
-                        })
+                        .map(|mat| mat.string.clone())
                         .collect::<Vec<String>>(),
                     items_out
                         .iter()
@@ -11852,13 +11849,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
-    entries
-        .iter()
-        .flat_map(|e| match e {
-            CompletionEntry::Match(mat) => Some(mat.string.clone()),
-            _ => None,
-        })
-        .collect()
+    entries.iter().map(|mat| mat.string.clone()).collect()
 }
 
 #[gpui::test]
@@ -15469,8 +15460,7 @@ async fn assert_highlighted_edits(
             &edit_preview,
             include_deletions,
             cx,
-        )
-        .expect("Missing highlighted edits");
+        );
         assertion_fn(highlighted_edits, cx)
     });
 }

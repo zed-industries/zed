@@ -439,7 +439,6 @@ fn main() {
         inline_completion_registry::init(
             app_state.client.clone(),
             app_state.user_store.clone(),
-            app_state.fs.clone(),
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);

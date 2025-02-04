@@ -420,6 +420,7 @@ impl HeadlessProject {
                         worktree_id,
                         path: PathBuf::from(message.payload.path).into(),
                     },
+                    message.payload.skip_file_contents,
                     cx,
                 )
             });
@@ -486,6 +487,7 @@ impl HeadlessProject {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into(),
                     },
+                    false,
                     cx,
                 )
             });
@@ -729,6 +731,7 @@ impl HeadlessProject {
                                 worktree_id: worktree.read(cx).id(),
                                 path: Arc::from(relative_path),
                             },
+                            true,
                             cx,
                         )
                     })

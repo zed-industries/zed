@@ -990,6 +990,79 @@ fn test_empty_multibuffer(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    let buffer = cx.new(|cx| Buffer::local("", cx));
+    let base_text = "a\nb\nc";
+
+    let change_set = cx.new(|cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        let mut change_set = BufferChangeSet::new(&buffer, cx);
+        let _ = change_set.set_base_text(base_text.into(), snapshot.text, cx);
+        change_set
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer.add_change_set(change_set.clone(), cx);
+        multibuffer.push_excerpts(
+            buffer.clone(),
+            [ExcerptRange {
+                context: 0..0,
+                primary: None,
+            }],
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\n");
+
+    let hunk = snapshot
+        .diff_hunks_in_range(Point::new(1, 1)..Point::new(1, 1))
+        .next()
+        .unwrap();
+
+    assert_eq!(hunk.diff_base_byte_range.start, 0);
+
+    let buf2 = cx.new(|cx| Buffer::local("X", cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.push_excerpts(
+            buf2,
+            [ExcerptRange {
+                context: 0..1,
+                primary: None,
+            }],
+            cx,
+        );
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "a\nb\nc")], None, cx);
+        change_set.update(cx, |change_set, cx| {
+            let _ = change_set.recalculate_diff(buffer.snapshot().text, cx);
+        });
+        assert_eq!(buffer.text(), "a\nb\nc")
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\nX");
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        change_set.update(cx, |change_set, cx| {
+            let _ = change_set.recalculate_diff(buffer.snapshot().text, cx);
+        });
+        assert_eq!(buffer.text(), "")
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "a\nb\nc\n\nX");
+}
+
+#[gpui::test]
 fn test_singleton_multibuffer_anchors(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local("abcd", cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));

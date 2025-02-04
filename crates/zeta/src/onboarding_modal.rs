@@ -1,6 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
+use crate::{Zeta, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use client::{Client, UserStore};
+use db::kvp::KEY_VALUE_STORE;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
@@ -9,10 +11,12 @@ use gpui::{
 };
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
-use ui::{prelude::*, CheckboxWithLabel, TintColor};
+use ui::{prelude::*, Checkbox, TintColor, Tooltip};
+use util::ResultExt;
 use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
+use worktree::Worktree;
 
-/// Introduces user to AI inline prediction feature and terms of service
+/// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
@@ -20,6 +24,9 @@ pub struct ZedPredictModal {
     focus_handle: FocusHandle,
     sign_in_status: SignInStatus,
     terms_of_service: bool,
+    data_collection_expanded: bool,
+    data_collection_opted_in: bool,
+    worktrees: Vec<Entity<Worktree>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -33,34 +40,26 @@ enum SignInStatus {
 }
 
 impl ZedPredictModal {
-    fn new(
+    pub fn toggle(
+        workspace: &mut Workspace,
         user_store: Entity<UserStore>,
         client: Arc<Client>,
         fs: Arc<dyn Fs>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        ZedPredictModal {
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let worktrees = workspace.visible_worktrees(cx).collect();
+
+        workspace.toggle_modal(window, cx, |_window, cx| Self {
             user_store,
             client,
             fs,
             focus_handle: cx.focus_handle(),
             sign_in_status: SignInStatus::Idle,
             terms_of_service: false,
-        }
-    }
-
-    pub fn toggle(
-        workspace: Entity<Workspace>,
-        user_store: Entity<UserStore>,
-        client: Arc<Client>,
-        fs: Arc<dyn Fs>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        workspace.update(cx, |this, cx| {
-            this.toggle_modal(window, cx, |_window, cx| {
-                ZedPredictModal::new(user_store, client, fs, cx)
-            });
+            data_collection_expanded: false,
+            data_collection_opted_in: false,
+            worktrees,
         });
     }
 
@@ -74,6 +73,11 @@ impl ZedPredictModal {
         cx.notify();
     }
 
+    fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
+        cx.notify();
+    }
+
     fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .user_store
@@ -82,12 +86,33 @@ impl ZedPredictModal {
         cx.spawn(|this, mut cx| async move {
             task.await?;
 
+            let mut data_collection_opted_in = false;
+            this.update(&mut cx, |this, _cx| {
+                data_collection_opted_in = this.data_collection_opted_in;
+            })
+            .ok();
+
+            KEY_VALUE_STORE
+                .write_kvp(
+                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    data_collection_opted_in.to_string(),
+                )
+                .await
+                .log_err();
+
             this.update(&mut cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
                         .inline_completion_provider = Some(InlineCompletionProvider::Zed);
                 });
+
+                if this.worktrees.is_empty() {
+                    cx.emit(DismissEvent);
+                    return;
+                }
+
+                Zeta::register(None, this.client.clone(), this.user_store.clone(), cx);
 
                 cx.emit(DismissEvent);
             })
@@ -135,16 +160,16 @@ impl ModalView for ZedPredictModal {}
 impl Render for ZedPredictModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let base = v_flex()
-            .w(px(420.))
+            .id("zed predict tos")
+            .key_context("ZedPredictModal")
+            .w(px(440.))
             .p_4()
             .relative()
             .gap_2()
             .overflow_hidden()
             .elevation_3(cx)
-            .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
-            .key_context("ZedPredictModal")
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 cx.emit(DismissEvent);
             }))
@@ -155,15 +180,15 @@ impl Render for ZedPredictModal {
                 div()
                     .p_1p5()
                     .absolute()
-                    .top_0()
-                    .left_0()
+                    .top_1()
+                    .left_1p5()
                     .right_0()
                     .h(px(200.))
                     .child(
                         svg()
                             .path("icons/zed_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(416.))
+                            .w(px(418.))
                             .h(px(128.))
                             .overflow_hidden(),
                     ),
@@ -249,24 +274,49 @@ impl Render for ZedPredictModal {
 
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
-                SignInStatus::Idle => "Get accurate and helpful edit predictions at every keystroke. To set Zed as your inline completions provider, ensure you:",
+                SignInStatus::Idle => "Get accurate and instant edit predictions at every keystroke. Before setting Zed as your inline completions provider:",
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
             };
 
+            let accordion_icons = if self.data_collection_expanded {
+                (IconName::ChevronUp, IconName::ChevronDown)
+            } else {
+                (IconName::ChevronDown, IconName::ChevronUp)
+            };
+
+            fn label_item(label_text: impl Into<SharedString>) -> impl Element {
+                Label::new(label_text).color(Color::Muted).into_element()
+            }
+
+            fn info_item(label_text: impl Into<SharedString>) -> impl Element {
+                h_flex()
+                    .gap_2()
+                    .child(Icon::new(IconName::Check).size(IconSize::XSmall))
+                    .child(label_item(label_text))
+            }
+
+            fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
+                first_line: E1,
+                second_line: E2,
+            ) -> impl Element {
+                v_flex()
+                    .child(info_item(first_line))
+                    .child(div().pl_5().child(second_line))
+            }
+
             base.child(Label::new(copy).color(Color::Muted))
                 .child(
                     h_flex()
-                        .gap_0p5()
-                        .child(CheckboxWithLabel::new(
-                            "tos-checkbox",
-                            Label::new("Have read and accepted the").color(Color::Muted),
-                            self.terms_of_service.into(),
-                            cx.listener(move |this, state, _window, cx| {
-                                this.terms_of_service = *state == ToggleState::Selected;
-                                cx.notify()
-                            }),
-                        ))
+                        .child(
+                            Checkbox::new("tos-checkbox", self.terms_of_service.into())
+                                .fill()
+                                .label("Read and accept the")
+                                .on_click(cx.listener(move |this, state, _window, cx| {
+                                    this.terms_of_service = *state == ToggleState::Selected;
+                                    cx.notify()
+                                })),
+                        )
                         .child(
                             Button::new("view-tos", "Terms of Service")
                                 .icon(IconName::ArrowUpRight)
@@ -274,6 +324,88 @@ impl Render for ZedPredictModal {
                                 .icon_color(Color::Muted)
                                 .on_click(cx.listener(Self::view_terms)),
                         ),
+                )
+                .child(
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .child(
+                                    Checkbox::new(
+                                        "training-data-checkbox",
+                                        self.data_collection_opted_in.into(),
+                                    )
+                                    .label("Optionally share training data (OSS-only).")
+                                    .fill()
+                                    .when(self.worktrees.is_empty(), |element| {
+                                        element.disabled(true).tooltip(move |window, cx| {
+                                            Tooltip::with_meta(
+                                                "No Project Open",
+                                                None,
+                                                "Open a project to enable this option.",
+                                                window,
+                                                cx,
+                                            )
+                                        })
+                                    })
+                                    .on_click(cx.listener(
+                                        move |this, state, _window, cx| {
+                                            this.data_collection_opted_in =
+                                                *state == ToggleState::Selected;
+                                            cx.notify()
+                                        },
+                                    )),
+                                )
+                                // TODO: show each worktree if more than 1
+                                .child(
+                                    Button::new("learn-more", "Learn More")
+                                        .icon(accordion_icons.0)
+                                        .icon_size(IconSize::Indicator)
+                                        .icon_color(Color::Muted)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.data_collection_expanded =
+                                                !this.data_collection_expanded;
+                                            cx.notify()
+                                        })),
+                                ),
+                        )
+                        .when(self.data_collection_expanded, |element| {
+                            element.child(
+                                v_flex()
+                                    .mt_2()
+                                    .p_2()
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().editor_background.opacity(0.5))
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(
+                                        div().child(
+                                            Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
+                                                .mb_1()
+                                        )
+                                    )
+                                    .child(info_item(
+                                        "We ask this exclusively for open-source projects.",
+                                    ))
+                                    .child(info_item(
+                                        "Zed automatically detects if your project is open-source.",
+                                    ))
+                                    .child(info_item(
+                                        "This setting is valid for all OSS projects you open in Zed.",
+                                    ))
+                                    .child(info_item("Toggle it anytime via the status bar menu."))
+                                    .child(multiline_info_item(
+                                        "Files that can contain sensitive data, like `.env`, are",
+                                        h_flex()
+                                            .child(label_item("excluded by default via the"))
+                                            .child(
+                                                Button::new("doc-link", "disabled_globs").on_click(
+                                                    cx.listener(Self::inline_completions_doc),
+                                                ),
+                                            )
+                                            .child(label_item("setting.")),
+                                    )),
+                            )
+                        }),
                 )
                 .child(
                     v_flex()
