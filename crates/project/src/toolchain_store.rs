@@ -37,16 +37,16 @@ impl ToolchainStore {
         project_environment: Entity<ProjectEnvironment>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let model = cx.new(|_| LocalToolchainStore {
+        let entity = cx.new(|_| LocalToolchainStore {
             languages,
             worktree_store,
             project_environment,
             active_toolchains: Default::default(),
         });
-        let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
+        let subscription = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
-        Self(ToolchainStoreInner::Local(model, subscription))
+        Self(ToolchainStoreInner::Local(entity, subscription))
     }
     pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut App) -> Self {
         Self(ToolchainStoreInner::Remote(

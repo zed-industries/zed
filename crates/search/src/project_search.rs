@@ -154,7 +154,7 @@ enum InputPanel {
 pub struct ProjectSearchView {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
-    model: Entity<ProjectSearch>,
+    entity: Entity<ProjectSearch>,
     query_editor: Entity<Editor>,
     replacement_editor: Entity<Editor>,
     results_editor: Entity<Editor>,
@@ -337,7 +337,7 @@ impl Render for ProjectSearchView {
                 .track_focus(&self.focus_handle(cx))
                 .child(self.results_editor.clone())
         } else {
-            let model = self.model.read(cx);
+            let model = self.entity.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
 
@@ -436,7 +436,7 @@ impl Item for ProjectSearchView {
 
     fn tab_content_text(&self, _: &Window, cx: &App) -> Option<SharedString> {
         let last_query: Option<SharedString> = self
-            .model
+            .entity
             .read(cx)
             .last_search_query_text
             .as_ref()
@@ -520,7 +520,7 @@ impl Item for ProjectSearchView {
     where
         Self: Sized,
     {
-        let model = self.model.update(cx, |model, cx| model.clone(cx));
+        let model = self.entity.update(cx, |model, cx| model.clone(cx));
         Some(cx.new(|cx| Self::new(self.workspace.clone(), model, window, cx, None)))
     }
 
@@ -585,14 +585,14 @@ impl Item for ProjectSearchView {
 
 impl ProjectSearchView {
     pub fn get_matches(&self, cx: &App) -> Vec<Range<Anchor>> {
-        self.model.read(cx).match_ranges.clone()
+        self.entity.read(cx).match_ranges.clone()
     }
 
     fn toggle_filters(&mut self, cx: &mut Context<Self>) {
         self.filters_enabled = !self.filters_enabled;
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
-                self.model.read(cx).project.downgrade(),
+                self.entity.read(cx).project.downgrade(),
                 self.current_settings(),
             );
         });
@@ -609,7 +609,7 @@ impl ProjectSearchView {
         self.search_options.toggle(option);
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
-                self.model.read(cx).project.downgrade(),
+                self.entity.read(cx).project.downgrade(),
                 self.current_settings(),
             );
         });
@@ -620,19 +620,19 @@ impl ProjectSearchView {
     }
 
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
-        if self.model.read(cx).match_ranges.is_empty() {
+        if self.entity.read(cx).match_ranges.is_empty() {
             return;
         }
         let Some(active_index) = self.active_match_index else {
             return;
         };
 
-        let query = self.model.read(cx).active_query.clone();
+        let query = self.entity.read(cx).active_query.clone();
         if let Some(query) = query {
             let query = query.with_replacement(self.replacement(cx));
 
             // TODO: Do we need the clone here?
-            let mat = self.model.read(cx).match_ranges[active_index].clone();
+            let mat = self.entity.read(cx).match_ranges[active_index].clone();
             self.results_editor.update(cx, |editor, cx| {
                 editor.replace(&mat, &query, window, cx);
             });
@@ -647,13 +647,13 @@ impl ProjectSearchView {
             return;
         }
 
-        let Some(query) = self.model.read(cx).active_query.as_ref() else {
+        let Some(query) = self.entity.read(cx).active_query.as_ref() else {
             return;
         };
         let query = query.clone().with_replacement(self.replacement(cx));
 
         let match_ranges = self
-            .model
+            .entity
             .update(cx, |model, _| mem::take(&mut model.match_ranges));
         if match_ranges.is_empty() {
             return;
@@ -663,14 +663,14 @@ impl ProjectSearchView {
             editor.replace_all(&mut match_ranges.iter(), &query, window, cx);
         });
 
-        self.model.update(cx, |model, _cx| {
+        self.entity.update(cx, |model, _cx| {
             model.match_ranges = match_ranges;
         });
     }
 
     pub fn new(
         workspace: WeakEntity<Workspace>,
-        model: Entity<ProjectSearch>,
+        entity: Entity<ProjectSearch>,
         window: &mut Window,
         cx: &mut Context<Self>,
         settings: Option<ProjectSearchSettings>,
@@ -691,17 +691,17 @@ impl ProjectSearchView {
         };
 
         {
-            let model = model.read(cx);
-            project = model.project.clone();
-            excerpts = model.excerpts.clone();
-            if let Some(active_query) = model.active_query.as_ref() {
+            let entity = entity.read(cx);
+            project = entity.project.clone();
+            excerpts = entity.excerpts.clone();
+            if let Some(active_query) = entity.active_query.as_ref() {
                 query_text = active_query.as_str().to_string();
                 replacement_text = active_query.replacement().map(ToOwned::to_owned);
                 options = SearchOptions::from_query(active_query);
             }
         }
-        subscriptions.push(cx.observe_in(&model, window, |this, _, window, cx| {
-            this.model_changed(window, cx)
+        subscriptions.push(cx.observe_in(&entity, window, |this, _, window, cx| {
+            this.entity_changed(window, cx)
         }));
 
         let query_editor = cx.new(|cx| {
@@ -796,8 +796,8 @@ impl ProjectSearchView {
             workspace,
             focus_handle,
             replacement_editor,
-            search_id: model.read(cx).search_id,
-            model,
+            search_id: entity.read(cx).search_id,
+            entity,
             query_editor,
             results_editor,
             search_options: options,
@@ -810,7 +810,7 @@ impl ProjectSearchView {
             included_opened_only: false,
             _subscriptions: subscriptions,
         };
-        this.model_changed(window, cx);
+        this.entity_changed(window, cx);
         this
     }
 
@@ -826,8 +826,8 @@ impl ProjectSearchView {
 
         let weak_workspace = cx.entity().downgrade();
 
-        let model = cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
-        let search = cx.new(|cx| ProjectSearchView::new(weak_workspace, model, window, cx, None));
+        let entity = cx.new(|cx| ProjectSearch::new(workspace.project().clone(), cx));
+        let search = cx.new(|cx| ProjectSearchView::new(weak_workspace, entity, window, cx, None));
         workspace.add_item_to_active_pane(Box::new(search.clone()), None, true, window, cx);
         search.update(cx, |search, cx| {
             search
@@ -868,7 +868,7 @@ impl ProjectSearchView {
             let new_query = search_view.update(cx, |search_view, cx| {
                 let new_query = search_view.build_search_query(cx);
                 if new_query.is_some() {
-                    if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
+                    if let Some(old_query) = search_view.entity.read(cx).active_query.clone() {
                         search_view.query_editor.update(cx, |editor, cx| {
                             editor.set_text(old_query.as_str(), window, cx);
                         });
@@ -878,18 +878,16 @@ impl ProjectSearchView {
                 new_query
             });
             if let Some(new_query) = new_query {
-                let model = cx.new(|cx| {
-                    let mut model = ProjectSearch::new(workspace.project().clone(), cx);
-                    model.search(new_query, cx);
-                    model
+                let entity = cx.new(|cx| {
+                    let mut entity = ProjectSearch::new(workspace.project().clone(), cx);
+                    entity.search(new_query, cx);
+                    entity
                 });
                 let weak_workspace = cx.entity().downgrade();
                 workspace.add_item_to_active_pane(
-                    Box::new(
-                        cx.new(|cx| {
-                            ProjectSearchView::new(weak_workspace, model, window, cx, None)
-                        }),
-                    ),
+                    Box::new(cx.new(|cx| {
+                        ProjectSearchView::new(weak_workspace, entity, window, cx, None)
+                    })),
                     None,
                     true,
                     window,
@@ -969,7 +967,7 @@ impl ProjectSearchView {
 
     fn search(&mut self, cx: &mut Context<Self>) {
         if let Some(query) = self.build_search_query(cx) {
-            self.model.update(cx, |model, cx| model.search(query, cx));
+            self.entity.update(cx, |model, cx| model.search(query, cx));
         }
     }
 
@@ -1111,7 +1109,7 @@ impl ProjectSearchView {
 
     fn select_match(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.active_match_index {
-            let match_ranges = self.model.read(cx).match_ranges.clone();
+            let match_ranges = self.entity.read(cx).match_ranges.clone();
 
             if !EditorSettings::get_global(cx).search_wrap
                 && ((direction == Direction::Next && index + 1 >= match_ranges.len())
@@ -1182,14 +1180,14 @@ impl ProjectSearchView {
         window.focus(&results_handle);
     }
 
-    fn model_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let match_ranges = self.model.read(cx).match_ranges.clone();
+    fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let match_ranges = self.entity.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
             self.active_match_index = None;
         } else {
             self.active_match_index = Some(0);
             self.update_match_index(cx);
-            let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
+            let prev_search_id = mem::replace(&mut self.search_id, self.entity.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
                 if is_new_search {
@@ -1219,7 +1217,7 @@ impl ProjectSearchView {
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
-            &self.model.read(cx).match_ranges,
+            &self.entity.read(cx).match_ranges,
             &results_editor.selections.newest_anchor().head(),
             &results_editor.buffer().read(cx).snapshot(cx),
         );
@@ -1324,7 +1322,7 @@ impl ProjectSearchView {
 
     fn move_focus_to_results(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.results_editor.focus_handle(cx).is_focused(window)
-            && !self.model.read(cx).match_ranges.is_empty()
+            && !self.entity.read(cx).match_ranges.is_empty()
         {
             cx.stop_propagation();
             self.focus_results_editor(window, cx)
@@ -1454,7 +1452,7 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_search_option(option, cx);
-                if search_view.model.read(cx).active_query.is_some() {
+                if search_view.entity.read(cx).active_query.is_some() {
                     search_view.search(cx);
                 }
             });
@@ -1505,7 +1503,7 @@ impl ProjectSearchBar {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_opened_only(window, cx);
-                if search_view.model.read(cx).active_query.is_some() {
+                if search_view.entity.read(cx).active_query.is_some() {
                     search_view.search(cx);
                 }
             });
@@ -1562,7 +1560,7 @@ impl ProjectSearchBar {
                     ),
                 ] {
                     if editor.focus_handle(cx).is_focused(window) {
-                        let new_query = search_view.model.update(cx, |model, cx| {
+                        let new_query = search_view.entity.update(cx, |model, cx| {
                             let project = model.project.clone();
 
                             if let Some(new_query) = project.update(cx, |project, _| {
@@ -1606,12 +1604,12 @@ impl ProjectSearchBar {
                     if editor.focus_handle(cx).is_focused(window) {
                         if editor.read(cx).text(cx).is_empty() {
                             if let Some(new_query) = search_view
-                                .model
+                                .entity
                                 .read(cx)
                                 .project
                                 .read(cx)
                                 .search_history(kind)
-                                .current(search_view.model.read(cx).cursor(kind))
+                                .current(search_view.entity.read(cx).cursor(kind))
                                 .map(str::to_string)
                             {
                                 search_view.set_search_editor(kind, &new_query, window, cx);
@@ -1619,7 +1617,7 @@ impl ProjectSearchBar {
                             }
                         }
 
-                        if let Some(new_query) = search_view.model.update(cx, |model, cx| {
+                        if let Some(new_query) = search_view.entity.update(cx, |model, cx| {
                             let project = model.project.clone();
                             project.update(cx, |project, _| {
                                 project
@@ -1806,13 +1804,13 @@ impl Render for ProjectSearchBar {
                     }),
             );
 
-        let limit_reached = search.model.read(cx).limit_reached;
+        let limit_reached = search.entity.read(cx).limit_reached;
 
         let match_text = search
             .active_match_index
             .and_then(|index| {
                 let index = index + 1;
-                let match_quantity = search.model.read(cx).match_ranges.len();
+                let match_quantity = search.entity.read(cx).match_ranges.len();
                 if match_quantity > 0 {
                     debug_assert!(match_quantity >= index);
                     if limit_reached {
