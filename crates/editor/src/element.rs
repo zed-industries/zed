@@ -553,7 +553,7 @@ impl EditorElement {
             return;
         }
 
-        let text_hitbox = &position_map.gutter_hitbox;
+        let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
