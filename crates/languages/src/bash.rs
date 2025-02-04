@@ -15,3 +15,103 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
         },
     ]))
 }
+
+#[cfg(test)]
+mod tests {
+    use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
+    use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
+    use settings::SettingsStore;
+    use std::num::NonZeroU32;
+
+    #[gpui::test]
+    async fn test_bash_autoindent(cx: &mut TestAppContext) {
+        cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let language = crate::language("bash", tree_sitter_bash::LANGUAGE.into());
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            language::init(cx);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
+                    s.defaults.tab_size = NonZeroU32::new(2)
+                });
+            });
+        });
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("", cx).with_language(language, cx);
+
+            let expect_indents_to =
+                |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {
+                    buffer.edit( [(0..buffer.len(), input)], Some(AutoindentMode::EachLine), cx, );
+                    assert_eq!(buffer.text(), expected);
+                };
+
+            // indent function correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "function name() {\necho \"Hello, World!\"\n}",
+                "function name() {\n  echo \"Hello, World!\"\n}",
+            );
+
+            // indent if-else correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "if true;then\nfoo\nelse\nbar\nfi",
+                "if true;then\n  foo\nelse\n  bar\nfi",
+            );
+
+            // indent if-elif-else correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "if true;then\nfoo\nelif true;then\nbar\nelse\nbar\nfi",
+                "if true;then\n  foo\nelif true;then\n  bar\nelse\n  bar\nfi",
+            );
+
+            // indent case-when-else correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "case $1 in\nfoo) echo \"Hello, World!\";;\n*) echo \"Unknown argument\";;\nesac",
+                "case $1 in\n  foo) echo \"Hello, World!\";;\n  *) echo \"Unknown argument\";;\nesac",
+            );
+
+            // indent for-loop correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "for i in {1..10};do\nfoo\ndone",
+                "for i in {1..10};do\n  foo\ndone",
+            );
+
+            // indent while-loop correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "while true; do\nfoo\ndone",
+                "while true; do\n  foo\ndone",
+            );
+
+            // indent array correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "array=(\n1\n2\n3\n)",
+                "array=(\n  1\n  2\n  3\n)",
+            );
+
+            // indents non-"function" function correctly
+            expect_indents_to(
+                &mut buffer,
+                cx,
+                "foo() {\necho \"Hello, World!\"\n}",
+                "foo() {\n  echo \"Hello, World!\"\n}",
+            );
+
+            buffer
+        });
+    }
+}
