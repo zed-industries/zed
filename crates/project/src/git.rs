@@ -107,7 +107,7 @@ impl GitState {
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
-                worktree.update(cx, |worktree, _| {
+                worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
                     for repo in snapshot.repositories().iter() {
                         let git_repo = worktree
@@ -128,11 +128,15 @@ impl GitState {
                         let Some(git_repo) = git_repo else {
                             continue;
                         };
-                        let existing = self
-                            .repositories
-                            .iter()
-                            .enumerate()
-                            .find(|(_, existing_handle)| *existing_handle == &repo);
+                        let worktree_id = worktree.id();
+                        let existing =
+                            self.repositories
+                                .iter()
+                                .enumerate()
+                                .find(|(_, existing_handle)| {
+                                    existing_handle.read(cx).id()
+                                        == (worktree_id, repo.work_directory_id())
+                                });
                         let handle = if let Some((index, handle)) = existing {
                             if self.active_index == Some(index) {
                                 new_active_index = Some(new_repositories.len());
@@ -146,7 +150,7 @@ impl GitState {
                         } else {
                             cx.new(|_| Repository {
                                 git_state: this.clone(),
-                                worktree_id: worktree.id(),
+                                worktree_id,
                                 repository_entry: repo.clone(),
                                 git_repo,
                                 update_sender: self.update_sender.clone(),
@@ -286,6 +290,10 @@ impl GitState {
 }
 
 impl Repository {
+    fn id(&self) -> (WorktreeId, ProjectEntryId) {
+        (self.worktree_id, self.repository_entry.work_directory_id())
+    }
+
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
             let path = self.repo_path_to_project_path(&"".into())?;
@@ -310,7 +318,7 @@ impl Repository {
                 .repositories
                 .iter()
                 .enumerate()
-                .find(|(_, handle)| *handle == &self)
+                .find(|(_, handle)| handle.read(cx).id() == self.id())
             else {
                 return;
             };
@@ -374,7 +382,7 @@ impl Repository {
                     let git_commit_language = git_commit_language.await?;
                     buffer.update(&mut cx, |buffer, cx| {
                         buffer.set_language(Some(git_commit_language), cx)
-                    });
+                    })?;
                     Ok(buffer)
                 })
             }
@@ -410,20 +418,20 @@ impl Repository {
     pub fn stage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         if entries.is_empty() {
-            result_tx.send(Ok(()));
-        } else {
-            self.update_sender
-                .unbounded_send((Message::Stage(self.git_repo.clone(), entries), result_tx))
-                .ok();
+            result_tx.send(Ok(())).ok();
+            return result_rx;
         }
-
+        self.update_sender
+            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), result_tx))
+            .ok();
         result_rx
     }
 
     pub fn unstage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         if entries.is_empty() {
-            result_tx.send(Ok(()));
+            result_tx.send(Ok(())).ok();
+            return result_rx;
         }
         self.update_sender
             .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), result_tx))
@@ -469,18 +477,20 @@ impl Repository {
         return self.have_changes() && (commit_all || self.have_staged_changes());
     }
 
-    pub async fn commit(
+    pub fn commit(
         &self,
         name_and_email: Option<(SharedString, SharedString)>,
-    ) -> anyhow::Result<()> {
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        self.update_sender.unbounded_send((
-            Message::Commit {
-                git_repo: self.git_repo.clone(),
-                name_and_email,
-            },
-            result_tx,
-        ))?;
-        result_rx.await?
+        self.update_sender
+            .unbounded_send((
+                Message::Commit {
+                    git_repo: self.git_repo.clone(),
+                    name_and_email,
+                },
+                result_tx,
+            ))
+            .ok();
+        result_rx
     }
 }

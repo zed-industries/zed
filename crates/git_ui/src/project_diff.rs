@@ -234,43 +234,45 @@ impl ProjectDiff {
         let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         let mut result = vec![];
-        for entry in repo.status() {
-            if !entry.status.has_changes() {
-                continue;
-            }
-            let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
-                continue;
-            };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-                continue;
-            };
-            // Craft some artificial paths so that created entries will appear last.
+        repo.update(cx, |repo, cx| {
+            for entry in repo.status() {
+                if !entry.status.has_changes() {
+                    continue;
+                }
+                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
+                    continue;
+                };
+                let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+                    continue;
+                };
+                // Craft some artificial paths so that created entries will appear last.
             let path_key = if entry.status.is_created() {
                 PathKey::namespaced(ADDED_NAMESPACE, &abs_path)
             } else {
                 PathKey::namespaced(CHANGED_NAMESPACE, &abs_path)
             };
 
-            previous_paths.remove(&path_key);
-            let load_buffer = self
-                .project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx));
+                previous_paths.remove(&path_key);
+                let load_buffer = self
+                    .project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-            let project = self.project.clone();
-            result.push(cx.spawn(|_, mut cx| async move {
-                let buffer = load_buffer.await?;
-                let changes = project
-                    .update(&mut cx, |project, cx| {
-                        project.open_uncommitted_changes(buffer.clone(), cx)
-                    })?
-                    .await?;
-                Ok(DiffBuffer {
-                    path_key,
-                    buffer,
-                    change_set: changes,
-                })
-            }));
-        }
+                let project = self.project.clone();
+                result.push(cx.spawn(|_, mut cx| async move {
+                    let buffer = load_buffer.await?;
+                    let changes = project
+                        .update(&mut cx, |project, cx| {
+                            project.open_uncommitted_changes(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    Ok(DiffBuffer {
+                        path_key,
+                        buffer,
+                        change_set: changes,
+                    })
+                }));
+            }
+        });
         self.multibuffer.update(cx, |multibuffer, cx| {
             for path in previous_paths {
                 multibuffer.remove_excerpts_for_path(path, cx);

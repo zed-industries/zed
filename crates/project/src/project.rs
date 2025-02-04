@@ -4001,7 +4001,7 @@ impl Project {
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.stage_entries(entries)
             })?
-            .await?;
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -4027,7 +4027,7 @@ impl Project {
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.unstage_entries(entries)
             })?
-            .await?;
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -4047,7 +4047,7 @@ impl Project {
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.commit(name.zip(email))
             })?
-            .await?;
+            .await??;
         Ok(proto::Ack {})
     }
 

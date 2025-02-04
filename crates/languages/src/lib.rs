@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
+use language::language_settings::SoftWrap;
 pub use language::*;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -8,7 +9,10 @@ use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
-use std::{str, sync::Arc};
+use std::{
+    str,
+    sync::{Arc, LazyLock},
+};
 use typescript::typescript_task_context;
 use util::{asset_str, ResultExt};
 
@@ -44,7 +48,7 @@ pub static LANGUAGE_GIT_COMMIT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             line_comments: vec![Arc::from("#")],
             ..Default::default()
         },
-        Some(tree_sitter_gitcommit::LANGUAGE),
+        Some(tree_sitter_gitcommit::language()),
     ))
 });
 
@@ -70,7 +74,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
         ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
         ("yaml", tree_sitter_yaml::LANGUAGE),
-        ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
+        ("gitcommit", tree_sitter_gitcommit::language()),
     ]);
 
     macro_rules! language {

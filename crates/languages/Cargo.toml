@@ -18,6 +18,7 @@ load-grammars = [
     "tree-sitter-cpp",
     "tree-sitter-css",
     "tree-sitter-diff",
+    "tree-sitter-gitcommit",
     "tree-sitter-go",
     "tree-sitter-go-mod",
     "tree-sitter-gowork",

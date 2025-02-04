@@ -194,7 +194,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
             return;
         };
-        selected_repo.activate(cx);
+        selected_repo.update(cx, |selected_repo, cx| selected_repo.activate(cx));
         self.dismissed(window, cx);
     }
 
@@ -222,7 +222,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     ) -> Option<Self::ListItem> {
         let project = self.project.upgrade()?;
         let repo_info = self.filtered_repositories.get(ix)?;
-        let display_name = repo_info.display_name(project.read(cx), cx);
+        let display_name = repo_info.read(cx).display_name(project.read(cx), cx);
         // TODO: Implement repository item rendering
         Some(
             ListItem::new(ix)
