@@ -69,7 +69,6 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_onboarding::ZedPredictModal;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -617,7 +616,8 @@ pub struct Editor {
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
 
-    project: Option<Entity<Project>>,
+    // TODO: make this a access method
+    pub project: Option<Entity<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
     collaboration_hub: Option<Box<dyn CollaborationHub>>,
@@ -3944,20 +3944,7 @@ impl Editor {
     }
 
     fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
-            return;
-        };
-
-        let project = project.read(cx);
-
-        ZedPredictModal::toggle(
-            workspace,
-            project.user_store().clone(),
-            project.client().clone(),
-            project.fs().clone(),
-            window,
-            cx,
-        );
+        window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
     }
 
     fn do_completion(

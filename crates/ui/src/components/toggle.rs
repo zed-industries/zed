@@ -1,4 +1,6 @@
-use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled, Window};
+use gpui::{
+    div, hsla, prelude::*, AnyView, CursorStyle, ElementId, Hsla, IntoElement, Styled, Window,
+};
 use std::sync::Arc;
 
 use crate::utils::is_light;
@@ -45,6 +47,7 @@ pub struct Checkbox {
     filled: bool,
     style: ToggleStyle,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    label: Option<SharedString>,
 }
 
 impl Checkbox {
@@ -58,6 +61,7 @@ impl Checkbox {
             filled: false,
             style: ToggleStyle::default(),
             tooltip: None,
+            label: None,
         }
     }
 
@@ -99,6 +103,12 @@ impl Checkbox {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
+
+    /// Set the label for the checkbox.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
 }
 
 impl Checkbox {
@@ -116,11 +126,11 @@ impl Checkbox {
 
     fn border_color(&self, cx: &App) -> Hsla {
         if self.disabled {
-            return cx.theme().colors().border_disabled;
+            return cx.theme().colors().border_variant;
         }
 
         match self.style.clone() {
-            ToggleStyle::Ghost => cx.theme().colors().border_variant,
+            ToggleStyle::Ghost => cx.theme().colors().border,
             ToggleStyle::ElevationBased(elevation) => elevation.on_elevation_bg(cx),
             ToggleStyle::Custom(color) => color.opacity(0.3),
         }
@@ -153,10 +163,8 @@ impl RenderOnce for Checkbox {
         let bg_color = self.bg_color(cx);
         let border_color = self.border_color(cx);
 
-        h_flex()
-            .id(self.id)
+        let checkbox = h_flex()
             .justify_center()
-            .items_center()
             .size(DynamicSpacing::Base20.rems(cx))
             .group(group_id.clone())
             .child(
@@ -171,13 +179,24 @@ impl RenderOnce for Checkbox {
                     .bg(bg_color)
                     .border_1()
                     .border_color(border_color)
+                    .when(self.disabled, |this| {
+                        this.cursor(CursorStyle::OperationNotAllowed)
+                    })
+                    .when(self.disabled, |this| {
+                        this.bg(cx.theme().colors().element_disabled.opacity(0.6))
+                    })
                     .when(!self.disabled, |this| {
                         this.group_hover(group_id.clone(), |el| {
                             el.bg(cx.theme().colors().element_hover)
                         })
                     })
                     .children(icon),
-            )
+            );
+
+        h_flex()
+            .id(self.id)
+            .gap(DynamicSpacing::Base06.rems(cx))
+            .child(checkbox)
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
@@ -186,6 +205,11 @@ impl RenderOnce for Checkbox {
                     })
                 },
             )
+            // TODO: Allow label size to be different from default.
+            // TODO: Allow label color to be different from muted.
+            .when_some(self.label, |this, label| {
+                this.child(Label::new(label).color(Color::Muted))
+            })
             .when_some(self.tooltip, |this, tooltip| {
                 this.tooltip(move |window, cx| tooltip(window, cx))
             })
@@ -203,6 +227,7 @@ pub struct CheckboxWithLabel {
     style: ToggleStyle,
 }
 
+// TODO: Remove `CheckboxWithLabel` now that `label` is a method of `Checkbox`.
 impl CheckboxWithLabel {
     /// Creates a checkbox with an attached label.
     pub fn new(
