@@ -1603,46 +1603,48 @@ impl Interactivity {
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
-                    style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
-                        window.with_text_style(style.text_style().cloned(), |window| {
-                            window.with_content_mask(
-                                style.overflow_mask(bounds, window.rem_size()),
-                                |window| {
-                                    if let Some(hitbox) = hitbox {
-                                        #[cfg(debug_assertions)]
-                                        self.paint_debug_info(
-                                            global_id, hitbox, &style, window, cx,
-                                        );
+                    window.with_scale(style.scale_multiplier, |window| {
+                        style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
+                            window.with_text_style(style.text_style().cloned(), |window| {
+                                window.with_content_mask(
+                                    style.overflow_mask(bounds, window.rem_size()),
+                                    |window| {
+                                        if let Some(hitbox) = hitbox {
+                                            #[cfg(debug_assertions)]
+                                            self.paint_debug_info(
+                                                global_id, hitbox, &style, window, cx,
+                                            );
 
-                                        if !cx.has_active_drag() {
-                                            if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+                                            if !cx.has_active_drag() {
+                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                    window.set_cursor_style(mouse_cursor, hitbox);
+                                                }
+                                            }
+
+                                            if let Some(group) = self.group.clone() {
+                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                            }
+
+                                            self.paint_mouse_listeners(
+                                                hitbox,
+                                                element_state.as_mut(),
+                                                window,
+                                                cx,
+                                            );
+                                            self.paint_scroll_listener(hitbox, &style, window, cx);
+                                        }
+
+                                        self.paint_keyboard_listeners(window, cx);
+                                        f(&style, window, cx);
+
+                                        if hitbox.is_some() {
+                                            if let Some(group) = self.group.as_ref() {
+                                                GroupHitboxes::pop(group, cx);
                                             }
                                         }
-
-                                        if let Some(group) = self.group.clone() {
-                                            GroupHitboxes::push(group, hitbox.id, cx);
-                                        }
-
-                                        self.paint_mouse_listeners(
-                                            hitbox,
-                                            element_state.as_mut(),
-                                            window,
-                                            cx,
-                                        );
-                                        self.paint_scroll_listener(hitbox, &style, window, cx);
-                                    }
-
-                                    self.paint_keyboard_listeners(window, cx);
-                                    f(&style, window, cx);
-
-                                    if hitbox.is_some() {
-                                        if let Some(group) = self.group.as_ref() {
-                                            GroupHitboxes::pop(group, cx);
-                                        }
-                                    }
-                                },
-                            );
+                                    },
+                                );
+                            });
                         });
                     });
                 });

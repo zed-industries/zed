@@ -629,7 +629,7 @@ pub struct Window {
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
-    scale_factor: f32,
+    scale_factor_stack: SmallVec<[f32; 1]>,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -912,7 +912,7 @@ impl Window {
             mouse_position,
             mouse_hit_test: HitTest::default(),
             modifiers,
-            scale_factor,
+            scale_factor_stack: [scale_factor; 1].into(),
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -1317,7 +1317,7 @@ impl Window {
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
+        self.scale_factor_stack[0] = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
 
@@ -1442,11 +1442,30 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// The scale factor of the display associated with the window. For example, it could
-    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
-    /// be rendered as two pixels on screen.
+    /// The scale factor of the display associated with the window and element. For example,
+    /// it could return 2.0 for a "retina" display, indicating that each logical pixel should
+    /// actually be rendered as two pixels on screen. Elements can add multipliers to this
+    /// which adjust the scale of themselves and their children.
     pub fn scale_factor(&self) -> f32 {
-        self.scale_factor
+        self.scale_factor_stack
+            .iter()
+            .fold(1.0, |acc, &multiplier| acc * multiplier)
+    }
+
+    pub fn with_scale<F, R>(&mut self, multiplier: Option<f32>, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.invalidator.debug_assert_paint_or_prepaint();
+
+        if let Some(multiplier) = multiplier {
+            self.scale_factor_stack.push(multiplier);
+            let result = f(self);
+            self.scale_factor_stack.pop();
+            result
+        } else {
+            f(self)
+        }
     }
 
     /// The size of an em for the base font of the application. Adjusting this value allows the

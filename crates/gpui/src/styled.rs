@@ -614,6 +614,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the scale of this element and its children.
+    fn scale(mut self, scale: f32) -> Self {
+        self.style().scale_multiplier = Some(scale);
+        self
+    }
+
     /// Sets the opacity of this element and its children.
     fn opacity(mut self, opacity: f32) -> Self {
         self.style().opacity = Some(opacity);
