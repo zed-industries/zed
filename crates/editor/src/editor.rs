@@ -76,14 +76,14 @@ use code_context_menus::{
 };
 use git::blame::GitBlame;
 use gpui::{
-    div, impl_actions, point, prelude::*, pulsating_between, px, relative, size, Action, Animation,
-    AnimationExt, AnyElement, App, AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry,
-    ClipboardItem, Context, DispatchPhase, ElementId, Entity, EntityInputHandler, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, FontId, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveText, KeyContext, Modifiers, MouseButton, MouseDownEvent, PaintQuad, ParentElement,
-    Pixels, Render, SharedString, Size, Styled, StyledText, Subscription, Task, TextStyle,
-    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, WeakEntity,
-    WeakFocusHandle, Window,
+    div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
+    px, relative, size, Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext,
+    AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
+    FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
+    MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
+    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
+    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -107,7 +107,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
-use std::iter::{self, Peekable};
+use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -466,7 +466,7 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 pub(crate) enum EditDisplayMode {
-    TabAccept,
+    TabAccept(bool),
     DiffPopover,
     Inline,
 }
@@ -4953,6 +4953,13 @@ impl Editor {
         true
     }
 
+    pub fn is_previewing_inline_completion(&self) -> bool {
+        matches!(
+            self.context_menu.borrow().as_ref(),
+            Some(CodeContextMenu::Completions(menu)) if !menu.is_empty() && menu.previewing_inline_completion
+        )
+    }
+
     fn update_inline_completion_preview(
         &mut self,
         modifiers: &Modifiers,
@@ -5117,7 +5124,7 @@ impl Editor {
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept
+                    EditDisplayMode::TabAccept(self.is_previewing_inline_completion())
                 } else {
                     EditDisplayMode::Inline
                 }
@@ -5405,10 +5412,12 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_edit_prediction_cursor_popover(
         &self,
         max_width: Pixels,
         cursor_point: Point,
+        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
         window: &Window,
@@ -5456,6 +5465,7 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
+                line_layouts,
                 style,
                 cx,
             )?,
@@ -5464,6 +5474,7 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
+                    line_layouts,
                     style,
                     cx,
                 )?,
@@ -5549,6 +5560,7 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
+        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
@@ -5644,32 +5656,27 @@ impl Editor {
                 range_around_target,
                 snapshot,
             } => {
-                let mut highlighted_text = snapshot.highlighted_text_for_range(
+                let highlighted_text = snapshot.highlighted_text_for_range(
                     range_around_target.clone(),
                     None,
                     &style.syntax,
                 );
                 let cursor_color = self.current_user_player_color(cx).cursor;
-                let target_ix =
-                    text::ToOffset::to_offset(&target.text_anchor, &snapshot).saturating_sub(
-                        text::ToOffset::to_offset(&range_around_target.start, &snapshot),
-                    );
-                highlighted_text.highlights = gpui::combine_highlights(
-                    highlighted_text.highlights,
-                    iter::once((
-                        target_ix..target_ix + 1,
-                        HighlightStyle {
-                            background_color: Some(cursor_color),
-                            ..Default::default()
-                        },
-                    )),
-                )
-                .collect::<Vec<_>>();
 
                 let start_point = range_around_target.start.to_point(&snapshot);
                 let end_point = range_around_target.end.to_point(&snapshot);
-                let ellipsis_before = start_point.column > 0;
-                let ellipsis_after = end_point.column < snapshot.line_len(end_point.row);
+                let target_point = target.text_anchor.to_point(&snapshot);
+
+                let start_column_x =
+                    line_layouts[start_point.row as usize].x_for_index(start_point.column as usize);
+                let target_column_x = line_layouts[target_point.row as usize]
+                    .x_for_index(target_point.column as usize);
+                let cursor_relative_position = target_column_x - start_column_x;
+
+                let fade_before = start_point.column > 0;
+                let fade_after = end_point.column < snapshot.line_len(end_point.row);
+
+                let background = cx.theme().colors().elevated_surface_background;
 
                 Some(
                     h_flex()
@@ -5682,9 +5689,39 @@ impl Editor {
                         .when(!highlighted_text.text.is_empty(), |parent| {
                             parent.child(
                                 h_flex()
-                                    .when(ellipsis_before, |parent| parent.child("…"))
+                                    .relative()
                                     .child(highlighted_text.to_styled_text(&style.text))
-                                    .when(ellipsis_after, |parent| parent.child("…")),
+                                    .when(fade_before, |parent| {
+                                        parent.child(
+                                            div().absolute().top_0().left_0().w_4().h_full().bg(
+                                                linear_gradient(
+                                                    90.,
+                                                    linear_color_stop(background, 0.),
+                                                    linear_color_stop(background.opacity(0.), 1.),
+                                                ),
+                                            ),
+                                        )
+                                    })
+                                    .when(fade_after, |parent| {
+                                        parent.child(
+                                            div().absolute().top_0().right_0().w_4().h_full().bg(
+                                                linear_gradient(
+                                                    -90.,
+                                                    linear_color_stop(background, 0.),
+                                                    linear_color_stop(background.opacity(0.), 1.),
+                                                ),
+                                            ),
+                                        )
+                                    })
+                                    .child(
+                                        div()
+                                            .w(px(2.))
+                                            .h_full()
+                                            .bg(cursor_color)
+                                            .absolute()
+                                            .top_0()
+                                            .left(cursor_relative_position),
+                                    ),
                             )
                         }),
                 )

@@ -1668,7 +1668,7 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept,
+                        display_mode: EditDisplayMode::TabAccept(_),
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
@@ -3301,6 +3301,7 @@ impl EditorElement {
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             max_width,
                             cursor_point,
+                            &line_layouts,
                             style,
                             accept_keystroke.as_ref()?,
                             window,
@@ -3686,6 +3687,7 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
+                        true,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3698,6 +3700,7 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
+                        true,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3713,6 +3716,7 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         None,
+                        true,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3764,7 +3768,8 @@ impl EditorElement {
                 }
 
                 match display_mode {
-                    EditDisplayMode::TabAccept => {
+                    EditDisplayMode::TabAccept(previewing) => {
+                        let previewing = *previewing;
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3779,6 +3784,7 @@ impl EditorElement {
                         let mut element = inline_completion_accept_indicator(
                             "Accept",
                             None,
+                            !previewing,
                             self.editor.focus_handle(cx),
                             window,
                             cx,
@@ -5816,6 +5822,7 @@ fn header_jump_data(
 fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
+    show_modifiers: bool,
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
@@ -5834,11 +5841,13 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .children(ui::render_modifiers(
-            &accept_keystroke.modifiers,
-            PlatformStyle::platform(),
-            Some(Color::Default),
-        ))
+        .when(show_modifiers, |parent| {
+            parent.children(ui::render_modifiers(
+                &accept_keystroke.modifiers,
+                PlatformStyle::platform(),
+                Some(Color::Default),
+            ))
+        })
         .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
