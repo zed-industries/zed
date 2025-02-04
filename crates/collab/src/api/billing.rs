@@ -249,29 +249,31 @@ async fn create_billing_subscription(
         ));
     }
 
-    if app.db.has_overdue_billing_subscriptions(user.id).await? {
-        return Err(Error::http(
-            StatusCode::PAYMENT_REQUIRED,
-            "user has overdue billing subscriptions".into(),
-        ));
+    let existing_billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
+    if let Some(existing_billing_customer) = &existing_billing_customer {
+        if existing_billing_customer.has_overdue_invoices {
+            return Err(Error::http(
+                StatusCode::PAYMENT_REQUIRED,
+                "user has overdue invoices".into(),
+            ));
+        }
     }
 
-    let customer_id =
-        if let Some(existing_customer) = app.db.get_billing_customer_by_user_id(user.id).await? {
-            CustomerId::from_str(&existing_customer.stripe_customer_id)
-                .context("failed to parse customer ID")?
-        } else {
-            let customer = Customer::create(
-                &stripe_client,
-                CreateCustomer {
-                    email: user.email_address.as_deref(),
-                    ..Default::default()
-                },
-            )
-            .await?;
+    let customer_id = if let Some(existing_customer) = existing_billing_customer {
+        CustomerId::from_str(&existing_customer.stripe_customer_id)
+            .context("failed to parse customer ID")?
+    } else {
+        let customer = Customer::create(
+            &stripe_client,
+            CreateCustomer {
+                email: user.email_address.as_deref(),
+                ..Default::default()
+            },
+        )
+        .await?;
 
-            customer.id
-        };
+        customer.id
+    };
 
     let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
     let stripe_model = stripe_billing.register_model(default_model).await?;
