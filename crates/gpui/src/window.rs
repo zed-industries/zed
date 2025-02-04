@@ -2815,12 +2815,15 @@ impl Window {
         self.rendered_entity_stack.last().copied().unwrap()
     }
 
-    pub(crate) fn push_rendered_view(&mut self, id: EntityId) {
+    pub(crate) fn with_rendered_view<R>(
+        &mut self,
+        id: EntityId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
         self.rendered_entity_stack.push(id);
-    }
-
-    pub(crate) fn pop_rendered_view(&mut self) {
+        let result = f(self);
         self.rendered_entity_stack.pop();
+        result
     }
 
     /// Sets an input handler, such as [`ElementInputHandler`][element_input_handler], which interfaces with the
