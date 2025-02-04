@@ -404,7 +404,7 @@ impl InlineCompletionButton {
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .documentation_aside(|_| {
-                            Label::new("Zed automatically identifies whether your project is open-source. Thus, this setting only applies if that's the case.").into_any_element()
+                            Label::new("Zed automatically detects if your project is open-source. This setting is only applicable in such cases.").into_any_element()
                         })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
@@ -419,7 +419,7 @@ impl InlineCompletionButton {
                     ContextMenuEntry::new("Exclude File")
                         .toggleable(IconPosition::Start, !path_enabled)
                         .documentation_aside(|_| {
-                            Label::new("Files within this setting don't ever have their content sent to Zed's prediction model. You can specify file extensions as well as individual files.").into_any_element()
+                            Label::new("Content from files specified in this setting is never captured by Zed's prediction model. You can list both specific file extensions and individual file names.").into_any_element()
                         })
                         .handler(move |window, cx| {
                             if let Some(workspace) = window.root().flatten() {
