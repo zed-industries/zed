@@ -1,12 +1,13 @@
 use crate::{
-    CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER, START_OF_FILE_MARKER,
+    BYTES_PER_TOKEN_GUESS, CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
+    START_OF_FILE_MARKER,
 };
 use language::{BufferSnapshot, Point};
 use std::{fmt::Write, ops::Range};
 
-struct InputExcerpt {
-    editable_range: Range<Point>,
-    prompt: String,
+pub struct InputExcerpt {
+    pub editable_range: Range<Point>,
+    pub prompt: String,
 }
 
 pub fn excerpt_for_cursor_position(
@@ -104,7 +105,7 @@ fn expand_range(
 }
 
 fn tokens_for_bytes(bytes: usize) -> usize {
-    bytes / 3
+    bytes / BYTES_PER_TOKEN_GUESS
 }
 
 #[cfg(test)]

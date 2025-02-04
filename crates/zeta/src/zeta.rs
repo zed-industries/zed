@@ -26,7 +26,7 @@ use gpui::{
 use http_client::{HttpClient, Method};
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
-    OffsetRangeExt, Point, ToOffset, ToPoint,
+    OffsetRangeExt, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
@@ -62,19 +62,19 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 /// intentionally low to err on the side of underestimating limits.
 const BYTES_PER_TOKEN_GUESS: usize = 3;
 
-/// Output token limit, used to inform the size of the input. A copy of this constant is also in
+/// Input token limit, used to inform the size of the input. A copy of this constant is also in
 /// `crates/collab/src/llm.rs`.
-const MAX_OUTPUT_TOKENS: usize = 2048;
+const MAX_INPUT_TOKENS: usize = 2048;
+
+const MAX_CONTEXT_TOKENS: usize = 128;
+const MAX_OUTPUT_TOKENS: usize = 256;
 
 /// Total bytes limit for editable region of buffer excerpt.
 ///
 /// The number of output tokens is relevant to the size of the input excerpt because the model is
 /// tasked with outputting a modified excerpt. `2/3` is chosen so that there are some output tokens
 /// remaining for the model to specify insertions.
-const BUFFER_EXCERPT_BYTE_LIMIT: usize = (MAX_OUTPUT_TOKENS * 2 / 3) * BYTES_PER_TOKEN_GUESS;
-
-/// Total line limit for editable region of buffer excerpt.
-const BUFFER_EXCERPT_LINE_LIMIT: u32 = 64;
+const BUFFER_EXCERPT_BYTE_LIMIT: usize = (MAX_INPUT_TOKENS * 2 / 3) * BYTES_PER_TOKEN_GUESS;
 
 /// Note that this is not the limit for the overall prompt, just for the inputs to the template
 /// instantiated in `crates/collab/src/llm.rs`.
@@ -374,8 +374,8 @@ impl Zeta {
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
-        let cursor_point = cursor.to_point(&snapshot);
-        let cursor_offset = cursor_point.to_offset(&snapshot);
+        let cursor_position = cursor.to_point(&snapshot);
+        let cursor_offset = cursor_position.to_offset(&snapshot);
         let events = self.events.clone();
         let path: Arc<Path> = snapshot
             .file()
@@ -390,36 +390,36 @@ impl Zeta {
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
-            let (input_events, input_excerpt, excerpt_range, input_outline) = cx
+            let (input_events, input_excerpt, editable_range, input_outline) = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
                     let path = path.clone();
                     async move {
                         let path = path.to_string_lossy();
-                        let (excerpt_range, excerpt_len_guess) = excerpt_range_for_position(
-                            cursor_point,
-                            BUFFER_EXCERPT_BYTE_LIMIT,
-                            BUFFER_EXCERPT_LINE_LIMIT,
+                        let input_excerpt = input_excerpt::excerpt_for_cursor_position(
+                            cursor_position,
                             &path,
                             &snapshot,
-                        )?;
-                        let input_excerpt = prompt_for_excerpt(
-                            cursor_offset,
-                            &excerpt_range,
-                            excerpt_len_guess,
-                            &path,
-                            &snapshot,
+                            MAX_OUTPUT_TOKENS,
+                            MAX_CONTEXT_TOKENS,
                         );
 
-                        let bytes_remaining = TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.len());
+                        let bytes_remaining =
+                            TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.prompt.len());
                         let input_events = prompt_for_events(events.iter(), bytes_remaining);
 
                         // Note that input_outline is not currently used in prompt generation and so
                         // is not counted towards TOTAL_BYTE_LIMIT.
                         let input_outline = prompt_for_outline(&snapshot);
 
-                        anyhow::Ok((input_events, input_excerpt, excerpt_range, input_outline))
+                        let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
+                        anyhow::Ok((
+                            input_events,
+                            input_excerpt.prompt,
+                            editable_range,
+                            input_outline,
+                        ))
                     }
                 })
                 .await?;
@@ -442,7 +442,7 @@ impl Zeta {
                 output_excerpt,
                 buffer,
                 &snapshot,
-                excerpt_range,
+                editable_range,
                 cursor_offset,
                 path,
                 input_outline,
@@ -458,6 +458,8 @@ impl Zeta {
     // Generates several example completions of various states to fill the Zeta completion modal
     #[cfg(any(test, feature = "test-support"))]
     pub fn fill_with_fake_completions(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        use language::Point;
+
         let test_buffer_text = indoc::indoc! {r#"a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
             And maybe a short line
 
@@ -676,7 +678,7 @@ and then another
         output_excerpt: String,
         buffer: Entity<Buffer>,
         snapshot: &BufferSnapshot,
-        excerpt_range: Range<usize>,
+        editable_range: Range<usize>,
         cursor_offset: usize,
         path: Arc<Path>,
         input_outline: String,
@@ -693,9 +695,9 @@ and then another
                 .background_executor()
                 .spawn({
                     let output_excerpt = output_excerpt.clone();
-                    let excerpt_range = excerpt_range.clone();
+                    let editable_range = editable_range.clone();
                     let snapshot = snapshot.clone();
-                    async move { Self::parse_edits(output_excerpt, excerpt_range, &snapshot) }
+                    async move { Self::parse_edits(output_excerpt, editable_range, &snapshot) }
                 })
                 .await?
                 .into();
@@ -718,7 +720,7 @@ and then another
             Ok(Some(InlineCompletion {
                 id: InlineCompletionId::new(),
                 path,
-                excerpt_range,
+                excerpt_range: editable_range,
                 cursor_offset,
                 edits,
                 edit_preview,
@@ -735,7 +737,7 @@ and then another
 
     fn parse_edits(
         output_excerpt: Arc<str>,
-        excerpt_range: Range<usize>,
+        editable_range: Range<usize>,
         snapshot: &BufferSnapshot,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
         let content = output_excerpt.replace(CURSOR_MARKER, "");
@@ -779,13 +781,13 @@ and then another
         let new_text = &content[..codefence_end];
 
         let old_text = snapshot
-            .text_for_range(excerpt_range.clone())
+            .text_for_range(editable_range.clone())
             .collect::<String>();
 
         Ok(Self::compute_edits(
             old_text,
             new_text,
-            excerpt_range.start,
+            editable_range.start,
             &snapshot,
         ))
     }
@@ -1010,161 +1012,6 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     writeln!(input_outline, "```").unwrap();
 
     input_outline
-}
-
-fn prompt_for_excerpt(
-    offset: usize,
-    excerpt_range: &Range<usize>,
-    mut len_guess: usize,
-    path: &str,
-    snapshot: &BufferSnapshot,
-) -> String {
-    let point_range = excerpt_range.to_point(snapshot);
-
-    // Include one line of extra context before and after editable range, if those lines are non-empty.
-    let extra_context_before_range =
-        if point_range.start.row > 0 && !snapshot.is_line_blank(point_range.start.row - 1) {
-            let range =
-                (Point::new(point_range.start.row - 1, 0)..point_range.start).to_offset(snapshot);
-            len_guess += range.end - range.start;
-            Some(range)
-        } else {
-            None
-        };
-    let extra_context_after_range = if point_range.end.row < snapshot.max_point().row
-        && !snapshot.is_line_blank(point_range.end.row + 1)
-    {
-        let range = (point_range.end
-            ..Point::new(
-                point_range.end.row + 1,
-                snapshot.line_len(point_range.end.row + 1),
-            ))
-            .to_offset(snapshot);
-        len_guess += range.end - range.start;
-        Some(range)
-    } else {
-        None
-    };
-
-    let mut prompt_excerpt = String::with_capacity(len_guess);
-    writeln!(prompt_excerpt, "```{}", path).unwrap();
-
-    if excerpt_range.start == 0 {
-        writeln!(prompt_excerpt, "{START_OF_FILE_MARKER}").unwrap();
-    }
-
-    if let Some(extra_context_before_range) = extra_context_before_range {
-        for chunk in snapshot.text_for_range(extra_context_before_range) {
-            prompt_excerpt.push_str(chunk);
-        }
-    }
-    writeln!(prompt_excerpt, "{EDITABLE_REGION_START_MARKER}").unwrap();
-    for chunk in snapshot.text_for_range(excerpt_range.start..offset) {
-        prompt_excerpt.push_str(chunk);
-    }
-    prompt_excerpt.push_str(CURSOR_MARKER);
-    for chunk in snapshot.text_for_range(offset..excerpt_range.end) {
-        prompt_excerpt.push_str(chunk);
-    }
-    write!(prompt_excerpt, "\n{EDITABLE_REGION_END_MARKER}").unwrap();
-
-    if let Some(extra_context_after_range) = extra_context_after_range {
-        for chunk in snapshot.text_for_range(extra_context_after_range) {
-            prompt_excerpt.push_str(chunk);
-        }
-    }
-
-    write!(prompt_excerpt, "\n```").unwrap();
-    debug_assert!(
-        prompt_excerpt.len() <= len_guess,
-        "Excerpt length {} exceeds estimated length {}",
-        prompt_excerpt.len(),
-        len_guess
-    );
-    prompt_excerpt
-}
-
-fn excerpt_range_for_position(
-    cursor_point: Point,
-    byte_limit: usize,
-    line_limit: u32,
-    path: &str,
-    snapshot: &BufferSnapshot,
-) -> Result<(Range<usize>, usize)> {
-    let cursor_row = cursor_point.row;
-    let last_buffer_row = snapshot.max_point().row;
-
-    // This is an overestimate because it includes parts of prompt_for_excerpt which are
-    // conditionally skipped.
-    let mut len_guess = 0;
-    len_guess += "```".len() + path.len() + 1;
-    len_guess += START_OF_FILE_MARKER.len() + 1;
-    len_guess += EDITABLE_REGION_START_MARKER.len() + 1;
-    len_guess += CURSOR_MARKER.len();
-    len_guess += EDITABLE_REGION_END_MARKER.len() + 1;
-    len_guess += "```".len() + 1;
-
-    len_guess += usize::try_from(snapshot.line_len(cursor_row) + 1).unwrap();
-
-    if len_guess > byte_limit {
-        return Err(anyhow!("Current line too long to send to model."));
-    }
-
-    let mut excerpt_start_row = cursor_row;
-    let mut excerpt_end_row = cursor_row;
-    let mut no_more_before = cursor_row == 0;
-    let mut no_more_after = cursor_row >= last_buffer_row;
-    let mut row_delta = 1;
-    loop {
-        if !no_more_before {
-            let row = cursor_point.row - row_delta;
-            let line_len: usize = usize::try_from(snapshot.line_len(row) + 1).unwrap();
-            let mut new_len_guess = len_guess + line_len;
-            if row == 0 {
-                new_len_guess += START_OF_FILE_MARKER.len() + 1;
-            }
-            if new_len_guess <= byte_limit {
-                len_guess = new_len_guess;
-                excerpt_start_row = row;
-                if row == 0 {
-                    no_more_before = true;
-                }
-            } else {
-                no_more_before = true;
-            }
-        }
-        if excerpt_end_row - excerpt_start_row >= line_limit {
-            break;
-        }
-        if !no_more_after {
-            let row = cursor_point.row + row_delta;
-            let line_len: usize = usize::try_from(snapshot.line_len(row) + 1).unwrap();
-            let new_len_guess = len_guess + line_len;
-            if new_len_guess <= byte_limit {
-                len_guess = new_len_guess;
-                excerpt_end_row = row;
-                if row >= last_buffer_row {
-                    no_more_after = true;
-                }
-            } else {
-                no_more_after = true;
-            }
-        }
-        if excerpt_end_row - excerpt_start_row >= line_limit {
-            break;
-        }
-        if no_more_before && no_more_after {
-            break;
-        }
-        row_delta += 1;
-    }
-
-    let excerpt_start = Point::new(excerpt_start_row, 0);
-    let excerpt_end = Point::new(excerpt_end_row, snapshot.line_len(excerpt_end_row));
-    Ok((
-        excerpt_start.to_offset(snapshot)..excerpt_end.to_offset(snapshot),
-        len_guess,
-    ))
 }
 
 fn prompt_for_events<'a>(
@@ -1672,6 +1519,7 @@ mod tests {
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
+    use language::Point;
     use language_models::RefreshLlmTokenListener;
     use rpc::proto;
     use settings::SettingsStore;
