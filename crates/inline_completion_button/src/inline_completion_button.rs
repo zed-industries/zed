@@ -245,29 +245,50 @@ impl Render for InlineCompletionButton {
                     let base = IconButton::new("zed-predict-pending-button", zeta_icon)
                         .shape(IconButtonShape::Square);
 
-                    if !current_user_terms_accepted.unwrap_or(false) {
-                        let signed_in = current_user_terms_accepted.is_some();
-                        let tooltip_meta = if signed_in {
-                            "Read Terms of Service"
-                        } else {
-                            "Sign in to use"
-                        };
+                    match (
+                        current_user_terms_accepted,
+                        self.popover_menu_handle.is_deployed(),
+                        enabled,
+                    ) {
+                        (Some(false) | None, _, _) => {
+                            let signed_in = current_user_terms_accepted.is_some();
+                            let tooltip_meta = if signed_in {
+                                "Read Terms of Service"
+                            } else {
+                                "Sign in to use"
+                            };
 
-                        base.tooltip(move |window, cx| {
-                            Tooltip::with_meta("Edit Predictions", None, tooltip_meta, window, cx)
-                        })
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            window.dispatch_action(
-                                zed_actions::OpenZedPredictOnboarding.boxed_clone(),
-                                cx,
-                            );
-                        }))
-                    } else if self.popover_menu_handle.is_deployed() {
-                        base
-                    } else {
-                        base.tooltip(|window, cx| {
+                            base.tooltip(move |window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Predictions",
+                                    None,
+                                    tooltip_meta,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(
+                                move |_, _, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                        cx,
+                                    );
+                                },
+                            ))
+                        }
+                        (Some(true), true, _) => base,
+                        (Some(true), false, true) => base.tooltip(|window, cx| {
                             Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                        })
+                        }),
+                        (Some(true), false, false) => base.tooltip(|window, cx| {
+                            Tooltip::with_meta(
+                                "Edit Prediction",
+                                None,
+                                "Disabled For This File",
+                                window,
+                                cx,
+                            )
+                        }),
                     }
                 };
 
