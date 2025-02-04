@@ -679,7 +679,7 @@ pub struct Editor {
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // inline completions based on its mode.
-    enable_inline_completions: bool,
+    show_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
     inlay_hint_cache: InlayHintCache,
@@ -1385,7 +1385,7 @@ impl Editor {
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             show_inline_completions_override: None,
-            enable_inline_completions: true,
+            show_inline_completions: true,
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             custom_context_menu: None,
             show_git_blame_gutter: false,
@@ -1815,9 +1815,9 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
-    pub fn set_inline_completions_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.enable_inline_completions = enabled;
-        if !self.enable_inline_completions {
+    pub fn set_show_inline_completions_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.show_inline_completions = enabled;
+        if !self.show_inline_completions {
             self.take_active_inline_completion(cx);
             cx.notify();
         }
@@ -1868,8 +1868,11 @@ impl Editor {
             if let Some((buffer, cursor_buffer_position)) =
                 self.buffer.read(cx).text_anchor_for_position(cursor, cx)
             {
-                let show_inline_completions =
-                    !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx);
+                let show_inline_completions = !self.should_show_inline_completions_in_buffer(
+                    &buffer,
+                    cursor_buffer_position,
+                    cx,
+                );
                 self.set_show_inline_completions(Some(show_inline_completions), window, cx);
             }
         }
@@ -1883,42 +1886,6 @@ impl Editor {
     ) {
         self.show_inline_completions_override = show_inline_completions;
         self.refresh_inline_completion(false, true, window, cx);
-    }
-
-    pub fn inline_completions_enabled(&self, cx: &App) -> bool {
-        let cursor = self.selections.newest_anchor().head();
-        if let Some((buffer, buffer_position)) =
-            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
-        {
-            self.should_show_inline_completions(&buffer, buffer_position, cx)
-        } else {
-            false
-        }
-    }
-
-    fn should_show_inline_completions(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> bool {
-        if !self.snippet_stack.is_empty() {
-            return false;
-        }
-
-        if self.inline_completions_disabled_in_scope(buffer, buffer_position, cx) {
-            return false;
-        }
-
-        if let Some(provider) = self.inline_completion_provider() {
-            if let Some(show_inline_completions) = self.show_inline_completions_override {
-                show_inline_completions
-            } else {
-                self.mode == EditorMode::Full && provider.is_enabled(buffer, buffer_position, cx)
-            }
-        } else {
-            false
-        }
     }
 
     fn inline_completions_disabled_in_scope(
@@ -4651,9 +4618,18 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
+        if !self.inline_completions_enabled(&buffer, cursor_buffer_position, cx) {
+            self.discard_inline_completion(false, cx);
+            return None;
+        }
+
         if !user_requested
-            && (!self.enable_inline_completions
-                || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+            && (!self.show_inline_completions
+                || !self.should_show_inline_completions_in_buffer(
+                    &buffer,
+                    cursor_buffer_position,
+                    cx,
+                )
                 || !self.is_focused(window)
                 || buffer.read(cx).is_empty())
         {
@@ -4666,6 +4642,66 @@ impl Editor {
         Some(())
     }
 
+    pub fn should_show_inline_completions(&self, cx: &App) -> bool {
+        let cursor = self.selections.newest_anchor().head();
+        if let Some((buffer, cursor_position)) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+        {
+            self.should_show_inline_completions_in_buffer(&buffer, cursor_position, cx)
+        } else {
+            false
+        }
+    }
+
+    fn should_show_inline_completions_in_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &App,
+    ) -> bool {
+        if !self.snippet_stack.is_empty() {
+            return false;
+        }
+
+        if self.inline_completions_disabled_in_scope(buffer, buffer_position, cx) {
+            return false;
+        }
+
+        if let Some(show_inline_completions) = self.show_inline_completions_override {
+            show_inline_completions
+        } else {
+            let buffer = buffer.read(cx);
+            self.mode == EditorMode::Full
+                && language_settings(
+                    buffer.language_at(buffer_position).map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                )
+                .show_inline_completions
+        }
+    }
+
+    fn inline_completions_enabled(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &Context<Self>,
+    ) -> bool {
+        maybe!({
+            let provider = self.inline_completion_provider()?;
+            if !provider.is_enabled(&buffer, buffer_position, cx) {
+                return Some(false);
+            }
+            let buffer = buffer.read(cx);
+            let Some(file) = buffer.file() else {
+                return Some(true);
+            };
+            let settings = all_language_settings(Some(file), cx);
+            Some(settings.inline_completions_enabled_for_path(file.path()))
+        })
+        .unwrap_or(false)
+    }
+
     fn cycle_inline_completion(
         &mut self,
         direction: Direction,
@@ -4676,8 +4712,8 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.enable_inline_completions
-            || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+        if !self.show_inline_completions
+            || !self.should_show_inline_completions_in_buffer(&buffer, cursor_buffer_position, cx)
         {
             return None;
         }
@@ -4694,10 +4730,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.inline_completions_enabled(cx) {
-            return;
-        }
-
         if !self.has_active_inline_completion() {
             self.refresh_inline_completion(false, true, window, cx);
             return;
@@ -5012,7 +5044,7 @@ impl Editor {
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
         if completions_menu_has_precedence
             || !offset_selection.is_empty()
-            || !self.enable_inline_completions
+            || !self.show_inline_completions
             || self
                 .active_inline_completion
                 .as_ref()

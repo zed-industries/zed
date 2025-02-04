@@ -94,7 +94,7 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
-            inline_completions_enabled,
+            show_inline_completions,
         ) = {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
@@ -103,7 +103,7 @@ impl Render for QuickActionBar {
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
-            let inline_completions_enabled = editor.inline_completions_enabled(cx);
+            let show_inline_completions = editor.should_show_inline_completions(cx);
 
             (
                 selection_menu_enabled,
@@ -112,7 +112,7 @@ impl Render for QuickActionBar {
                 git_blame_inline_enabled,
                 show_git_blame_gutter,
                 auto_signature_help_enabled,
-                inline_completions_enabled,
+                show_inline_completions,
             )
         };
 
@@ -296,7 +296,7 @@ impl Render for QuickActionBar {
 
                         menu = menu.toggleable_entry(
                             "Inline Completions",
-                            inline_completions_enabled,
+                            show_inline_completions,
                             IconPosition::Start,
                             Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
                             {

@@ -71,9 +71,9 @@ impl Render for InlineCompletionButton {
                 };
                 let status = copilot.read(cx).status();
 
-                let enabled = self.editor_enabled.unwrap_or_else(|| {
-                    all_language_settings.inline_completions_enabled(None, None, cx)
-                });
+                let enabled = self
+                    .editor_enabled
+                    .unwrap_or_else(|| all_language_settings.show_inline_completions(None, cx));
 
                 let icon = match status {
                     Status::Error(_) => IconName::CopilotError,
@@ -380,7 +380,7 @@ impl InlineCompletionButton {
                 IconPosition::Start,
                 None,
                 move |_, cx| {
-                    toggle_inline_completions_for_language(language.clone(), fs.clone(), cx)
+                    toggle_show_inline_completions_for_language(language.clone(), fs.clone(), cx)
                 },
             );
         }
@@ -412,7 +412,7 @@ impl InlineCompletionButton {
             );
         }
 
-        let globally_enabled = settings.inline_completions_enabled(None, None, cx);
+        let globally_enabled = settings.show_inline_completions(None, cx);
         menu = menu.toggleable_entry(
             "All Files",
             globally_enabled,
@@ -528,12 +528,11 @@ impl InlineCompletionButton {
         self.editor_enabled = {
             let file = file.as_ref();
             Some(
-                file.map(|file| !file.is_private()).unwrap_or(true)
-                    && all_language_settings(file, cx).inline_completions_enabled(
-                        language,
-                        file.map(|file| file.path().as_ref()),
-                        cx,
-                    ),
+                file.map(|file| {
+                    all_language_settings(Some(file), cx)
+                        .inline_completions_enabled_for_path(file.path())
+                })
+                .unwrap_or(true),
             )
         };
         self.inline_completion_provider = editor.inline_completion_provider();
@@ -654,8 +653,7 @@ async fn configure_disabled_globs(
 }
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
+    let show_inline_completions = all_language_settings(None, cx).show_inline_completions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
     });
@@ -669,9 +667,13 @@ fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: InlineComple
     });
 }
 
-fn toggle_inline_completions_for_language(language: Arc<Language>, fs: Arc<dyn Fs>, cx: &mut App) {
+fn toggle_show_inline_completions_for_language(
+    language: Arc<Language>,
+    fs: Arc<dyn Fs>,
+    cx: &mut App,
+) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
+        all_language_settings(None, cx).show_inline_completions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())

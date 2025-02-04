@@ -2,10 +2,7 @@ use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
-use language::{
-    language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, OffsetRangeExt, ToOffset,
-};
+use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -73,19 +70,11 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
         cx: &App,
     ) -> bool {
-        if !self.copilot.read(cx).status().is_authorized() {
-            return false;
-        }
-
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        self.copilot.read(cx).status().is_authorized()
     }
 
     fn refresh(
@@ -205,7 +194,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
     fn discard(&mut self, cx: &mut Context<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
 
-        let copilot_enabled = settings.inline_completions_enabled(None, None, cx);
+        let copilot_enabled = settings.show_inline_completions(None, cx);
 
         if !copilot_enabled {
             return;
