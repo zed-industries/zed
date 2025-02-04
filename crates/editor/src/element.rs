@@ -3301,6 +3301,7 @@ impl EditorElement {
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             max_width,
                             cursor_point,
+                            &line_layouts,
                             style,
                             accept_keystroke.as_ref()?,
                             window,

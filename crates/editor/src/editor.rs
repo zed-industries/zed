@@ -5416,6 +5416,7 @@ impl Editor {
         &self,
         max_width: Pixels,
         cursor_point: Point,
+        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
         window: &Window,
@@ -5463,6 +5464,7 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
+                line_layouts,
                 style,
                 cx,
             )?,
@@ -5471,6 +5473,7 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
+                    line_layouts,
                     style,
                     cx,
                 )?,
@@ -5556,6 +5559,7 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
+        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
@@ -5651,30 +5655,23 @@ impl Editor {
                 range_around_target,
                 snapshot,
             } => {
-                let mut highlighted_text = snapshot.highlighted_text_for_range(
+                let highlighted_text = snapshot.highlighted_text_for_range(
                     range_around_target.clone(),
                     None,
                     &style.syntax,
                 );
                 let cursor_color = self.current_user_player_color(cx).cursor;
-                let target_ix =
-                    text::ToOffset::to_offset(&target.text_anchor, &snapshot).saturating_sub(
-                        text::ToOffset::to_offset(&range_around_target.start, &snapshot),
-                    );
-                highlighted_text.highlights = gpui::combine_highlights(
-                    highlighted_text.highlights,
-                    iter::once((
-                        target_ix..target_ix + 1,
-                        HighlightStyle {
-                            background_color: Some(cursor_color),
-                            ..Default::default()
-                        },
-                    )),
-                )
-                .collect::<Vec<_>>();
 
                 let start_point = range_around_target.start.to_point(&snapshot);
                 let end_point = range_around_target.end.to_point(&snapshot);
+                let target_point = target.text_anchor.to_point(&snapshot);
+
+                let start_column_x =
+                    line_layouts[start_point.row as usize].x_for_index(start_point.column as usize);
+                let target_column_x = line_layouts[target_point.row as usize]
+                    .x_for_index(target_point.column as usize);
+                let cursor_relative_position = target_column_x - start_column_x;
+
                 let ellipsis_before = start_point.column > 0;
                 let ellipsis_after = end_point.column < snapshot.line_len(end_point.row);
 
@@ -5691,7 +5688,17 @@ impl Editor {
                                 h_flex()
                                     .when(ellipsis_before, |parent| parent.child("…"))
                                     .child(highlighted_text.to_styled_text(&style.text))
-                                    .when(ellipsis_after, |parent| parent.child("…")),
+                                    .when(ellipsis_after, |parent| parent.child("…"))
+                                    .relative()
+                                    .child(
+                                        div()
+                                            .w(px(2.))
+                                            .h_full()
+                                            .bg(cursor_color)
+                                            .absolute()
+                                            .top_0()
+                                            .left(cursor_relative_position),
+                                    ),
                             )
                         }),
                 )
