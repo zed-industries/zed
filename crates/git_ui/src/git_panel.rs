@@ -158,6 +158,8 @@ pub struct GitPanel {
     pending: Vec<PendingOperation>,
     commit_task: Task<Result<()>>,
     commit_pending: bool,
+    can_commit: bool,
+    can_commit_all: bool,
 }
 
 fn commit_message_buffer(
@@ -327,6 +329,8 @@ impl GitPanel {
                 commit_editor,
                 project,
                 workspace,
+                can_commit: false,
+                can_commit_all: false,
             };
             git_panel.schedule_update(false, window, cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
@@ -718,7 +722,7 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-        if !active_repository.can_commit(false) {
+        if !self.can_commit {
             return;
         }
         if self.commit_editor.read(cx).is_empty(cx) {
@@ -761,7 +765,7 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-        if !active_repository.can_commit(true) {
+        if !self.can_commit_all {
             return;
         }
         if self.commit_editor.read(cx).is_empty(cx) {
@@ -942,6 +946,10 @@ impl GitPanel {
         // First pass - collect all paths
         let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path));
 
+        let mut has_changed_checked_boxes = false;
+        let mut has_changed = false;
+        let mut has_added_checked_boxes = false;
+
         // Second pass - create entries with proper depth calculation
         for entry in repo.status() {
             let (depth, difference) =
@@ -978,8 +986,15 @@ impl GitPanel {
             };
 
             if is_new {
+                if entry.is_staged != Some(false) {
+                    has_added_checked_boxes = true
+                }
                 new_entries.push(entry);
             } else {
+                has_changed = true;
+                if entry.is_staged != Some(false) {
+                    has_changed_checked_boxes = true
+                }
                 changed_entries.push(entry);
             }
         }
@@ -1011,6 +1026,8 @@ impl GitPanel {
                 self.entries_by_path.insert(status_entry.repo_path, ix);
             }
         }
+        self.can_commit = has_changed_checked_boxes || has_added_checked_boxes;
+        self.can_commit_all = has_changed || has_added_checked_boxes;
 
         self.select_first_entry_if_none(cx);
 
@@ -1172,21 +1189,13 @@ impl GitPanel {
     pub fn render_commit_editor(
         &self,
         name_and_email: Option<(SharedString, SharedString)>,
-        can_commit: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
-        let can_commit = can_commit && !editor.read(cx).is_empty(cx);
+        let can_commit = !self.commit_pending && self.can_commit && !editor.read(cx).is_empty(cx);
+        let can_commit_all =
+            !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
-        let (can_commit, can_commit_all) =
-            self.active_repository
-                .as_ref()
-                .map_or((false, false), |active_repository| {
-                    (
-                        can_commit && active_repository.can_commit(false),
-                        can_commit && active_repository.can_commit(true),
-                    )
-                });
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
@@ -1726,7 +1735,7 @@ impl Render for GitPanel {
                 self.render_empty_state(cx).into_any_element()
             })
             .child(self.render_divider(cx))
-            .child(self.render_commit_editor(name_and_email, can_commit, cx))
+            .child(self.render_commit_editor(name_and_email, cx))
     }
 }
 
