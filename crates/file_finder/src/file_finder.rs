@@ -1309,6 +1309,7 @@ impl PickerDelegate for FileFinderDelegate {
         let context = self.focus_handle.clone();
         Some(
             h_flex()
+                .id("recent-projects-footer")
                 .w_full()
                 .p_2()
                 .gap_2()

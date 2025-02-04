@@ -108,6 +108,12 @@
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
   "restore_on_startup": "last_session",
+  // Whether to reuse the current window when opening a recent project
+  // or create a new window.
+  //
+  // If the project is already open in another window, that window will be
+  // focused, regardless of this setting.
+  "open_recent_project": "open_in_new_window",
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.

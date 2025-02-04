@@ -5523,6 +5523,7 @@ impl Editor {
                                     } else {
                                         None
                                     },
+                                    None,
                                 )),
                         )
                         .opacity(if has_completion { 1.0 } else { 0.1 })

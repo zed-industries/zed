@@ -17,6 +17,7 @@ pub struct WorkspaceSettings {
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
     pub restore_on_startup: RestoreOnStartupBehavior,
+    pub open_recent_project: OpenRecentProjectBehavior,
     pub drop_target_size: f32,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
@@ -83,6 +84,19 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenRecentProjectBehavior {
+    /// Swap the current project with the selected recent project, reusing the
+    /// current window. If the project is already open in another window, focus
+    /// that window instead.
+    SwapProjects,
+    /// Open the selected recent project in a new window. If the project is
+    /// already open in another window, focus that window instead.
+    #[default]
+    OpenInNewWindow,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
@@ -113,6 +127,14 @@ pub struct WorkspaceSettingsContent {
     /// Values: none, last_workspace, last_session
     /// Default: last_session
     pub restore_on_startup: Option<RestoreOnStartupBehavior>,
+    /// Whether to reuse the current window when opening a recent project
+    /// or create a new window.
+    ///
+    /// If the project is already open in another window, that window will be
+    /// focused, regardless of this setting.
+    ///
+    /// Default: false
+    pub open_recent_project: Option<OpenRecentProjectBehavior>,
     /// The size of the workspace split drop targets on the outer edges.
     /// Given as a fraction that will be multiplied by the smaller dimension of the workspace.
     ///

@@ -32,7 +32,9 @@ use ui::{
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{
+    notifications::NotifyResultExt, OpenRecentProjectBehavior, Workspace, WorkspaceSettings,
+};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
 use zeta::ZedPredictBanner;
 
@@ -451,6 +453,9 @@ impl TitleBar {
     }
 
     pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = WorkspaceSettings::get_global(cx);
+        let open_recent_behavior = settings.open_recent_project;
+
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -474,7 +479,10 @@ impl TitleBar {
                 Tooltip::for_action(
                     "Recent Projects",
                     &zed_actions::OpenRecent {
-                        create_new_window: false,
+                        create_new_window: matches!(
+                            open_recent_behavior,
+                            OpenRecentProjectBehavior::OpenInNewWindow
+                        ),
                     },
                     window,
                     cx,

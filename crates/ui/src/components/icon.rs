@@ -70,6 +70,7 @@ pub enum IconSize {
     Medium,
     /// 48px
     XLarge,
+    Custom(Pixels),
 }
 
 impl IconSize {
@@ -80,6 +81,7 @@ impl IconSize {
             IconSize::Small => rems_from_px(14.),
             IconSize::Medium => rems_from_px(16.),
             IconSize::XLarge => rems_from_px(48.),
+            IconSize::Custom(size) => rems_from_px(size.into()),
         }
     }
 
@@ -96,6 +98,8 @@ impl IconSize {
             IconSize::Small => DynamicSpacing::Base02.px(cx),
             IconSize::Medium => DynamicSpacing::Base02.px(cx),
             IconSize::XLarge => DynamicSpacing::Base02.px(cx),
+            // TODO: Wire into dynamic spacing
+            IconSize::Custom(size) => px(size.into()),
         };
 
         (icon_size, padding)

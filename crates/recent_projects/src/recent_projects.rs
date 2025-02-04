@@ -21,7 +21,10 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{prelude::*, tooltip_container, KeyBinding, ListItem, ListItemSpacing, Tooltip};
+use ui::{
+    prelude::*, tooltip_container, ElevationIndex, KeyBinding, KeybindingHint, KeybindingPosition,
+    ListItem, ListItemSpacing, Tooltip,
+};
 use util::{paths::PathExt, ResultExt};
 use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
@@ -110,6 +113,7 @@ impl RecentProjects {
         cx: &mut Context<Workspace>,
     ) {
         let weak = cx.entity().downgrade();
+
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
 
@@ -177,21 +181,8 @@ impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
 impl PickerDelegate for RecentProjectsDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, window: &mut Window, _: &mut App) -> Arc<str> {
-        let (create_window, reuse_window) = if self.create_new_window {
-            (
-                window.keystroke_text_for(&menu::Confirm),
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-            )
-        } else {
-            (
-                window.keystroke_text_for(&menu::SecondaryConfirm),
-                window.keystroke_text_for(&menu::Confirm),
-            )
-        };
-        Arc::from(format!(
-            "{reuse_window} reuses this window, {create_window} opens a new one",
-        ))
+    fn placeholder_text(&self, _window: &mut Window, _: &mut App) -> Arc<str> {
+        Arc::from("Open recent project")
     }
 
     fn match_count(&self) -> usize {
@@ -268,9 +259,9 @@ impl PickerDelegate for RecentProjectsDelegate {
             let (candidate_workspace_id, candidate_workspace_location) =
                 &self.workspaces[selected_match.candidate_id];
             let replace_current_window = if self.create_new_window {
-                secondary
-            } else {
                 !secondary
+            } else {
+                secondary
             };
             workspace
                 .update(cx, |workspace, cx| {
@@ -353,7 +344,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> SharedString {
         if self.workspaces.is_empty() {
-            "Recently opened projects will show up here".into()
+            "No recent projects".into()
         } else {
             "No matches".into()
         }
@@ -424,13 +415,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .child(
                             IconButton::new("delete", IconName::Close)
                                 .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
                                 .on_click(cx.listener(move |this, _event, window, cx| {
                                     cx.stop_propagation();
                                     window.prevent_default();
 
                                     this.delegate.delete_recent_project(ix, window, cx)
                                 }))
-                                .tooltip(Tooltip::text("Delete from Recent Projects...")),
+                                .tooltip(Tooltip::text("Remove")),
                         )
                         .into_any_element();
 
@@ -460,24 +452,55 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .w_full()
                 .p_2()
                 .gap_2()
-                .justify_end()
+                .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenRemote.boxed_clone(), cx)
-                        }),
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .when_some(
+                            KeyBinding::for_action(&menu::Confirm, window),
+                            |this, keybinding| {
+                                this.child(
+                                    KeybindingHint::with_suffix(keybinding, "open")
+                                        .elevation(ElevationIndex::ModalSurface)
+                                        .size(px(14.)),
+                                )
+                            },
+                        )
+                        .when_some(
+                            KeyBinding::for_action(&menu::SecondaryConfirm, window),
+                            |this, keybinding| {
+                                this.child(
+                                    KeybindingHint::with_suffix(keybinding, "swap")
+                                        .elevation(ElevationIndex::ModalSurface)
+                                        .size(px(14.)),
+                                )
+                            },
+                        ),
                 )
                 .child(
-                    Button::new("local", "Open Local Folder")
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(workspace::Open.boxed_clone(), cx)
-                        }),
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("remote", "Open Remote…")
+                                .key_binding(KeyBinding::for_action(&OpenRemote, window))
+                                .key_binding_position(KeybindingPosition::Start)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(OpenRemote.boxed_clone(), cx)
+                                }),
+                        )
+                        .child(
+                            Button::new("local", "Open…")
+                                .key_binding(KeyBinding::for_action(&workspace::Open, window))
+                                .key_binding_position(KeybindingPosition::Start)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(workspace::Open.boxed_clone(), cx)
+                                }),
+                        ),
                 )
-                .into_any(),
+                .into_any_element(),
         )
     }
 }

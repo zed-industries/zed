@@ -38,6 +38,13 @@ pub trait ButtonCommon: Clickable + Disableable {
     fn layer(self, elevation: ElevationIndex) -> Self;
 }
 
+#[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum KeybindingPosition {
+    Start,
+    #[default]
+    End,
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum IconPosition {
     #[default]

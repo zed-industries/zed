@@ -94,7 +94,8 @@ use ui::prelude::*;
 use util::{paths::SanitizedPath, serde::default_true, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, OpenRecentProjectBehavior, RestoreOnStartupBehavior, TabBarSettings,
+    WorkspaceSettings,
 };
 
 use crate::notifications::NotificationId;
