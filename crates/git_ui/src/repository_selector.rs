@@ -20,10 +20,8 @@ pub struct RepositorySelector {
 
 impl RepositorySelector {
     pub fn new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let git_state = project.read(cx).git_state().cloned();
-        let all_repositories = git_state
-            .as_ref()
-            .map_or(vec![], |git_state| git_state.read(cx).all_repositories());
+        let git_state = project.read(cx).git_state().clone();
+        let all_repositories = git_state.read(cx).all_repositories();
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
@@ -34,14 +32,12 @@ impl RepositorySelector {
         };
 
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+            Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .max_height(Some(rems(20.).into()))
         });
 
-        let _subscriptions = if let Some(git_state) = git_state {
-            vec![cx.subscribe_in(&git_state, window, Self::handle_project_git_event)]
-        } else {
-            Vec::new()
-        };
+        let _subscriptions =
+            vec![cx.subscribe_in(&git_state, window, Self::handle_project_git_event)];
 
         RepositorySelector {
             picker,
@@ -234,20 +230,6 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(Label::new(display_name)),
-        )
-    }
-
-    fn render_footer(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<gpui::AnyElement> {
-        // TODO: Implement footer rendering if needed
-        Some(
-            div()
-                .text_ui_sm(cx)
-                .child("Temporary location for repo selector")
-                .into_any_element(),
         )
     }
 }

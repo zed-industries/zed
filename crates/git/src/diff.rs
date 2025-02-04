@@ -80,6 +80,20 @@ impl BufferDiff {
         let buffer_text = buffer.as_rope().to_string();
         let patch = Self::diff(diff_base, &buffer_text);
 
+        // A common case in Zed is that the empty buffer is represented as just a newline,
+        // but if we just compute a naive diff you get a "preserved" line in the middle,
+        // which is a bit odd.
+        if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
+            tree.push(
+                InternalDiffHunk {
+                    buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
+                    diff_base_byte_range: 0..diff_base.len() - 1,
+                },
+                buffer,
+            );
+            return Self { tree };
+        }
+
         if let Some(patch) = patch {
             let mut divergence = 0;
             for hunk_index in 0..patch.num_hunks() {

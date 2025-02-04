@@ -143,7 +143,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
     styles::box_shadow_style_methods(input)
 }
 
-/// #[gpui::test] can be used to annotate test functions that run with GPUI support.
+/// `#[gpui::test]` can be used to annotate test functions that run with GPUI support.
 /// it supports both synchronous and asynchronous tests, and can provide you with
 /// as many `TestAppContext` instances as you need.
 /// The output contains a `#[test]` annotation so this can be used with any existing
@@ -160,7 +160,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// Using the same `StdRng` for behavior in your test will allow you to exercise a wide
 /// variety of scenarios and interleavings just by changing the seed.
 ///
-/// #[gpui::test] also takes three different arguments:
+/// `#[gpui::test]` also takes three different arguments:
 /// - `#[gpui::test(iterations=10)]` will run the test ten times with a different initial SEED.
 /// - `#[gpui::test(retries=3)]` will run the test up to four times if it fails to try and make it pass.
 /// - `#[gpui::test(on_failure="crate::test::report_failure")]` will call the specified function after the

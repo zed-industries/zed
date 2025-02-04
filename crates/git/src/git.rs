@@ -20,10 +20,12 @@ pub use git2 as libgit;
 pub use repository::WORK_DIRECTORY_REPO_PATH;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
-pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cookies"));
+pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
-pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
+pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
+    LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
+pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
 
 actions!(
     git,
@@ -42,6 +44,9 @@ actions!(
         ClearCommitMessage
     ]
 );
+
+/// The length of a Git short SHA.
+pub const SHORT_SHA_LENGTH: usize = 7;
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Oid(libgit::Oid);
@@ -62,7 +67,7 @@ impl Oid {
 
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
-        self.to_string().chars().take(7).collect()
+        self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
     }
 }
 

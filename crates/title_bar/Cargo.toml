@@ -31,6 +31,7 @@ auto_update.workspace = true
 call.workspace = true
 client.workspace = true
 feature_flags.workspace = true
+git_ui.workspace = true
 gpui.workspace = true
 notifications.workspace = true
 project.workspace = true
@@ -41,13 +42,12 @@ serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
+telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-telemetry.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-git_ui.workspace = true
 zeta.workspace = true
 
 [target.'cfg(windows)'.dependencies]

@@ -376,14 +376,14 @@ fn main() {
         if let (Some(system_id), Some(installation_id)) = (&system_id, &installation_id) {
             match (&system_id, &installation_id) {
                 (IdType::New(_), IdType::New(_)) => {
-                    telemetry.report_app_event("first open".to_string());
-                    telemetry.report_app_event("first open for release channel".to_string());
+                    telemetry::event!("App First Opened");
+                    telemetry::event!("App First Opened For Release Channel");
                 }
                 (IdType::Existing(_), IdType::New(_)) => {
-                    telemetry.report_app_event("first open for release channel".to_string());
+                    telemetry::event!("App First Opened For Release Channel");
                 }
                 (_, IdType::Existing(_)) => {
-                    telemetry.report_app_event("open".to_string());
+                    telemetry::event!("App Opened");
                 }
             }
         }

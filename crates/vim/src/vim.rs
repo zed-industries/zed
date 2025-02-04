@@ -124,7 +124,7 @@ pub fn init(cx: &mut App) {
             workspace.reset_pane_sizes(cx);
         });
 
-        workspace.register_action(|workspace, _: &MaximizePane, _, cx| {
+        workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
             let pane = workspace.active_pane();
             let Some(size) = workspace.bounding_box_for_pane(&pane) else {
                 return;
@@ -138,7 +138,7 @@ pub fn init(cx: &mut App) {
             } else {
                 px(10000.)
             };
-            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, cx)
+            workspace.resize_pane(Axis::Vertical, desired_size - size.size.height, window, cx)
         });
 
         workspace.register_action(|workspace, action: &ResizePane, window, cx| {
@@ -162,7 +162,7 @@ pub fn init(cx: &mut App) {
                 ResizeIntent::Narrow => (Axis::Horizontal, width.width * -1.),
             };
 
-            workspace.resize_pane(axis, amount * count, cx);
+            workspace.resize_pane(axis, amount * count, window, cx);
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {

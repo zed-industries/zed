@@ -1,5 +1,10 @@
-use futures::{channel::oneshot, FutureExt as _};
-use gpui::{App, Context, Global, Subscription, Window};
+use futures::channel::oneshot;
+use futures::{select_biased, FutureExt};
+use gpui::{App, Context, Global, Subscription, Task, Window};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::LazyLock;
+use std::time::Duration;
 use std::{future::Future, pin::Pin, task::Poll};
 
 #[derive(Default)]
@@ -8,9 +13,18 @@ struct FeatureFlags {
     staff: bool,
 }
 
+pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
+});
+
 impl FeatureFlags {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
         if self.staff && T::enabled_for_staff() {
+            return true;
+        }
+
+        #[cfg(debug_assertions)]
+        if T::enabled_in_development() {
             return true;
         }
 
@@ -32,6 +46,10 @@ pub trait FeatureFlag {
     /// Returns whether this feature flag is enabled for Zed staff.
     fn enabled_for_staff() -> bool {
         true
+    }
+
+    fn enabled_in_development() -> bool {
+        Self::enabled_for_staff() && !*ZED_DISABLE_STAFF
     }
 }
 
@@ -95,6 +113,12 @@ pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
         F: Fn(bool, &mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static;
+
+    fn when_flag_enabled<T: FeatureFlag>(
+        &mut self,
+        window: &mut Window,
+        callback: impl Fn(&mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static,
+    );
 }
 
 impl<V> FeatureFlagViewExt<V> for Context<'_, V>
@@ -110,10 +134,43 @@ where
             callback(feature_flags.has_flag::<T>(), v, window, cx);
         })
     }
+
+    fn when_flag_enabled<T: FeatureFlag>(
+        &mut self,
+        window: &mut Window,
+        callback: impl Fn(&mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static,
+    ) {
+        if self
+            .try_global::<FeatureFlags>()
+            .is_some_and(|f| f.has_flag::<T>())
+            || cfg!(debug_assertions) && T::enabled_in_development()
+        {
+            self.defer_in(window, move |view, window, cx| {
+                callback(view, window, cx);
+            });
+            return;
+        }
+        let subscription = Rc::new(RefCell::new(None));
+        let inner = self.observe_global_in::<FeatureFlags>(window, {
+            let subscription = subscription.clone();
+            move |v, window, cx| {
+                let feature_flags = cx.global::<FeatureFlags>();
+                if feature_flags.has_flag::<T>() {
+                    callback(v, window, cx);
+                    subscription.take();
+                }
+            }
+        });
+        subscription.borrow_mut().replace(inner);
+    }
 }
 
 pub trait FeatureFlagAppExt {
     fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag;
+
+    /// Waits for the specified feature flag to resolve, up to the given timeout.
+    fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool>;
+
     fn update_flags(&mut self, staff: bool, flags: Vec<String>);
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
@@ -179,6 +236,20 @@ impl FeatureFlagAppExt for App {
         }
 
         WaitForFlag(rx, subscription)
+    }
+
+    fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
+        let wait_for_flag = self.wait_for_flag::<T>();
+
+        self.spawn(|_cx| async move {
+            let mut wait_for_flag = wait_for_flag.fuse();
+            let mut timeout = FutureExt::fuse(smol::Timer::after(timeout));
+
+            select_biased! {
+                is_enabled = wait_for_flag => is_enabled,
+                _ = timeout => false,
+            }
+        })
     }
 }
 

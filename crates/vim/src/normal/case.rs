@@ -73,6 +73,7 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -100,6 +101,7 @@ impl Vim {
                         selection.collapse_to(anchor.to_display_point(map), SelectionGoal::None);
                     });
                 });
+                editor.set_clip_at_line_ends(true, cx);
             });
         });
     }
@@ -305,5 +307,14 @@ mod test {
 
         cx.simulate_shared_keystrokes("g shift-u $").await;
         cx.shared_state().await.assert_eq("ˇABC DEF");
+    }
+
+    #[gpui::test]
+    async fn test_change_case_motion_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("abc dˇef\n").await;
+        cx.simulate_shared_keystrokes("g shift-u i w").await;
+        cx.shared_state().await.assert_eq("abc ˇDEF\n");
     }
 }

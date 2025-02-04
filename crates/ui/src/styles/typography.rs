@@ -24,7 +24,7 @@ pub trait StyledTypography: Styled + Sized {
         self.font_family(ui_font_family)
     }
 
-    /// Sets the text size using a [`UiTextSize`].
+    /// Sets the text size using a [`TextSize`].
     fn text_ui_size(self, size: TextSize, cx: &App) -> Self {
         self.text_size(size.rems(cx))
     }

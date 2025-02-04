@@ -697,7 +697,7 @@ fn main() {
                 },
             )
             .unwrap();
-        let view = window.root(cx).unwrap();
+        let view = window.update(cx, |_, _, cx| cx.entity()).unwrap();
         cx.observe_keystrokes(move |ev, _, cx| {
             view.update(cx, |view, cx| {
                 view.recent_keystrokes.push(ev.keystroke.clone());

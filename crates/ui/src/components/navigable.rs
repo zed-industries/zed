@@ -42,8 +42,9 @@ impl Navigable {
     }
 
     /// Add a new entry that can be navigated to via keyboard.
-    /// The order of calls to [Navigable::entry] determines the order of traversal of elements via successive
-    /// uses of [menu:::SelectNext]/[menu::SelectPrev]
+    ///
+    /// The order of calls to [Navigable::entry] determines the order of traversal of
+    /// elements via successive uses of `menu:::SelectNext/SelectPrev`
     pub fn entry(mut self, child: NavigableEntry) -> Self {
         self.selectable_children.push(child);
         self
@@ -59,6 +60,7 @@ impl Navigable {
             .position(|entry| entry.focus_handle.contains_focused(window, cx))
     }
 }
+
 impl RenderOnce for Navigable {
     fn render(self, _window: &mut Window, _: &mut App) -> impl crate::IntoElement {
         div()

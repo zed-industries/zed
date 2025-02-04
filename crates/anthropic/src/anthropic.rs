@@ -250,7 +250,7 @@ pub async fn stream_completion(
         .map(|output| output.0)
 }
 
-/// https://docs.anthropic.com/en/api/rate-limits#response-headers
+/// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
 #[derive(Debug)]
 pub struct RateLimitInfo {
     pub requests_limit: usize,
@@ -626,7 +626,7 @@ pub struct ApiError {
 }
 
 /// An Anthropic API error code.
-/// https://docs.anthropic.com/en/api/errors#http-errors
+/// <https://docs.anthropic.com/en/api/errors#http-errors>
 #[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString)]
 #[strum(serialize_all = "snake_case")]
 pub enum ApiErrorCode {

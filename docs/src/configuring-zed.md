@@ -382,11 +382,16 @@ There are two options to choose from:
 - Default:
 
 ```json
-"inline_completions": {
-  "disabled_globs": [
-    ".env"
-  ]
-}
+  "inline_completions": {
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/secrets.yml"
+    ]
+  }
 ```
 
 **Options**
@@ -514,12 +519,6 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
-
-**Options**
-
-1. Position the dock attached to the bottom of the workspace: `bottom`
-2. Position the dock to the right of the workspace like a side panel: `right`
-3. Position the dock full screen over the entire workspace: `expanded`
 
 ## Editor Scrollbar
 

@@ -195,6 +195,20 @@ impl TextSystem {
         Ok(result * font_size)
     }
 
+    /// Returns the width of an `em`.
+    ///
+    /// Uses the width of the `m` character in the given font and size.
+    pub fn em_width(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        Ok(self.typographic_bounds(font_id, font_size, 'm')?.size.width)
+    }
+
+    /// Returns the advance width of an `em`.
+    ///
+    /// Uses the advance width of the `m` character in the given font and size.
+    pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
+        Ok(self.advance(font_id, font_size, 'm')?.width)
+    }
+
     /// Get the number of font size units per 'em square',
     /// Per MDN: "an abstract square whose height is the intended distance between
     /// lines of type in the same type size"
