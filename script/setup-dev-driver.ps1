@@ -17,8 +17,8 @@ fsutil devdrv trust $Drive
 fsutil devdrv enable /disallowAv
 
 # Remount so the changes take effect
-Dismount-VHD -Path C:/uv_dev_drive.vhdx
-Mount-VHD -Path C:/uv_dev_drive.vhdx
+Dismount-VHD -Path C:/zed_dev_drive.vhdx
+Mount-VHD -Path C:/zed_dev_drive.vhdx
 
 # Show some debug information
 Write-Output $Volume
