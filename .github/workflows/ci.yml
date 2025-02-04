@@ -228,7 +228,6 @@ jobs:
         if: always()
         run: rm -rf ./../.cargo
 
-  # todo(windows): Actually run the tests
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
