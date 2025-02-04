@@ -307,15 +307,15 @@ message Envelope {
         OpenUnstagedChanges open_unstaged_changes = 288;
         OpenUnstagedChangesResponse open_unstaged_changes_response = 289;
 
-        OpenUncommittedChanges open_uncommitted_changes = 296;
-        OpenUncommittedChangesResponse open_uncommitted_changes_response = 297;
-
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
 
         Stage stage = 293;
         Unstage unstage = 294;
         Commit commit = 295;
-        OpenCommitMessageBuffer open_commit_message_buffer = 296; // current max
+        OpenCommitMessageBuffer open_commit_message_buffer = 296;
+
+        OpenUncommittedChanges open_uncommitted_changes = 297;
+        OpenUncommittedChangesResponse open_uncommitted_changes_response = 298; // current max
     }
 
     reserved 87 to 88;
