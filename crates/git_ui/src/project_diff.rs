@@ -235,7 +235,7 @@ impl ProjectDiff {
                 let buffer = load_buffer.await?;
                 let changes = project
                     .update(&mut cx, |project, cx| {
-                        project.open_unstaged_changes(buffer.clone(), cx)
+                        project.open_uncommitted_changes(buffer.clone(), cx)
                     })?
                     .await?;
                 Ok(DiffBuffer {
