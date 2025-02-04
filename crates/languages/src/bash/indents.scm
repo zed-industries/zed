@@ -1,10 +1,12 @@
 (function_definition
-    "function"
-    body: (_ "{" (_)* @indent "}" @end)) @indent
+    "function"?
+    body: (
+        _
+        "{" @start
+        "}" @end
+    )) @indent
 
-; (if_statement
-;     "if"
-;     (_)*
-;     "then"
-;     (_)* @indent
-;     ) @indent
+(array
+    "(" @start
+    ")" @end
+    ) @indent
