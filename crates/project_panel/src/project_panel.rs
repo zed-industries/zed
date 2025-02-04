@@ -6667,6 +6667,136 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_select_modified_git_entry(cx: &mut gpui::TestAppContext) {
+        use std::path::Path;
+
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                ".gitignore": "",
+                "dir1": {
+                    "modified1.txt": "",
+                    "unmodified1.txt": "",
+                    "modified2.txt": "",
+                },
+                "modified3.txt": "",
+                "unmodified2.txt": "",
+                "dir2": {
+                    "modified4.txt": "",
+                    "unmodified3.txt": "",
+                }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/root2",
+            json!({
+                "dir3": {
+                    "modified5.txt": "",
+                    "unmodified4.txt": "",
+                },
+                "modified6.txt": "",
+                "unmodified5.txt": "",
+            }),
+        )
+        .await;
+
+        // Mark files as git modified
+        let root1_modified_files = [
+            "dir1/modified1.txt",
+            "dir1/modified2.txt",
+            "modified3.txt",
+            "dir2/modified4.txt",
+        ];
+
+        let path = Path::new("/root1");
+        let set_value = git::status::FileStatus::Tracked(git::status::TrackedStatus {
+            index_status: git::status::StatusCode::Modified,
+            worktree_status: git::status::StatusCode::Modified,
+        });
+
+        fs.with_git_state(&path, true, |git_repo_state| {
+            for file_path in root1_modified_files {
+                git_repo_state.statuses.insert(file_path.into(), set_value);
+            }
+        });
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        select_path(&panel, "root1/dir1", cx);
+
+        // Verify initial state
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root1",
+                "    > dir1  <== selected",
+                "    > dir2",
+                "      .gitignore",
+                "      modified3.txt",
+                "      unmodified2.txt",
+                "v root2",
+                "    > dir3",
+                "      modified6.txt",
+                "      unmodified5.txt"
+            ],
+        );
+
+        // Test selecting next modified entry
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root1",
+                "    v dir1",
+                "        modified1.txt <== selected",
+                "        modified2.txt",
+                "        unmodified1.txt",
+                "    > dir2",
+                "      .gitignore",
+                "      modified3.txt",
+                "      unmodified2.txt",
+                "v root2",
+                "    > dir3",
+                "      modified6.txt",
+                "      unmodified5.txt"
+            ],
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+
+        // Wraps around to first modified file
+        panel.update_in(cx, |panel, window, cx| {
+            panel.select_next_git_entry(&SelectNextGitEntry, window, cx);
+        });
+    }
+
+    #[gpui::test]
     async fn test_select_directory(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
