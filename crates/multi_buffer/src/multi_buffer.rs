@@ -1743,7 +1743,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(
-            snapshot,
+            &mut *snapshot,
             vec![Edit {
                 old: edit_start..edit_start,
                 new: edit_start..edit_end,
@@ -1776,7 +1776,7 @@ impl MultiBuffer {
         snapshot.has_conflict = false;
 
         self.sync_diff_transforms(
-            snapshot,
+            &mut *snapshot,
             vec![Edit {
                 old: start..prev_len,
                 new: start..start,
@@ -2054,7 +2054,7 @@ impl MultiBuffer {
             snapshot.trailing_excerpt_update_count += 1;
         }
 
-        self.sync_diff_transforms(snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -2219,7 +2219,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(
-            snapshot,
+            &mut *snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
                 base_changed: base_text_changed,
@@ -2389,7 +2389,7 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         self.sync(cx);
-        let snapshot = self.snapshot.borrow_mut();
+        let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
         for range in ranges.iter() {
             let end_excerpt_id = range.end.excerpt_id;
@@ -2423,7 +2423,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(
-            snapshot,
+            &mut *snapshot,
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
         );
@@ -2492,7 +2492,7 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.sync_diff_transforms(snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -2593,7 +2593,7 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.sync_diff_transforms(snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -2706,12 +2706,12 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.sync_diff_transforms(snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
     }
 
     fn sync_diff_transforms(
         &self,
-        mut snapshot: RefMut<MultiBufferSnapshot>,
+        snapshot: &mut MultiBufferSnapshot,
         excerpt_edits: Vec<text::Edit<ExcerptOffset>>,
         change_kind: DiffChangeKind,
     ) {
@@ -6070,8 +6070,22 @@ where
         self.cached_region.clone()
     }
 
-    fn is_at_end_of_excerpt(&self) -> bool {
-        self.diff_transforms.end(&()).1 >= self.excerpts.end(&())
+    fn is_at_end_of_excerpt(&mut self) -> bool {
+        if self.diff_transforms.end(&()).1 < self.excerpts.end(&()) {
+            return false;
+        } else if self.diff_transforms.end(&()).1 > self.excerpts.end(&())
+            || self.diff_transforms.item().is_none()
+        {
+            return true;
+        }
+
+        self.diff_transforms.next(&());
+        let next_transform = self.diff_transforms.item();
+        self.diff_transforms.prev(&());
+
+        next_transform.map_or(true, |next_transform| {
+            matches!(next_transform, DiffTransform::BufferContent { .. })
+        })
     }
 
     fn main_buffer_position(&self) -> Option<D> {
