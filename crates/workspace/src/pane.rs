@@ -3004,8 +3004,12 @@ impl Pane {
 }
 
 impl Focusable for Pane {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        if let Some(item) = self.active_item() {
+            item.item_focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
     }
 }
 
