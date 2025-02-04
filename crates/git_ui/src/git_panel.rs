@@ -43,7 +43,6 @@ actions!(
         Close,
         ToggleFocus,
         OpenMenu,
-        OpenSelected,
         FocusEditor,
         FocusChanges,
         FillCoAuthors,
@@ -126,11 +125,11 @@ impl GitListEntry {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct GitStatusEntry {
-    depth: usize,
-    display_name: String,
-    repo_path: RepoPath,
-    status: FileStatus,
-    is_staged: Option<bool>,
+    pub(crate) depth: usize,
+    pub(crate) display_name: String,
+    pub(crate) repo_path: RepoPath,
+    pub(crate) status: FileStatus,
+    pub(crate) is_staged: Option<bool>,
 }
 
 pub struct GitPanel {
@@ -1581,27 +1580,14 @@ impl GitPanel {
                     .toggle_state(selected)
                     .disabled(!has_write_access)
                     .on_click({
-                        let repo_path = entry.repo_path.clone();
+                        let entry = entry.clone();
                         cx.listener(move |this, _, window, cx| {
                             this.selected_entry = Some(ix);
-                            window.dispatch_action(Box::new(OpenSelected), cx);
-                            cx.notify();
                             let Some(workspace) = this.workspace.upgrade() else {
                                 return;
                             };
-                            let Some(git_repo) = this.active_repository.as_ref() else {
-                                return;
-                            };
-                            let Some(path) = git_repo
-                                .repo_path_to_project_path(&repo_path)
-                                .and_then(|project_path| {
-                                    this.project.read(cx).absolute_path(&project_path, cx)
-                                })
-                            else {
-                                return;
-                            };
                             workspace.update(cx, |workspace, cx| {
-                                ProjectDiff::deploy_at(workspace, Some(path.into()), window, cx);
+                                ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
                             })
                         })
                     })
