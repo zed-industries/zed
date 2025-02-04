@@ -29,9 +29,15 @@ pub struct Branch {
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
-    /// Loads a git repository entry's contents.
+    /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
+    ///
     /// Note that for symlink entries, this will return the contents of the symlink, not the target.
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
+    fn load_index_text(&self, path: &RepoPath) -> Option<String>;
+
+    /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
+    ///
+    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
@@ -106,15 +112,15 @@ impl GitRepository for RealGitRepository {
         repo.path().into()
     }
 
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
-        fn logic(repo: &git2::Repository, relative_file_path: &Path) -> Result<Option<String>> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
+        fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
 
             // This check is required because index.get_path() unwraps internally :(
-            check_path_to_repo_path_errors(relative_file_path)?;
+            check_path_to_repo_path_errors(path)?;
 
-            let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
+            let oid = match index.get_path(path, STAGE_NORMAL) {
                 Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                 _ => return Ok(None),
             };
@@ -123,11 +129,20 @@ impl GitRepository for RealGitRepository {
             Ok(Some(String::from_utf8(content)?))
         }
 
-        match logic(&self.repository.lock(), relative_file_path) {
+        match logic(&self.repository.lock(), path) {
             Ok(value) => return value,
-            Err(err) => log::error!("Error loading head text: {:?}", err),
+            Err(err) => log::error!("Error loading index text: {:?}", err),
         }
         None
+    }
+
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
+        let repo = self.repository.lock();
+        let head = repo.head().ok()?.peel_to_tree().log_err()?;
+        let oid = head.get_path(path).ok()?.id();
+        let content = repo.find_blob(oid).log_err()?.content().to_owned();
+        let content = String::from_utf8(content).log_err()?;
+        Some(content)
     }
 
     fn remote_url(&self, name: &str) -> Option<String> {
@@ -325,8 +340,9 @@ pub struct FakeGitRepository {
 pub struct FakeGitRepositoryState {
     pub dot_git_dir: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
-    pub index_contents: HashMap<PathBuf, String>,
-    pub blames: HashMap<PathBuf, Blame>,
+    pub head_contents: HashMap<RepoPath, String>,
+    pub index_contents: HashMap<RepoPath, String>,
+    pub blames: HashMap<RepoPath, Blame>,
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
@@ -343,6 +359,7 @@ impl FakeGitRepositoryState {
         FakeGitRepositoryState {
             dot_git_dir,
             event_emitter,
+            head_contents: Default::default(),
             index_contents: Default::default(),
             blames: Default::default(),
             statuses: Default::default(),
@@ -355,9 +372,14 @@ impl FakeGitRepositoryState {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: &Path) -> Option<String> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
         let state = self.state.lock();
-        state.index_contents.get(path).cloned()
+        state.index_contents.get(path.as_ref()).cloned()
+    }
+
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
+        let state = self.state.lock();
+        state.head_contents.get(path.as_ref()).cloned()
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {
@@ -526,6 +548,12 @@ impl std::fmt::Display for RepoPath {
 impl From<&Path> for RepoPath {
     fn from(value: &Path) -> Self {
         RepoPath::new(value.into())
+    }
+}
+
+impl From<Arc<Path>> for RepoPath {
+    fn from(value: Arc<Path>) -> Self {
+        RepoPath(value)
     }
 }
 

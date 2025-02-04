@@ -12431,8 +12431,8 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let change_set = cx
-                .new(|cx| BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx));
+            let change_set =
+                cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
@@ -13125,9 +13125,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let change_set = cx.new(|cx| {
-                    BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
-                });
+                let change_set =
+                    cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
                 editor
                     .buffer
                     .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
@@ -13212,7 +13211,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     init_test(cx, |_| {});
 
     let base = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\n";
-    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\n";
+    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\nhhh\niii\n";
 
     let buffer = cx.new(|cx| Buffer::local(text.to_string(), cx));
     let multi_buffer = cx.new(|cx| {
@@ -13225,7 +13224,11 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
                     primary: None,
                 },
                 ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
+                    context: Point::new(4, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 0),
                     primary: None,
                 },
             ],
@@ -13239,8 +13242,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     editor
         .update(cx, |editor, _window, cx| {
-            let change_set =
-                cx.new(|cx| BufferChangeSet::new_with_base_text(base.to_string(), &buffer, cx));
+            let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base, &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
@@ -13255,14 +13257,22 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     cx.executor().run_until_parked();
 
+    // When the start of a hunk coincides with the start of its excerpt,
+    // the hunk is expanded. When the start of a a hunk is earlier than
+    // the start of its excerpt, the hunk is not expanded.
     cx.assert_state_with_diff(
         "
             ˇaaa
           - bbb
           + BBB
 
+          - ddd
+          - eee
+          + DDD
           + EEE
             fff
+
+            iii
         "
         .unindent(),
     );
@@ -13500,8 +13510,8 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! { "
         one
-        TWO
-        ˇthree
+        ˇTWO
+        three
         four
         five
     "});
@@ -13514,15 +13524,14 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         indoc! { "
             one
           - two
-          + TWO
-            ˇthree
+          + ˇTWO
+            three
             four
             five
         "}
         .to_string(),
     );
     cx.update_editor(|editor, window, cx| {
-        editor.move_up(&Default::default(), window, cx);
         editor.move_up(&Default::default(), window, cx);
         editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
     });
@@ -14402,12 +14411,8 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let change_set = cx.new(|cx| {
-                let mut change_set = BufferChangeSet::new(&buffer, cx);
-                let _ =
-                    change_set.set_base_text(base_text.into(), buffer.read(cx).text_snapshot(), cx);
-                change_set
-            });
+            let change_set =
+                cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
 
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_change_set(change_set, cx);

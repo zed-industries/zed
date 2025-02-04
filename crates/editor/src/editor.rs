@@ -10137,12 +10137,12 @@ impl Editor {
             let mut diagnostics;
             if direction == Direction::Prev {
                 diagnostics = buffer
-                    .diagnostics_in_range::<_, usize>(0..search_start)
+                    .diagnostics_in_range::<usize>(0..search_start)
                     .collect::<Vec<_>>();
                 diagnostics.reverse();
             } else {
                 diagnostics = buffer
-                    .diagnostics_in_range::<_, usize>(search_start..buffer.len())
+                    .diagnostics_in_range::<usize>(search_start..buffer.len())
                     .collect::<Vec<_>>();
             };
             let group = diagnostics
@@ -11333,8 +11333,9 @@ impl Editor {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
+            let primary_range_end = active_diagnostics.primary_range.end.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .diagnostics_in_range::<usize>(primary_range_start..primary_range_end)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
