@@ -1250,10 +1250,11 @@ pub struct ZetaInlineCompletionProvider {
     current_completion: Option<CurrentInlineCompletion>,
     /// None if this is entirely disabled for this provider
     provider_data_collection: ProviderDataCollection,
+    last_request_timestamp: Instant,
 }
 
 impl ZetaInlineCompletionProvider {
-    pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
+    pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
     pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
         Self {
@@ -1262,6 +1263,7 @@ impl ZetaInlineCompletionProvider {
             next_pending_completion_id: 0,
             current_completion: None,
             provider_data_collection,
+            last_request_timestamp: Instant::now(),
         }
     }
 }
@@ -1327,7 +1329,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         &mut self,
         buffer: Entity<Buffer>,
         position: language::Anchor,
-        debounce: bool,
+        _debounce: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.zeta.read(cx).tos_accepted {
@@ -1349,13 +1351,17 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         self.next_pending_completion_id += 1;
         let data_collection_permission =
             self.provider_data_collection.data_collection_permission(cx);
+        let last_request_timestamp = self.last_request_timestamp;
 
         let task = cx.spawn(|this, mut cx| async move {
-            if debounce {
-                cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
+            if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
+                .checked_duration_since(Instant::now())
+            {
+                cx.background_executor().timer(timeout).await;
             }
 
             let completion_request = this.update(&mut cx, |this, cx| {
+                this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
                     zeta.request_completion(&buffer, position, data_collection_permission, cx)
                 })
