@@ -10,8 +10,6 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
-use futures::channel::mpsc;
-use futures::{SinkExt, StreamExt as _};
 use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{
@@ -148,7 +146,7 @@ pub struct GitPanel {
     entries: Vec<GitListEntry>,
     entries_by_path: collections::HashMap<RepoPath, usize>,
     width: Option<Pixels>,
-    err_sender: mpsc::Sender<anyhow::Error>,
+    pending: HashMap<RepoPath, bool>,
     commit_task: Task<()>,
     commit_pending: bool,
 }
@@ -261,7 +259,6 @@ impl GitPanel {
         let project = workspace.project().clone();
         let git_state = project.read(cx).git_state().clone();
         let active_repository = project.read(cx).active_repository(cx);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
         let workspace = cx.entity().downgrade();
 
         let git_panel = cx.new(|cx| {
@@ -300,6 +297,7 @@ impl GitPanel {
                 pending_serialization: Task::ready(None),
                 entries: Vec::new(),
                 entries_by_path: HashMap::default(),
+                pending: HashMap::default(),
                 current_modifiers: window.modifiers(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone())
@@ -316,31 +314,12 @@ impl GitPanel {
                 fs,
                 commit_editor,
                 project,
-                err_sender,
                 workspace,
             };
             git_panel.schedule_update(window, cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
             git_panel
         });
-
-        let handle = git_panel.downgrade();
-        cx.spawn(|_, mut cx| async move {
-            while let Some(e) = err_receiver.next().await {
-                let Some(this) = handle.upgrade() else {
-                    break;
-                };
-                if this
-                    .update(&mut cx, |this, cx| {
-                        this.show_err_toast("git operation error", e, cx);
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
 
         cx.subscribe_in(
             &git_panel,
@@ -623,18 +602,12 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let result = match entry {
+        let (stage, repo_paths) = match entry {
             GitListEntry::GitStatusEntry(status_entry) => {
                 if status_entry.status.is_staged().unwrap_or(false) {
-                    active_repository.unstage_entries(
-                        vec![status_entry.repo_path.clone()],
-                        self.err_sender.clone(),
-                    )
+                    (false, vec![status_entry.repo_path.clone()])
                 } else {
-                    active_repository.stage_entries(
-                        vec![status_entry.repo_path.clone()],
-                        self.err_sender.clone(),
-                    )
+                    (true, vec![status_entry.repo_path.clone()])
                 }
             }
             GitListEntry::Header(section) => {
@@ -650,17 +623,35 @@ impl GitPanel {
                     .map(|status_entry| status_entry.repo_path)
                     .collect::<Vec<_>>();
 
-                if section.all_staged.selected() {
-                    active_repository.unstage_entries(entries, self.err_sender.clone())
-                } else {
-                    active_repository.stage_entries(entries, self.err_sender.clone())
-                }
+                (!section.all_staged.selected(), entries)
             }
         };
-        if let Err(e) = result {
-            self.show_err_toast("toggle staged error", e, cx);
+        for repo_path in repo_paths {
+            self.pending.insert(repo_path.clone(), stage);
         }
-        cx.notify();
+
+        let future = if stage {
+            active_repository.stage_entries(repo_paths.clone())
+        } else {
+            active_repository.unstage_entries(repo_paths.clone())
+        };
+        cx.spawn(|this, cx| async move {
+            let result = future.await;
+            this.update(&mut cx, |this, cx| {
+                for repo_path in repo_paths {
+                    if this.pending.get(&repo_path) == Some(&stage) {
+                        this.pending.remove(&repo_path);
+                    }
+                    match result {
+                        Err(e) => {
+                            this.show_err_toast("git-operation-error", e, cx);
+                        }
+                        _ => {}
+                    }
+                }
+                cx.notify();
+            });
+        });
     }
 
     fn toggle_staged_for_selected(
@@ -805,10 +796,11 @@ impl GitPanel {
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
             match save_task.await {
                 Ok(()) => {
+                    // TODO:
+                    // - pending: HashMap<RepoPath, bool> ->  When rendering UI, check pending map
+                    // - stage all tracked files, then run git commit
                     if let Some(Ok(())) = cx
-                        .update(|_, cx| {
-                            active_repository.commit_all(name_and_email, err_sender.clone(), cx)
-                        })
+                        .update(|_, cx| active_repository.commit_all(name_and_email, cx))
                         .ok()
                     {
                         cx.update(|window, cx| {
@@ -1517,28 +1509,11 @@ impl GitPanel {
         .fill()
         .elevation(ElevationIndex::Surface)
         .on_click({
-            let handle = cx.entity().downgrade();
             let repo_path = repo_path.clone();
-            move |toggle, _window, cx| {
-                let Some(this) = handle.upgrade() else {
-                    return;
-                };
-                this.update(cx, |this, cx| {
-                    let repo_path = repo_path.clone();
-                    let Some(active_repository) = this.active_repository.as_ref() else {
-                        return;
-                    };
-                    let result = match toggle {
-                        ToggleState::Selected | ToggleState::Indeterminate => active_repository
-                            .stage_entries(vec![repo_path], this.err_sender.clone()),
-                        ToggleState::Unselected => active_repository
-                            .unstage_entries(vec![repo_path], this.err_sender.clone()),
-                    };
-                    if let Err(e) = result {
-                        this.show_err_toast("toggle staged error", e, cx);
-                    }
-                });
-            }
+            let entry = entry.clone();
+            cx.listener(move |this, toggle, _window, cx| {
+                self.toggle_staged_for_entry(entry, window, cx);
+            })
         });
 
         let start_slot = h_flex()
