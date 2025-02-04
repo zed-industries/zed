@@ -31,11 +31,11 @@ use std::{
 use util::{ResultExt, TryFutureExt};
 
 pub(crate) fn init(client: &AnyProtoClient) {
-    client.add_model_message_handler(ContextStore::handle_advertise_contexts);
-    client.add_model_request_handler(ContextStore::handle_open_context);
-    client.add_model_request_handler(ContextStore::handle_create_context);
-    client.add_model_message_handler(ContextStore::handle_update_context);
-    client.add_model_request_handler(ContextStore::handle_synchronize_contexts);
+    client.add_entity_message_handler(ContextStore::handle_advertise_contexts);
+    client.add_entity_request_handler(ContextStore::handle_open_context);
+    client.add_entity_request_handler(ContextStore::handle_create_context);
+    client.add_entity_message_handler(ContextStore::handle_update_context);
+    client.add_entity_request_handler(ContextStore::handle_synchronize_contexts);
 }
 
 #[derive(Clone)]
@@ -310,7 +310,7 @@ impl ContextStore {
                 .client
                 .subscribe_to_entity(remote_id)
                 .log_err()
-                .map(|subscription| subscription.set_model(&cx.entity(), &mut cx.to_async()));
+                .map(|subscription| subscription.set_entity(&cx.entity(), &mut cx.to_async()));
             self.advertise_contexts(cx);
         } else {
             self.client_subscription = None;
