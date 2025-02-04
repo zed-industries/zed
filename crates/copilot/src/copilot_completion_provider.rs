@@ -436,8 +436,8 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-            // AcceptInlineCompletion when there is an active suggestion inserts it.
-            editor.accept_inline_completion(&Default::default(), window, cx);
+            // AcceptEditPrediction when there is an active suggestion inserts it.
+            editor.accept_edit_prediction(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
@@ -482,7 +482,7 @@ mod tests {
         );
 
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -496,8 +496,8 @@ mod tests {
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-            // Using AcceptInlineCompletion again accepts the suggestion.
-            editor.accept_inline_completion(&Default::default(), window, cx);
+            // Using AcceptEditPrediction again accepts the suggestion.
+            editor.accept_edit_prediction(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
@@ -669,7 +669,7 @@ mod tests {
             vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -758,7 +758,7 @@ mod tests {
             editor.change_selections(None, window, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
             });
-            editor.next_inline_completion(&Default::default(), window, cx);
+            editor.next_edit_prediction(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         _ = editor.update(cx, |editor, _, cx| {
@@ -862,7 +862,7 @@ mod tests {
             vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {

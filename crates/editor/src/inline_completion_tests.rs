@@ -315,7 +315,7 @@ fn assert_editor_active_move_completion(
 
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
-        editor.accept_inline_completion(&crate::AcceptEditPrediction, window, cx)
+        editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
     })
 }
 

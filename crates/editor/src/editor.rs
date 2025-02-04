@@ -4826,7 +4826,7 @@ impl Editor {
         .detach();
     }
 
-    pub fn next_inline_completion(
+    pub fn next_edit_prediction(
         &mut self,
         _: &NextEditPrediction,
         window: &mut Window,
@@ -4844,7 +4844,7 @@ impl Editor {
         }
     }
 
-    pub fn previous_inline_completion(
+    pub fn previous_edit_prediction(
         &mut self,
         _: &PreviousEditPrediction,
         window: &mut Window,
@@ -4862,7 +4862,7 @@ impl Editor {
         }
     }
 
-    pub fn accept_inline_completion(
+    pub fn accept_edit_prediction(
         &mut self,
         _: &AcceptEditPrediction,
         window: &mut Window,
@@ -4988,7 +4988,7 @@ impl Editor {
                     self.refresh_inline_completion(true, true, window, cx);
                     cx.notify();
                 } else {
-                    self.accept_inline_completion(&Default::default(), window, cx);
+                    self.accept_edit_prediction(&Default::default(), window, cx);
                 }
             }
         }
@@ -5269,7 +5269,7 @@ impl Editor {
         );
 
         by_provider
-            && EditorSettings::get_global(cx).show_edit_completions_in_menu
+            && EditorSettings::get_global(cx).show_edit_predictions_in_menu
             && self
                 .edit_prediction_provider()
                 .map_or(false, |provider| provider.show_completions_in_menu())

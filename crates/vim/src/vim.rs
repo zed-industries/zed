@@ -1566,7 +1566,7 @@ impl Vim {
 
                 if self.mode == Mode::Normal {
                     self.update_editor(window, cx, |_, editor, window, cx| {
-                        editor.accept_inline_completion(
+                        editor.accept_edit_prediction(
                             &editor::actions::AcceptEditPrediction {},
                             window,
                             cx,
