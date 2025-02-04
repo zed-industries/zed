@@ -3249,25 +3249,37 @@ impl EditorElement {
                 let edit_prediction = if edit_prediction_popover_visible {
                     let accept_keystroke: Option<Keystroke>;
 
-                    // TODO: this isn't working on mgsloan's linux machine.
+                    // TODO: load modifier from keymap.
+                    // `bindings_for_action_in` returns `None` in Linux, and is intermittent on macOS
                     #[cfg(target_os = "macos")]
                     {
-                        let bindings = window.bindings_for_action_in(
-                            &crate::AcceptInlineCompletion,
-                            &self.editor.focus_handle(cx),
-                        );
+                        // let bindings = window.bindings_for_action_in(
+                        //     &crate::AcceptInlineCompletion,
+                        //     &self.editor.focus_handle(cx),
+                        // );
 
-                        let last_binding = bindings.last();
+                        // let last_binding = bindings.last();
 
-                        accept_keystroke = if let Some(binding) = last_binding {
-                            match &binding.keystrokes() {
-                                // TODO: no need to clone once this logic works on linux.
-                                [keystroke] => Some(keystroke.clone()),
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
+                        // accept_keystroke = if let Some(binding) = last_binding {
+                        //     match &binding.keystrokes() {
+                        //         // TODO: no need to clone once this logic works on linux.
+                        //         [keystroke] => Some(keystroke.clone()),
+                        //         _ => None,
+                        //     }
+                        // } else {
+                        //     None
+                        // };
+                        accept_keystroke = Some(Keystroke {
+                            modifiers: gpui::Modifiers {
+                                alt: true,
+                                control: false,
+                                shift: false,
+                                platform: false,
+                                function: false,
+                            },
+                            key: "tab".to_string(),
+                            key_char: None,
+                        });
                     }
 
                     #[cfg(not(target_os = "macos"))]
