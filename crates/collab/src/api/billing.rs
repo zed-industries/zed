@@ -666,6 +666,27 @@ async fn handle_customer_subscription_event(
             .await?
             .ok_or_else(|| anyhow!("billing customer not found"))?;
 
+    let was_canceled_due_to_payment_failure = subscription.status == SubscriptionStatus::Canceled
+        && subscription
+            .cancellation_details
+            .as_ref()
+            .and_then(|details| details.reason)
+            .map_or(false, |reason| {
+                reason == CancellationDetailsReason::PaymentFailed
+            });
+
+    if was_canceled_due_to_payment_failure {
+        app.db
+            .update_billing_customer(
+                billing_customer.id,
+                &UpdateBillingCustomerParams {
+                    has_overdue_invoices: ActiveValue::set(true),
+                    ..Default::default()
+                },
+            )
+            .await?;
+    }
+
     if let Some(existing_subscription) = app
         .db
         .get_billing_subscription_by_stripe_subscription_id(&subscription.id)
