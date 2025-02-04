@@ -5511,6 +5511,11 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_move = self
+            .active_inline_completion
+            .as_ref()
+            .map_or(false, |c| c.is_move());
+
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5539,23 +5544,18 @@ impl Editor {
                                     } else {
                                         None
                                     },
+                                    !is_move,
                                 )),
                         )
                         .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(
-                            if self
-                                .active_inline_completion
-                                .as_ref()
-                                .map_or(false, |c| c.is_move())
-                            {
-                                div()
-                                    .child(ui::Key::new(&accept_keystroke.key, None))
-                                    .font(buffer_font.clone())
-                                    .into_any()
-                            } else {
-                                Label::new("Preview").color(Color::Muted).into_any_element()
-                            },
-                        ),
+                        .child(if is_move {
+                            div()
+                                .child(ui::Key::new(&accept_keystroke.key, None))
+                                .font(buffer_font.clone())
+                                .into_any()
+                        } else {
+                            Label::new("Preview").color(Color::Muted).into_any_element()
+                        }),
                 )
                 .into_any(),
         )

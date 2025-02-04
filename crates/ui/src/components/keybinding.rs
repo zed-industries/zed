@@ -83,6 +83,7 @@ impl RenderOnce for KeyBinding {
                         &keystroke.modifiers,
                         self.platform_style,
                         None,
+                        false,
                     ))
                     .map(|el| el.child(render_key(&keystroke, self.platform_style, None)))
             }))
@@ -129,6 +130,7 @@ pub fn render_modifiers(
     modifiers: &Modifiers,
     platform_style: PlatformStyle,
     color: Option<Color>,
+    standalone: bool,
 ) -> impl Iterator<Item = AnyElement> {
     enum KeyOrIcon {
         Key(&'static str),
@@ -179,18 +181,23 @@ pub fn render_modifiers(
         ]
     };
 
-    table
+    let filtered = table
         .into_iter()
-        .flat_map(move |modifier| {
-            if modifier.enabled {
-                match platform_style {
-                    PlatformStyle::Mac => vec![modifier.mac],
-                    PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
-                    PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
-                }
-            } else {
-                vec![]
+        .filter(|modifier| modifier.enabled)
+        .collect::<Vec<_>>();
+    let last_ix = filtered.len().saturating_sub(1);
+
+    filtered
+        .into_iter()
+        .enumerate()
+        .flat_map(move |(ix, modifier)| match platform_style {
+            PlatformStyle::Mac => vec![modifier.mac],
+            PlatformStyle::Linux if standalone && ix == last_ix => vec![modifier.linux],
+            PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
+            PlatformStyle::Windows if standalone && ix == last_ix => {
+                vec![modifier.windows]
             }
+            PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
         })
         .map(move |key_or_icon| match key_or_icon {
             KeyOrIcon::Key(key) => Key::new(key, color).into_any_element(),
