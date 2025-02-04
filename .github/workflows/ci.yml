@@ -235,19 +235,16 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
     steps:
-      - name: Test
-        run: |
-          [System.Environment]::OSVersion.Version
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
-      # - name: Create Dev Drive using ReFS
-      #   run: |
-      #     $Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 30GB |
-      #               Mount-VHD -Passthru |
-      #               Initialize-Disk -Passthru |
-      #               New-Partition -AssignDriveLetter -UseMaximumSize |
-      #               Format-Volume -FileSystem ReFS -Confirm:$false -Force
-      #     Write-Output $Volume
-      #     Write-Output "DEV_DRIVE=$($Volume.DriveLetter):" >> $env:GITHUB_ENV
+      - name: Create Dev Drive using ReFS
+        run: |
+          $Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 30GB |
+                    Mount-VHD -Passthru |
+                    Initialize-Disk -Passthru |
+                    New-Partition -AssignDriveLetter -UseMaximumSize |
+                    Format-Volume -FileSystem ReFS -Confirm:$false -Force
+          Write-Output $Volume
+          Write-Output "DEV_DRIVE=$($Volume.DriveLetter):" >> $env:GITHUB_ENV
       # - name: Enable longer pathnames for git
       #   run: git config --system core.longpaths true
       # - name: Checkout repo
