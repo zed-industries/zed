@@ -120,7 +120,7 @@ impl Console {
         cx: &mut Context<Self>,
     ) {
         match event {
-            StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::SelectedStackFrameChanged => cx.notify(),
             StackFrameListEvent::StackFramesUpdated => {}
         }
     }
