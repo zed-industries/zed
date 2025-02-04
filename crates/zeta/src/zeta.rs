@@ -1359,6 +1359,12 @@ impl ProviderDataCollection {
         }
     }
 
+    pub fn user_data_collection_choice(&self, cx: &App) -> bool {
+        self.choice
+            .as_ref()
+            .map_or(false, |choice| choice.read(cx).is_enabled())
+    }
+
     pub fn data_collection_permission(&self, cx: &App) -> bool {
         self.choice
             .as_ref()
@@ -1432,7 +1438,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
-        if self.provider_data_collection.data_collection_permission(cx) {
+        if self
+            .provider_data_collection
+            .user_data_collection_choice(cx)
+        {
             DataCollectionState::Enabled
         } else {
             DataCollectionState::Disabled
