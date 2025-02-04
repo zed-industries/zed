@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
 use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
@@ -8,6 +6,7 @@ use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use gpui::{AnyWindowHandle, App, AppContext, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use zeta::ProviderDataCollection;
@@ -213,6 +212,7 @@ fn assign_inline_completion_provider(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    // TODO: Do we really want to collect data only for singleton buffers?
     let singleton_buffer = editor.buffer().read(cx).as_singleton();
 
     match provider {
@@ -240,7 +240,23 @@ fn assign_inline_completion_provider(
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
-                let zeta = zeta::Zeta::register(client.clone(), user_store, cx);
+                let mut worktree = None;
+
+                if let Some(buffer) = &singleton_buffer {
+                    if let Some(file) = buffer.read(cx).file() {
+                        let id = file.worktree_id(cx);
+                        if let Some(inner_worktree) = editor
+                            .project
+                            .as_ref()
+                            .and_then(|project| project.read(cx).worktree_for_id(id, cx))
+                        {
+                            worktree = Some(inner_worktree);
+                        }
+                    }
+                }
+
+                let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+
                 if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {

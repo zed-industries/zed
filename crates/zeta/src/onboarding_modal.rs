@@ -1,7 +1,8 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::Zeta;
+use crate::{Zeta, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use client::{Client, UserStore};
+use db::kvp::KEY_VALUE_STORE;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
@@ -11,6 +12,7 @@ use gpui::{
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
 use ui::{prelude::*, Checkbox, TintColor, Tooltip};
+use util::ResultExt;
 use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
 use worktree::Worktree;
 
@@ -84,6 +86,20 @@ impl ZedPredictModal {
         cx.spawn(|this, mut cx| async move {
             task.await?;
 
+            let mut data_collection_opted_in = false;
+            this.update(&mut cx, |this, _cx| {
+                data_collection_opted_in = this.data_collection_opted_in;
+            })
+            .ok();
+
+            KEY_VALUE_STORE
+                .write_kvp(
+                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    data_collection_opted_in.to_string(),
+                )
+                .await
+                .log_err();
+
             this.update(&mut cx, |this, cx| {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
@@ -93,10 +109,10 @@ impl ZedPredictModal {
 
                 if this.worktrees.is_empty() {
                     cx.emit(DismissEvent);
-                    return ();
+                    return;
                 }
 
-                Zeta::register(this.client.clone(), this.user_store.clone(), cx);
+                Zeta::register(None, this.client.clone(), this.user_store.clone(), cx);
 
                 cx.emit(DismissEvent);
             })
@@ -144,16 +160,16 @@ impl ModalView for ZedPredictModal {}
 impl Render for ZedPredictModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let base = v_flex()
+            .id("zed predict tos")
+            .key_context("ZedPredictModal")
             .w(px(440.))
             .p_4()
             .relative()
             .gap_2()
             .overflow_hidden()
             .elevation_3(cx)
-            .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
-            .key_context("ZedPredictModal")
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
                 cx.emit(DismissEvent);
             }))
@@ -263,6 +279,17 @@ impl Render for ZedPredictModal {
                 SignInStatus::Waiting => unreachable!(),
             };
 
+            let accordion_icons = if self.data_collection_expanded {
+                (IconName::ChevronUp, IconName::ChevronDown)
+            } else {
+                (IconName::ChevronDown, IconName::ChevronUp)
+            };
+            let accordion_label = if self.data_collection_expanded {
+                "Hide Details"
+            } else {
+                "Show Details"
+            };
+
             fn label_item(label_text: impl Into<SharedString>) -> impl Element {
                 Label::new(label_text).color(Color::Muted).into_element()
             }
@@ -312,7 +339,7 @@ impl Render for ZedPredictModal {
                                         "training-data-checkbox",
                                         self.data_collection_opted_in.into(),
                                     )
-                                    .label("OSS projects: Optionally share training data.")
+                                    .label("Optionally share training data (OSS-only).")
                                     .fill()
                                     .when(self.worktrees.is_empty(), |element| {
                                         element.disabled(true).tooltip(move |window, cx| {
@@ -335,12 +362,8 @@ impl Render for ZedPredictModal {
                                 )
                                 // TODO: show each worktree if more than 1
                                 .child(
-                                    Button::new("learn-more", "Learn More")
-                                        .icon(if self.data_collection_expanded {
-                                            IconName::ChevronUp
-                                        } else {
-                                            IconName::ChevronDown
-                                        })
+                                    Button::new("learn-more", accordion_label)
+                                        .icon(accordion_icons.0)
                                         .icon_size(IconSize::Indicator)
                                         .icon_color(Color::Muted)
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -361,12 +384,15 @@ impl Render for ZedPredictModal {
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(
                                         div().child(
-                                            Label::new("To get better predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
+                                            Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
                                                 .mb_1()
                                         )
                                     )
                                     .child(info_item(
                                         "We ask this exclusively for open-source projects.",
+                                    ))
+                                    .child(info_item(
+                                        "Zed automatically detects if your project is open-source.",
                                     ))
                                     .child(info_item(
                                         "This setting is valid for all OSS projects you open in Zed.",

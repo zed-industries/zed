@@ -1,5 +1,6 @@
 mod completion_diff_element;
 mod init;
+mod license_detection;
 mod onboarding_banner;
 mod onboarding_modal;
 mod rate_completion_modal;
@@ -8,6 +9,7 @@ pub(crate) use completion_diff_element::*;
 use db::kvp::KEY_VALUE_STORE;
 pub use init::*;
 use inline_completion::DataCollectionState;
+pub use license_detection::is_license_eligible_for_data_collection;
 pub use onboarding_banner::*;
 pub use rate_completion_modal::*;
 
@@ -26,7 +28,9 @@ use language::{
     OffsetRangeExt, Point, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
+use postage::watch;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
+use settings::WorktreeId;
 use std::{
     borrow::Cow,
     cmp,
@@ -35,12 +39,14 @@ use std::{
     mem,
     ops::Range,
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
+use worktree::Worktree;
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
@@ -208,6 +214,7 @@ pub struct Zeta {
     _llm_token_subscription: Subscription,
     tos_accepted: bool, // Terms of service accepted
     _user_store_subscription: Subscription,
+    license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
 impl Zeta {
@@ -216,15 +223,33 @@ impl Zeta {
     }
 
     pub fn register(
+        worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
-        Self::global(cx).unwrap_or_else(|| {
+        let this = Self::global(cx).unwrap_or_else(|| {
             let model = cx.new(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(model.clone()));
             model
-        })
+        });
+
+        this.update(cx, move |this, cx| {
+            let mut watchers = HashMap::default();
+
+            if let Some(worktree) = worktree {
+                worktree.update(cx, |worktree, cx| {
+                    if !this.license_detection_watchers.contains_key(&worktree.id()) {
+                        let new_watcher = Rc::new(LicenseDetectionWatcher::new(worktree, cx));
+                        watchers.insert(worktree.id(), new_watcher);
+                    }
+                });
+            }
+
+            this.license_detection_watchers = watchers;
+        });
+
+        this
     }
 
     pub fn clear_history(&mut self) {
@@ -272,6 +297,7 @@ impl Zeta {
                     _ => {}
                 }
             }),
+            license_detection_watchers: HashMap::default(),
         }
     }
 
@@ -904,10 +930,10 @@ and then another
         new_snapshot
     }
 
-    fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
-        let toggled = self.data_collection_choice.read(cx).toggle();
-        self.update_data_collection_choice(toggled.is_enabled(), cx);
-    }
+    // fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
+    //     let toggled = self.data_collection_choice.read(cx).toggle();
+    //     self.update_data_collection_choice(toggled.is_enabled(), cx);
+    // }
 
     fn update_data_collection_choice(&mut self, new_choice_bool: bool, cx: &mut Context<Self>) {
         let new_choice = match new_choice_bool {
@@ -942,6 +968,45 @@ and then another
             }
             None => DataCollectionChoice::NotAnswered,
         }
+    }
+}
+
+struct LicenseDetectionWatcher {
+    is_open_source_rx: watch::Receiver<bool>,
+    _is_open_source_task: Task<()>,
+}
+
+impl LicenseDetectionWatcher {
+    pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
+        let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
+
+        let loaded_file_fut = worktree.load_file(Path::new("LICENSE"), cx);
+
+        Self {
+            is_open_source_rx,
+            _is_open_source_task: cx.spawn(|_, _| async move {
+                // TODO: Don't display error if file not found
+                let Some(loaded_file) = loaded_file_fut.await.log_err() else {
+                    return;
+                };
+
+                let is_loaded_file_open_source_thing: bool =
+                    is_license_eligible_for_data_collection(&loaded_file.text);
+
+                println!(
+                    "arquivo {:?} is_loaded_file_open_source_thing deu {} ",
+                    loaded_file.file.path, is_loaded_file_open_source_thing
+                );
+
+                *is_open_source_tx.borrow_mut() = is_loaded_file_open_source_thing;
+                println!("conteudos: '{}'", loaded_file.text);
+            }),
+        }
+    }
+
+    /// Answers false until we find out it's open source
+    pub fn is_open_source(&self) -> bool {
+        *self.is_open_source_rx.borrow()
     }
 }
 
@@ -1291,28 +1356,51 @@ impl From<bool> for DataCollectionChoice {
 pub struct ProviderDataCollection {
     /// When set to None, data collection is not possible in the provider buffer
     choice: Option<Entity<DataCollectionChoice>>,
+    license_detection_watcher: Option<Rc<LicenseDetectionWatcher>>,
 }
 
 impl ProviderDataCollection {
     pub fn new(zeta: Entity<Zeta>, buffer: Option<Entity<Buffer>>, cx: &mut App) -> Self {
-        let choice = buffer.and_then(|buffer| {
+        let choice_and_watcher = buffer.and_then(|buffer| {
             let file = buffer.read(cx).file()?;
 
             if !file.is_local() || file.is_private() {
                 return None;
             }
 
-            let choice = zeta.read(cx).data_collection_choice.clone();
-            Some(choice)
+            let zeta = zeta.read(cx);
+            let choice = zeta.data_collection_choice.clone();
+            // Unwrap safety:
+            //   there should be a watcher for each worktree
+            let license_detection_watcher = zeta
+                .license_detection_watchers
+                .get(&file.worktree_id(cx))
+                .cloned()?;
+
+            Some((choice, license_detection_watcher))
         });
 
-        ProviderDataCollection { choice }
+        if let Some((choice, watcher)) = choice_and_watcher {
+            ProviderDataCollection {
+                choice: Some(choice),
+                license_detection_watcher: Some(watcher),
+            }
+        } else {
+            ProviderDataCollection {
+                choice: None,
+                license_detection_watcher: None,
+            }
+        }
     }
 
     pub fn can_collect_data(&self, cx: &App) -> bool {
         self.choice
             .as_ref()
             .is_some_and(|choice| choice.read(cx).is_enabled())
+            && self
+                .license_detection_watcher
+                .as_ref()
+                .is_some_and(|watcher| watcher.is_open_source())
     }
 
     pub fn toggle(&mut self, cx: &mut App) {
@@ -1377,6 +1465,16 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         DataCollectionState::Disabled
     }
+
+    // fn is_worktree_eligible_for_data_collection(
+    //     &self,
+    //     worktree: &Worktree,
+    //     cx: &mut Context<Worktree>,
+    // ) -> bool {
+    //     let loaded_file: Task<Result<LoadedFile>> = worktree.load_file(Path::new("LICENSE"), cx);
+    //     let check = |loaded_file: LoadedFile| -> bool { todo!() };
+    //     todo!("how to wait for Task to end to check result...")
+    // }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
         self.provider_data_collection.toggle(cx);
