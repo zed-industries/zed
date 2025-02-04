@@ -3426,7 +3426,10 @@ impl MultiBufferSnapshot {
             )
         })
         .filter_map(move |(range, hunk, excerpt)| {
-            if range.end == query_range.start && !hunk.row_range.is_empty() {
+            if range.start != range.end
+                && range.end == query_range.start
+                && !hunk.row_range.is_empty()
+            {
                 return None;
             }
             let end_row = if range.end.column == 0 {
@@ -3665,8 +3668,8 @@ impl MultiBufferSnapshot {
                 if metadata_buffer_range.start > D::default() {
                     while let Some(region) = cursor.region() {
                         if region.is_main_buffer
-                            && region.buffer_range.end >= metadata_buffer_range.start
-                            || cursor.is_at_end_of_excerpt()
+                            && (region.buffer_range.end >= metadata_buffer_range.start
+                                || cursor.is_at_end_of_excerpt())
                         {
                             break;
                         }
@@ -3675,8 +3678,9 @@ impl MultiBufferSnapshot {
                 }
                 let start_region = cursor.region()?;
                 while let Some(region) = cursor.region() {
-                    if region.is_main_buffer && region.buffer_range.end >= metadata_buffer_range.end
-                        || cursor.is_at_end_of_excerpt()
+                    if region.is_main_buffer
+                        && (region.buffer_range.end > metadata_buffer_range.end
+                            || cursor.is_at_end_of_excerpt())
                     {
                         break;
                     }

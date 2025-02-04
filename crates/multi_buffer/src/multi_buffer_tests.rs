@@ -2094,9 +2094,6 @@ impl ReferenceMultibuffer {
         };
         let diff = change_set.read(cx).diff_to_buffer.clone();
         let excerpt_range = excerpt.range.to_offset(&buffer);
-        if excerpt_range.is_empty() {
-            return;
-        }
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
             if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
@@ -2143,10 +2140,7 @@ impl ReferenceMultibuffer {
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
 
                 hunk_range.end = hunk_range.end.min(buffer_range.end);
-                if hunk_range.start > buffer_range.end
-                    || hunk_range.start < buffer_range.start
-                    || buffer_range.is_empty()
-                {
+                if hunk_range.start > buffer_range.end || hunk_range.start < buffer_range.start {
                     log::trace!("skipping hunk outside excerpt range");
                     continue;
                 }
