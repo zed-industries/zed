@@ -386,32 +386,6 @@ impl InlineCompletionButton {
         }
 
         let settings = AllLanguageSettings::get_global(cx);
-        if let Some(file) = &self.file {
-            let path = file.path().clone();
-            let path_enabled = settings.inline_completions_enabled_for_path(&path);
-
-            menu = menu.toggleable_entry(
-                "This File",
-                path_enabled,
-                IconPosition::Start,
-                None,
-                move |window, cx| {
-                    if let Some(workspace) = window.root().flatten() {
-                        let workspace = workspace.downgrade();
-                        window
-                            .spawn(cx, |cx| {
-                                configure_disabled_globs(
-                                    workspace,
-                                    path_enabled.then_some(path.clone()),
-                                    cx,
-                                )
-                            })
-                            .detach_and_log_err(cx);
-                    }
-                },
-            );
-        }
-
         let globally_enabled = settings.show_inline_completions(None, cx);
         menu = menu.toggleable_entry(
             "All Files",
@@ -420,16 +394,12 @@ impl InlineCompletionButton {
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
+        menu = menu.separator().header("Privacy");
 
         if let Some(provider) = &self.inline_completion_provider {
             let data_collection = provider.data_collection_state(cx);
-
             if data_collection.is_supported() {
                 let provider = provider.clone();
-                menu = menu
-                    .separator()
-                    .header("Help Improve The Model")
-                    .header("For OSS Projects Only");
                 menu = menu.item(
                     // TODO: We want to add something later that communicates whether
                     // the current project is open-source.
@@ -437,6 +407,29 @@ impl InlineCompletionButton {
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
+                        }),
+                )
+            }
+
+            if let Some(file) = &self.file {
+                let path = file.path().clone();
+                let path_enabled = settings.inline_completions_enabled_for_path(&path);
+                menu = menu.item(
+                    ContextMenuEntry::new("Exclude File")
+                        .toggleable(IconPosition::Start, !path_enabled)
+                        .handler(move |window, cx| {
+                            if let Some(workspace) = window.root().flatten() {
+                                let workspace = workspace.downgrade();
+                                window
+                                    .spawn(cx, |cx| {
+                                        configure_disabled_globs(
+                                            workspace,
+                                            path_enabled.then_some(path.clone()),
+                                            cx,
+                                        )
+                                    })
+                                    .detach_and_log_err(cx);
+                            }
                         }),
                 );
             }
@@ -619,16 +612,19 @@ async fn configure_disabled_globs(
 
             let settings = cx.global::<SettingsStore>();
             let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                let copilot = file.inline_completions.get_or_insert_with(Default::default);
-                let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                    settings
-                        .get::<AllLanguageSettings>(None)
-                        .inline_completions
-                        .disabled_globs
-                        .iter()
-                        .map(|glob| glob.glob().to_string())
-                        .collect()
-                });
+                let inline_completion_settings =
+                    file.inline_completions.get_or_insert_with(Default::default);
+                let globs = inline_completion_settings
+                    .disabled_globs
+                    .get_or_insert_with(|| {
+                        settings
+                            .get::<AllLanguageSettings>(None)
+                            .inline_completions
+                            .disabled_globs
+                            .iter()
+                            .map(|glob| glob.glob().to_string())
+                            .collect()
+                    });
 
                 if let Some(path_to_disable) = &path_to_disable {
                     globs.push(path_to_disable.to_string_lossy().into_owned());
