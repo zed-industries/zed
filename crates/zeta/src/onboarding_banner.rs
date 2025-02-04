@@ -1,7 +1,7 @@
 use chrono::Utc;
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsFeatureFlag};
 use gpui::Subscription;
-use language::language_settings::{all_language_settings, InlineCompletionProvider};
+use language::language_settings::{all_language_settings, EditPredictionProvider};
 use settings::SettingsStore;
 use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;

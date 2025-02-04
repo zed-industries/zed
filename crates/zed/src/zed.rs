@@ -20,7 +20,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
-use fs::{Fs, RealFs};
+use fs::Fs;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
