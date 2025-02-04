@@ -6,7 +6,7 @@ use crate::{
     Vim,
 };
 use editor::{
-    display_map::{DisplaySnapshot, ToDisplayPoint},
+    display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
     Bias, DisplayPoint, Editor,
 };
@@ -61,6 +61,414 @@ struct Subword {
 struct IndentObj {
     #[serde(default)]
     include_below: bool,
+}
+
+/// Minimal struct to hold the start/end as display points.
+#[derive(Debug, Clone)]
+pub struct CandidateRange {
+    pub start: DisplayPoint,
+    pub end: DisplayPoint,
+}
+
+fn gather_line_quotes(map: &DisplaySnapshot, line: DisplayRow) -> Vec<CandidateRange> {
+    // 1. figure out line length in display columns
+    let line_len = map.line_len(line);
+
+    // 2. Convert (line, col=0) to a global text offset
+    //    so we can collect line text out of the buffer
+    let line_start_dp = DisplayPoint::new(line, 0);
+    // `to_offset(map, Bias::Left)` returns a `usize` offset in the underlying buffer
+    let start_offset = line_start_dp.to_offset(map, Bias::Left);
+    // Similarly for col=line_len, bias=Right if you want the end
+    let line_end_dp = DisplayPoint::new(line, line_len);
+    let end_offset = line_end_dp.to_offset(map, Bias::Right);
+
+    // 3. Actually build the *raw text* for that line by collecting chars
+    //    from `start_offset` up to `end_offset`.
+    let count = end_offset.saturating_sub(start_offset);
+    let line_chars: String = map
+        .buffer_chars_at(start_offset)
+        .take(count) // only up to line_end
+        .map(|(ch, _off)| ch)
+        .collect();
+
+    // 4. Regex for quotes. You can also do `'([^']*)'` etc.
+    let mut ranges = Vec::new();
+    let patterns = &["\"([^\"]*)\"", "'([^']*)'", "`([^`]*)`"];
+    for pat in patterns {
+        let re = regex::Regex::new(pat).unwrap();
+        for mat in re.find_iter(&line_chars) {
+            let local_start = mat.start();
+            let local_end = mat.end();
+
+            // Convert these back to global offsets
+            let global_start = start_offset + local_start;
+            let global_end = start_offset + local_end;
+
+            // Convert offsets → display points again
+            let start_dp = DisplayPoint::new(line, 0).offset_plus(map, global_start - start_offset);
+            let end_dp = DisplayPoint::new(line, 0).offset_plus(map, global_end - start_offset);
+
+            ranges.push(CandidateRange {
+                start: start_dp,
+                end: end_dp,
+            });
+        }
+    }
+
+    ranges
+}
+
+/// Gather `"..."`, `'...'`, and `` `...` `` pairs across the entire buffer.
+/// Uses a single-pass approach over the combined text, storing offsets -> DisplayPoint,
+/// then runs a naive multiline regex.
+fn gather_quotes_multiline(map: &DisplaySnapshot) -> Vec<CandidateRange> {
+    // 1) Build entire buffer text + a mapping from “text index” -> DisplayPoint
+    let mut text = String::new();
+    let mut offsets_to_dp = Vec::new();
+
+    let max_row = map.max_point().row().0;
+    let mut _global_offset = 0;
+
+    for row_u32 in 0..=max_row {
+        let line = DisplayRow(row_u32);
+
+        let line_len_u32 = map.line_len(line);
+        let line_start_dp = DisplayPoint::new(line, 0);
+        let start_offset = line_start_dp.to_offset(map, Bias::Left);
+
+        let line_end_dp = DisplayPoint::new(line, line_len_u32);
+        let end_offset = line_end_dp.to_offset(map, Bias::Right);
+
+        let count = end_offset.saturating_sub(start_offset);
+        let line_string: String = map
+            .buffer_chars_at(start_offset)
+            .take(count)
+            .map(|(ch, _off)| ch)
+            .collect();
+
+        // Store these characters in `text`, track each char’s DisplayPoint
+        for (i, ch) in line_string.chars().enumerate() {
+            text.push(ch);
+            offsets_to_dp.push(DisplayPoint::new(line, i as u32));
+            _global_offset += 1;
+        }
+    }
+
+    // 2) We run three naive multiline regexes:
+    //    (?s)"[^"]*"  or (?s)'[^']*'  or (?s)`[^`]*`
+    //    “(?s)” = “dot matches newline”
+    //    disclaim: no escaping logic, just naive
+    let patterns = &[
+        r#"(?s)"[^"]*""#, // double quotes
+        r#"(?s)'[^']*'"#, // single quotes
+        r#"(?s)`[^`]*`"#, // backtick
+    ];
+
+    let mut candidates = Vec::new();
+    let combined_text_len = offsets_to_dp.len();
+
+    for pat in patterns {
+        let re = regex::Regex::new(pat).unwrap();
+        // For each match, convert the match’s [start..end) indices -> display points
+        for mat in re.find_iter(&text) {
+            let start_idx = mat.start();
+            let end_idx = mat.end().saturating_sub(1); // inclusive end
+            if end_idx >= combined_text_len {
+                continue;
+            }
+
+            // The DP for the opening character
+            let dp_start = offsets_to_dp[start_idx];
+            // The DP for the last char. We'll make it half‐open by +1 column
+            let dp_end_char = offsets_to_dp[end_idx];
+
+            // Make final end = last char’s column + 1
+            let final_end =
+                DisplayPoint::new(dp_end_char.row(), dp_end_char.column().saturating_add(1));
+
+            candidates.push(CandidateRange {
+                start: dp_start,
+                end: final_end,
+            });
+        }
+    }
+
+    candidates
+}
+
+/// Gather bracket pairs ((), [], {}, <>) across the entire buffer, not just one line.
+/// This fixes the multiline `{ ... }` issue.
+fn gather_brackets_multiline(map: &DisplaySnapshot) -> Vec<CandidateRange> {
+    // 1) Build the entire buffer as a single string. We also store the offset
+    //    => (display row, column) mapping so we can convert back to DisplayPoints.
+    let mut text = String::new();
+    let mut offsets_to_dp = Vec::new(); // for each character in `text`, store its DisplayPoint
+
+    // We'll iterate line by line, but keep a running `global_offset` for the final big string
+    let max_row = map.max_point().row().0;
+    let mut _global_offset = 0;
+
+    for row_u32 in 0..=max_row {
+        let line = DisplayRow(row_u32);
+
+        let line_len_u32 = map.line_len(line);
+        let line_start_dp = DisplayPoint::new(line, 0);
+        let start_offset = line_start_dp.to_offset(map, Bias::Left);
+
+        let line_end_dp = DisplayPoint::new(line, line_len_u32);
+        let end_offset = line_end_dp.to_offset(map, Bias::Right);
+
+        // For each line, gather its characters
+        let count = end_offset.saturating_sub(start_offset);
+        let line_string: String = map
+            .buffer_chars_at(start_offset)
+            .take(count)
+            .map(|(ch, _off)| ch)
+            .collect();
+
+        // Store them in `text`, but also track each char's "DisplayPoint"
+        for (i, ch) in line_string.chars().enumerate() {
+            text.push(ch);
+            let dp = DisplayPoint::new(line, i as u32);
+            offsets_to_dp.push(dp);
+            _global_offset += 1;
+        }
+    }
+
+    // 2) Single pass stack approach for each bracket type
+    let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+    let mut candidates = Vec::new();
+
+    for (open, close) in bracket_pairs {
+        let mut stack = Vec::new(); // store the "global index in text"
+        for (i, ch) in text.chars().enumerate() {
+            if ch == open {
+                stack.push(i);
+            } else if ch == close {
+                if let Some(open_i) = stack.pop() {
+                    // We have a bracket pair from `open_i .. i`
+                    // Convert each to the corresponding DisplayPoint
+                    let start_dp = offsets_to_dp[open_i];
+                    // We might need +1 if `close` is multiple bytes, so do `i + ch.len_utf8()` if we want a *half‐open* range
+                    let end_idx = i + ch.len_utf8().saturating_sub(1);
+                    // But we also need to be sure we don't overflow the `offsets_to_dp` array
+                    let end_idx_clamped = end_idx.min(offsets_to_dp.len().saturating_sub(1));
+                    let end_dp = offsets_to_dp[end_idx_clamped];
+
+                    candidates.push(CandidateRange {
+                        start: start_dp,
+                        end: DisplayPoint::new(
+                            end_dp.row(),
+                            end_dp.column() + 1, // convert inclusive -> exclusive if you want
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+/// Gather bracket pairs on a single line: (), [], {}, <>.
+/// Uses a simple stack approach for each bracket type.
+fn gather_line_brackets(map: &DisplaySnapshot, line: DisplayRow) -> Vec<CandidateRange> {
+    // 1) line length
+    let line_len_u32 = map.line_len(line);
+
+    // 2) Convert (line, col=0) -> offset in buffer
+    let line_start_dp = DisplayPoint::new(line, 0);
+    let start_offset = line_start_dp.to_offset(map, Bias::Left);
+
+    // 3) Similarly for col=line_len
+    let line_end_dp = DisplayPoint::new(line, line_len_u32);
+    let end_offset = line_end_dp.to_offset(map, Bias::Right);
+
+    // 4) Build the text for that line
+    let count = end_offset.saturating_sub(start_offset);
+    let line_text: String = map
+        .buffer_chars_at(start_offset)
+        .take(count)
+        .map(|(ch, _off)| ch)
+        .collect();
+
+    // 5) We'll do a single pass stack for all bracket types. One approach:
+    //    Collect them all in one pass or do multiple passes. Here we do a single pass *per bracket type* for clarity.
+    let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
+
+    let mut candidates = Vec::new();
+
+    for (open, close) in bracket_pairs {
+        let mut stack = Vec::new();
+        for (i, ch) in line_text.chars().enumerate() {
+            if ch == open {
+                stack.push(i);
+            } else if ch == close {
+                if let Some(open_i) = stack.pop() {
+                    // Convert offsets -> display points
+                    let dp_start = DisplayPoint::new(line, 0).offset_plus(map, open_i);
+                    let dp_end = DisplayPoint::new(line, 0).offset_plus(map, i + ch.len_utf8());
+
+                    candidates.push(CandidateRange {
+                        start: dp_start,
+                        end: dp_end,
+                    });
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+//
+// 3) COVER OR NEXT" PICKING
+//
+fn pick_best_range<'a>(
+    candidates: &'a [CandidateRange],
+    caret: DisplayPoint,
+    map: &DisplaySnapshot,
+) -> Option<&'a CandidateRange> {
+    let caret_offset = caret.to_offset(map, Bias::Left);
+    let mut covering = vec![];
+    let mut next_ones = vec![];
+    let mut prev_ones = vec![];
+
+    for c in candidates {
+        let start_off = c.start.to_offset(map, Bias::Left);
+        let end_off = c.end.to_offset(map, Bias::Right);
+
+        if start_off <= caret_offset && caret_offset < end_off {
+            covering.push(c);
+        } else if start_off >= caret_offset {
+            next_ones.push(c);
+        } else if end_off <= caret_offset {
+            prev_ones.push(c);
+        }
+    }
+
+    // 1) covering -> smallest width
+    if !covering.is_empty() {
+        return covering.into_iter().min_by_key(|r| {
+            r.end.to_offset(map, Bias::Right) - r.start.to_offset(map, Bias::Left)
+        });
+    }
+
+    // 2) next -> closest by start
+    if !next_ones.is_empty() {
+        return next_ones.into_iter().min_by_key(|r| {
+            let start = r.start.to_offset(map, Bias::Left);
+            (start as isize - caret_offset as isize).abs()
+        });
+    }
+
+    // 3) prev -> closest by end
+    if !prev_ones.is_empty() {
+        return prev_ones.into_iter().min_by_key(|r| {
+            let end = r.end.to_offset(map, Bias::Right);
+            (end as isize - caret_offset as isize).abs()
+        });
+    }
+
+    None
+}
+
+fn find_any_quotes(
+    map: &DisplaySnapshot,
+    caret: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    // 1) gather quotes on caret’s line
+    let line_candidates = gather_line_quotes(map, caret.row());
+    if let Some(best_line) = pick_best_range(&line_candidates, caret, map) {
+        // Found a line-based quote pair => done
+        return finalize_quote_range(best_line.clone(), map, around);
+    }
+
+    // 2) fallback: gather from entire file (multiline)
+    let all_candidates = gather_quotes_multiline(map);
+    let best = pick_best_range(&all_candidates, caret, map)?;
+
+    // 3) Return final range, skipping bounding quote chars if “inner”
+    finalize_quote_range(best.clone(), map, around)
+}
+
+/// A tiny helper to do “outer vs. inner” logic for quotes
+fn finalize_quote_range(
+    pair: CandidateRange,
+    map: &DisplaySnapshot,
+    around: bool,
+) -> Option<std::ops::Range<DisplayPoint>> {
+    if around {
+        return Some(pair.start..pair.end);
+    }
+
+    // “inner”: skip bounding quotes if possible
+    let start_off = pair.start.to_offset(map, Bias::Left);
+    let end_off = pair.end.to_offset(map, Bias::Right);
+    if end_off.saturating_sub(start_off) < 2 {
+        // not enough room to skip
+        return None;
+    }
+
+    let new_start = DisplayPoint::new(pair.start.row(), pair.start.column() + 1);
+    let new_end = DisplayPoint::new(pair.end.row(), pair.end.column().saturating_sub(1));
+    Some(new_start..new_end)
+}
+
+/// Return the final bracket pair as a Range<DisplayPoint> with line-first priority.
+/// - If any bracket pair is found covering or next on the caret’s line, pick that.
+/// - Otherwise, gather from the entire file (multiline) and pick again.
+/// - `around` == true => return the full bracket pair.
+/// - `around` == false => skip bounding chars.
+fn find_any_brackets(
+    map: &DisplaySnapshot,
+    caret: DisplayPoint,
+    around: bool,
+) -> Option<std::ops::Range<DisplayPoint>> {
+    // 1) Gather bracket pairs on the caret’s line
+    let line_candidates = gather_line_brackets(map, caret.row());
+    // “cover-or-next” logic in just those
+    if let Some(best_line) = pick_best_range(&line_candidates, caret, map) {
+        // We found a match on the same line => done
+        return finalize_bracket_range(best_line.clone(), map, around);
+    }
+
+    // 2) If none on the same line, gather from entire buffer (multi-line)
+    let all_candidates = gather_brackets_multiline(map);
+    let best = pick_best_range(&all_candidates, caret, map)?;
+
+    // 3) Return the final range, skipping bounding chars if `around == false`
+    finalize_bracket_range(best.clone(), map, around)
+}
+
+/// A small helper to handle the “inner vs. outer” logic for bracket textobjects.
+/// - If `around == false`, we skip the bounding chars, but only if at least 2 wide.
+fn finalize_bracket_range(
+    pair: CandidateRange,
+    map: &DisplaySnapshot,
+    around: bool,
+) -> Option<std::ops::Range<DisplayPoint>> {
+    if around {
+        // Full bracket pair
+        return Some(pair.start..pair.end);
+    }
+
+    // “inner”: skip the bounding chars if possible
+    let start_off = pair.start.to_offset(map, Bias::Left);
+    let end_off = pair.end.to_offset(map, Bias::Right);
+
+    if end_off.saturating_sub(start_off) < 2 {
+        // Not enough room to skip
+        return None;
+    }
+
+    // Shift start +1, end -1
+    let new_start = DisplayPoint::new(pair.start.row(), pair.start.column() + 1);
+    let new_end = DisplayPoint::new(pair.end.row(), pair.end.column().saturating_sub(1));
+
+    Some(new_start..new_end)
 }
 
 impl_actions!(vim, [Word, Subword, IndentObj]);
@@ -303,26 +711,7 @@ impl Object {
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
             }
-            Object::AnyQuotes => {
-                let quote_types = ['\'', '"', '`']; // Types of quotes to handle
-                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
-
-                // Find the closest matching quote range
-                quote_types
-                    .iter()
-                    .flat_map(|&quote| {
-                        // Get ranges for each quote type
-                        surrounding_markers(
-                            map,
-                            relative_to,
-                            around,
-                            self.is_multiline(),
-                            quote,
-                            quote,
-                        )
-                    })
-                    .min_by_key(|range| calculate_range_distance(range, relative_offset, map))
-            }
+            Object::AnyQuotes => find_any_quotes(map, relative_to, around),
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
             }
@@ -337,24 +726,7 @@ impl Object {
                 let range = selection.range();
                 surrounding_html_tag(map, head, range, around)
             }
-            Object::AnyBrackets => {
-                let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
-
-                bracket_pairs
-                    .iter()
-                    .flat_map(|&(open_bracket, close_bracket)| {
-                        surrounding_markers(
-                            map,
-                            relative_to,
-                            around,
-                            self.is_multiline(),
-                            open_bracket,
-                            close_bracket,
-                        )
-                    })
-                    .min_by_key(|range| calculate_range_distance(range, relative_offset, map))
-            }
+            Object::AnyBrackets => find_any_brackets(map, relative_to, around),
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -607,37 +979,6 @@ fn around_word(
     } else {
         around_next_word(map, relative_to, ignore_punctuation)
     }
-}
-
-/// Calculate distance between a range and a cursor position
-///
-/// Returns a score where:
-/// - Lower values indicate better matches
-/// - Range containing cursor gets priority (returns range length)
-/// - For non-containing ranges, uses minimum distance to boundaries as primary factor
-/// - Range length is used as secondary factor for tiebreaking
-fn calculate_range_distance(
-    range: &Range<DisplayPoint>,
-    cursor_offset: isize,
-    map: &DisplaySnapshot,
-) -> isize {
-    let start_offset = range.start.to_offset(map, Bias::Left) as isize;
-    let end_offset = range.end.to_offset(map, Bias::Right) as isize;
-    let range_length = end_offset - start_offset;
-
-    // If cursor is inside the range, return range length
-    if cursor_offset >= start_offset && cursor_offset <= end_offset {
-        return range_length;
-    }
-
-    // Calculate minimum distance to range boundaries
-    let start_distance = (cursor_offset - start_offset).abs();
-    let end_distance = (cursor_offset - end_offset).abs();
-    let min_distance = start_distance.min(end_distance);
-
-    // Use min_distance as primary factor, range_length as secondary
-    // Multiply by large number to ensure distance is primary factor
-    min_distance * 10000 + range_length
 }
 
 fn around_subword(
@@ -1975,6 +2316,33 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Special cases from mini.ai plugin
+            // the false string in the middle should not be considered
+            (
+                "c i q",
+                "'first' false ˇstring 'second'",
+                "'first' false string 'ˇ'",
+                Mode::Insert,
+            ),
+            // Multiline support :)! Same behavior as mini.ai plugin
+            (
+                "c i q",
+                indoc! {"
+                    '
+                    first
+                    middle ˇstring
+                    second
+                    '
+                "},
+                indoc! {"
+                    'ˇ'
+                "},
+                Mode::Insert,
+            ),
+            // If you are in the close quote and it is the only quote in the buffer, it should replace inside the quote
+            // This is not working with the core motion ci' for this special edge case, so I am happy to fix it in AnyQuotes :)
+            // Bug reference: https://github.com/zed-industries/zed/issues/23889
+            ("c i q", "'quote«'ˇ»", "'ˇ'", Mode::Insert),
             // Single quotes
             (
                 "c i q",
@@ -1985,7 +2353,7 @@ mod test {
             (
                 "c a q",
                 "Thisˇ is a 'quote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -1997,7 +2365,7 @@ mod test {
             (
                 "c a q",
                 "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"simpleˇ\" example.",
+                "This is a \"simple ˇ\" example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2009,7 +2377,7 @@ mod test {
             (
                 "c a q",
                 "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2021,7 +2389,7 @@ mod test {
             (
                 "d a q",
                 "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
             // Double quotes
@@ -2034,7 +2402,7 @@ mod test {
             (
                 "c a q",
                 "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2046,7 +2414,7 @@ mod test {
             (
                 "d a q",
                 "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
             // Back quotes
@@ -2059,7 +2427,7 @@ mod test {
             (
                 "c a q",
                 "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
@@ -2071,7 +2439,7 @@ mod test {
             (
                 "d a q",
                 "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
         ];
@@ -2120,6 +2488,76 @@ mod test {
         });
 
         const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Special cases from mini.ai plugin
+            // Current line has more priority for the cover or next algorithm, to avoid changing curly brackets which is supper anoying
+            // Same behavior as mini.ai plugin
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            ˇprint('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {
+                        {
+                            print(ˇ)
+                        }
+                    }
+                "},
+                Mode::Insert,
+            ),
+            // If the current line doesn't have brackets then it should consider if the caret is inside an external bracket
+            // Same behavior as mini.ai plugin
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            ˇ
+                            print('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {
+                        {ˇ}
+                    }
+                "},
+                Mode::Insert,
+            ),
+            // If you are in the open bracket then it has higher priority
+            (
+                "c i b",
+                indoc! {"
+                    «{ˇ»
+                        {
+                            print('hello')
+                        }
+                    }
+                "},
+                indoc! {"
+                    {ˇ}
+                "},
+                Mode::Insert,
+            ),
+            // If you are in the close bracket then it has higher priority
+            (
+                "c i b",
+                indoc! {"
+                    {
+                        {
+                            print('hello')
+                        }
+                    «}ˇ»
+                "},
+                indoc! {"
+                    {ˇ}
+                "},
+                Mode::Insert,
+            ),
             // Bracket (Parentheses)
             (
                 "c i b",
