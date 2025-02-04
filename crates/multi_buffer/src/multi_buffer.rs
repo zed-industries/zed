@@ -4536,7 +4536,16 @@ impl MultiBufferSnapshot {
             }
 
             let excerpt_start_position = D::from_text_summary(&cursor.start().text);
-            if let Some(excerpt) = cursor.item().filter(|excerpt| excerpt.id == excerpt_id) {
+            if let Some(excerpt) = cursor.item() {
+                if excerpt.id != excerpt_id {
+                    let position = self.resolve_summary_for_anchor(
+                        &Anchor::min(),
+                        excerpt_start_position,
+                        &mut diff_transforms_cursor,
+                    );
+                    summaries.extend(excerpt_anchors.map(|_| position));
+                    continue;
+                }
                 let excerpt_buffer_start =
                     excerpt.range.context.start.summary::<D>(&excerpt.buffer);
                 let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
