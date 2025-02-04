@@ -394,17 +394,18 @@ impl InlineCompletionButton {
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
-        menu = menu.separator().header("Privacy");
+        menu = menu.separator().header("Privacy Settings:");
 
         if let Some(provider) = &self.inline_completion_provider {
             let data_collection = provider.data_collection_state(cx);
             if data_collection.is_supported() {
                 let provider = provider.clone();
                 menu = menu.item(
-                    // TODO: We want to add something later that communicates whether
-                    // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
+                        .documentation_aside(|_| {
+                            Label::new("Zed automatically identifies whether your project is open-source. Thus, this setting only applies if that's the case.").into_any_element()
+                        })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
                         }),
@@ -417,6 +418,9 @@ impl InlineCompletionButton {
                 menu = menu.item(
                     ContextMenuEntry::new("Exclude File")
                         .toggleable(IconPosition::Start, !path_enabled)
+                        .documentation_aside(|_| {
+                            Label::new("Files within this setting don't ever have their content sent to Zed's prediction model. You can specify file extensions as well as individual files.").into_any_element()
+                        })
                         .handler(move |window, cx| {
                             if let Some(workspace) = window.root().flatten() {
                                 let workspace = workspace.downgrade();
