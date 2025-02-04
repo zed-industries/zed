@@ -1668,7 +1668,7 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept,
+                        display_mode: EditDisplayMode::TabAccept(_),
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
@@ -3241,11 +3241,15 @@ impl EditorElement {
                 } else {
                     None
                 };
+                let min_width = context_menu
+                    .as_ref()
+                    .map_or(px(0.), |(_, _, size)| size.width);
                 let max_width = max_width_for_stable_x.max(
                     context_menu
                         .as_ref()
                         .map_or(px(0.), |(_, _, size)| size.width),
                 );
+
                 let edit_prediction = if edit_prediction_popover_visible {
                     let accept_keystroke: Option<Keystroke>;
 
@@ -3272,10 +3276,7 @@ impl EditorElement {
                         accept_keystroke = Some(Keystroke {
                             modifiers: gpui::Modifiers {
                                 alt: true,
-                                control: false,
-                                shift: false,
-                                platform: false,
-                                function: false,
+                                ..Default::default()
                             },
                             key: "tab".to_string(),
                             key_char: None,
@@ -3287,10 +3288,7 @@ impl EditorElement {
                         accept_keystroke = Some(Keystroke {
                             modifiers: gpui::Modifiers {
                                 alt: true,
-                                control: false,
-                                shift: false,
-                                platform: false,
-                                function: false,
+                                ..Default::default()
                             },
                             key: "enter".to_string(),
                             key_char: None,
@@ -3299,8 +3297,10 @@ impl EditorElement {
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
+                            min_width,
                             max_width,
                             cursor_point,
+                            &line_layouts,
                             style,
                             accept_keystroke.as_ref()?,
                             window,
@@ -3681,11 +3681,13 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
+                let previewing = false;
                 let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
+                        previewing,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3698,6 +3700,7 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
+                        previewing,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3713,6 +3716,7 @@ impl EditorElement {
                     let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         None,
+                        previewing,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3764,7 +3768,8 @@ impl EditorElement {
                 }
 
                 match display_mode {
-                    EditDisplayMode::TabAccept => {
+                    EditDisplayMode::TabAccept(previewing) => {
+                        let previewing = *previewing;
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3779,6 +3784,7 @@ impl EditorElement {
                         let mut element = inline_completion_accept_indicator(
                             "Accept",
                             None,
+                            previewing,
                             self.editor.focus_handle(cx),
                             window,
                             cx,
@@ -5790,14 +5796,14 @@ fn header_jump_data(
 
     let excerpt_start = range.context.start;
     let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+    let rows_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_row = language::ToPoint::to_point(&excerpt_start, buffer).row;
-        jump_position.row - excerpt_start_row
+        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
+        jump_position.row.saturating_sub(excerpt_start_point.row)
     };
 
-    let line_offset_from_top = (block_row_start.0 + height + offset_from_excerpt_start)
+    let line_offset_from_top = (block_row_start.0 + height + rows_from_excerpt_start)
         .saturating_sub(
             snapshot
                 .scroll_anchor
@@ -5808,7 +5814,7 @@ fn header_jump_data(
     JumpData::MultiBufferPoint {
         excerpt_id: for_excerpt.id,
         anchor: jump_anchor,
-        position: language::ToPoint::to_point(&jump_anchor, buffer),
+        position: jump_position,
         line_offset_from_top,
     }
 }
@@ -5816,16 +5822,40 @@ fn header_jump_data(
 fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
+    previewing: bool,
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
-    let Some(accept_keystroke) = bindings
-        .last()
-        .and_then(|binding| binding.keystrokes().first())
-    else {
-        return div().into_any();
+    let use_hardcoded_linux_preview_binding;
+
+    #[cfg(target_os = "macos")]
+    {
+        use_hardcoded_linux_preview_binding = false;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        use_hardcoded_linux_preview_binding = previewing;
+    }
+
+    let accept_keystroke = if use_hardcoded_linux_preview_binding {
+        Keystroke {
+            modifiers: Default::default(),
+            key: "enter".to_string(),
+            key_char: None,
+        }
+    } else {
+        let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+        if let Some(keystroke) = bindings
+            .last()
+            .and_then(|binding| binding.keystrokes().first())
+        {
+            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
+            keystroke.clone()
+        } else {
+            return div().into_any();
+        }
     };
 
     let accept_key = h_flex()
@@ -5834,11 +5864,13 @@ fn inline_completion_accept_indicator(
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
         .gap_1()
-        .children(ui::render_modifiers(
-            &accept_keystroke.modifiers,
-            PlatformStyle::platform(),
-            Some(Color::Default),
-        ))
+        .when(!previewing, |parent| {
+            parent.children(ui::render_modifiers(
+                &accept_keystroke.modifiers,
+                PlatformStyle::platform(),
+                Some(Color::Default),
+            ))
+        })
         .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };

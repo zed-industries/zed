@@ -404,7 +404,7 @@ fn initialize_panels(
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
             cx.when_flag_enabled::<GitUiFeatureFlag>(window, |workspace, window, cx| {
-                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, cx);
+                let git_panel = git_ui::git_panel::GitPanel::new(workspace, window, None, cx);
                 workspace.add_panel(git_panel, window, cx);
             });
         })?;

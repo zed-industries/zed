@@ -442,7 +442,7 @@ impl AssistantPanel {
 
     fn handle_assistant_configuration_event(
         &mut self,
-        _model: &Entity<AssistantConfiguration>,
+        _entity: &Entity<AssistantConfiguration>,
         event: &AssistantConfigurationEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
