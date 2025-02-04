@@ -880,7 +880,7 @@ and then another
     ) {
         self.rated_completions.insert(completion.id);
         telemetry::event!(
-            "Inline Completion Rated",
+            "Edit Prediction Rated",
             rating,
             input_events = completion.input_events,
             input_excerpt = completion.input_excerpt,

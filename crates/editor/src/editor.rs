@@ -678,7 +678,7 @@ pub struct Editor {
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
-    // inline completions based on its mode.
+    // edit predictions based on its mode.
     enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
@@ -4927,8 +4927,8 @@ impl Editor {
             .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
 
         let event_type = match accepted {
-            true => "Inline Completion Accepted",
-            false => "Inline Completion Discarded",
+            true => "Edit Prediction Accepted",
+            false => "Edit Prediction Discarded",
         };
         telemetry::event!(
             event_type,
