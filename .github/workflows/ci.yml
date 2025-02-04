@@ -235,8 +235,6 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
     steps:
-      - name: Create Dev Drive using ReFS
-        run: ./script/setup-dev-driver.ps1
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
         run: git config --system core.longpaths true
@@ -244,6 +242,8 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+      - name: Create Dev Drive using ReFS
+        run: ./script/setup-dev-driver.ps1
       # actions/checkout does not let us clone into anywhere outside ${{ github.workspace }}, so we have to copy the clone...
       - name: Copy Git Repo to Dev Drive
         run: |
