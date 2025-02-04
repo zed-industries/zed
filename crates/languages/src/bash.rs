@@ -22,6 +22,8 @@ mod tests {
     use language::{language_settings::AllLanguageSettings, AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
+    use unindent::Unindent;
+    use util::test::marked_text_offsets;
 
     #[gpui::test]
     async fn test_bash_autoindent(cx: &mut TestAppContext) {
@@ -110,6 +112,40 @@ mod tests {
                 "foo() {\necho \"Hello, World!\"\n}",
                 "foo() {\n  echo \"Hello, World!\"\n}",
             );
+
+            let (input, offsets) = marked_text_offsets(
+                &r#"
+                if foo; then
+                  1ˇ
+                else
+                  3
+                fi
+                "#
+                .unindent(),
+            );
+
+            buffer.edit([(0..buffer.len(), input)], None, cx);
+            buffer.edit(
+                [(offsets[0]..offsets[0], "\n")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            buffer.edit(
+                [(offsets[0] + 3..offsets[0] + 3, "elif")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            let expected = r#"
+                if foo; then
+                  1
+                elif
+                else
+                  3
+                fi
+                "#
+            .unindent();
+
+            pretty_assertions::assert_eq!(buffer.text(), expected);
 
             buffer
         });

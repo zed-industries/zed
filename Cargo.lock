@@ -7050,6 +7050,7 @@ dependencies = [
  "pet-fs",
  "pet-poetry",
  "pet-reporter",
+ "pretty_assertions",
  "project",
  "regex",
  "rope",
