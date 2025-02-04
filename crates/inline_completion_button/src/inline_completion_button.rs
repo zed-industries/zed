@@ -283,7 +283,7 @@ impl Render for InlineCompletionButton {
                         (Some(true), false, false) => base.tooltip(|window, cx| {
                             Tooltip::with_meta(
                                 "Edit Prediction",
-                                None,
+                                Some(&ToggleMenu),
                                 "Disabled For This File",
                                 window,
                                 cx,
