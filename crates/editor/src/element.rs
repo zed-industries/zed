@@ -5804,7 +5804,7 @@ fn inline_completion_accept_indicator(
         .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
-        .gap_0p5()
+        .gap_1()
         .children(ui::render_modifiers(
             &accept_keystroke.modifiers,
             PlatformStyle::platform(),
