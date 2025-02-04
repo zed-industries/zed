@@ -1743,7 +1743,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(
-            &mut *snapshot,
+            &mut snapshot,
             vec![Edit {
                 old: edit_start..edit_start,
                 new: edit_start..edit_end,
@@ -1776,7 +1776,7 @@ impl MultiBuffer {
         snapshot.has_conflict = false;
 
         self.sync_diff_transforms(
-            &mut *snapshot,
+            &mut snapshot,
             vec![Edit {
                 old: start..prev_len,
                 new: start..start,
@@ -2054,7 +2054,7 @@ impl MultiBuffer {
             snapshot.trailing_excerpt_update_count += 1;
         }
 
-        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -2219,7 +2219,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(
-            &mut *snapshot,
+            &mut snapshot,
             excerpt_edits,
             DiffChangeKind::DiffUpdated {
                 base_changed: base_text_changed,
@@ -2423,7 +2423,7 @@ impl MultiBuffer {
         }
 
         self.sync_diff_transforms(
-            &mut *snapshot,
+            &mut snapshot,
             excerpt_edits,
             DiffChangeKind::ExpandOrCollapseHunks { expand },
         );
@@ -2492,7 +2492,7 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -2593,7 +2593,7 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
         cx.emit(Event::Edited {
             singleton_buffer_edited: false,
             edited_buffer: None,
@@ -2706,7 +2706,7 @@ impl MultiBuffer {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.sync_diff_transforms(&mut *snapshot, edits, DiffChangeKind::BufferEdited);
+        self.sync_diff_transforms(&mut snapshot, edits, DiffChangeKind::BufferEdited);
     }
 
     fn sync_diff_transforms(
