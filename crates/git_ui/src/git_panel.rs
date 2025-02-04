@@ -130,14 +130,34 @@ fn commit_message_buffer(
                 )
                 .await
                 .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
-                let buffer = project
+                let (worktree, relative_path) = project
                     .update(&mut cx, |project, cx| {
-                        project.open_local_buffer(&commit_message_file, cx)
+                        project.worktree_store().update(cx, |worktree_store, cx| {
+                            worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
+                        })
                     })?
                     .await
                     .with_context(|| {
-                        format!("opening commit message buffer at {commit_message_file:?}",)
+                        format!("deriving worktree for commit message file {commit_message_file:?}")
                     })?;
+
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store().update(cx, |buffer_store, cx| {
+                            buffer_store.open_buffer(
+                                ProjectPath {
+                                    worktree_id: worktree.read(cx).id(),
+                                    path: Arc::from(relative_path),
+                                },
+                                true,
+                                cx,
+                            )
+                        })
+                    })
+                    .with_context(|| {
+                        format!("opening buffer for commit message file {commit_message_file:?}")
+                    })?
+                    .await?;
                 Ok(buffer)
             })
         }
@@ -211,7 +231,6 @@ impl GitPanel {
     pub fn new(
         workspace: &mut Workspace,
         window: &mut Window,
-        commit_message_buffer: Option<Entity<Buffer>>,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let fs = workspace.app_state().fs.clone();
@@ -229,12 +248,7 @@ impl GitPanel {
             })
             .detach();
 
-            let commit_editor =
-                cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
-            commit_editor.update(cx, |editor, cx| {
-                editor.clear(window, cx);
-            });
-
+            let commit_editor = cx.new(|cx| commit_message_editor(None, window, cx));
             let scroll_handle = UniformListScrollHandle::new();
 
             cx.subscribe_in(
