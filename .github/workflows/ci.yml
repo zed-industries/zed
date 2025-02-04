@@ -255,7 +255,7 @@ jobs:
       - name: Cache dependencies
         uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}
           cache-provider: "github"
 
