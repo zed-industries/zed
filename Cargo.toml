@@ -546,6 +546,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
+zed_llm_client = "0.1.1"
 zstd = "0.11"
 metal = "0.31"
 
