@@ -13519,8 +13519,8 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! { "
         one
-        TWO
-        ˇthree
+        ˇTWO
+        three
         four
         five
     "});
@@ -13533,15 +13533,14 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         indoc! { "
             one
           - two
-          + TWO
-            ˇthree
+          + ˇTWO
+            three
             four
             five
         "}
         .to_string(),
     );
     cx.update_editor(|editor, window, cx| {
-        editor.move_up(&Default::default(), window, cx);
         editor.move_up(&Default::default(), window, cx);
         editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
     });
