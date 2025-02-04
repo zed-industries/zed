@@ -1914,12 +1914,17 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.capability != Capability::ReadOnly
-            && (self.has_conflict
-                || self.file.as_ref().map_or(false, |file| {
-                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
-                })
-                || self.has_unsaved_edits())
+        if self.capability == Capability::ReadOnly {
+            return false;
+        }
+        if self.has_conflict || self.has_unsaved_edits() {
+            return true;
+        }
+        match self.file.as_ref().map(|f| f.disk_state()) {
+            Some(DiskState::New) => !self.is_empty(),
+            Some(DiskState::Deleted) => true,
+            _ => false,
+        }
     }
 
     /// Checks if the buffer and its file have both changed since the buffer

@@ -27,7 +27,7 @@ use workspace::{
 
 use crate::git_panel::GitPanel;
 
-actions!(git, [ShowUncommittedChanges]);
+actions!(git, [Diff]);
 
 pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
@@ -63,7 +63,7 @@ impl ProjectDiff {
 
     fn deploy(
         workspace: &mut Workspace,
-        _: &ShowUncommittedChanges,
+        _: &Diff,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
