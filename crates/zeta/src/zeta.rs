@@ -237,11 +237,9 @@ impl Zeta {
         this.update(cx, move |this, cx| {
             if let Some(worktree) = worktree {
                 worktree.update(cx, |worktree, cx| {
-                    if !this.license_detection_watchers.contains_key(&worktree.id()) {
-                        let new_watcher = Rc::new(LicenseDetectionWatcher::new(worktree, cx));
-                        this.license_detection_watchers
-                            .insert(worktree.id(), new_watcher);
-                    }
+                    this.license_detection_watchers
+                        .entry(worktree.id())
+                        .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(worktree, cx)));
                 });
             }
         });
@@ -933,7 +931,7 @@ and then another
             .log_err()
             .flatten();
 
-        match choice.as_ref().map(String::as_str) {
+        match choice.as_deref() {
             Some("true") => DataCollectionChoice::Enabled,
             Some("false") => DataCollectionChoice::Disabled,
             Some(_) => {
@@ -1340,13 +1338,10 @@ impl ProviderDataCollection {
             let choice = zeta.data_collection_choice.clone();
 
             // Unwrap safety: there should be a watcher for each worktree
-            let Some(license_detection_watcher) = zeta
+            let license_detection_watcher = zeta
                 .license_detection_watchers
                 .get(&file.worktree_id(cx))
-                .cloned()
-            else {
-                return None;
-            };
+                .cloned()?;
 
             Some((choice, license_detection_watcher))
         });

@@ -434,7 +434,7 @@ impl InlineCompletionButton {
                     // TODO: We want to add something later that communicates whether
                     // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
-                        .toggleable(IconPosition::Start, dbg!(data_collection.is_enabled()))
+                        .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
                         }),
