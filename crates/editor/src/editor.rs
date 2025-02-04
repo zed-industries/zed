@@ -5073,15 +5073,13 @@ impl Editor {
             let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
             // TODO: Base this off of TreeSitter or word boundaries?
             let target_excerpt_begin = snapshot.anchor_before(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column.saturating_sub(10)),
+                Point::new(target_point.row, target_point.column.saturating_sub(20)),
                 Bias::Left,
             ));
             let target_excerpt_end = snapshot.anchor_after(snapshot.clip_point(
-                Point::new(target_point.row, target_point.column + 10),
+                Point::new(target_point.row, target_point.column + 20),
                 Bias::Right,
             ));
-            // TODO: Extend this to be before the jump target, and draw a cursor at the jump target
-            // (using Editor::current_user_player_color).
             let range_around_target = target_excerpt_begin..target_excerpt_end;
             InlineCompletion::Move {
                 target,
@@ -5656,14 +5654,14 @@ impl Editor {
                     &style.syntax,
                 );
                 let cursor_color = self.current_user_player_color(cx).cursor;
-                let target_offset =
+                let target_ix =
                     text::ToOffset::to_offset(&target.text_anchor, &snapshot).saturating_sub(
                         text::ToOffset::to_offset(&range_around_target.start, &snapshot),
                     );
                 highlighted_text.highlights = gpui::combine_highlights(
                     highlighted_text.highlights,
                     iter::once((
-                        target_offset..target_offset + 1,
+                        target_ix..target_ix + 1,
                         HighlightStyle {
                             background_color: Some(cursor_color),
                             ..Default::default()
@@ -5671,6 +5669,11 @@ impl Editor {
                     )),
                 )
                 .collect::<Vec<_>>();
+
+                let start_point = range_around_target.start.to_point(&snapshot);
+                let end_point = range_around_target.end.to_point(&snapshot);
+                let ellipsis_before = start_point.column > 0;
+                let ellipsis_after = end_point.column < snapshot.line_len(end_point.row);
 
                 Some(
                     h_flex()
@@ -5681,7 +5684,12 @@ impl Editor {
                             target.text_anchor.to_point(&snapshot).row,
                         ))
                         .when(!highlighted_text.text.is_empty(), |parent| {
-                            parent.child(highlighted_text.to_styled_text(&style.text))
+                            parent.child(
+                                h_flex()
+                                    .when(ellipsis_before, |parent| parent.child("…"))
+                                    .child(highlighted_text.to_styled_text(&style.text))
+                                    .when(ellipsis_after, |parent| parent.child("…")),
+                            )
                         }),
                 )
             }
