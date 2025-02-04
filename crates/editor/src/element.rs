@@ -430,7 +430,6 @@ impl EditorElement {
             }
         });
         register_action(editor, window, Editor::restart_language_server);
-        register_action(editor, window, Editor::cancel_language_server_work);
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
