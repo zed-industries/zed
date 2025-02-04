@@ -135,6 +135,7 @@ jobs:
           cargo check -p gpui --features "macos-blade"
           cargo check -p workspace
           cargo build -p remote_server
+          cargo check -p gpui --examples
           script/check-rust-livekit-macos
 
       # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
@@ -181,6 +182,7 @@ jobs:
         run: |
           cargo build -p zed
           cargo check -p workspace
+          cargo check -p gpui --examples
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
