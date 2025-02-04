@@ -5675,11 +5675,12 @@ impl Editor {
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let start_column_x =
-                    line_layouts[start_point.row as usize].x_for_index(start_point.column as usize);
-                let target_column_x = line_layouts[target_point.row as usize]
-                    .x_for_index(target_point.column as usize);
-                let cursor_relative_position = target_column_x - start_column_x;
+                let cursor_relative_position =
+                    line_layouts.get(start_point.row as usize).map(|line| {
+                        let start_column_x = line.x_for_index(start_point.column as usize);
+                        let target_column_x = line.x_for_index(target_point.column as usize);
+                        target_column_x - start_column_x
+                    });
 
                 let fade_before = start_point.column > 0;
                 let fade_after = end_point.column < snapshot.line_len(end_point.row);
@@ -5722,15 +5723,17 @@ impl Editor {
                                             ),
                                         )
                                     })
-                                    .child(
-                                        div()
-                                            .w(px(2.))
-                                            .h_full()
-                                            .bg(cursor_color)
-                                            .absolute()
-                                            .top_0()
-                                            .left(cursor_relative_position),
-                                    ),
+                                    .when_some(cursor_relative_position, |parent, position| {
+                                        parent.child(
+                                            div()
+                                                .w(px(2.))
+                                                .h_full()
+                                                .bg(cursor_color)
+                                                .absolute()
+                                                .top_0()
+                                                .left(position),
+                                        )
+                                    }),
                             )
                         }),
                 )
