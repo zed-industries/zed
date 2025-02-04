@@ -3321,34 +3321,34 @@ impl EditorElement {
             return;
         };
 
-        let Some((_, menu_bounds)) = laid_out_popovers
+        let Some((menu_ix, (_, menu_bounds))) = laid_out_popovers
             .iter()
-            .find(|(x, _)| matches!(x, CursorPopoverType::CodeContextMenu))
+            .find_position(|(x, _)| matches!(x, CursorPopoverType::CodeContextMenu))
         else {
             return;
         };
+        let last_ix = laid_out_popovers.len() - 1;
+        let menu_is_last = menu_ix == last_ix;
         let first_popover_bounds = laid_out_popovers[0].1;
-        let last_popover_bounds = laid_out_popovers[laid_out_popovers.len() - 1].1;
+        let last_popover_bounds = laid_out_popovers[last_ix].1;
 
-        let mut target_bounds = if y_flipped {
-            Bounds::from_corners(
-                last_popover_bounds.origin,
-                first_popover_bounds.bottom_right(),
-            )
-        } else {
-            Bounds::from_corners(
-                first_popover_bounds.origin,
-                last_popover_bounds.bottom_right(),
-            )
-        };
+        // Bounds to layout the aside around. When y_flipped, the aside goes either above or to the
+        // right, and otherwise it goes below or to the right.
+        let mut target_bounds = Bounds::from_corners(
+            first_popover_bounds.origin,
+            last_popover_bounds.bottom_right(),
+        );
         target_bounds.size.width = menu_bounds.size.width;
 
+        // Like `target_bounds`, but with the max height it could occupy. Choosing an aside position
+        // based on this is preferred for layout stability.
         let mut max_target_bounds = target_bounds;
         max_target_bounds.size.height = max_height;
         if y_flipped {
             max_target_bounds.origin.y -= max_height - target_bounds.size.height;
         }
 
+        // Add spacing around `target_bounds` and `max_target_bounds`.
         let mut extend_amount = Edges::all(MENU_GAP);
         if y_flipped {
             extend_amount.bottom = line_height;
@@ -3358,12 +3358,22 @@ impl EditorElement {
         let target_bounds = target_bounds.extend(extend_amount);
         let max_target_bounds = max_target_bounds.extend(extend_amount);
 
+        let must_place_above_or_below =
+            if y_flipped && !menu_is_last && menu_bounds.size.height < max_menu_height {
+                laid_out_popovers[menu_ix + 1..]
+                    .iter()
+                    .any(|(_, popover_bounds)| popover_bounds.size.width > menu_bounds.size.width)
+            } else {
+                false
+            };
+
         self.layout_context_menu_aside(
             y_flipped,
             *menu_bounds,
             target_bounds,
             max_target_bounds,
             max_menu_height,
+            must_place_above_or_below,
             text_hitbox,
             viewport_bounds,
             window,
@@ -3503,7 +3513,7 @@ impl EditorElement {
             },
         };
 
-        let laid_out_popovers = popovers
+        let mut laid_out_popovers = popovers
             .into_iter()
             .map(|(popover_type, element, size)| {
                 if y_flipped {
@@ -3520,6 +3530,10 @@ impl EditorElement {
             })
             .collect::<Vec<_>>();
 
+        if y_flipped {
+            laid_out_popovers.reverse();
+        }
+
         Some((laid_out_popovers, y_flipped))
     }
 
@@ -3531,13 +3545,16 @@ impl EditorElement {
         target_bounds: Bounds<Pixels>,
         max_target_bounds: Bounds<Pixels>,
         max_height: Pixels,
+        must_place_above_or_below: bool,
         text_hitbox: &Hitbox,
         viewport_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) {
         let available_within_viewport = target_bounds.space_within(&viewport_bounds);
-        let positioned_aside = if available_within_viewport.right >= MENU_ASIDE_MIN_WIDTH {
+        let positioned_aside = if available_within_viewport.right >= MENU_ASIDE_MIN_WIDTH
+            && !must_place_above_or_below
+        {
             let max_width = cmp::min(
                 available_within_viewport.right - px(1.),
                 MENU_ASIDE_MAX_WIDTH,
