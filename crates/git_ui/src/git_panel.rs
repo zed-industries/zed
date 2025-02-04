@@ -1064,7 +1064,7 @@ impl GitPanel {
             self.entries.extend(
                 changed_entries
                     .into_iter()
-                    .map(|status_entry| GitListEntry::GitStatusEntry(status_entry)),
+                    .map(GitListEntry::GitStatusEntry),
             );
         }
         if new_entries.len() > 0 {
@@ -1073,11 +1073,8 @@ impl GitPanel {
                 header: Section::New,
                 all_staged: toggle_state,
             }));
-            self.entries.extend(
-                new_entries
-                    .into_iter()
-                    .map(|status_entry| GitListEntry::GitStatusEntry(status_entry)),
-            );
+            self.entries
+                .extend(new_entries.into_iter().map(GitListEntry::GitStatusEntry));
         }
 
         for (ix, entry) in self.entries.iter().enumerate() {
