@@ -31,7 +31,6 @@ auto_update.workspace = true
 call.workspace = true
 client.workspace = true
 feature_flags.workspace = true
-git_ui.workspace = true
 gpui.workspace = true
 notifications.workspace = true
 project.workspace = true
