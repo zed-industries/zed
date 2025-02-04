@@ -429,7 +429,7 @@ impl InlineCompletionButton {
                 menu = menu
                     .separator()
                     .header("Help Improve The Model")
-                    .header("For OSS Projects Only");
+                    .header("Valid Only For OSS Projects");
                 menu = menu.item(
                     // TODO: We want to add something later that communicates whether
                     // the current project is open-source.
