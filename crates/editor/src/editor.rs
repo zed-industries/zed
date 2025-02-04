@@ -4618,7 +4618,7 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        if !self.inline_completions_enabled(&buffer, cursor_buffer_position, cx) {
+        if !self.inline_completions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
             self.discard_inline_completion(false, cx);
             return None;
         }
@@ -4681,11 +4681,22 @@ impl Editor {
         }
     }
 
-    fn inline_completions_enabled(
+    pub fn inline_completions_enabled(&self, cx: &App) -> bool {
+        let cursor = self.selections.newest_anchor().head();
+        if let Some((buffer, cursor_position)) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+        {
+            self.inline_completions_enabled_in_buffer(&buffer, cursor_position, cx)
+        } else {
+            false
+        }
+    }
+
+    fn inline_completions_enabled_in_buffer(
         &self,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
-        cx: &Context<Self>,
+        cx: &App,
     ) -> bool {
         maybe!({
             let provider = self.inline_completion_provider()?;
