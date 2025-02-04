@@ -139,6 +139,7 @@ impl WindowInvalidator {
 
     pub fn not_painting(&self) -> bool {
         self.inner.borrow().draw_phase == DrawPhase::None
+            || self.inner.borrow().draw_phase == DrawPhase::Focus
     }
 
     #[track_caller]
