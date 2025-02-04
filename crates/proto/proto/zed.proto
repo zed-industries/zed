@@ -795,7 +795,6 @@ message OpenBufferByPath {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string path = 3;
-    bool skip_file_contents = 4;
 }
 
 message OpenBufferById {

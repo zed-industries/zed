@@ -952,7 +952,7 @@ impl LicenseDetectionWatcher {
     pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
 
-        let loaded_file_fut = worktree.load_file(Path::new("LICENSE"), false, cx);
+        let loaded_file_fut = worktree.load_file(Path::new("LICENSE"), cx);
 
         Self {
             is_open_source_rx,
