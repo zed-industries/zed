@@ -17,10 +17,11 @@ use gpui::*;
 use language::{Buffer, BufferId};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::git::{GitEvent, GitRepo, RepositoryHandle};
-use project::{CreateOptions, Fs, Project, ProjectPath};
+use project::{CreateOptions, Fs, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use rpc::proto;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use std::ops::ControlFlow;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
@@ -152,6 +153,7 @@ pub struct GitPanel {
     update_visible_entries_task: Task<()>,
     repository_selector: Entity<RepositorySelector>,
     commit_editor: Entity<Editor>,
+    commit_editor_for_repository: Option<(WorktreeId, ProjectEntryId)>,
     entries: Vec<GitListEntry>,
     entries_by_path: collections::HashMap<RepoPath, usize>,
     width: Option<Pixels>,
@@ -256,6 +258,7 @@ fn commit_message_editor(
     commit_editor.set_show_indent_guides(false, cx);
     commit_editor.set_text_style_refinement(refinement);
     commit_editor.set_placeholder_text("Enter commit message", cx);
+    commit_editor.clear(window, cx);
     commit_editor
 }
 
@@ -327,6 +330,7 @@ impl GitPanel {
                 scroll_handle,
                 fs,
                 commit_editor,
+                commit_editor_for_repository: None,
                 project,
                 workspace,
                 can_commit: false,
@@ -892,35 +896,54 @@ impl GitPanel {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
                 let Ok(commit_message_buffer) = git_panel.update_in(&mut cx, |git_panel, _, cx| {
-                    git_panel
-                        .active_repository
-                        .as_ref()
-                        .map(|active_repository| {
-                            commit_message_buffer(&project, active_repository, cx)
-                        })
+                    match git_panel.active_repository.as_ref() {
+                        Some(active_repository) => {
+                            let new_repository_id = (
+                                active_repository.worktree_id,
+                                active_repository.repository_entry.work_directory_id(),
+                            );
+                            if git_panel.commit_editor_for_repository != Some(new_repository_id) {
+                                git_panel.commit_editor_for_repository = Some(new_repository_id);
+                                return ControlFlow::Continue(Some(commit_message_buffer(
+                                    &project,
+                                    active_repository,
+                                    cx,
+                                )));
+                            }
+                        }
+                        None => {
+                            if git_panel.commit_editor_for_repository.is_some() {
+                                git_panel.commit_editor_for_repository = None;
+                                return ControlFlow::Continue(None);
+                            }
+                        }
+                    }
+                    ControlFlow::Break(())
                 }) else {
                     return;
                 };
-                let commit_message_buffer = match commit_message_buffer {
-                    Some(commit_message_buffer) => match commit_message_buffer
-                        .await
-                        .context("opening commit buffer on repo update")
-                        .log_err()
-                    {
-                        Some(buffer) => Some(buffer),
-                        None => return,
-                    },
-                    None => None,
-                };
 
+                let commit_message_buffer = match commit_message_buffer {
+                    ControlFlow::Continue(Some(commit_message_buffer)) => {
+                        match commit_message_buffer.await.log_err() {
+                            Some(buffer) => ControlFlow::Continue(Some(buffer)),
+                            None => return,
+                        }
+                    }
+                    ControlFlow::Continue(None) => ControlFlow::Continue(None),
+                    ControlFlow::Break(()) => ControlFlow::Break(()),
+                };
                 git_panel
                     .update_in(&mut cx, |git_panel, window, cx| {
                         git_panel.update_visible_entries(cx);
                         if clear_pending {
                             git_panel.clear_pending();
                         }
-                        git_panel.commit_editor =
-                            cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+                        if let ControlFlow::Continue(commit_message_buffer) = commit_message_buffer
+                        {
+                            git_panel.commit_editor = cx
+                                .new(|cx| commit_message_editor(commit_message_buffer, window, cx))
+                        }
                     })
                     .ok();
             }
