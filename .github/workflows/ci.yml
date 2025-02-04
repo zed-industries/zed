@@ -255,7 +255,7 @@ jobs:
       - name: Cache dependencies
         uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}
           cache-provider: "github"
 
@@ -265,10 +265,12 @@ jobs:
           cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
 
       - name: cargo clippy
+        working-directory: ${{ env.ZED_WORKSPACE }}
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
       - name: Build Zed
+        working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
