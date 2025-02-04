@@ -119,9 +119,11 @@ impl JsonSchema for KeymapAction {
 pub enum KeymapFileLoadResult {
     Success {
         key_bindings: Vec<KeyBinding>,
+        keymap_file: KeymapFile,
     },
     SomeFailedToLoad {
         key_bindings: Vec<KeyBinding>,
+        keymap_file: KeymapFile,
         error_message: MarkdownString,
     },
     JsonParseFailure {
@@ -155,6 +157,7 @@ impl KeymapFile {
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
                 error_message,
+                ..
             } if key_bindings.is_empty() => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
@@ -169,7 +172,7 @@ impl KeymapFile {
     #[cfg(feature = "test-support")]
     pub fn load_panic_on_failure(content: &str, cx: &App) -> Vec<KeyBinding> {
         match Self::load(content, cx) {
-            KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+            KeymapFileLoadResult::Success { key_bindings, .. } => key_bindings,
             KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 panic!("{error_message}");
             }
@@ -185,6 +188,7 @@ impl KeymapFile {
         if content.is_empty() {
             return KeymapFileLoadResult::Success {
                 key_bindings: Vec::new(),
+                keymap_file: KeymapFile(Vec::new()),
             };
         }
         let keymap_file = match parse_json_with_comments::<Self>(content) {
@@ -271,7 +275,10 @@ impl KeymapFile {
         }
 
         if errors.is_empty() {
-            KeymapFileLoadResult::Success { key_bindings }
+            KeymapFileLoadResult::Success {
+                key_bindings,
+                keymap_file,
+            }
         } else {
             let mut error_message = "Errors in user keymap file.\n".to_owned();
             for (context, section_errors) in errors {
@@ -289,6 +296,7 @@ impl KeymapFile {
             }
             KeymapFileLoadResult::SomeFailedToLoad {
                 key_bindings,
+                keymap_file,
                 error_message: MarkdownString(error_message),
             }
         }

@@ -20,7 +20,7 @@ pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
     SettingsStore,
 };
-pub use utils::parse_json_with_comments;
+pub use utils::{parse_json_with_comments, MigrationResult};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);

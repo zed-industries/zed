@@ -115,7 +115,9 @@ fn replace_value_in_json_text(
 
         let found_key = text
             .get(key_range.clone())
-            .map(|key_text| key_text == format!("\"{}\"", key_path[depth]))
+            .map(|key_text| {
+                depth < key_path.len() && key_text == format!("\"{}\"", key_path[depth])
+            })
             .unwrap_or(false);
 
         if found_key {
@@ -215,4 +217,12 @@ fn to_pretty_json(value: &impl Serialize, indent_size: usize, indent_prefix_len:
 
 pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
     Ok(serde_json_lenient::from_str(content)?)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MigrationResult {
+    KeymapOnly,
+    SettingsOnly,
+    KeymapAndSettings,
+    None,
 }
