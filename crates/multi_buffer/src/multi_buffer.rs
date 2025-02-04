@@ -2654,25 +2654,24 @@ impl MultiBuffer {
             if excerpt_edits.peek().map_or(true, |next_edit| {
                 next_edit.old.start >= old_diff_transforms.end(&()).0
             }) {
+                let keep_next_old_transform = (old_diff_transforms.start().0 >= edit.old.end)
+                    && match old_diff_transforms.item() {
+                        Some(DiffTransform::BufferContent {
+                            inserted_hunk_anchor: Some(hunk_anchor),
+                            ..
+                        }) => excerpts
+                            .item()
+                            .is_some_and(|excerpt| hunk_anchor.1.is_valid(&excerpt.buffer)),
+                        _ => true,
+                    };
+
                 let mut excerpt_offset = edit.new.end;
-                if old_diff_transforms.start().0 < edit.old.end {
+                if !keep_next_old_transform {
                     excerpt_offset += old_diff_transforms.end(&()).0 - edit.old.end;
                     old_diff_transforms.next(&());
                 }
+
                 old_expanded_hunks.clear();
-
-                if let Some(DiffTransform::BufferContent {
-                    inserted_hunk_anchor: Some(hunk_anchor),
-                    ..
-                }) = old_diff_transforms.item()
-                {
-                    if let Some(excerpt) = excerpts.item() {
-                        if !hunk_anchor.1.is_valid(&excerpt.buffer) {
-                            old_diff_transforms.next(&());
-                        }
-                    }
-                }
-
                 self.push_buffer_content_transform(
                     &snapshot,
                     &mut new_diff_transforms,
