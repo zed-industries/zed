@@ -219,10 +219,6 @@ impl DispatchTree {
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
-    pub fn parent_view_id(&self) -> Option<EntityId> {
-        self.view_stack.last().copied()
-    }
-
     pub fn set_view_id(&mut self, view_id: EntityId) {
         if self.view_stack.last().copied() != Some(view_id) {
             let node_id = *self.node_stack.last().unwrap();
