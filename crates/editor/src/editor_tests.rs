@@ -13220,7 +13220,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     init_test(cx, |_| {});
 
     let base = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\n";
-    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\n";
+    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\nhhh\niii\n";
 
     let buffer = cx.new(|cx| Buffer::local(text.to_string(), cx));
     let multi_buffer = cx.new(|cx| {
@@ -13233,7 +13233,11 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
                     primary: None,
                 },
                 ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
+                    context: Point::new(4, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 0),
                     primary: None,
                 },
             ],
@@ -13262,14 +13266,22 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     cx.executor().run_until_parked();
 
+    // When the start of a hunk coincides with the start of its excerpt,
+    // the hunk is expanded. When the start of a a hunk is earlier than
+    // the start of its excerpt, the hunk is not expanded.
     cx.assert_state_with_diff(
         "
             ˇaaa
           - bbb
           + BBB
 
+          - ddd
+          - eee
+          + DDD
           + EEE
             fff
+
+            iii
         "
         .unindent(),
     );
