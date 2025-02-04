@@ -28,10 +28,7 @@ Write-Output "Using Dev Drive at $Volume"
     
 # Move Cargo to the dev drive
 New-Item -Path "$($Drive)/.cargo/bin" -ItemType Directory -Force
-if (Test-Path "C:/Users/runneradmin/.cargo") {
-    Write-Output "Copying Cargo to $Drive"
-    Copy-Item -Path "C:/Users/runneradmin/.cargo/*" -Destination "$($Drive)/.cargo/" -Recurse -Force
-}
+Copy-Item -Path "C:/Users/runneradmin/.cargo/*" -Destination "$($Drive)/.cargo/" -Recurse -Force
 
 Write-Output `
 	"DEV_DRIVE=$($Drive)" `
