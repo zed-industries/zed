@@ -53,6 +53,7 @@ impl ZedPredictBanner {
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
+        telemetry::event!("Edit Prediction Banner Dismissed");
         persist_dismissed(cx);
         self.dismissed = true;
         cx.notify();
@@ -107,6 +108,7 @@ impl Render for ZedPredictBanner {
                             ),
                     )
                     .on_click(|_, window, cx| {
+                        telemetry::event!("Edit Prediction Banner Clicked");
                         window.dispatch_action(Box::new(zed_actions::OpenZedPredictOnboarding), cx)
                     }),
             )
