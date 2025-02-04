@@ -364,6 +364,20 @@ impl EntityInputHandler for TextInput {
             ),
         ))
     }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let line_point = self.last_bounds?.localize(&point)?;
+        let last_layout = self.last_layout.as_ref()?;
+
+        assert_eq!(last_layout.text, self.content);
+        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        Some(self.offset_to_utf16(utf8_index))
+    }
 }
 
 struct TextElement {
