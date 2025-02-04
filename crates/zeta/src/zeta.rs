@@ -80,7 +80,7 @@ const BUFFER_EXCERPT_LINE_LIMIT: u32 = 64;
 const TOTAL_BYTE_LIMIT: usize = BUFFER_EXCERPT_BYTE_LIMIT * 2;
 
 /// Maximum number of events to include in the prompt.
-const MAX_EVENT_COUNT: usize = 16;
+const MAX_EVENT_COUNT: usize = 8;
 
 /// Maximum number of string bytes in a single event. Arbitrarily choosing this to be 4x the size of
 /// equally splitting up the the remaining bytes after the largest possible buffer excerpt.
