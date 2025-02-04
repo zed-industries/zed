@@ -29,7 +29,6 @@ use language::{
 };
 use language_models::LlmApiToken;
 use postage::watch;
-use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use settings::WorktreeId;
 use std::{
     borrow::Cow,
@@ -47,6 +46,7 @@ use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
 use worktree::Worktree;
+use zed_llm_client::{PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
@@ -369,7 +369,7 @@ impl Zeta {
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
     where
-        F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsParams) -> R + 'static,
+        F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsBody) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
@@ -425,7 +425,7 @@ impl Zeta {
 
             log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
-            let body = PredictEditsParams {
+            let body = PredictEditsBody {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
@@ -625,7 +625,7 @@ and then another
         client: Arc<Client>,
         llm_token: LlmApiToken,
         _is_staff: bool,
-        body: PredictEditsParams,
+        body: PredictEditsBody,
     ) -> impl Future<Output = Result<PredictEditsResponse>> {
         async move {
             let http_client = client.http_client();
