@@ -185,21 +185,21 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         client.add_request_handler(cx.weak_entity(), Self::handle_ping);
 
-        client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_entity_request_handler(Self::handle_add_worktree);
         client.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
-        client.add_model_request_handler(Self::handle_open_buffer_by_path);
-        client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_request_handler(Self::handle_find_search_candidates);
-        client.add_model_request_handler(Self::handle_open_server_settings);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
+        client.add_entity_request_handler(Self::handle_open_new_buffer);
+        client.add_entity_request_handler(Self::handle_find_search_candidates);
+        client.add_entity_request_handler(Self::handle_open_server_settings);
 
-        client.add_model_request_handler(BufferStore::handle_update_buffer);
-        client.add_model_message_handler(BufferStore::handle_close_buffer);
+        client.add_entity_request_handler(BufferStore::handle_update_buffer);
+        client.add_entity_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_model_request_handler(Self::handle_stage);
-        client.add_model_request_handler(Self::handle_unstage);
-        client.add_model_request_handler(Self::handle_commit);
-        client.add_model_request_handler(Self::handle_open_commit_message_buffer);
+        client.add_entity_request_handler(Self::handle_stage);
+        client.add_entity_request_handler(Self::handle_unstage);
+        client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
 
         client.add_request_handler(
             extensions.clone().downgrade(),

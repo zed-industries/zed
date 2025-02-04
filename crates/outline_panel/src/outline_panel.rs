@@ -796,9 +796,9 @@ impl OutlinePanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_model(&cx.entity()),
+                    .parent_entity(&cx.entity()),
                 horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_model(&cx.entity()),
+                    .parent_entity(&cx.entity()),
                 max_width_item_index: None,
                 scroll_handle,
                 focus_handle,

@@ -230,9 +230,9 @@ impl Zeta {
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let model = cx.new(|cx| Self::new(client, user_store, cx));
-            cx.set_global(ZetaGlobal(model.clone()));
-            model
+            let entity = cx.new(|cx| Self::new(client, user_store, cx));
+            cx.set_global(ZetaGlobal(entity.clone()));
+            entity
         });
 
         this.update(cx, move |this, cx| {
