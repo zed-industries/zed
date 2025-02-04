@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
-    SharedString, Task, TaskLabel, Window,
+    SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -616,6 +616,11 @@ impl HighlightedText {
             syntax_theme,
         );
         highlighted_text.build()
+    }
+
+    pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
+        gpui::StyledText::new(self.text.clone())
+            .with_highlights(default_style, self.highlights.iter().cloned())
     }
 }
 

@@ -304,8 +304,8 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let InlineCompletion::Move(anchor) = &completion_state.completion {
-            assert(editor.buffer().read(cx).snapshot(cx), *anchor);
+        if let InlineCompletion::Move { target, .. } = &completion_state.completion {
+            assert(editor.buffer().read(cx).snapshot(cx), *target);
         } else {
             panic!("expected move completion");
         }

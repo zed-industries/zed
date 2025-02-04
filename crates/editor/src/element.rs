@@ -32,11 +32,12 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
-    Hsla, InteractiveElement, IntoElement, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -525,6 +526,8 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        editor.update_inline_completion_preview(&event.modifiers, window, cx);
+
         let mouse_position = window.mouse_position();
         if !text_hitbox.is_hovered(window) {
             return;
@@ -1010,12 +1013,7 @@ impl EditorElement {
                     layouts.push(layout);
                 }
 
-                let player = if editor.read_only(cx) {
-                    cx.theme().players().read_only()
-                } else {
-                    self.style.local_player
-                };
-
+                let player = editor.current_user_player_color(cx);
                 selections.push((player, layouts));
             }
 
@@ -1077,11 +1075,6 @@ impl EditorElement {
 
                 selections.extend(remote_selections.into_values());
             } else if !editor.is_focused(window) && editor.show_cursor_when_unfocused {
-                let player = if editor.read_only(cx) {
-                    cx.theme().players().read_only()
-                } else {
-                    self.style.local_player
-                };
                 let layouts = snapshot
                     .buffer_snapshot
                     .selections_in_range(&(start_anchor..end_anchor), true)
@@ -1097,6 +1090,7 @@ impl EditorElement {
                         )
                     })
                     .collect::<Vec<_>>();
+                let player = editor.current_user_player_color(cx);
                 selections.push((player, layouts));
             }
         });
@@ -3157,7 +3151,7 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_context_menu(
+    fn layout_cursor_popovers(
         &self,
         line_height: Pixels,
         text_hitbox: &Hitbox,
@@ -3165,44 +3159,53 @@ impl EditorElement {
         start_row: DisplayRow,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_layouts: &[LineWithInvisibles],
-        newest_selection_head: DisplayPoint,
-        gutter_overshoot: Pixels,
+        cursor: DisplayPoint,
+        cursor_point: Point,
+        style: &EditorStyle,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let Some(context_menu_origin) = self
-            .editor
-            .read(cx)
-            .context_menu_origin(newest_selection_head)
-        else {
+        let mut min_menu_height = Pixels::ZERO;
+        let mut max_menu_height = Pixels::ZERO;
+        let mut height_above_menu = Pixels::ZERO;
+        let height_below_menu = Pixels::ZERO;
+        let mut edit_prediction_popover_visible = false;
+        let mut context_menu_visible = false;
+
+        {
+            let editor = self.editor.read(cx);
+            if editor.has_active_completions_menu() && editor.show_inline_completions_in_menu(cx) {
+                height_above_menu +=
+                    editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
+                edit_prediction_popover_visible = true;
+            }
+
+            if editor.context_menu_visible() {
+                if let Some(crate::ContextMenuOrigin::Cursor) = editor.context_menu_origin() {
+                    min_menu_height += line_height * 3. + POPOVER_Y_PADDING;
+                    max_menu_height += line_height * 12. + POPOVER_Y_PADDING;
+                    context_menu_visible = true;
+                }
+            }
+        }
+
+        let visible = edit_prediction_popover_visible || context_menu_visible;
+        if !visible {
             return;
-        };
+        }
+
+        let cursor_row_layout = &line_layouts[cursor.row().minus(start_row) as usize];
         let target_position = content_origin
-            + match context_menu_origin {
-                crate::ContextMenuOrigin::EditorPoint(display_point) => {
-                    let cursor_row_layout =
-                        &line_layouts[display_point.row().minus(start_row) as usize];
-                    gpui::Point {
-                        x: cmp::max(
-                            px(0.),
-                            cursor_row_layout.x_for_index(display_point.column() as usize)
-                                - scroll_pixel_position.x,
-                        ),
-                        y: cmp::max(
-                            px(0.),
-                            display_point.row().next_row().as_f32() * line_height
-                                - scroll_pixel_position.y,
-                        ),
-                    }
-                }
-                crate::ContextMenuOrigin::GutterIndicator(row) => {
-                    // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
-                    // text field.
-                    gpui::Point {
-                        x: -gutter_overshoot,
-                        y: row.next_row().as_f32() * line_height - scroll_pixel_position.y,
-                    }
-                }
+            + gpui::Point {
+                x: cmp::max(
+                    px(0.),
+                    cursor_row_layout.x_for_index(cursor.column() as usize)
+                        - scroll_pixel_position.x,
+                ),
+                y: cmp::max(
+                    px(0.),
+                    cursor.row().next_row().as_f32() * line_height - scroll_pixel_position.y,
+                ),
             };
 
         let viewport_bounds =
@@ -3211,17 +3214,241 @@ impl EditorElement {
                 ..Default::default()
             });
 
-        // If the context menu's max height won't fit below, then flip it above the line and display
-        // it in reverse order. If the available space above is less than below.
-        let unconstrained_max_height = line_height * 12. + POPOVER_Y_PADDING;
+        let min_height = height_above_menu + min_menu_height + height_below_menu;
+        let max_height = height_above_menu + max_menu_height + height_below_menu;
+        let Some((laid_out_popovers, y_flipped)) = self.layout_popovers_above_or_below_line(
+            target_position,
+            line_height,
+            min_height,
+            max_height,
+            text_hitbox,
+            viewport_bounds,
+            window,
+            cx,
+            |height, max_width_for_stable_x, y_flipped, window, cx| {
+                // First layout the menu to get its size - others can be at least this wide.
+                let context_menu = if context_menu_visible {
+                    let menu_height = if y_flipped {
+                        height - height_below_menu
+                    } else {
+                        height - height_above_menu
+                    };
+                    let mut element = self
+                        .render_context_menu(line_height, menu_height, y_flipped, window, cx)
+                        .unwrap();
+                    let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                    Some((CursorPopoverType::CodeContextMenu, element, size))
+                } else {
+                    None
+                };
+                let max_width = max_width_for_stable_x.max(
+                    context_menu
+                        .as_ref()
+                        .map_or(px(0.), |(_, _, size)| size.width),
+                );
+                let edit_prediction = if edit_prediction_popover_visible {
+                    let accept_keystroke: Option<Keystroke>;
+
+                    // TODO: load modifier from keymap.
+                    // `bindings_for_action_in` returns `None` in Linux, and is intermittent on macOS
+                    #[cfg(target_os = "macos")]
+                    {
+                        // let bindings = window.bindings_for_action_in(
+                        //     &crate::AcceptInlineCompletion,
+                        //     &self.editor.focus_handle(cx),
+                        // );
+
+                        // let last_binding = bindings.last();
+
+                        // accept_keystroke = if let Some(binding) = last_binding {
+                        //     match &binding.keystrokes() {
+                        //         // TODO: no need to clone once this logic works on linux.
+                        //         [keystroke] => Some(keystroke.clone()),
+                        //         _ => None,
+                        //     }
+                        // } else {
+                        //     None
+                        // };
+                        accept_keystroke = Some(Keystroke {
+                            modifiers: gpui::Modifiers {
+                                alt: true,
+                                control: false,
+                                shift: false,
+                                platform: false,
+                                function: false,
+                            },
+                            key: "tab".to_string(),
+                            key_char: None,
+                        });
+                    }
+
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        accept_keystroke = Some(Keystroke {
+                            modifiers: gpui::Modifiers {
+                                alt: true,
+                                control: false,
+                                shift: false,
+                                platform: false,
+                                function: false,
+                            },
+                            key: "enter".to_string(),
+                            key_char: None,
+                        });
+                    }
+
+                    self.editor.update(cx, move |editor, cx| {
+                        let mut element = editor.render_edit_prediction_cursor_popover(
+                            max_width,
+                            cursor_point,
+                            style,
+                            accept_keystroke.as_ref()?,
+                            window,
+                            cx,
+                        )?;
+                        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                        Some((CursorPopoverType::EditPrediction, element, size))
+                    })
+                } else {
+                    None
+                };
+                vec![edit_prediction, context_menu]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+            },
+        ) else {
+            return;
+        };
+
+        let Some((_, menu_bounds)) = laid_out_popovers
+            .iter()
+            .find(|(x, _)| matches!(x, CursorPopoverType::CodeContextMenu))
+        else {
+            return;
+        };
+        let first_popover_bounds = laid_out_popovers[0].1;
+        let last_popover_bounds = laid_out_popovers[laid_out_popovers.len() - 1].1;
+
+        let mut target_bounds = if y_flipped {
+            Bounds::from_corners(
+                last_popover_bounds.origin,
+                first_popover_bounds.bottom_right(),
+            )
+        } else {
+            Bounds::from_corners(
+                first_popover_bounds.origin,
+                last_popover_bounds.bottom_right(),
+            )
+        };
+        target_bounds.size.width = menu_bounds.size.width;
+
+        let mut max_target_bounds = target_bounds;
+        max_target_bounds.size.height = max_height;
+        if y_flipped {
+            max_target_bounds.origin.y -= max_height - target_bounds.size.height;
+        }
+
+        let mut extend_amount = Edges::all(MENU_GAP);
+        if y_flipped {
+            extend_amount.bottom = line_height;
+        } else {
+            extend_amount.top = line_height;
+        }
+        let target_bounds = target_bounds.extend(extend_amount);
+        let max_target_bounds = max_target_bounds.extend(extend_amount);
+
+        self.layout_context_menu_aside(
+            y_flipped,
+            *menu_bounds,
+            target_bounds,
+            max_target_bounds,
+            max_menu_height,
+            text_hitbox,
+            viewport_bounds,
+            window,
+            cx,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_gutter_menu(
+        &self,
+        line_height: Pixels,
+        text_hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_overshoot: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(crate::ContextMenuOrigin::GutterIndicator(gutter_row)) =
+            self.editor.read(cx).context_menu_origin()
+        else {
+            return;
+        };
+        // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the
+        // indicator than just a plain first column of the text field.
+        let target_position = content_origin
+            + gpui::Point {
+                x: -gutter_overshoot,
+                y: gutter_row.next_row().as_f32() * line_height - scroll_pixel_position.y,
+            };
         let min_height = line_height * 3. + POPOVER_Y_PADDING;
+        let max_height = line_height * 12. + POPOVER_Y_PADDING;
+        let viewport_bounds =
+            Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
+                right: -Self::SCROLLBAR_WIDTH - MENU_GAP,
+                ..Default::default()
+            });
+        self.layout_popovers_above_or_below_line(
+            target_position,
+            line_height,
+            min_height,
+            max_height,
+            text_hitbox,
+            viewport_bounds,
+            window,
+            cx,
+            move |height, _max_width_for_stable_x, y_flipped, window, cx| {
+                let Some(mut element) =
+                    self.render_context_menu(line_height, height, y_flipped, window, cx)
+                else {
+                    return vec![];
+                };
+                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
+                vec![(CursorPopoverType::CodeContextMenu, element, size)]
+            },
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_popovers_above_or_below_line(
+        &self,
+        target_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        min_height: Pixels,
+        max_height: Pixels,
+        text_hitbox: &Hitbox,
+        viewport_bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+        make_sized_popovers: impl FnOnce(
+            Pixels,
+            Pixels,
+            bool,
+            &mut Window,
+            &mut App,
+        ) -> Vec<(CursorPopoverType, AnyElement, Size<Pixels>)>,
+    ) -> Option<(Vec<(CursorPopoverType, Bounds<Pixels>)>, bool)> {
+        // If the max height won't fit below and there is more space above, put it above the line.
         let bottom_y_when_flipped = target_position.y - line_height;
         let available_above = bottom_y_when_flipped - text_hitbox.top();
         let available_below = text_hitbox.bottom() - target_position.y;
-        let y_overflows_below = unconstrained_max_height > available_below;
+        let y_overflows_below = max_height > available_below;
         let mut y_flipped = y_overflows_below && available_above > available_below;
         let mut height = cmp::min(
-            unconstrained_max_height,
+            max_height,
             if y_flipped {
                 available_above
             } else {
@@ -3229,14 +3456,14 @@ impl EditorElement {
             },
         );
 
-        // If less than 3 lines fit within the text bounds, instead fit within the window.
+        // If the min height doesn't fit within text bounds, instead fit within the window.
         if height < min_height {
             let available_above = bottom_y_when_flipped;
             let available_below = viewport_bounds.bottom() - target_position.y;
-            if available_below > 3. * line_height {
+            if available_below > min_height {
                 y_flipped = false;
                 height = min_height;
-            } else if available_above > 3. * line_height {
+            } else if available_above > min_height {
                 y_flipped = true;
                 height = min_height;
             } else if available_above > available_below {
@@ -3248,82 +3475,67 @@ impl EditorElement {
             }
         }
 
-        let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
+        let max_width_for_stable_x = viewport_bounds.right() - target_position.x;
 
-        // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
-        let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
-        }) else {
-            return;
-        };
+        // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
+        // for very narrow windows.
+        let popovers = make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
+        if popovers.is_empty() {
+            return None;
+        }
 
-        let menu_size = menu_element.layout_as_root(AvailableSpace::min_size(), window, cx);
-        let menu_position = gpui::Point {
+        let max_width = popovers
+            .iter()
+            .map(|(_, _, size)| size.width)
+            .max()
+            .unwrap_or_default();
+
+        let mut current_position = gpui::Point {
             // Snap the right edge of the list to the right edge of the window if its horizontal bounds
             // overflow. Include space for the scrollbar.
             x: target_position
                 .x
-                .min((viewport_bounds.right() - menu_size.width).max(Pixels::ZERO)),
+                .min((viewport_bounds.right() - max_width).max(Pixels::ZERO)),
             y: if y_flipped {
-                bottom_y_when_flipped - menu_size.height
+                bottom_y_when_flipped
             } else {
                 target_position.y
             },
         };
-        window.defer_draw(menu_element, menu_position, 1);
 
-        // Layout documentation aside
-        let menu_bounds = Bounds::new(menu_position, menu_size);
-        let max_menu_size = size(menu_size.width, unconstrained_max_height);
-        let max_menu_bounds = if y_flipped {
-            Bounds::new(
-                point(
-                    menu_position.x,
-                    bottom_y_when_flipped - max_menu_size.height,
-                ),
-                max_menu_size,
-            )
-        } else {
-            Bounds::new(target_position, max_menu_size)
-        };
-        self.layout_context_menu_aside(
-            text_hitbox,
-            y_flipped,
-            menu_position,
-            menu_bounds,
-            max_menu_bounds,
-            unconstrained_max_height,
-            line_height,
-            viewport_bounds,
-            window,
-            cx,
-        );
+        let laid_out_popovers = popovers
+            .into_iter()
+            .map(|(popover_type, element, size)| {
+                if y_flipped {
+                    current_position.y -= size.height;
+                }
+                let position = current_position;
+                window.defer_draw(element, current_position, 1);
+                if !y_flipped {
+                    current_position.y += size.height + MENU_GAP;
+                } else {
+                    current_position.y -= MENU_GAP;
+                }
+                (popover_type, Bounds::new(position, size))
+            })
+            .collect::<Vec<_>>();
+
+        Some((laid_out_popovers, y_flipped))
     }
 
     #[allow(clippy::too_many_arguments)]
     fn layout_context_menu_aside(
         &self,
-        text_hitbox: &Hitbox,
         y_flipped: bool,
-        menu_position: gpui::Point<Pixels>,
         menu_bounds: Bounds<Pixels>,
-        max_menu_bounds: Bounds<Pixels>,
+        target_bounds: Bounds<Pixels>,
+        max_target_bounds: Bounds<Pixels>,
         max_height: Pixels,
-        line_height: Pixels,
+        text_hitbox: &Hitbox,
         viewport_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut extend_amount = Edges::all(MENU_GAP);
-        // Extend to include the cursored line to avoid overlapping it.
-        if y_flipped {
-            extend_amount.bottom = line_height;
-        } else {
-            extend_amount.top = line_height;
-        }
-        let target_bounds = menu_bounds.extend(extend_amount);
-        let max_target_bounds = max_menu_bounds.extend(extend_amount);
-
         let available_within_viewport = target_bounds.space_within(&viewport_bounds);
         let positioned_aside = if available_within_viewport.right >= MENU_ASIDE_MIN_WIDTH {
             let max_width = cmp::min(
@@ -3336,7 +3548,7 @@ impl EditorElement {
                 return;
             };
             aside.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let right_position = point(target_bounds.right(), menu_position.y);
+            let right_position = point(target_bounds.right(), menu_bounds.origin.y);
             Some((aside, right_position))
         } else {
             let max_size = size(
@@ -3359,8 +3571,11 @@ impl EditorElement {
             };
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-            let top_position = point(menu_position.x, target_bounds.top() - actual_size.height);
-            let bottom_position = point(menu_position.x, target_bounds.bottom());
+            let top_position = point(
+                menu_bounds.origin.x,
+                target_bounds.top() - actual_size.height,
+            );
+            let bottom_position = point(menu_bounds.origin.x, target_bounds.bottom());
 
             let fit_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
                 // Prefer to fit on the same side of the line as the menu, then on the other side of
@@ -3394,6 +3609,20 @@ impl EditorElement {
         if let Some((aside, position)) = positioned_aside {
             window.defer_draw(aside, position, 1);
         }
+    }
+
+    fn render_context_menu(
+        &self,
+        line_height: Pixels,
+        height: Pixels,
+        y_flipped: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let max_height_in_lines = ((height - POPOVER_Y_PADDING) / line_height).floor() as u32;
+        self.editor.update(cx, |editor, cx| {
+            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, window, cx)
+        })
     }
 
     fn render_context_menu_aside(
@@ -3434,12 +3663,14 @@ impl EditorElement {
         let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
 
         match &active_inline_completion.completion {
-            InlineCompletion::Move(target_position) => {
-                let target_display_point = target_position.to_display_point(editor_snapshot);
+            InlineCompletion::Move { target, .. } => {
+                let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
-                    let mut element = inline_completion_tab_indicator(
+                    let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
+                        self.editor.focus_handle(cx),
+                        window,
                         cx,
                     );
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3447,9 +3678,11 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
-                    let mut element = inline_completion_tab_indicator(
+                    let mut element = inline_completion_accept_indicator(
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
+                        self.editor.focus_handle(cx),
+                        window,
                         cx,
                     );
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3460,7 +3693,13 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
                     Some(element)
                 } else {
-                    let mut element = inline_completion_tab_indicator("Jump to Edit", None, cx);
+                    let mut element = inline_completion_accept_indicator(
+                        "Jump to Edit",
+                        None,
+                        self.editor.focus_handle(cx),
+                        window,
+                        cx,
+                    );
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3520,7 +3759,13 @@ impl EditorElement {
                             editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                         })?;
 
-                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
+                        let mut element = inline_completion_accept_indicator(
+                            "Accept",
+                            None,
+                            self.editor.focus_handle(cx),
+                            window,
+                            cx,
+                        );
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -3535,9 +3780,13 @@ impl EditorElement {
                     EditDisplayMode::DiffPopover => {}
                 }
 
-                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
-                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
-                })?;
+                let highlighted_edits = crate::inline_completion_edit_text(
+                    &snapshot,
+                    edits,
+                    edit_preview.as_ref()?,
+                    false,
+                    cx,
+                );
 
                 let line_count = highlighted_edits.text.lines().count();
 
@@ -3558,8 +3807,7 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
-                    .with_highlights(&style.text, highlighted_edits.highlights);
+                let styled_text = highlighted_edits.to_styled_text(&style.text);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)
@@ -5548,17 +5796,33 @@ fn header_jump_data(
     }
 }
 
-fn inline_completion_tab_indicator(
+fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
+    focus_handle: FocusHandle,
+    window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let tab_kbd = h_flex()
+    let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+    let Some(accept_keystroke) = bindings
+        .last()
+        .and_then(|binding| binding.keystrokes().first())
+    else {
+        return div().into_any();
+    };
+
+    let accept_key = h_flex()
         .px_0p5()
         .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
         .text_size(TextSize::XSmall.rems(cx))
         .text_color(cx.theme().colors().text)
-        .child("tab");
+        .gap_1()
+        .children(ui::render_modifiers(
+            &accept_keystroke.modifiers,
+            PlatformStyle::platform(),
+            Some(Color::Default),
+        ))
+        .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
@@ -5572,7 +5836,7 @@ fn inline_completion_tab_indicator(
         .border_color(cx.theme().colors().text_accent.opacity(0.8))
         .rounded_md()
         .shadow_sm()
-        .child(tab_kbd)
+        .child(accept_key)
         .child(Label::new(label).size(LabelSize::Small))
         .when_some(icon, |element, icon| {
             element.child(
@@ -7059,8 +7323,11 @@ impl Element for EditorElement {
                         );
                     let mut code_actions_indicator = None;
                     if let Some(newest_selection_head) = newest_selection_head {
+                        let newest_selection_point =
+                            newest_selection_head.to_point(&snapshot.display_snapshot);
+
                         if (start_row..end_row).contains(&newest_selection_head.row()) {
-                            self.layout_context_menu(
+                            self.layout_cursor_popovers(
                                 line_height,
                                 &text_hitbox,
                                 content_origin,
@@ -7068,7 +7335,8 @@ impl Element for EditorElement {
                                 scroll_pixel_position,
                                 &line_layouts,
                                 newest_selection_head,
-                                gutter_dimensions.width - gutter_dimensions.left_padding,
+                                newest_selection_point,
+                                &style,
                                 window,
                                 cx,
                             );
@@ -7112,6 +7380,16 @@ impl Element for EditorElement {
                             }
                         }
                     }
+
+                    self.layout_gutter_menu(
+                        line_height,
+                        &text_hitbox,
+                        content_origin,
+                        scroll_pixel_position,
+                        gutter_dimensions.width - gutter_dimensions.left_padding,
+                        window,
+                        cx,
+                    );
 
                     let test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(
@@ -7992,6 +8270,11 @@ impl HighlightedRange {
             window.paint_path(path, self.color);
         }
     }
+}
+
+enum CursorPopoverType {
+    CodeContextMenu,
+    EditPrediction,
 }
 
 pub fn scale_vertical_mouse_autoscroll_delta(delta: Pixels) -> f32 {
