@@ -295,7 +295,7 @@ impl Render for QuickActionBar {
                         );
 
                         menu = menu.toggleable_entry(
-                            "Inline Completions",
+                            "Edit Predictions",
                             inline_completions_enabled,
                             IconPosition::Start,
                             Some(editor::actions::ToggleInlineCompletions.boxed_clone()),

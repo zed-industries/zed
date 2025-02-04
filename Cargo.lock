@@ -8664,9 +8664,9 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.68"
+version = "0.10.70"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6174bc48f102d208783c2c84bf931bb75927a617866870de8a4ea85597f871f5"
+checksum = "61cfb4e166a8bb8c9b55c500bc2308550148ece889be90f609377e58140f42c6"
 dependencies = [
  "bitflags 2.8.0",
  "cfg-if",
@@ -8705,9 +8705,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.104"
+version = "0.9.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45abf306cbf99debc8195b66b7346498d7b10c210de50418b5ccd7ceba08c741"
+checksum = "8b22d5b84be05a8d6947c7cb71f7c849aa0f112acd4bf51c2a7c1c988ac0a9dc"
 dependencies = [
  "cc",
  "libc",
@@ -16411,7 +16411,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.173.0"
+version = "0.174.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16632,6 +16632,15 @@ name = "zed_html"
 version = "0.1.5"
 dependencies = [
  "zed_extension_api 0.1.0",
+]
+
+[[package]]
+name = "zed_llm_client"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54ca07d631d9d758f1820c7a7e7854ca00619b9783a5b6b3b6057fef06c786cb"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -16873,6 +16882,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]

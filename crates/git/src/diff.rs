@@ -74,31 +74,34 @@ impl BufferDiff {
         }
     }
 
-    pub fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+    pub fn build(diff_base: Option<&str>, buffer: &text::BufferSnapshot) -> Self {
         let mut tree = SumTree::new(buffer);
 
-        let buffer_text = buffer.as_rope().to_string();
-        let patch = Self::diff(diff_base, &buffer_text);
+        if let Some(diff_base) = diff_base {
+            let buffer_text = buffer.as_rope().to_string();
+            let patch = Self::diff(diff_base, &buffer_text);
 
-        // A common case in Zed is that the empty buffer is represented as just a newline,
-        // but if we just compute a naive diff you get a "preserved" line in the middle,
-        // which is a bit odd.
-        if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
-            tree.push(
-                InternalDiffHunk {
-                    buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
-                    diff_base_byte_range: 0..diff_base.len() - 1,
-                },
-                buffer,
-            );
-            return Self { tree };
-        }
+            // A common case in Zed is that the empty buffer is represented as just a newline,
+            // but if we just compute a naive diff you get a "preserved" line in the middle,
+            // which is a bit odd.
+            if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
+                tree.push(
+                    InternalDiffHunk {
+                        buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
+                        diff_base_byte_range: 0..diff_base.len() - 1,
+                    },
+                    buffer,
+                );
+                return Self { tree };
+            }
 
-        if let Some(patch) = patch {
-            let mut divergence = 0;
-            for hunk_index in 0..patch.num_hunks() {
-                let hunk = Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
-                tree.push(hunk, buffer);
+            if let Some(patch) = patch {
+                let mut divergence = 0;
+                for hunk_index in 0..patch.num_hunks() {
+                    let hunk =
+                        Self::process_patch_hunk(&patch, hunk_index, buffer, &mut divergence);
+                    tree.push(hunk, buffer);
+                }
             }
         }
 
@@ -125,11 +128,14 @@ impl BufferDiff {
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let range = range.to_offset(buffer);
+
         let mut cursor = self
             .tree
             .filter::<_, DiffHunkSummary>(buffer, move |summary| {
-                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+                let summary_range = summary.buffer_range.to_offset(buffer);
+                let before_start = summary_range.end < range.start;
+                let after_end = summary_range.start > range.end;
                 !before_start && !after_end
             });
 
@@ -151,9 +157,13 @@ impl BufferDiff {
         });
 
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
-        iter::from_fn(move || {
+        iter::from_fn(move || loop {
             let (start_point, (start_anchor, start_base)) = summaries.next()?;
             let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
+
+            if !start_anchor.is_valid(buffer) {
+                continue;
+            }
 
             if end_point.column > 0 {
                 end_point.row += 1;
@@ -161,11 +171,11 @@ impl BufferDiff {
                 end_anchor = buffer.anchor_before(end_point);
             }
 
-            Some(DiffHunk {
+            return Some(DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
-            })
+            });
         })
     }
 
@@ -270,7 +280,7 @@ impl BufferDiff {
     }
 
     pub fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        *self = Self::build(&diff_base.to_string(), buffer);
+        *self = Self::build(Some(&diff_base.to_string()), buffer);
     }
 
     #[cfg(test)]
@@ -536,7 +546,7 @@ mod tests {
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text_1);
 
         let empty_diff = BufferDiff::new(&buffer);
-        let diff_1 = BufferDiff::build(&base_text, &buffer);
+        let diff_1 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_1.compare(&empty_diff, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
@@ -554,7 +564,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_2 = BufferDiff::build(&base_text, &buffer);
+        let diff_2 = BufferDiff::build(Some(&base_text), &buffer);
         assert_eq!(None, diff_2.compare(&diff_1, &buffer));
 
         // Edit turns a deletion hunk into a modification.
@@ -571,7 +581,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_3 = BufferDiff::build(&base_text, &buffer);
+        let diff_3 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_3.compare(&diff_2, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
 
@@ -588,7 +598,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_4 = BufferDiff::build(&base_text, &buffer);
+        let diff_4 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_4.compare(&diff_3, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 4)..Point::new(4, 0));
 
@@ -606,7 +616,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_5 = BufferDiff::build(&base_text, &buffer);
+        let diff_5 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_5.compare(&diff_4, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(4, 0));
 
@@ -624,7 +634,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_6 = BufferDiff::build(&base_text, &buffer);
+        let diff_6 = BufferDiff::build(Some(&base_text), &buffer);
         let range = diff_6.compare(&diff_5, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
     }

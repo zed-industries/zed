@@ -83,19 +83,28 @@ impl LspAdapter for PythonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let node = delegate.which("node".as_ref()).await?;
-        let (node_modules_path, _) = delegate
-            .npm_package_installed_version(Self::SERVER_NAME.as_ref())
-            .await
-            .log_err()??;
+        if let Some(pyright_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pyright_bin,
+                env: Some(env),
+                arguments: vec!["--stdio".into()],
+            })
+        } else {
+            let node = delegate.which("node".as_ref()).await?;
+            let (node_modules_path, _) = delegate
+                .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+                .await
+                .log_err()??;
 
-        let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+            let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
 
-        Some(LanguageServerBinary {
-            path: node,
-            env: None,
-            arguments: server_binary_arguments(&path),
-        })
+            Some(LanguageServerBinary {
+                path: node,
+                env: None,
+                arguments: server_binary_arguments(&path),
+            })
+        }
     }
 
     async fn fetch_latest_server_version(
@@ -791,19 +800,28 @@ impl LspAdapter for PyLspAdapter {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let venv = toolchains
-            .active_toolchain(
-                delegate.worktree_id(),
-                LanguageName::new("Python"),
-                &mut cx.clone(),
-            )
-            .await?;
-        let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
-        pylsp_path.exists().then(|| LanguageServerBinary {
-            path: venv.path.to_string().into(),
-            arguments: vec![pylsp_path.into()],
-            env: None,
-        })
+        if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pylsp_bin,
+                env: Some(env),
+                arguments: vec![],
+            })
+        } else {
+            let venv = toolchains
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    LanguageName::new("Python"),
+                    &mut cx.clone(),
+                )
+                .await?;
+            let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
+            pylsp_path.exists().then(|| LanguageServerBinary {
+                path: venv.path.to_string().into(),
+                arguments: vec![pylsp_path.into()],
+                env: None,
+            })
+        }
     }
 
     async fn fetch_latest_server_version(

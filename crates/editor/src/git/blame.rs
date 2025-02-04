@@ -697,7 +697,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: vec![
                         blame_entry("1b1b1b", 0..1),
@@ -809,7 +809,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: vec![blame_entry("1b1b1b", 0..4)],
                     ..Default::default()
@@ -958,7 +958,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                Path::new("file.txt"),
+                "file.txt".into(),
                 Blame {
                     entries: blame_entries,
                     ..Default::default()
@@ -1000,7 +1000,7 @@ mod tests {
                     fs.set_blame_for_repo(
                         Path::new("/my-repo/.git"),
                         vec![(
-                            Path::new("file.txt"),
+                            "file.txt".into(),
                             Blame {
                                 entries: blame_entries,
                                 ..Default::default()

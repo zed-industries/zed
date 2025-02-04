@@ -5616,7 +5616,7 @@ impl LspStore {
             lsp_store
                 .update(&mut cx, |lsp_store, cx| {
                     lsp_store.buffer_store().update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(project_path, false, cx)
+                        buffer_store.open_buffer(project_path, cx)
                     })
                 })?
                 .await

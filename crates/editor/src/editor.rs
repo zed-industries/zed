@@ -63,10 +63,10 @@ pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine, SearchSettings, ShowScrollbar,
 };
 pub use editor_settings_controls::*;
-use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
+use element::{LineWithInvisibles, PositionMap};
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
 
@@ -306,6 +306,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
+            workspace.register_action(Editor::cancel_language_server_work);
         },
     )
     .detach();
@@ -678,7 +679,7 @@ pub struct Editor {
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
-    // inline completions based on its mode.
+    // edit predictions based on its mode.
     enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
@@ -715,6 +716,7 @@ pub struct Editor {
         >,
     >,
     last_bounds: Option<Bounds<Pixels>>,
+    last_position_map: Option<Rc<PositionMap>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
@@ -1377,6 +1379,7 @@ impl Editor {
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
+            last_position_map: None,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -4923,8 +4926,8 @@ impl Editor {
             .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
 
         let event_type = match accepted {
-            true => "Inline Completion Accepted",
-            false => "Inline Completion Discarded",
+            true => "Edit Prediction Accepted",
+            false => "Edit Prediction Discarded",
         };
         telemetry::event!(
             event_type,
@@ -5414,6 +5417,7 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
@@ -5470,6 +5474,7 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
+                start_row,
                 line_layouts,
                 style,
                 cx,
@@ -5479,6 +5484,7 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
+                    start_row,
                     line_layouts,
                     style,
                     cx,
@@ -5511,6 +5517,11 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_move = self
+            .active_inline_completion
+            .as_ref()
+            .map_or(false, |c| c.is_move());
+
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5539,23 +5550,18 @@ impl Editor {
                                     } else {
                                         None
                                     },
+                                    !is_move,
                                 )),
                         )
                         .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(
-                            if self
-                                .active_inline_completion
-                                .as_ref()
-                                .map_or(false, |c| c.is_move())
-                            {
-                                div()
-                                    .child(ui::Key::new(&accept_keystroke.key, None))
-                                    .font(buffer_font.clone())
-                                    .into_any()
-                            } else {
-                                Label::new("Preview").color(Color::Muted).into_any_element()
-                            },
-                        ),
+                        .child(if is_move {
+                            div()
+                                .child(ui::Key::new(&accept_keystroke.key, None))
+                                .font(buffer_font.clone())
+                                .into_any()
+                        } else {
+                            Label::new("Preview").color(Color::Muted).into_any_element()
+                        }),
                 )
                 .into_any(),
         )
@@ -5565,6 +5571,7 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         cx: &mut Context<Editor>,
@@ -5672,11 +5679,13 @@ impl Editor {
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let start_column_x =
-                    line_layouts[start_point.row as usize].x_for_index(start_point.column as usize);
-                let target_column_x = line_layouts[target_point.row as usize]
-                    .x_for_index(target_point.column as usize);
-                let cursor_relative_position = target_column_x - start_column_x;
+                let cursor_relative_position = line_layouts
+                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                    .map(|line| {
+                        let start_column_x = line.x_for_index(start_point.column as usize);
+                        let target_column_x = line.x_for_index(target_point.column as usize);
+                        target_column_x - start_column_x
+                    });
 
                 let fade_before = start_point.column > 0;
                 let fade_after = end_point.column < snapshot.line_len(end_point.row);
@@ -5719,15 +5728,17 @@ impl Editor {
                                             ),
                                         )
                                     })
-                                    .child(
-                                        div()
-                                            .w(px(2.))
-                                            .h_full()
-                                            .bg(cursor_color)
-                                            .absolute()
-                                            .top_0()
-                                            .left(cursor_relative_position),
-                                    ),
+                                    .when_some(cursor_relative_position, |parent, position| {
+                                        parent.child(
+                                            div()
+                                                .w(px(2.))
+                                                .h_full()
+                                                .bg(cursor_color)
+                                                .absolute()
+                                                .top_0()
+                                                .left(position),
+                                        )
+                                    }),
                             )
                         }),
                 )
@@ -10135,12 +10146,12 @@ impl Editor {
             let mut diagnostics;
             if direction == Direction::Prev {
                 diagnostics = buffer
-                    .diagnostics_in_range::<_, usize>(0..search_start)
+                    .diagnostics_in_range::<usize>(0..search_start)
                     .collect::<Vec<_>>();
                 diagnostics.reverse();
             } else {
                 diagnostics = buffer
-                    .diagnostics_in_range::<_, usize>(search_start..buffer.len())
+                    .diagnostics_in_range::<usize>(search_start..buffer.len())
                     .collect::<Vec<_>>();
             };
             let group = diagnostics
@@ -11304,18 +11315,21 @@ impl Editor {
     }
 
     fn cancel_language_server_work(
-        &mut self,
+        workspace: &mut Workspace,
         _: &actions::CancelLanguageServerWork,
         _: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Workspace>,
     ) {
-        if let Some(project) = self.project.clone() {
-            self.buffer.update(cx, |multi_buffer, cx| {
-                project.update(cx, |project, cx| {
-                    project.cancel_language_server_work_for_buffers(multi_buffer.all_buffers(), cx);
-                });
-            })
-        }
+        let project = workspace.project();
+        let buffers = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map_or(HashSet::default(), |editor| {
+                editor.read(cx).buffer.read(cx).all_buffers()
+            });
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work_for_buffers(buffers, cx);
+        });
     }
 
     fn show_character_palette(
@@ -11331,8 +11345,9 @@ impl Editor {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
+            let primary_range_end = active_diagnostics.primary_range.end.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .diagnostics_in_range::<usize>(primary_range_start..primary_range_end)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
@@ -14388,7 +14403,7 @@ impl Editor {
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
 
-    fn character_size(&self, window: &mut Window) -> gpui::Point<Pixels> {
+    fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
         let text_layout_details = self.text_layout_details(window);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
@@ -14396,7 +14411,7 @@ impl Editor {
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
-        gpui::Point::new(em_width, line_height)
+        gpui::Size::new(em_width, line_height)
     }
 }
 
@@ -15904,9 +15919,9 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
         let text_layout_details = self.text_layout_details(window);
-        let gpui::Point {
-            x: em_width,
-            y: line_height,
+        let gpui::Size {
+            width: em_width,
+            height: line_height,
         } = self.character_size(window);
 
         let snapshot = self.snapshot(window, cx);
@@ -15923,6 +15938,24 @@ impl EntityInputHandler for Editor {
             origin: element_bounds.origin + point(x, y),
             size: size(em_width, line_height),
         })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let position_map = self.last_position_map.as_ref()?;
+        if !position_map.text_hitbox.contains(&point) {
+            return None;
+        }
+        let display_point = position_map.point_for_position(point).previous_valid;
+        let anchor = position_map
+            .snapshot
+            .display_point_to_anchor(display_point, Bias::Left);
+        let utf16_offset = anchor.to_offset_utf16(&position_map.snapshot.buffer_snapshot);
+        Some(utf16_offset.0)
     }
 }
 
