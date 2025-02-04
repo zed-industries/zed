@@ -2259,12 +2259,6 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                     let edit_count = rng.gen_range(1..5);
                     buf.randomly_edit(&mut rng, edit_count, cx);
                     log::info!("buffer text:\n{}", buf.text());
-                    let change_set = multibuffer
-                        .read_with(cx, |multibuffer, _| {
-                            multibuffer.change_set_for(buf.remote_id())
-                        })
-                        .unwrap();
-
                     needs_diff_calculation = true;
                 });
                 cx.update(|cx| reference.diffs_updated(cx));

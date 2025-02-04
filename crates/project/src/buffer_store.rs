@@ -1449,9 +1449,7 @@ impl BufferStore {
                             Self::open_change_set_internal(
                                 this,
                                 ChangeSetKind::Unstaged,
-                                staged_text
-                                    .await
-                                    .map(|staged_text| DiffBasesChange::SetIndex(staged_text)),
+                                staged_text.await.map(DiffBasesChange::SetIndex),
                                 buffer,
                                 cx,
                             )
