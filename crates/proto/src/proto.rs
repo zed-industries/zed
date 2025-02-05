@@ -718,11 +718,6 @@ impl CrossPlatformPath {
     }
 }
 
-pub fn to_db_string(path: Vec<String>) -> String {
-    let path = CrossPlatformPath { path };
-    path.to_db_string()
-}
-
 #[cfg(any(test, feature = "test-support"))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]
