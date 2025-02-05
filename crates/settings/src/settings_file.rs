@@ -1,8 +1,13 @@
 use crate::{settings_store::SettingsStore, Settings};
+use collections::HashMap;
 use fs::Fs;
 use futures::{channel::mpsc, StreamExt};
 use gpui::{App, BackgroundExecutor, ReadGlobal, UpdateGlobal};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
@@ -119,3 +124,56 @@ pub fn update_settings_file<T: Settings>(
 ) {
     SettingsStore::global(cx).update_settings_file::<T>(fs, update);
 }
+
+fn migrate_settings_for_type<T: Settings>(fs: Arc<dyn Fs>, cx: &mut App) {
+    let type_id = std::any::type_name::<T>();
+    update_settings_file::<T>(fs, cx, |settings, _| {
+        let user_settings = match settings.raw_user_settings.as_object_mut() {
+            Some(settings) => settings,
+            None => return,
+        };
+        if let Some(replacements) = SETTINGS_STRING_REPLACE.get(type_id) {
+            for (old_key, new_key) in replacements.iter() {
+                if let Some(value) = user_settings.remove(*old_key) {
+                    user_settings.insert(new_key.to_string(), value);
+                }
+            }
+        }
+        if let Some(replacements) = SETTINGS_NESTED_STRING_REPLACE.get(type_id) {
+            for (parent_key, (old_key, new_key)) in replacements.iter() {
+                if let Some(parent_value) = user_settings.get_mut(*parent_key) {
+                    if let Some(child_value) = parent_value.as_object_mut() {
+                        if let Some(value) = child_value.remove(*old_key) {
+                            child_value.insert(new_key.to_string(), value);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[rustfmt::skip]
+static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, Vec<(&'static str, &'static str)>>> = LazyLock::new(|| {
+    HashMap::from_iter([
+        ("EditorSettings", vec![
+            ("show_inline_completions_in_menu", "show_edit_predictions_in_menu")
+        ]),
+        ("LanguageSettings", vec![
+            ("show_inline_completions", "show_edit_predictions"),
+            ("inline_completions_disabled_in", "edit_predictions_disabled_in")
+        ]),
+        ("AllLanguageSettings", vec![
+            ("inline_completions", "edit_predictions")
+        ])
+    ])
+});
+
+#[rustfmt::skip]
+static SETTINGS_NESTED_STRING_REPLACE: LazyLock<HashMap<&'static str, Vec<(&'static str, (&'static str, &'static str))>>> = LazyLock::new(|| {
+    HashMap::from_iter([
+        ("AllLanguageSettings", vec![
+            ("features", ("inline_completion_provider", "edit_prediction_provider"))
+        ])
+    ])
+});

@@ -14,7 +14,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     str::{self, FromStr},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
 use util::{merge_non_null_json_value_into, ResultExt as _};
 
@@ -990,66 +990,7 @@ impl SettingsStore {
         properties.use_fallbacks();
         Some(properties)
     }
-
-    pub fn should_migrate_settings(&self) -> bool {
-        let user_settings = match self.raw_user_settings.as_object() {
-            Some(settings) => settings,
-            None => return false,
-        };
-        for (old_key, _) in SETTINGS_STRING_REPLACE.iter() {
-            if user_settings.contains_key(*old_key) {
-                return true;
-            }
-        }
-        for (parent_key, (old_key, _)) in SETTINGS_NESTED_STRING_REPLACE.iter() {
-            if let Some(child_value) = user_settings.get(*parent_key).and_then(|v| v.as_object()) {
-                if child_value.contains_key(*old_key) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    pub fn migrate_settings(&mut self) {
-        let user_settings = match self.raw_user_settings.as_object_mut() {
-            Some(settings) => settings,
-            None => return,
-        };
-        for (old_key, new_key) in SETTINGS_STRING_REPLACE.iter() {
-            if let Some(value) = user_settings.remove(*old_key) {
-                user_settings.insert(new_key.to_string(), value);
-            }
-        }
-        for (parent_key, (old_key, new_key)) in SETTINGS_NESTED_STRING_REPLACE.iter() {
-            if let Some(parent_value) = user_settings.get_mut(*parent_key) {
-                if let Some(child_value) = parent_value.as_object_mut() {
-                    if let Some(value) = child_value.remove(*old_key) {
-                        child_value.insert(new_key.to_string(), value);
-                    }
-                }
-            }
-        }
-    }
 }
-
-#[rustfmt::skip]
-static SETTINGS_STRING_REPLACE: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
-    vec![
-        ("show_inline_completions_in_menu", "show_edit_predictions_in_menu"),
-        ("show_inline_completions", "show_edit_predictions"),
-        ("inline_completions_disabled_in", "edit_predictions_disabled_in"),
-        ("inline_completions", "edit_predictions"),
-    ]
-});
-
-#[rustfmt::skip]
-static SETTINGS_NESTED_STRING_REPLACE: LazyLock<Vec<(&str, (&str, &str))>> =
-    LazyLock::new(|| {
-        vec![
-            ("features", ("inline_completion_provider", "edit_prediction_provider"))
-        ]
-    });
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InvalidSettingsError {

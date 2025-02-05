@@ -41,8 +41,8 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_project_settings_content, initial_tasks_content, update_settings_file,
-    InvalidSettingsError, KeymapFile, KeymapFileLoadResult, MigrationResult, Settings,
-    SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
+    InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -1094,7 +1094,6 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
 
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
-    fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
     BaseKeymap::register(cx);
@@ -1152,34 +1151,27 @@ pub fn handle_keymap_file_changes(
                     } => {
                         reload_keymaps(cx, key_bindings);
                         dismiss_app_notification(&notification_id, cx);
-                        show_migration_notification_if_needed(
+                        show_keymap_migration_notification_if_needed(
                             keymap_file,
                             notification_id.clone(),
-                            fs.clone(),
                             cx,
                         );
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
-                        error_message,
                         keymap_file,
+                        error_message,
                     } => {
                         if !key_bindings.is_empty() {
                             reload_keymaps(cx, key_bindings);
                         }
                         dismiss_app_notification(&notification_id, cx);
-                        match show_migration_notification_if_needed(
+                        if !show_keymap_migration_notification_if_needed(
                             keymap_file,
                             notification_id.clone(),
-                            fs.clone(),
                             cx,
                         ) {
-                            MigrationResult::None => show_keymap_file_load_error(
-                                notification_id.clone(),
-                                error_message,
-                                cx,
-                            ),
-                            _ => {}
+                            show_keymap_file_load_error(notification_id.clone(), error_message, cx);
                         }
                     }
                     KeymapFileLoadResult::JsonParseFailure { error } => {
@@ -1212,65 +1204,53 @@ fn show_keymap_file_json_error(
     });
 }
 
-fn show_migration_notification_if_needed(
+fn show_keymap_migration_notification_if_needed(
     keymap_file: KeymapFile,
     notification_id: NotificationId,
-    fs: Arc<dyn Fs>,
     cx: &mut App,
-) -> MigrationResult {
-    let migrate_keymap = keymap_file.should_migrate_keymap();
-    let migrate_settings =
-        cx.read_global(|store: &SettingsStore, _| store.should_migrate_settings());
-    let migration_type = match (migrate_keymap, migrate_settings) {
-        (true, true) => MigrationResult::KeymapAndSettings,
-        (true, false) => MigrationResult::KeymapOnly,
-        (false, true) => MigrationResult::SettingsOnly,
-        (false, false) => MigrationResult::None,
-    };
-    if migrate_keymap || migrate_settings {
-        show_migration_notification(migration_type, notification_id, fs, cx);
+) -> bool {
+    if !keymap_file.should_migrate_keymap() {
+        return false;
     }
-    migration_type
-}
-
-fn show_migration_notification(
-    migration_type: MigrationResult,
-    notification_id: NotificationId,
-    fs: Arc<dyn Fs>,
-    cx: &mut App,
-) {
     show_app_notification(notification_id, cx, move |cx| {
-        let fs = fs.clone();
         cx.new(move |_cx| {
-            let message = match migration_type {
-                MigrationResult::KeymapAndSettings => "A newer version of Zed has simplified several keymaps and settings. Your existing configuration may be deprecated. You can migrate both by clicking below. Backups will be created in your home directory.",
-                MigrationResult::KeymapOnly => "A newer version of Zed has simplified several keymaps. Your existing keymaps may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.",
-                MigrationResult::SettingsOnly => "A newer version of Zed has updated some settings. Your existing settings may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.",
-                MigrationResult::None => unreachable!(),
-            };
-            let button_text = match migration_type {
-                MigrationResult::KeymapAndSettings => "Backup and Migrate Keymap & Settings",
-                MigrationResult::KeymapOnly => "Backup and Migrate Keymap",
-                MigrationResult::SettingsOnly => "Backup and Migrate Settings",
-                MigrationResult::None => unreachable!(),
-            };
+            let message = "A newer version of Zed has simplified several keymaps. Your existing keymaps may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
+            let button_text = "Backup and Migrate Keymap";
             MessageNotification::new_from_builder(move |_, _| {
                 gpui::div().text_xs().child(message).into_any()
             })
             .with_click_message(button_text)
             .on_click(move |_, cx| {
-                let fs = fs.clone();
+                let fs = <dyn Fs>::global(cx);
                 cx.spawn(move |weak_notification, mut cx| async move {
-                    match migration_type {
-                        MigrationResult::KeymapAndSettings => {
-                        KeymapFile::update_keymap_file(fs.clone(), |keymap, _| keymap.migrate_keymap(), &cx).await.ok();
-                        },
-                        MigrationResult::KeymapOnly => {
-                            KeymapFile::update_keymap_file(fs, |keymap, _| keymap.migrate_keymap(), &cx).await.ok();
-                        },
-                        MigrationResult::SettingsOnly => {},
-                        MigrationResult::None => unreachable!(),
-                    }
+                    KeymapFile::update_keymap_file(fs, |keymap, _| keymap.migrate_keymap(), &cx)
+                        .await
+                        .ok();
+                    weak_notification.update(&mut cx, |_, cx| {
+                        cx.emit(DismissEvent);
+                    }).ok();
+                }).detach();
+            })
+        })
+    });
+    return true;
+}
+
+fn show_settings_migration_notification_if_needed(notification_id: NotificationId, cx: &mut App) {
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new(move |_cx| {
+            let message = "A newer version of Zed has updated some settings. Your existing settings may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
+            let button_text = "Backup and Migrate Settings";
+            MessageNotification::new_from_builder(move |_, _| {
+                gpui::div().text_xs().child(message).into_any()
+            })
+            .with_click_message(button_text)
+            .on_click(move |_, cx| {
+                let fs = <dyn Fs>::global(cx);
+                cx.spawn(move |weak_notification, mut cx| async move {
+                    // update_settings_file::<EditorSettings>(fs, cx, |settings| {
+                    //     settings.migrate_settings()
+                    // });
                     weak_notification.update(&mut cx, |_, cx| {
                         cx.emit(DismissEvent);
                     }).ok();
@@ -1376,7 +1356,11 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
                 })
             });
         }
-        None => dismiss_app_notification(&id, cx),
+        None => {
+            dismiss_app_notification(&id, cx);
+            // Currently settings only throw json parse errors above. Outdated settings is handled here.
+            show_settings_migration_notification_if_needed(id, cx);
+        }
     }
 }
 
@@ -3830,7 +3814,7 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, app_state.fs.clone(), cx);
+            handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
             .update(cx, |workspace, _, cx| {
@@ -3944,7 +3928,7 @@ mod tests {
             );
 
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, app_state.fs.clone(), cx);
+            handle_keymap_file_changes(keymap_rx, cx);
         });
 
         cx.background_executor.run_until_parked();
