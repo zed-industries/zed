@@ -269,9 +269,9 @@ jobs:
         run: cargo xtask clippy
 
       - name: Run tests
+        uses: ./.github/actions/run_tests_windows
         with:
           working-directory: ${{ env.ZED_WORKSPACE }}
-        uses: ./.github/actions/run_tests
 
       - name: Build Zed
         working-directory: ${{ env.ZED_WORKSPACE }}
