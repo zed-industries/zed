@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
-use client::ExtensionMetadata;
+use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
@@ -567,6 +567,11 @@ impl ExtensionsPage {
             _ => None,
         };
 
+        let mut provides = extension.manifest.provides.clone();
+        provides.insert(ExtensionProvides::Themes);
+        provides.insert(ExtensionProvides::IconThemes);
+        provides.insert(ExtensionProvides::LanguageServers);
+
         ExtensionCard::new()
             .overridden_by_dev_extension(has_dev_extension)
             .child(
@@ -588,7 +593,48 @@ impl ExtensionsPage {
                                         Headline::new(format!("(v{installed_version} installed)",))
                                             .size(HeadlineSize::XSmall)
                                     }),
-                            ),
+                            )
+                            .map(|parent| {
+                                if provides.is_empty() {
+                                    return parent;
+                                }
+
+                                parent.child(
+                                    h_flex().gap_2().children(
+                                        provides
+                                            .iter()
+                                            .map(|provides| {
+                                                let label = match provides {
+                                                    ExtensionProvides::Themes => "Themes",
+                                                    ExtensionProvides::IconThemes => "Icon Themes",
+                                                    ExtensionProvides::Languages => "Languages",
+                                                    ExtensionProvides::Grammars => "Grammars",
+                                                    ExtensionProvides::LanguageServers => {
+                                                        "Language Servers"
+                                                    }
+                                                    ExtensionProvides::ContextServers => {
+                                                        "Context Servers"
+                                                    }
+                                                    ExtensionProvides::SlashCommands => {
+                                                        "Slash Commands"
+                                                    }
+                                                    ExtensionProvides::IndexedDocsProviders => {
+                                                        "Indexed Docs Providers"
+                                                    }
+                                                    ExtensionProvides::Snippets => "Snippets",
+                                                };
+                                                div()
+                                                    .bg(cx.theme().colors().element_background)
+                                                    .border_1()
+                                                    .rounded_md()
+                                                    .child(
+                                                        Label::new(label).size(LabelSize::XSmall),
+                                                    )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    ),
+                                )
+                            }),
                     )
                     .child(
                         h_flex()
