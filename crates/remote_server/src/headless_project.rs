@@ -689,7 +689,6 @@ impl HeadlessProject {
                 repository_handle.commit(message, name.zip(email))
             })?
             .await??;
-
         Ok(proto::Ack {})
     }
 

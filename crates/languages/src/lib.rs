@@ -44,7 +44,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
                     first_line_pattern: None,
                 },
                 line_comments: vec![Arc::from("#")],
-                ..Default::default()
+                ..LanguageConfig::default()
             },
             Some(tree_sitter_gitcommit::LANGUAGE.into()),
         ))

@@ -139,6 +139,7 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
         None,
     ))
 });
+
 /// Types that represent a position in a buffer, and can be converted into
 /// an LSP position, to send to a language server.
 pub trait ToLspPosition {
