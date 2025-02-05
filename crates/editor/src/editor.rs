@@ -306,6 +306,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
+            workspace.register_action(Editor::cancel_language_server_work);
         },
     )
     .detach();
@@ -5420,6 +5421,7 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
@@ -5472,6 +5474,7 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
+                start_row,
                 line_layouts,
                 style,
                 cx,
@@ -5481,6 +5484,7 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
+                    start_row,
                     line_layouts,
                     style,
                     cx,
@@ -5567,6 +5571,7 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         cx: &mut Context<Editor>,
@@ -5674,11 +5679,13 @@ impl Editor {
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let start_column_x =
-                    line_layouts[start_point.row as usize].x_for_index(start_point.column as usize);
-                let target_column_x = line_layouts[target_point.row as usize]
-                    .x_for_index(target_point.column as usize);
-                let cursor_relative_position = target_column_x - start_column_x;
+                let cursor_relative_position = line_layouts
+                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                    .map(|line| {
+                        let start_column_x = line.x_for_index(start_point.column as usize);
+                        let target_column_x = line.x_for_index(target_point.column as usize);
+                        target_column_x - start_column_x
+                    });
 
                 let fade_before = start_point.column > 0;
                 let fade_after = end_point.column < snapshot.line_len(end_point.row);
@@ -5721,15 +5728,17 @@ impl Editor {
                                             ),
                                         )
                                     })
-                                    .child(
-                                        div()
-                                            .w(px(2.))
-                                            .h_full()
-                                            .bg(cursor_color)
-                                            .absolute()
-                                            .top_0()
-                                            .left(cursor_relative_position),
-                                    ),
+                                    .when_some(cursor_relative_position, |parent, position| {
+                                        parent.child(
+                                            div()
+                                                .w(px(2.))
+                                                .h_full()
+                                                .bg(cursor_color)
+                                                .absolute()
+                                                .top_0()
+                                                .left(position),
+                                        )
+                                    }),
                             )
                         }),
                 )
@@ -11306,18 +11315,21 @@ impl Editor {
     }
 
     fn cancel_language_server_work(
-        &mut self,
+        workspace: &mut Workspace,
         _: &actions::CancelLanguageServerWork,
         _: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Workspace>,
     ) {
-        if let Some(project) = self.project.clone() {
-            self.buffer.update(cx, |multi_buffer, cx| {
-                project.update(cx, |project, cx| {
-                    project.cancel_language_server_work_for_buffers(multi_buffer.all_buffers(), cx);
-                });
-            })
-        }
+        let project = workspace.project();
+        let buffers = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map_or(HashSet::default(), |editor| {
+                editor.read(cx).buffer.read(cx).all_buffers()
+            });
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work_for_buffers(buffers, cx);
+        });
     }
 
     fn show_character_palette(

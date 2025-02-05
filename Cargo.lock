@@ -16635,6 +16635,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_llm_client"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54ca07d631d9d758f1820c7a7e7854ca00619b9783a5b6b3b6057fef06c786cb"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "zed_lua"
 version = "0.1.1"
 dependencies = [
@@ -16873,6 +16882,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]
