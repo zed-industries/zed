@@ -3,7 +3,7 @@
 # The current version of the Windows runner is 10.0.20348 which does not support DevDrive option.
 # Ref: https://learn.microsoft.com/en-us/windows/dev-drive/
 
-$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 30GB |
+$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 40GB |
                     Mount-VHD -Passthru |
                     Initialize-Disk -Passthru |
                     New-Partition -AssignDriveLetter -UseMaximumSize |
