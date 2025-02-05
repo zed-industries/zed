@@ -3946,10 +3946,6 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
     }
 
-    fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-    }
-
     fn do_completion(
         &mut self,
         item_ix: Option<usize>,
@@ -5445,7 +5441,11 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(cx.listener(|this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.toggle_zed_predict_onboarding(window, cx)
+                        this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
+                        window.dispatch_action(
+                            zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                            cx,
+                        );
                     }))
                     .child(
                         h_flex()
@@ -14074,7 +14074,8 @@ impl Editor {
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
 
-        let copilot_enabled = all_language_settings(file, cx).inline_completions.provider
+        let edit_predictions_provider = all_language_settings(file, cx).inline_completions.provider;
+        let copilot_enabled = edit_predictions_provider
             == language::language_settings::InlineCompletionProvider::Copilot;
         let copilot_enabled_for_language = self
             .buffer
@@ -14089,6 +14090,7 @@ impl Editor {
             vim_mode,
             copilot_enabled,
             copilot_enabled_for_language,
+            edit_predictions_provider,
             is_via_ssh = project.is_via_ssh(),
         );
     }
