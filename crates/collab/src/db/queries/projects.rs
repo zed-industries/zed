@@ -79,7 +79,11 @@ impl Database {
                         id: ActiveValue::set(worktree.id as i64),
                         project_id: ActiveValue::set(project.id),
                         abs_path: ActiveValue::set(
-                            worktree.abs_path.clone().unwrap_or_default().to_db_string(),
+                            worktree
+                                .abs_path
+                                .map(|path| path.to_db_string())
+                                .or_else(|| worktree.abs_path_deprecated)
+                                .unwrap_or_default(),
                         ),
                         root_name: ActiveValue::set(worktree.root_name.clone()),
                         visible: ActiveValue::set(worktree.visible),
@@ -187,16 +191,22 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         if !worktrees.is_empty() {
-            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
-                id: ActiveValue::set(worktree.id as i64),
-                project_id: ActiveValue::set(project_id),
-                abs_path: ActiveValue::set(
-                    worktree.abs_path.clone().unwrap_or_default().to_db_string(),
-                ),
-                root_name: ActiveValue::set(worktree.root_name.clone()),
-                visible: ActiveValue::set(worktree.visible),
-                scan_id: ActiveValue::set(0),
-                completed_scan_id: ActiveValue::set(0),
+            worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
+                worktree::ActiveModel {
+                    id: ActiveValue::set(worktree.id as i64),
+                    project_id: ActiveValue::set(project_id),
+                    abs_path: ActiveValue::set(
+                        worktree
+                            .abs_path
+                            .map(|path| path.to_db_string())
+                            .or_else(|| worktree.abs_path_deprecated)
+                            .unwrap_or_default(),
+                    ),
+                    root_name: ActiveValue::set(worktree.root_name.clone()),
+                    visible: ActiveValue::set(worktree.visible),
+                    scan_id: ActiveValue::set(0),
+                    completed_scan_id: ActiveValue::set(0),
+                }
             }))
             .on_conflict(
                 OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
@@ -260,7 +270,11 @@ impl Database {
                     ActiveValue::default()
                 },
                 abs_path: ActiveValue::set(
-                    update.abs_path.clone().unwrap_or_default().to_db_string(),
+                    update
+                        .abs_path
+                        .map(|path| path.to_db_string())
+                        .or_else(|| worktree.abs_path_deprecated)
+                        .unwrap_or_default(),
                 ),
                 ..Default::default()
             })
@@ -276,7 +290,11 @@ impl Database {
                         id: ActiveValue::set(entry.id as i64),
                         is_dir: ActiveValue::set(entry.is_dir),
                         path: ActiveValue::set(
-                            entry.path.clone().unwrap_or_default().to_db_string(),
+                            entry
+                                .path
+                                .map(|path| path.to_db_string())
+                                .or_else(entry.path_deprecated)
+                                .unwrap_or_default(),
                         ),
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
@@ -284,8 +302,8 @@ impl Database {
                         canonical_path: ActiveValue::set(
                             entry
                                 .canonical_path
-                                .as_ref()
-                                .map(|path| path.to_db_string()),
+                                .map(|path| path.to_db_string())
+                                .or_else(|| entry.canonical_path_deprecated),
                         ),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         git_status: ActiveValue::set(None),
@@ -431,10 +449,14 @@ impl Database {
                                 )
                                 .and(worktree_repository_statuses::Column::RepoPath.is_in(
                                     update.updated_repositories.iter().flat_map(|repository| {
-                                        repository
-                                            .removed_statuses
-                                            .iter()
-                                            .map(|status_entry| status_entry.to_db_string())
+                                        if !repository.removed_statuses.is_empty() {
+                                            repository
+                                                .removed_statuses
+                                                .iter()
+                                                .map(|status_entry| status_entry.to_db_string())
+                                        } else {
+                                            repository.removed_statuses_deprecated.iter()
+                                        }
                                     }),
                                 )),
                         )
@@ -505,8 +527,9 @@ impl Database {
                     summary
                         .path
                         .as_ref()
-                        .context("Missing path")?
-                        .to_db_string(),
+                        .map(|path| path.to_db_string())
+                        .or_else(|| summary.path_deprecated.clone())
+                        .context("Missing path")?,
                 ),
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
@@ -607,7 +630,12 @@ impl Database {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(
-                        update.path.as_ref().context("Missing path")?.to_db_string(),
+                        update
+                            .path
+                            .as_ref()
+                            .map(|path| path.to_db_string())
+                            .or_else(|| update.path_deprecated.clone())
+                            .context("Missing path")?,
                     ),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
@@ -628,7 +656,12 @@ impl Database {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(
-                        update.path.as_ref().context("Missing path")?.path.join("/"),
+                        update
+                            .path
+                            .as_ref()
+                            .map(|path| path.to_db_string())
+                            .or_else(|| update.path_deprecated.clone())
+                            .context("Missing path")?,
                     ),
                     ..Default::default()
                 })
