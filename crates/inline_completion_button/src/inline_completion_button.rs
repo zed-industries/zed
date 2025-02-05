@@ -17,8 +17,12 @@ use language::{
     },
     File, Language,
 };
+use regex::Regex;
 use settings::{update_settings_file, Settings, SettingsStore};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
     prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, PopoverMenu,
@@ -71,9 +75,7 @@ impl Render for InlineCompletionButton {
                 };
                 let status = copilot.read(cx).status();
 
-                let enabled = self.editor_enabled.unwrap_or_else(|| {
-                    all_language_settings.inline_completions_enabled(None, None, cx)
-                });
+                let enabled = self.editor_enabled.unwrap_or(false);
 
                 let icon = match status {
                     Status::Error(_) => IconName::CopilotError,
@@ -228,25 +230,35 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                fn icon_button() -> IconButton {
-                    IconButton::new("zed-predict-pending-button", IconName::ZedPredict)
-                        .shape(IconButtonShape::Square)
-                }
+                let enabled = self.editor_enabled.unwrap_or(false);
+
+                let zeta_icon = if enabled {
+                    IconName::ZedPredict
+                } else {
+                    IconName::ZedPredictDisabled
+                };
 
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
 
-                if !current_user_terms_accepted.unwrap_or(false) {
-                    let signed_in = current_user_terms_accepted.is_some();
-                    let tooltip_meta = if signed_in {
-                        "Read Terms of Service"
-                    } else {
-                        "Sign in to use"
-                    };
+                let icon_button = || {
+                    let base = IconButton::new("zed-predict-pending-button", zeta_icon)
+                        .shape(IconButtonShape::Square);
 
-                    return div().child(
-                        icon_button()
-                            .tooltip(move |window, cx| {
+                    match (
+                        current_user_terms_accepted,
+                        self.popover_menu_handle.is_deployed(),
+                        enabled,
+                    ) {
+                        (Some(false) | None, _, _) => {
+                            let signed_in = current_user_terms_accepted.is_some();
+                            let tooltip_meta = if signed_in {
+                                "Read Terms of Service"
+                            } else {
+                                "Sign in to use"
+                            };
+
+                            base.tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
@@ -255,26 +267,36 @@ impl Render for InlineCompletionButton {
                                     cx,
                                 )
                             })
-                            .on_click(cx.listener(move |_, _, window, cx| {
-                                telemetry::event!(
-                                    "Pending ToS Clicked",
-                                    source = "Edit Prediction Status Button"
-                                );
-                                window.dispatch_action(
-                                    zed_actions::OpenZedPredictOnboarding.boxed_clone(),
-                                    cx,
-                                );
-                            })),
-                    );
-                }
+                            .on_click(cx.listener(
+                                move |_, _, window, cx| {
+                                    telemetry::event!(
+                                        "Pending ToS Clicked",
+                                        source = "Edit Prediction Status Button"
+                                    );
+                                    window.dispatch_action(
+                                        zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                        cx,
+                                    );
+                                },
+                            ))
+                        }
+                        (Some(true), true, _) => base,
+                        (Some(true), false, true) => base.tooltip(|window, cx| {
+                            Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                        }),
+                        (Some(true), false, false) => base.tooltip(|window, cx| {
+                            Tooltip::with_meta(
+                                "Edit Prediction",
+                                Some(&ToggleMenu),
+                                "Disabled For This File",
+                                window,
+                                cx,
+                            )
+                        }),
+                    }
+                };
 
                 let this = cx.entity().clone();
-
-                if !self.popover_menu_handle.is_deployed() {
-                    icon_button().tooltip(|window, cx| {
-                        Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                    });
-                }
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
@@ -362,15 +384,10 @@ impl InlineCompletionButton {
         })
     }
 
-    // Predict Edits at Cursor – alt-tab
-    // Automatically Predict:
-    // ✓ PATH
-    // ✓ Rust
-    // ✓ All Files
     pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
-        menu = menu.header("Predict Edits For:");
+        menu = menu.header("Show Predict Edits For");
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
@@ -381,66 +398,39 @@ impl InlineCompletionButton {
             menu = menu.toggleable_entry(
                 language.name(),
                 language_enabled,
-                IconPosition::Start,
+                IconPosition::End,
                 None,
                 move |_, cx| {
-                    toggle_inline_completions_for_language(language.clone(), fs.clone(), cx)
+                    toggle_show_inline_completions_for_language(language.clone(), fs.clone(), cx)
                 },
             );
         }
 
         let settings = AllLanguageSettings::get_global(cx);
-        if let Some(file) = &self.file {
-            let path = file.path().clone();
-            let path_enabled = settings.inline_completions_enabled_for_path(&path);
-
-            menu = menu.toggleable_entry(
-                "This File",
-                path_enabled,
-                IconPosition::Start,
-                None,
-                move |window, cx| {
-                    if let Some(workspace) = window.root().flatten() {
-                        let workspace = workspace.downgrade();
-                        window
-                            .spawn(cx, |cx| {
-                                configure_disabled_globs(
-                                    workspace,
-                                    path_enabled.then_some(path.clone()),
-                                    cx,
-                                )
-                            })
-                            .detach_and_log_err(cx);
-                    }
-                },
-            );
-        }
-
-        let globally_enabled = settings.inline_completions_enabled(None, None, cx);
+        let globally_enabled = settings.show_inline_completions(None, cx);
         menu = menu.toggleable_entry(
             "All Files",
             globally_enabled,
-            IconPosition::Start,
+            IconPosition::End,
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
+        menu = menu.separator().header("Privacy Settings");
 
         if let Some(provider) = &self.inline_completion_provider {
             let data_collection = provider.data_collection_state(cx);
-
             if data_collection.is_supported() {
                 let provider = provider.clone();
                 let enabled = data_collection.is_enabled();
 
-                menu = menu
-                    .separator()
-                    .header("Help Improve The Model")
-                    .header("Valid Only For OSS Projects");
                 menu = menu.item(
                     // TODO: We want to add something later that communicates whether
                     // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
-                        .toggleable(IconPosition::Start, enabled)
+                        .toggleable(IconPosition::End, data_collection.is_enabled())
+                        .documentation_aside(|_| {
+                            Label::new("Zed automatically detects if your project is open-source. This setting is only applicable in such cases.").into_any_element()
+                        })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
 
@@ -455,9 +445,40 @@ impl InlineCompletionButton {
                                     source = "Edit Prediction Status Menu"
                                 );
                             }
-                        }),
-                );
+                        })
+                )
             }
+        }
+
+        menu = menu.item(
+            ContextMenuEntry::new("Exclude Files")
+                .documentation_aside(|_| {
+                    Label::new("This item takes you to the settings where you can specify files that will never be captured by any edit prediction model. You can list both specific file extensions and individual file names.").into_any_element()
+                })
+                .handler(move |window, cx| {
+                    if let Some(workspace) = window.root().flatten() {
+                        let workspace = workspace.downgrade();
+                        window
+                            .spawn(cx, |cx| {
+                                open_disabled_globs_setting_in_editor(
+                                    workspace,
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
+                    }
+                }),
+        );
+
+        if self.file.as_ref().map_or(false, |file| {
+            !all_language_settings(Some(file), cx).inline_completions_enabled_for_path(file.path())
+        }) {
+            menu = menu.item(
+                ContextMenuEntry::new("This file is excluded.")
+                    .disabled(true)
+                    .icon(IconName::ZedPredictDisabled)
+                    .icon_size(IconSize::Small),
+            );
         }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
@@ -546,12 +567,11 @@ impl InlineCompletionButton {
         self.editor_enabled = {
             let file = file.as_ref();
             Some(
-                file.map(|file| !file.is_private()).unwrap_or(true)
-                    && all_language_settings(file, cx).inline_completions_enabled(
-                        language,
-                        file.map(|file| file.path().as_ref()),
-                        cx,
-                    ),
+                file.map(|file| {
+                    all_language_settings(Some(file), cx)
+                        .inline_completions_enabled_for_path(file.path())
+                })
+                .unwrap_or(true),
             )
         };
         self.inline_completion_provider = editor.inline_completion_provider();
@@ -616,9 +636,8 @@ impl SupermavenButtonStatus {
     }
 }
 
-async fn configure_disabled_globs(
+async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
-    path_to_disable: Option<Arc<Path>>,
     mut cx: AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace
@@ -637,34 +656,34 @@ async fn configure_disabled_globs(
             let text = item.buffer().read(cx).snapshot(cx).text();
 
             let settings = cx.global::<SettingsStore>();
-            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                let copilot = file.inline_completions.get_or_insert_with(Default::default);
-                let globs = copilot.disabled_globs.get_or_insert_with(|| {
-                    settings
-                        .get::<AllLanguageSettings>(None)
-                        .inline_completions
-                        .disabled_globs
-                        .iter()
-                        .map(|glob| glob.glob().to_string())
-                        .collect()
-                });
 
-                if let Some(path_to_disable) = &path_to_disable {
-                    globs.push(path_to_disable.to_string_lossy().into_owned());
-                } else {
-                    globs.clear();
-                }
+            // Ensure that we always have "inline_completions { "disabled_globs": [] }"
+            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
+                file.inline_completions
+                    .get_or_insert_with(Default::default)
+                    .disabled_globs
+                    .get_or_insert_with(Vec::new);
             });
 
             if !edits.is_empty() {
-                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_ranges(edits.iter().map(|e| e.0.clone()));
-                });
+                item.edit(edits.iter().cloned(), cx);
+            }
 
-                // When *enabling* a path, don't actually perform an edit, just select the range.
-                if path_to_disable.is_some() {
-                    item.edit(edits.iter().cloned(), cx);
-                }
+            let text = item.buffer().read(cx).snapshot(cx).text();
+
+            static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
+            });
+            // Only capture [...]
+            let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
+                captures
+                    .name("content")
+                    .map(|inner_match| inner_match.start()..inner_match.end())
+            });
+            if let Some(range) = range {
+                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
+                    selections.select_ranges(vec![range]);
+                });
             }
         })?;
 
@@ -672,8 +691,7 @@ async fn configure_disabled_globs(
 }
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
+    let show_inline_completions = all_language_settings(None, cx).show_inline_completions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
     });
@@ -687,9 +705,13 @@ fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: InlineComple
     });
 }
 
-fn toggle_inline_completions_for_language(language: Arc<Language>, fs: Arc<dyn Fs>, cx: &mut App) {
+fn toggle_show_inline_completions_for_language(
+    language: Arc<Language>,
+    fs: Arc<dyn Fs>,
+    cx: &mut App,
+) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
+        all_language_settings(None, cx).show_inline_completions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())

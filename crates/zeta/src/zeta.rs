@@ -25,8 +25,7 @@ use gpui::{
 };
 use http_client::{HttpClient, Method};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
-    OffsetRangeExt, Point, ToOffset, ToPoint,
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, Point, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
@@ -1469,15 +1468,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
-        cx: &App,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
+        _cx: &App,
     ) -> bool {
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        true
     }
 
     fn needs_terms_acceptance(&self, cx: &App) -> bool {
