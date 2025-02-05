@@ -550,7 +550,7 @@ pub mod simple_message_notification {
                             if let Some(icon) = self.primary_icon {
                                 button = button
                                     .icon(icon)
-                                    .icon_color(self.primary_icon_color.unwrap_or(Color::Success))
+                                    .icon_color(self.primary_icon_color.unwrap_or(Color::Muted))
                                     .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::Small);
                             }
@@ -572,7 +572,7 @@ pub mod simple_message_notification {
                                     .icon(icon)
                                     .icon_position(IconPosition::Start)
                                     .icon_size(IconSize::Small)
-                                    .icon_color(self.secondary_icon_color.unwrap_or(Color::Error));
+                                    .icon_color(self.secondary_icon_color.unwrap_or(Color::Muted));
                             }
 
                             button
