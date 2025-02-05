@@ -1,15 +1,15 @@
 use anyhow::{anyhow, Context as _, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
-use fs::{CreateOptions, Fs};
-use git::{repository::RepoPath, COMMIT_MESSAGE};
+use fs::Fs;
+use git::repository::RepoPath;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::{GitRepo, GitState, RepositoryHandle},
+    git::{GitState, Repository},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -635,7 +635,11 @@ impl HeadlessProject {
             .map(RepoPath::new)
             .collect();
 
-        repository_handle.stage_entries(entries).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.stage_entries(entries)
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -657,7 +661,11 @@ impl HeadlessProject {
             .map(RepoPath::new)
             .collect();
 
-        repository_handle.unstage_entries(entries).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.unstage_entries(entries)
+            })?
+            .await??;
 
         Ok(proto::Ack {})
     }
@@ -672,10 +680,15 @@ impl HeadlessProject {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
+        let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
 
-        repository_handle.commit(name.zip(email)).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.commit(message, name.zip(email))
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -686,55 +699,11 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
+        let repository =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-        let git_repository = match &repository_handle.git_repo {
-            GitRepo::Local(git_repository) => git_repository.clone(),
-            GitRepo::Remote { .. } => {
-                anyhow::bail!("Cannot handle open commit message buffer for remote git repo")
-            }
-        };
-        let commit_message_file = git_repository.dot_git_dir().join(*COMMIT_MESSAGE);
-        let fs = this.update(&mut cx, |headless_project, _| headless_project.fs.clone())?;
-        fs.create_file(
-            &commit_message_file,
-            CreateOptions {
-                overwrite: false,
-                ignore_if_exists: true,
-            },
-        )
-        .await
-        .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
-
-        let (worktree, relative_path) = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .worktree_store
-                    .update(cx, |worktree_store, cx| {
-                        worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
-                    })
-            })?
-            .await
-            .with_context(|| {
-                format!("deriving worktree for commit message file {commit_message_file:?}")
-            })?;
-
-        let buffer = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(
-                            ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: Arc::from(relative_path),
-                            },
-                            cx,
-                        )
-                    })
-            })
-            .with_context(|| {
-                format!("opening buffer for commit message file {commit_message_file:?}")
+        let buffer = repository
+            .update(&mut cx, |repository, cx| {
+                repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })?
             .await?;
 
@@ -759,7 +728,7 @@ impl HeadlessProject {
         worktree_id: WorktreeId,
         work_directory_id: ProjectEntryId,
         cx: &mut AsyncApp,
-    ) -> Result<RepositoryHandle> {
+    ) -> Result<Entity<Repository>> {
         this.update(cx, |project, cx| {
             let repository_handle = project
                 .git_state
@@ -767,8 +736,11 @@ impl HeadlessProject {
                 .all_repositories()
                 .into_iter()
                 .find(|repository_handle| {
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
+                    repository_handle.read(cx).worktree_id == worktree_id
+                        && repository_handle
+                            .read(cx)
+                            .repository_entry
+                            .work_directory_id()
                             == work_directory_id
                 })
                 .context("missing repository handle")?;
