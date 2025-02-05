@@ -5288,8 +5288,8 @@ impl BackgroundScanner {
                     return;
                 };
 
-                let merge_head_shas = job.local_repository.repo().merge_head_shas();
-                if merge_head_shas != job.local_repository.current_merge_head_shas {
+                let merge_head_shas = local_repository.repo().merge_head_shas();
+                if merge_head_shas != local_repository.current_merge_head_shas {
                     mem::take(&mut repository.current_merge_conflicts);
                 }
 
@@ -5317,7 +5317,7 @@ impl BackgroundScanner {
                     .repositories
                     .insert_or_replace(repository, &());
                 state.snapshot.git_repositories.update(
-                    &job.local_repository.work_directory_id,
+                    &local_repository.work_directory_id,
                     |entry| {
                         entry.current_merge_head_shas = merge_head_shas;
                     },
