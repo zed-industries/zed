@@ -1187,7 +1187,7 @@ impl Worktree {
                         .path
                         .map(Into::<PathBuf>::into)
                         .or_else(|| request.path_deprecated.map(PathBuf::from))
-                        .unwrap_or(PathBuf::new().into()),
+                        .unwrap_or(PathBuf::new()),
                     request.is_directory,
                     cx,
                 ),
@@ -1268,7 +1268,7 @@ impl Worktree {
                         .new_path
                         .map(Into::<PathBuf>::into)
                         .or_else(|| request.new_path_deprecated.map(PathBuf::from))
-                        .unwrap_or(PathBuf::new().into()),
+                        .unwrap_or(PathBuf::new()),
                     cx,
                 ),
             )
@@ -1299,7 +1299,7 @@ impl Worktree {
                         .new_path
                         .map(Into::<PathBuf>::into)
                         .or_else(|| request.new_path_deprecated.map(PathBuf::from))
-                        .unwrap_or(PathBuf::new().into()),
+                        .unwrap_or(PathBuf::new()),
                     cx,
                 ),
             )
