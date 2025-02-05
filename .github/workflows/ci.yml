@@ -277,6 +277,10 @@ jobs:
         with:
           node-version: "18"
 
+      - name: Debug print
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: ./script/clear-target-dir-if-larger-than.ps1 100
+
       - name: Run tests
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo nextest run --workspace --no-fail-fast
