@@ -268,18 +268,10 @@ jobs:
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
-      - name: Install NexTest
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: cargo install cargo-nextest --locked
-
-      - name: Install Node
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
-        with:
-          node-version: "18"
-
       - name: Run tests
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: cargo nextest run --workspace --no-fail-fast
+        with:
+          working-directory: ${{ env.ZED_WORKSPACE }}
+        uses: ./.github/actions/run_tests
 
       - name: Build Zed
         working-directory: ${{ env.ZED_WORKSPACE }}
