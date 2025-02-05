@@ -8890,6 +8890,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "ui",
+ "util",
+]
+
+[[package]]
 name = "parity-tokio-ipc"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
