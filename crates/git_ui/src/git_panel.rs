@@ -4,7 +4,7 @@ use crate::ProjectDiff;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
@@ -12,13 +12,12 @@ use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
 use git::repository::RepoPath;
 use git::status::FileStatus;
-use git::{CommitAllChanges, CommitChanges, ToggleStaged, COMMIT_MESSAGE};
+use git::{CommitAllChanges, CommitChanges, ToggleStaged};
 use gpui::*;
-use language::{Buffer, BufferId};
+use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::git::{GitEvent, GitRepo, RepositoryHandle};
-use project::{CreateOptions, Fs, Project, ProjectPath};
-use rpc::proto;
+use project::git::{GitEvent, Repository};
+use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
@@ -32,7 +31,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    Item, Workspace,
+    Workspace,
 };
 
 actions!(
@@ -144,7 +143,7 @@ pub struct GitPanel {
     pending_serialization: Task<Option<()>>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    active_repository: Option<RepositoryHandle>,
+    active_repository: Option<Entity<Repository>>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
@@ -160,63 +159,6 @@ pub struct GitPanel {
     commit_pending: bool,
     can_commit: bool,
     can_commit_all: bool,
-}
-
-fn commit_message_buffer(
-    project: &Entity<Project>,
-    active_repository: &RepositoryHandle,
-    cx: &mut App,
-) -> Task<Result<Entity<Buffer>>> {
-    match &active_repository.git_repo {
-        GitRepo::Local(repo) => {
-            let commit_message_file = repo.dot_git_dir().join(*COMMIT_MESSAGE);
-            let fs = project.read(cx).fs().clone();
-            let project = project.downgrade();
-            cx.spawn(|mut cx| async move {
-                fs.create_file(
-                    &commit_message_file,
-                    CreateOptions {
-                        overwrite: false,
-                        ignore_if_exists: true,
-                    },
-                )
-                .await
-                .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
-                let buffer = project
-                    .update(&mut cx, |project, cx| {
-                        project.open_local_buffer(&commit_message_file, cx)
-                    })?
-                    .await
-                    .with_context(|| {
-                        format!("opening commit message buffer at {commit_message_file:?}",)
-                    })?;
-                Ok(buffer)
-            })
-        }
-        GitRepo::Remote {
-            project_id,
-            client,
-            worktree_id,
-            work_directory_id,
-        } => {
-            let request = client.request(proto::OpenCommitMessageBuffer {
-                project_id: project_id.0,
-                worktree_id: worktree_id.to_proto(),
-                work_directory_id: work_directory_id.to_proto(),
-            });
-            let project = project.downgrade();
-            cx.spawn(|mut cx| async move {
-                let response = request.await.context("requesting to open commit buffer")?;
-                let buffer_id = BufferId::new(response.buffer_id)?;
-                let buffer = project
-                    .update(&mut cx, {
-                        |project, cx| project.wait_for_remote_buffer(buffer_id, cx)
-                    })?
-                    .await?;
-                Ok(buffer)
-            })
-        }
-    }
 }
 
 fn commit_message_editor(
@@ -360,7 +302,7 @@ impl GitPanel {
         let Some(git_repo) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(repo_path) = git_repo.project_path_to_repo_path(&path) else {
+        let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path) else {
             return;
         };
         let Some(ix) = self.entries_by_path.get(&repo_path) else {
@@ -578,7 +520,7 @@ impl GitPanel {
             .active_repository
             .as_ref()
             .map_or(false, |active_repository| {
-                active_repository.entry_count() > 0
+                active_repository.read(cx).entry_count() > 0
             });
         if have_entries && self.selected_entry.is_none() {
             self.selected_entry = Some(0);
@@ -655,11 +597,17 @@ impl GitPanel {
             let repo_paths = repo_paths.clone();
             let active_repository = active_repository.clone();
             |this, mut cx| async move {
-                let result = if stage {
-                    active_repository.stage_entries(repo_paths.clone()).await
-                } else {
-                    active_repository.unstage_entries(repo_paths.clone()).await
-                };
+                let result = cx
+                    .update(|cx| {
+                        if stage {
+                            active_repository.read(cx).stage_entries(repo_paths.clone())
+                        } else {
+                            active_repository
+                                .read(cx)
+                                .unstage_entries(repo_paths.clone())
+                        }
+                    })?
+                    .await?;
 
                 this.update(&mut cx, |this, cx| {
                     for pending in this.pending.iter_mut() {
@@ -697,7 +645,9 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let Some(path) = active_repository.repo_path_to_project_path(&status_entry.repo_path)
+        let Some(path) = active_repository
+            .read(cx)
+            .repo_path_to_project_path(&status_entry.repo_path)
         else {
             return;
         };
@@ -725,18 +675,18 @@ impl GitPanel {
         if !self.can_commit {
             return;
         }
-        if self.commit_editor.read(cx).is_empty(cx) {
+        let message = self.commit_editor.read(cx).text(cx);
+        if message.trim().is_empty() {
             return;
         }
         self.commit_pending = true;
-        let save_task = self.commit_editor.update(cx, |editor, cx| {
-            editor.save(false, self.project.clone(), window, cx)
-        });
         let commit_editor = self.commit_editor.clone();
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
+            let commit = active_repository.update(&mut cx, |active_repository, _| {
+                active_repository.commit(SharedString::from(message), name_and_email)
+            })?;
             let result = maybe!(async {
-                save_task.await?;
-                active_repository.commit(name_and_email).await?;
+                commit.await??;
                 cx.update(|window, cx| {
                     commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
                 })
@@ -768,14 +718,12 @@ impl GitPanel {
         if !self.can_commit_all {
             return;
         }
-        if self.commit_editor.read(cx).is_empty(cx) {
+
+        let message = self.commit_editor.read(cx).text(cx);
+        if message.trim().is_empty() {
             return;
         }
         self.commit_pending = true;
-        let save_task = self.commit_editor.update(cx, |editor, cx| {
-            editor.save(false, self.project.clone(), window, cx)
-        });
-
         let commit_editor = self.commit_editor.clone();
         let tracked_files = self
             .entries
@@ -790,9 +738,15 @@ impl GitPanel {
 
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
             let result = maybe!(async {
-                save_task.await?;
-                active_repository.stage_entries(tracked_files).await?;
-                active_repository.commit(name_and_email).await
+                cx.update(|_, cx| active_repository.read(cx).stage_entries(tracked_files))?
+                    .await??;
+                cx.update(|_, cx| {
+                    active_repository
+                        .read(cx)
+                        .commit(SharedString::from(message), name_and_email)
+                })?
+                .await??;
+                Ok(())
             })
             .await;
             cx.update(|window, cx| match result {
@@ -886,45 +840,54 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let project = self.project.clone();
         let handle = cx.entity().downgrade();
+        self.reopen_commit_buffer(window, cx);
         self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
-                let Ok(commit_message_buffer) = git_panel.update_in(&mut cx, |git_panel, _, cx| {
-                    git_panel
-                        .active_repository
-                        .as_ref()
-                        .map(|active_repository| {
-                            commit_message_buffer(&project, active_repository, cx)
-                        })
-                }) else {
-                    return;
-                };
-                let commit_message_buffer = match commit_message_buffer {
-                    Some(commit_message_buffer) => match commit_message_buffer
-                        .await
-                        .context("opening commit buffer on repo update")
-                        .log_err()
-                    {
-                        Some(buffer) => Some(buffer),
-                        None => return,
-                    },
-                    None => None,
-                };
-
                 git_panel
-                    .update_in(&mut cx, |git_panel, window, cx| {
-                        git_panel.update_visible_entries(cx);
+                    .update_in(&mut cx, |git_panel, _, cx| {
                         if clear_pending {
                             git_panel.clear_pending();
                         }
-                        git_panel.commit_editor =
-                            cx.new(|cx| commit_message_editor(commit_message_buffer, window, cx));
+                        git_panel.update_visible_entries(cx);
                     })
                     .ok();
             }
         });
+    }
+
+    fn reopen_commit_buffer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repo) = self.active_repository.as_ref() else {
+            return;
+        };
+        let load_buffer = active_repo.update(cx, |active_repo, cx| {
+            let project = self.project.read(cx);
+            active_repo.open_commit_buffer(
+                Some(project.languages().clone()),
+                project.buffer_store().clone(),
+                cx,
+            )
+        });
+
+        cx.spawn_in(window, |git_panel, mut cx| async move {
+            let buffer = load_buffer.await?;
+            git_panel.update_in(&mut cx, |git_panel, window, cx| {
+                if git_panel
+                    .commit_editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .as_ref()
+                    != Some(&buffer)
+                {
+                    git_panel.commit_editor =
+                        cx.new(|cx| commit_message_editor(Some(buffer), window, cx));
+                }
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     fn clear_pending(&mut self) {
@@ -944,6 +907,7 @@ impl GitPanel {
         };
 
         // First pass - collect all paths
+        let repo = repo.read(cx);
         let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path));
 
         let mut has_changed_checked_boxes = false;
@@ -1117,7 +1081,7 @@ impl GitPanel {
         let entry_count = self
             .active_repository
             .as_ref()
-            .map_or(0, RepositoryHandle::entry_count);
+            .map_or(0, |repo| repo.read(cx).entry_count());
 
         let changes_string = match entry_count {
             0 => "No changes".to_string(),
@@ -1151,7 +1115,7 @@ impl GitPanel {
         let active_repository = self.project.read(cx).active_repository(cx);
         let repository_display_name = active_repository
             .as_ref()
-            .map(|repo| repo.display_name(self.project.read(cx), cx))
+            .map(|repo| repo.read(cx).display_name(self.project.read(cx), cx))
             .unwrap_or_default();
 
         let entry_count = self.entries.len();
@@ -1619,7 +1583,7 @@ impl Render for GitPanel {
             .active_repository
             .as_ref()
             .map_or(false, |active_repository| {
-                active_repository.entry_count() > 0
+                active_repository.read(cx).entry_count() > 0
             });
         let room = self
             .workspace

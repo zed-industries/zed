@@ -5254,7 +5254,6 @@ dependencies = [
  "picker",
  "postage",
  "project",
- "rpc",
  "schemars",
  "serde",
  "serde_derive",
@@ -7008,6 +7007,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-diff",
+ "tree-sitter-gitcommit",
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
@@ -13939,6 +13939,15 @@ name = "tree-sitter-embedded-template"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790063ef14e5b67556abc0b3be0ed863fb41d65ee791cf8c0b20eb42a1fa46af"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-gitcommit"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/tree-sitter-git-commit?rev=88309716a69dd13ab83443721ba6e0b491d37ee9#88309716a69dd13ab83443721ba6e0b491d37ee9"
 dependencies = [
  "cc",
  "tree-sitter-language",
