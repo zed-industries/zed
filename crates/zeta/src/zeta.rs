@@ -57,36 +57,13 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
-
-/// Typical number of string bytes per token for the purposes of limiting model input. This is
-/// intentionally low to err on the side of underestimating limits.
-const BYTES_PER_TOKEN_GUESS: usize = 3;
-
-/// Input token limit, used to inform the size of the input. A copy of this constant is also in
-/// `crates/collab/src/llm.rs`.
-const MAX_INPUT_TOKENS: usize = 2048;
-
 const MAX_CONTEXT_TOKENS: usize = 64;
 const MAX_OUTPUT_TOKENS: usize = 256;
+const MAX_EVENT_TOKENS: usize = 512;
+const MAX_OUTLINE_TOKENS: usize = 512;
 
-/// Total bytes limit for editable region of buffer excerpt.
-///
-/// The number of output tokens is relevant to the size of the input excerpt because the model is
-/// tasked with outputting a modified excerpt. `2/3` is chosen so that there are some output tokens
-/// remaining for the model to specify insertions.
-const BUFFER_EXCERPT_BYTE_LIMIT: usize = (MAX_INPUT_TOKENS * 2 / 3) * BYTES_PER_TOKEN_GUESS;
-
-/// Note that this is not the limit for the overall prompt, just for the inputs to the template
-/// instantiated in `crates/collab/src/llm.rs`.
-const TOTAL_BYTE_LIMIT: usize = BUFFER_EXCERPT_BYTE_LIMIT * 2;
-
-/// Maximum number of events to include in the prompt.
+/// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 8;
-
-/// Maximum number of string bytes in a single event. Arbitrarily choosing this to be 4x the size of
-/// equally splitting up the the remaining bytes after the largest possible buffer excerpt.
-const PER_EVENT_BYTE_LIMIT: usize =
-    (TOTAL_BYTE_LIMIT - BUFFER_EXCERPT_BYTE_LIMIT) / MAX_EVENT_COUNT * 4;
 
 actions!(edit_prediction, [ClearHistory]);
 
@@ -405,13 +382,8 @@ impl Zeta {
                                 MAX_CONTEXT_TOKENS,
                             );
 
-                            let bytes_remaining =
-                                TOTAL_BYTE_LIMIT.saturating_sub(input_excerpt.prompt.len());
-                            let input_events = prompt_for_events(events.iter(), bytes_remaining);
-
-                            // Note that input_outline is not currently used in prompt generation and so
-                            // is not counted towards TOTAL_BYTE_LIMIT.
-                            let input_outline = prompt_for_outline(&snapshot);
+                            let input_events = prompt_for_events(&events, MAX_EVENT_TOKENS);
+                            let input_outline = prompt_for_outline(&snapshot, MAX_OUTLINE_TOKENS);
 
                             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
                             anyhow::Ok((
@@ -988,7 +960,7 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
         .sum()
 }
 
-fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
+fn prompt_for_outline(snapshot: &BufferSnapshot, mut bytes_remaining: usize) -> String {
     let mut input_outline = String::new();
 
     writeln!(
@@ -1003,11 +975,14 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     .unwrap();
 
     if let Some(outline) = snapshot.outline(None) {
-        let guess_size = outline.items.len() * 15;
-        input_outline.reserve(guess_size);
-        for item in outline.items.iter() {
+        for item in &outline.items {
+            if bytes_remaining == 0 {
+                writeln!(input_outline, "...outline truncated...").unwrap();
+                break;
+            }
             let spacing = " ".repeat(item.depth);
             writeln!(input_outline, "{}{}", spacing, item.text).unwrap();
+            bytes_remaining = bytes_remaining.saturating_sub(spacing.len() + item.text.len());
         }
     }
 
@@ -1016,26 +991,20 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     input_outline
 }
 
-fn prompt_for_events<'a>(
-    events: impl Iterator<Item = &'a Event>,
-    mut bytes_remaining: usize,
-) -> String {
+fn prompt_for_events<'a>(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
     let mut result = String::new();
-    for event in events {
-        if !result.is_empty() {
-            result.push('\n');
-            result.push('\n');
-        }
+    for event in events.iter().rev() {
         let event_string = event.to_prompt();
-        let len = event_string.len();
-        if len > PER_EVENT_BYTE_LIMIT {
-            continue;
+        let event_tokens = tokens_for_bytes(event_string.len());
+
+        if !result.is_empty() {
+            result.insert_str(0, "\n\n");
         }
-        if len > bytes_remaining {
+        result.push_str(&event_string);
+        remaining_tokens = remaining_tokens.saturating_sub(event_tokens);
+        if remaining_tokens == 0 {
             break;
         }
-        bytes_remaining -= len;
-        result.push_str(&event_string);
     }
     result
 }
@@ -1517,6 +1486,13 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             edit_preview: Some(completion.edit_preview.clone()),
         })
     }
+}
+
+fn tokens_for_bytes(bytes: usize) -> usize {
+    /// Typical number of string bytes per token for the purposes of limiting model input. This is
+    /// intentionally low to err on the side of underestimating limits.
+    const BYTES_PER_TOKEN_GUESS: usize = 3;
+    bytes / BYTES_PER_TOKEN_GUESS
 }
 
 #[cfg(test)]

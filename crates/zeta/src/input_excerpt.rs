@@ -1,5 +1,5 @@
 use crate::{
-    BYTES_PER_TOKEN_GUESS, CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
+    tokens_for_bytes, CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER,
     START_OF_FILE_MARKER,
 };
 use language::{BufferSnapshot, Point};
@@ -122,10 +122,6 @@ fn expand_range(
         }
     }
     expanded_range
-}
-
-fn tokens_for_bytes(bytes: usize) -> usize {
-    bytes / BYTES_PER_TOKEN_GUESS
 }
 
 #[cfg(test)]
