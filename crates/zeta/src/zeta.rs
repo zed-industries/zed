@@ -56,9 +56,8 @@ const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
-// TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
 const MAX_CONTEXT_TOKENS: usize = 100;
-const MAX_OUTPUT_TOKENS: usize = 300;
+const MAX_REWRITE_TOKENS: usize = 300;
 const MAX_EVENT_TOKENS: usize = 400;
 const MAX_OUTLINE_TOKENS: usize = 400;
 
@@ -378,7 +377,7 @@ impl Zeta {
                                 cursor_position,
                                 &path,
                                 &snapshot,
-                                MAX_OUTPUT_TOKENS,
+                                MAX_REWRITE_TOKENS,
                                 MAX_CONTEXT_TOKENS,
                             );
 
