@@ -272,15 +272,17 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{path::Path, sync::Arc};
+    use util::path;
 
     #[gpui::test]
     async fn test_project_symbols(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/dir", json!({ "test.rs": "" })).await;
+        fs.insert_tree(path!("/dir"), json!({ "test.rs": "" }))
+            .await;
 
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(Arc::new(Language::new(
@@ -299,7 +301,7 @@ mod tests {
 
         let _buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/dir/test.rs", cx)
+                project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
             })
             .await
             .unwrap();
@@ -307,9 +309,9 @@ mod tests {
         // Set up fake language server to return fuzzy matches against
         // a fixed set of symbol names.
         let fake_symbols = [
-            symbol("one", "/external"),
-            symbol("ton", "/dir/test.rs"),
-            symbol("uno", "/dir/test.rs"),
+            symbol("one", path!("/external")),
+            symbol("ton", path!("/dir/test.rs")),
+            symbol("uno", path!("/dir/test.rs")),
         ];
         let fake_server = fake_servers.next().await.unwrap();
         fake_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(

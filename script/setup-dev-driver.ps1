@@ -3,7 +3,8 @@
 # The current version of the Windows runner is 10.0.20348 which does not support DevDrive option.
 # Ref: https://learn.microsoft.com/en-us/windows/dev-drive/
 
-$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 30GB |
+# Currently, total CI requires almost 45GB of space, here we are creating a 60GB drive.
+$Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 60GB |
                     Mount-VHD -Passthru |
                     Initialize-Disk -Passthru |
                     New-Partition -AssignDriveLetter -UseMaximumSize |
