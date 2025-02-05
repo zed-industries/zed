@@ -1,15 +1,15 @@
 use anyhow::{anyhow, Context as _, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
-use fs::{CreateOptions, Fs};
-use git::{repository::RepoPath, COMMIT_MESSAGE};
+use fs::Fs;
+use git::repository::RepoPath;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    git::{GitRepo, GitState, Repository},
+    git::{GitState, Repository},
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,

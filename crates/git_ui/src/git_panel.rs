@@ -31,7 +31,7 @@ use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
-    Item, Workspace,
+    Workspace,
 };
 
 actions!(
@@ -681,16 +681,12 @@ impl GitPanel {
             return;
         }
         self.commit_pending = true;
-        let save_task = self.commit_editor.update(cx, |editor, cx| {
-            editor.save(false, self.project.clone(), window, cx)
-        });
         let commit_editor = self.commit_editor.clone();
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
             let commit = active_repository.update(&mut cx, |active_repository, _| {
                 active_repository.commit(SharedString::from(message), name_and_email)
             })?;
             let result = maybe!(async {
-                save_task.await?;
                 commit.await??;
                 cx.update(|window, cx| {
                     commit_editor.update(cx, |editor, cx| editor.clear(window, cx));
@@ -729,10 +725,6 @@ impl GitPanel {
             return;
         }
         self.commit_pending = true;
-        let save_task = self.commit_editor.update(cx, |editor, cx| {
-            editor.save(false, self.project.clone(), window, cx)
-        });
-
         let commit_editor = self.commit_editor.clone();
         let tracked_files = self
             .entries
@@ -747,7 +739,6 @@ impl GitPanel {
 
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
             let result = maybe!(async {
-                save_task.await?;
                 cx.update(|_, cx| active_repository.read(cx).stage_entries(tracked_files))?
                     .await??;
                 cx.update(|_, cx| {

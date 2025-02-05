@@ -1,7 +1,6 @@
 use anyhow::Context as _;
 use gpui::{App, UpdateGlobal};
 use json::json_task_context;
-use language::language_settings::SoftWrap;
 pub use language::*;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -9,10 +8,7 @@ use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
-use std::{
-    str,
-    sync::{Arc, LazyLock},
-};
+use std::{str, sync::Arc};
 use typescript::typescript_task_context;
 use util::{asset_str, ResultExt};
 
@@ -36,21 +32,23 @@ mod yaml;
 struct LanguageDir;
 
 /// A shared grammar for plain text, exposed for reuse by downstream crates.
-pub static LANGUAGE_GIT_COMMIT: LazyLock<Arc<Language>> = LazyLock::new(|| {
-    Arc::new(Language::new(
-        LanguageConfig {
-            name: "Git Commit".into(),
-            soft_wrap: Some(SoftWrap::EditorWidth),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
-                first_line_pattern: None,
+#[cfg(feature = "tree-sitter-gitcommit")]
+pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
+    std::sync::LazyLock::new(|| {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Git Commit".into(),
+                soft_wrap: Some(language::language_settings::SoftWrap::EditorWidth),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
+                    first_line_pattern: None,
+                },
+                line_comments: vec![Arc::from("#")],
+                ..Default::default()
             },
-            line_comments: vec![Arc::from("#")],
-            ..Default::default()
-        },
-        Some(tree_sitter_gitcommit::LANGUAGE.into()),
-    ))
-});
+            Some(tree_sitter_gitcommit::LANGUAGE.into()),
+        ))
+    });
 
 pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
