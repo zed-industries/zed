@@ -4490,6 +4490,7 @@ dependencies = [
  "db",
  "editor",
  "extension_host",
+ "feature_flags",
  "fs",
  "fuzzy",
  "gpui",
