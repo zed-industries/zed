@@ -750,7 +750,7 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("project diagnostics")
+        Some("Project Diagnostics Opened")
     }
 
     fn for_each_project_item(

@@ -173,7 +173,7 @@ pub fn init(cx: &mut App) {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
             let Some(vim) = vim else { return };
-            vim.model.update(cx, |_, cx| {
+            vim.entity.update(cx, |_, cx| {
                 cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
             })
         });
@@ -183,12 +183,12 @@ pub fn init(cx: &mut App) {
 
 #[derive(Clone)]
 pub(crate) struct VimAddon {
-    pub(crate) model: Entity<Vim>,
+    pub(crate) entity: Entity<Vim>,
 }
 
 impl editor::Addon for VimAddon {
     fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
-        self.model.read(cx).extend_key_context(key_context, cx)
+        self.entity.read(cx).extend_key_context(key_context, cx)
     }
 
     fn to_any(&self) -> &dyn std::any::Any {
@@ -298,7 +298,7 @@ impl Vim {
                 if toggle {
                     let is_relative = editor
                         .addon::<VimAddon>()
-                        .map(|vim| vim.model.read(cx).mode != Mode::Insert);
+                        .map(|vim| vim.entity.read(cx).mode != Mode::Insert);
                     editor.set_relative_line_number(is_relative, cx)
                 } else {
                     editor.set_relative_line_number(None, cx)
@@ -324,7 +324,9 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
 
-        editor.register_addon(VimAddon { model: vim.clone() });
+        editor.register_addon(VimAddon {
+            entity: vim.clone(),
+        });
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, action: &SwitchMode, window, cx| {

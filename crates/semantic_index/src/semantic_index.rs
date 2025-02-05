@@ -279,6 +279,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::channel;
     use std::{future, path::Path, sync::Arc};
+    use util::separator;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -421,7 +422,10 @@ mod tests {
         // Find result that is greater than 0.5
         let search_result = results.iter().find(|result| result.score > 0.9).unwrap();
 
-        assert_eq!(search_result.path.to_string_lossy(), "fixture/needle.md");
+        assert_eq!(
+            search_result.path.to_string_lossy(),
+            separator!("fixture/needle.md")
+        );
 
         let content = cx
             .update(|cx| {

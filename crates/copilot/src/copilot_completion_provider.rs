@@ -290,7 +290,10 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::future::Future;
-    use util::test::{marked_text_ranges_by, TextRangeMarker};
+    use util::{
+        path,
+        test::{marked_text_ranges_by, TextRangeMarker},
+    };
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -341,7 +344,6 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion());
             // Since we have both, the copilot suggestion is not shown inline
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
@@ -394,12 +396,11 @@ mod tests {
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
         });
 
-        // Ensure existing inline completion is interpolated when inserting again.
+        // Ensure existing edit prediction is interpolated when inserting again.
         cx.simulate_keystroke("c");
         executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
@@ -419,7 +420,6 @@ mod tests {
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
@@ -934,7 +934,6 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion(),);
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
@@ -953,24 +952,24 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 ".env": "SECRET=something\n",
                 "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
-        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/.env", cx)
+                project.open_local_buffer(path!("/test/.env"), cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/README.md", cx)
+                project.open_local_buffer(path!("/test/README.md"), cx)
             })
             .await
             .unwrap();

@@ -995,7 +995,7 @@ impl Item for ProjectDiffEditor {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("project diagnostics")
+        Some("Project Diagnostics Opened")
     }
 
     fn for_each_project_item(
@@ -1224,7 +1224,7 @@ mod tests {
         file_a_editor.update_in(cx, |file_a_editor, _window, cx| {
             let change_set = cx.new(|cx| {
                 BufferChangeSet::new_with_base_text(
-                    old_text.clone(),
+                    &old_text,
                     &file_a_editor.buffer().read(cx).as_singleton().unwrap(),
                     cx,
                 )
@@ -1234,7 +1234,7 @@ mod tests {
             });
             project.update(cx, |project, cx| {
                 project.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.set_change_set(
+                    buffer_store.set_unstaged_change_set(
                         file_a_editor
                             .buffer()
                             .read(cx)

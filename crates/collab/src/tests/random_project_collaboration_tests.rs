@@ -953,8 +953,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let dot_git_dir = repo_path.join(".git");
                     let contents = contents
-                        .iter()
-                        .map(|(path, contents)| (path.as_path(), contents.clone()))
+                        .into_iter()
+                        .map(|(path, contents)| (path.into(), contents))
                         .collect::<Vec<_>>();
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
                         client.fs().create_dir(&dot_git_dir).await?;
@@ -1339,7 +1339,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .get_unstaged_changes(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
                             .base_text_string()
@@ -1348,7 +1348,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         project
                             .buffer_store()
                             .read(cx)
-                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .get_unstaged_changes(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
                             .read(cx)
                             .base_text_string()

@@ -155,9 +155,11 @@ impl Element for AnyView {
             let layout_id = window.request_layout(root_style, None, cx);
             (layout_id, None)
         } else {
-            let mut element = (self.render)(self, window, cx);
-            let layout_id = element.request_layout(window, cx);
-            (layout_id, Some(element))
+            window.with_rendered_view(self.entity_id(), |window| {
+                let mut element = (self.render)(self, window, cx);
+                let layout_id = element.request_layout(window, cx);
+                (layout_id, Some(element))
+            })
         }
     }
 
@@ -197,12 +199,16 @@ impl Element for AnyView {
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     let prepaint_start = window.prepaint_index();
-                    let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
-                        let mut element = (self.render)(self, window, cx);
-                        element.layout_as_root(bounds.size.into(), window, cx);
-                        element.prepaint_at(bounds.origin, window, cx);
-                        element
-                    });
+                    let (mut element, accessed_entities) =
+                        window.with_rendered_view(self.entity_id(), |window| {
+                            cx.detect_accessed_entities(|cx| {
+                                let mut element = (self.render)(self, window, cx);
+                                element.layout_as_root(bounds.size.into(), window, cx);
+                                element.prepaint_at(bounds.origin, window, cx);
+                                element
+                            })
+                        });
+
                     let prepaint_end = window.prepaint_index();
                     window.refreshing = refreshing;
 
@@ -223,7 +229,10 @@ impl Element for AnyView {
             )
         } else {
             let mut element = element.take().unwrap();
-            element.prepaint(window, cx);
+            window.with_rendered_view(self.entity_id(), |window| {
+                element.prepaint(window, cx);
+            });
+
             Some(element)
         }
     }
@@ -247,7 +256,9 @@ impl Element for AnyView {
 
                     if let Some(element) = element {
                         let refreshing = mem::replace(&mut window.refreshing, true);
-                        element.paint(window, cx);
+                        window.with_rendered_view(self.entity_id(), |window| {
+                            element.paint(window, cx);
+                        });
                         window.refreshing = refreshing;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());

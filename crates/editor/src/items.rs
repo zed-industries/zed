@@ -1717,6 +1717,7 @@ mod tests {
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::path::{Path, PathBuf};
+    use util::path;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
@@ -1771,24 +1772,24 @@ mod tests {
         init_test(cx, |_| {});
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_file("/file.rs", Default::default()).await;
+        fs.insert_file(path!("/file.rs"), Default::default()).await;
 
         // Test case 1: Deserialize with path and contents
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
-                .metadata(Path::new("/file.rs"))
+                .metadata(Path::new(path!("/file.rs")))
                 .await
                 .unwrap()
                 .unwrap()
                 .mtime;
 
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
@@ -1812,7 +1813,7 @@ mod tests {
 
         // Test case 2: Deserialize with only path
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -1820,7 +1821,7 @@ mod tests {
 
             let item_id = 5678 as ItemId;
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: None,
                 language: None,
                 mtime: None,
@@ -1845,7 +1846,7 @@ mod tests {
 
         // Test case 3: Deserialize with no path (untitled buffer, with content and language)
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
             project.update(cx, |project, _| project.languages().add(rust_language()));
 
@@ -1884,7 +1885,7 @@ mod tests {
 
         // Test case 4: Deserialize with path, content, and old mtime
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -1893,7 +1894,7 @@ mod tests {
             let item_id = 9345 as ItemId;
             let old_mtime = MTime::from_seconds_and_nanos(0, 50);
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),

@@ -5,9 +5,9 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Context as _, Result};
-#[cfg(any(test, feature = "test-support"))]
-use git::status::FileStatus;
 use git::GitHostingProviderRegistry;
+#[cfg(any(test, feature = "test-support"))]
+use git::{repository::RepoPath, status::FileStatus};
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
@@ -1270,25 +1270,32 @@ impl FakeFs {
         })
     }
 
-    pub fn set_index_for_repo(&self, dot_git: &Path, head_state: &[(&Path, String)]) {
+    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
-                head_state
+                index_state
                     .iter()
-                    .map(|(path, content)| (path.to_path_buf(), content.clone())),
+                    .map(|(path, content)| (path.clone(), content.clone())),
             );
         });
     }
 
-    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(&Path, git::blame::Blame)>) {
+    pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
+        self.with_git_state(dot_git, true, |state| {
+            state.head_contents.clear();
+            state.head_contents.extend(
+                head_state
+                    .iter()
+                    .map(|(path, content)| (path.clone(), content.clone())),
+            );
+        });
+    }
+
+    pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(RepoPath, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
-            state.blames.extend(
-                blames
-                    .into_iter()
-                    .map(|(path, blame)| (path.to_path_buf(), blame)),
-            );
+            state.blames.extend(blames);
         });
     }
 

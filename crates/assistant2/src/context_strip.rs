@@ -92,8 +92,8 @@ impl ContextStrip {
         let active_item = workspace.read(cx).active_item(cx)?;
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let active_buffer_model = editor.buffer().read(cx).as_singleton()?;
-        let active_buffer = active_buffer_model.read(cx);
+        let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
+        let active_buffer = active_buffer_entity.read(cx);
 
         let path = active_buffer.file()?.path();
 
@@ -115,7 +115,7 @@ impl ContextStrip {
 
         Some(SuggestedContext::File {
             name,
-            buffer: active_buffer_model.downgrade(),
+            buffer: active_buffer_entity.downgrade(),
             icon_path,
         })
     }
@@ -393,9 +393,9 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::remove_focused_context))
             .on_action(cx.listener(Self::accept_suggested_context))
             .on_children_prepainted({
-                let model = cx.entity().downgrade();
+                let entity = cx.entity().downgrade();
                 move |children_bounds, _window, cx| {
-                    model
+                    entity
                         .update(cx, |this, _| {
                             this.children_bounds = Some(children_bounds);
                         })

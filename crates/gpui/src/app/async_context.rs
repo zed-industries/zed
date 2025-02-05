@@ -151,7 +151,7 @@ impl AsyncApp {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        Ok(f(&mut lock))
+        Ok(lock.update(f))
     }
 
     /// Open a window with the given options based on the root view returned by the given function.

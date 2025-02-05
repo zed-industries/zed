@@ -545,7 +545,7 @@ impl InlayMap {
 
     pub fn splice(
         &mut self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
@@ -653,7 +653,7 @@ impl InlayMap {
         }
         log::info!("removing inlays: {:?}", to_remove);
 
-        let (snapshot, edits) = self.splice(to_remove, to_insert);
+        let (snapshot, edits) = self.splice(&to_remove, to_insert);
         (snapshot, edits)
     }
 }
@@ -1171,7 +1171,7 @@ mod tests {
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            Vec::new(),
+            &[],
             vec![Inlay {
                 id: InlayId::Hint(post_inc(&mut next_inlay_id)),
                 position: buffer.read(cx).snapshot(cx).anchor_after(3),
@@ -1247,7 +1247,7 @@ mod tests {
         assert_eq!(inlay_snapshot.text(), "abxyDzefghi");
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            Vec::new(),
+            &[],
             vec![
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),
@@ -1444,7 +1444,11 @@ mod tests {
 
         // The inlays can be manually removed.
         let (inlay_snapshot, _) = inlay_map.splice(
-            inlay_map.inlays.iter().map(|inlay| inlay.id).collect(),
+            &inlay_map
+                .inlays
+                .iter()
+                .map(|inlay| inlay.id)
+                .collect::<Vec<InlayId>>(),
             Vec::new(),
         );
         assert_eq!(inlay_snapshot.text(), "abxJKLyDzefghi");
@@ -1458,7 +1462,7 @@ mod tests {
         let mut next_inlay_id = 0;
 
         let (inlay_snapshot, _) = inlay_map.splice(
-            Vec::new(),
+            &[],
             vec![
                 Inlay {
                     id: InlayId::Hint(post_inc(&mut next_inlay_id)),

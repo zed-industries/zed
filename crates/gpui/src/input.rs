@@ -62,6 +62,14 @@ pub trait EntityInputHandler: 'static + Sized {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>>;
+
+    /// See [`InputHandler::character_index_for_point`] for details
+    fn character_index_for_point(
+        &mut self,
+        point: crate::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize>;
 }
 
 /// The canonical implementation of [`PlatformInputHandler`]. Call [`Window::handle_input`]
@@ -156,6 +164,17 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     ) -> Option<Bounds<Pixels>> {
         self.view.update(cx, |view, cx| {
             view.bounds_for_range(range_utf16, self.element_bounds, window, cx)
+        })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: crate::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<usize> {
+        self.view.update(cx, |view, cx| {
+            view.character_index_for_point(point, window, cx)
         })
     }
 }

@@ -1,12 +1,15 @@
 pub mod editor_lsp_test_context;
 pub mod editor_test_context;
 
+use std::sync::LazyLock;
+
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
 };
 use gpui::{
-    AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels, Window,
+    font, AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
+    Window,
 };
 use project::Project;
 use util::test::{marked_text_offsets, marked_text_ranges};
@@ -17,6 +20,22 @@ fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::init();
     }
+}
+
+pub fn test_font() -> Font {
+    static TEST_FONT: LazyLock<Font> = LazyLock::new(|| {
+        #[cfg(not(target_os = "windows"))]
+        {
+            font("Helvetica")
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            font("Courier New")
+        }
+    });
+
+    TEST_FONT.clone()
 }
 
 // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.

@@ -1,6 +1,6 @@
 use crate::status::FileStatus;
-use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
+use crate::{GitHostingProviderRegistry, COMMIT_MESSAGE};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
@@ -29,9 +29,15 @@ pub struct Branch {
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
-    /// Loads a git repository entry's contents.
+    /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
+    ///
     /// Note that for symlink entries, this will return the contents of the symlink, not the target.
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
+    fn load_index_text(&self, path: &RepoPath) -> Option<String>;
+
+    /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
+    ///
+    /// Note that for symlink entries, this will return the contents of the symlink, not the target.
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
@@ -62,7 +68,7 @@ pub trait GitRepository: Send + Sync {
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
-    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
+    fn commit(&self, name_and_email: Option<(&str, &str)>) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -106,15 +112,15 @@ impl GitRepository for RealGitRepository {
         repo.path().into()
     }
 
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
-        fn logic(repo: &git2::Repository, relative_file_path: &Path) -> Result<Option<String>> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
+        fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
 
             // This check is required because index.get_path() unwraps internally :(
-            check_path_to_repo_path_errors(relative_file_path)?;
+            check_path_to_repo_path_errors(path)?;
 
-            let oid = match index.get_path(relative_file_path, STAGE_NORMAL) {
+            let oid = match index.get_path(path, STAGE_NORMAL) {
                 Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                 _ => return Ok(None),
             };
@@ -123,11 +129,20 @@ impl GitRepository for RealGitRepository {
             Ok(Some(String::from_utf8(content)?))
         }
 
-        match logic(&self.repository.lock(), relative_file_path) {
+        match logic(&self.repository.lock(), path) {
             Ok(value) => return value,
-            Err(err) => log::error!("Error loading head text: {:?}", err),
+            Err(err) => log::error!("Error loading index text: {:?}", err),
         }
         None
+    }
+
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
+        let repo = self.repository.lock();
+        let head = repo.head().ok()?.peel_to_tree().log_err()?;
+        let oid = head.get_path(path).ok()?.id();
+        let content = repo.find_blob(oid).log_err()?.content().to_owned();
+        let content = String::from_utf8(content).log_err()?;
+        Some(content)
     }
 
     fn remote_url(&self, name: &str) -> Option<String> {
@@ -250,13 +265,13 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let cmd = new_std_command(&self.git_binary_path)
+            let status = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .status()?;
-            if !cmd.success() {
-                return Err(anyhow!("Failed to stage paths: {cmd}"));
+            if !status.success() {
+                return Err(anyhow!("Failed to stage paths: {status}"));
             }
         }
         Ok(())
@@ -283,14 +298,22 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(&self, name_and_email: Option<(&str, &str)>) -> Result<()> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        let mut args = vec!["commit", "--quiet", "-m", message];
+        let commit_file = self.dot_git_dir().join(*COMMIT_MESSAGE);
+        let commit_file_path = commit_file.to_string_lossy();
+        let mut args = vec![
+            "commit",
+            "--quiet",
+            "-F",
+            commit_file_path.as_ref(),
+            "--cleanup=strip",
+        ];
         let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
         if let Some(author) = author.as_deref() {
             args.push("--author");
@@ -317,8 +340,9 @@ pub struct FakeGitRepository {
 pub struct FakeGitRepositoryState {
     pub dot_git_dir: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
-    pub index_contents: HashMap<PathBuf, String>,
-    pub blames: HashMap<PathBuf, Blame>,
+    pub head_contents: HashMap<RepoPath, String>,
+    pub index_contents: HashMap<RepoPath, String>,
+    pub blames: HashMap<RepoPath, Blame>,
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
@@ -335,6 +359,7 @@ impl FakeGitRepositoryState {
         FakeGitRepositoryState {
             dot_git_dir,
             event_emitter,
+            head_contents: Default::default(),
             index_contents: Default::default(),
             blames: Default::default(),
             statuses: Default::default(),
@@ -347,9 +372,14 @@ impl FakeGitRepositoryState {
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: &Path) -> Option<String> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
         let state = self.state.lock();
-        state.index_contents.get(path).cloned()
+        state.index_contents.get(path.as_ref()).cloned()
+    }
+
+    fn load_committed_text(&self, path: &RepoPath) -> Option<String> {
+        let state = self.state.lock();
+        state.head_contents.get(path.as_ref()).cloned()
     }
 
     fn remote_url(&self, _name: &str) -> Option<String> {
@@ -450,7 +480,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(&self, _name_and_email: Option<(&str, &str)>) -> Result<()> {
         unimplemented!()
     }
 }
@@ -518,6 +548,12 @@ impl std::fmt::Display for RepoPath {
 impl From<&Path> for RepoPath {
     fn from(value: &Path) -> Self {
         RepoPath::new(value.into())
+    }
+}
+
+impl From<Arc<Path>> for RepoPath {
+    fn from(value: Arc<Path>) -> Self {
+        RepoPath(value)
     }
 }
 

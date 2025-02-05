@@ -87,7 +87,7 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// May correspond to a directory or a single file.
 /// Possible examples:
 /// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
-/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+/// * a directory opened in Zed — may be added as a visible entry to the current worktree
 ///
 /// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
@@ -895,6 +895,30 @@ impl Worktree {
         }
     }
 
+    pub fn load_committed_file(&self, path: &Path, cx: &App) -> Task<Result<Option<String>>> {
+        match self {
+            Worktree::Local(this) => {
+                let path = Arc::from(path);
+                let snapshot = this.snapshot();
+                cx.background_executor().spawn(async move {
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&repo.work_directory_id)
+                            {
+                                return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
+                            }
+                        }
+                    }
+                    Ok(None)
+                })
+            }
+            Worktree::Remote(_) => Task::ready(Err(anyhow!(
+                "remote worktrees can't yet load committed files"
+            ))),
+        }
+    }
+
     pub fn load_binary_file(
         &self,
         path: &Path,
@@ -1295,14 +1319,7 @@ impl LocalWorktree {
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_executor().spawn({
-            let abs_path = &snapshot.abs_path;
-            #[cfg(target_os = "windows")]
-            let abs_path = abs_path
-                .as_path()
-                .canonicalize()
-                .unwrap_or_else(|_| abs_path.as_path().to_path_buf());
-            #[cfg(not(target_os = "windows"))]
-            let abs_path = abs_path.as_path().to_path_buf();
+            let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
                 let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
