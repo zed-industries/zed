@@ -43,6 +43,7 @@ pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
+    placeholder: bool,
     on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
     filled: bool,
     style: ToggleStyle,
@@ -62,12 +63,19 @@ impl Checkbox {
             style: ToggleStyle::default(),
             tooltip: None,
             label: None,
+            placeholder: false,
         }
     }
 
     /// Sets the disabled state of the [`Checkbox`].
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// Sets the disabled state of the [`Checkbox`].
+    pub fn placeholder(mut self, placeholder: bool) -> Self {
+        self.placeholder = placeholder;
         self
     }
 
@@ -145,25 +153,29 @@ impl Checkbox {
 impl RenderOnce for Checkbox {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
+        let color = if self.disabled {
+            Color::Disabled
+        } else if self.placeholder {
+            Color::Placeholder
+        } else {
+            Color::Selected
+        };
         let icon = match self.toggle_state {
-            ToggleState::Selected => Some(Icon::new(IconName::Check).size(IconSize::Small).color(
-                if self.disabled {
-                    Color::Disabled
-                } else {
-                    Color::Selected
-                },
-            )),
-            ToggleState::Indeterminate => Some(
-                Icon::new(IconName::Dash)
+            ToggleState::Selected => Some(if self.placeholder {
+                Icon::new(IconName::Circle)
+                    .size(IconSize::XSmall)
+                    .color(color)
+            } else {
+                Icon::new(IconName::Check)
                     .size(IconSize::Small)
-                    .color(if self.disabled {
-                        Color::Disabled
-                    } else {
-                        Color::Selected
-                    }),
-            ),
+                    .color(color)
+            }),
+            ToggleState::Indeterminate => {
+                Some(Icon::new(IconName::Dash).size(IconSize::Small).color(color))
+            }
             ToggleState::Unselected => None,
         };
+        if self.placeholder {}
 
         let bg_color = self.bg_color(cx);
         let border_color = self.border_color(cx);

@@ -58,12 +58,12 @@ impl From<bool> for ToggleState {
     }
 }
 
-impl From<Option<bool>> for ToggleState {
-    fn from(selected: Option<bool>) -> Self {
-        match selected {
-            Some(true) => Self::Selected,
-            Some(false) => Self::Unselected,
-            None => Self::Unselected,
-        }
-    }
-}
+// impl From<Option<bool>> for ToggleState {
+//     fn from(selected: Option<bool>) -> Self {
+//         match selected {
+//             Some(true) => Self::Selected,
+//             Some(false) => Self::Unselected,
+//             None => Self::Unselected,
+//         }
+//     }
+// }
