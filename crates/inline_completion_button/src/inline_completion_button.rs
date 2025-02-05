@@ -421,6 +421,8 @@ impl InlineCompletionButton {
             let data_collection = provider.data_collection_state(cx);
             if data_collection.is_supported() {
                 let provider = provider.clone();
+                let enabled = data_collection.is_enabled();
+
                 menu = menu.item(
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::End, data_collection.is_enabled())
@@ -429,7 +431,19 @@ impl InlineCompletionButton {
                         })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
-                        }),
+
+                            if !enabled {
+                                telemetry::event!(
+                                    "Data Collection Enabled",
+                                    source = "Edit Prediction Status Menu"
+                                );
+                            } else {
+                                telemetry::event!(
+                                    "Data Collection Disabled",
+                                    source = "Edit Prediction Status Menu"
+                                );
+                            }
+                        })
                 )
             }
         }
