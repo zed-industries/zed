@@ -1,5 +1,5 @@
 use crate::{state::Mode, Vim};
-use editor::{scroll::Autoscroll, Bias, Editor};
+use editor::{scroll::Autoscroll, Bias, DismissMenusAndPopupsReason, Editor};
 use gpui::{actions, Action, Context, Window};
 use language::SelectionGoal;
 
@@ -27,7 +27,11 @@ impl Vim {
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), false, window, cx);
             self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.dismiss_menus_and_popups(false, window, cx);
+                editor.dismiss_menus_and_popups(
+                    DismissMenusAndPopupsReason::VimModeChange,
+                    window,
+                    cx,
+                );
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_cursors_with(|map, mut cursor, _| {
                         *cursor.column_mut() = cursor.column().saturating_sub(1);

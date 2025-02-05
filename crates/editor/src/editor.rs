@@ -996,6 +996,12 @@ pub enum GotoDefinitionKind {
     Implementation,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum DismissMenusAndPopupsReason {
+    VimModeChange,
+    Cancel,
+}
+
 #[derive(Debug, Clone)]
 enum InlayHintRefreshReason {
     Toggle(bool),
@@ -2569,63 +2575,55 @@ impl Editor {
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.selection_mark_mode = false;
 
-        if self.clear_expanded_diff_hunks(cx) {
-            cx.notify();
-            return;
+        let dismissed =
+            self.dismiss_menus_and_popups(DismissMenusAndPopupsReason::Cancel, window, cx);
+        if !dismissed {
+            cx.propagate();
         }
-        if self.dismiss_menus_and_popups(true, window, cx) {
-            return;
-        }
-
-        if self.mode == EditorMode::Full
-            && self.change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel())
-        {
-            return;
-        }
-
-        cx.propagate();
     }
 
     pub fn dismiss_menus_and_popups(
         &mut self,
-        should_report_inline_completion_event: bool,
+        reason: DismissMenusAndPopupsReason,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.take_rename(false, window, cx).is_some() {
+        use DismissMenusAndPopupsReason::*;
+
+        let mut dismissed = false;
+
+        // First cancel hides anything that opens without a specific action.
+        dismissed = dismissed || hide_hover(self, cx);
+        dismissed = dismissed || self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
+        dismissed = dismissed || self.discard_inline_completion(reason == Cancel, cx);
+        if dismissed && reason == Cancel {
             return true;
         }
 
-        if hide_hover(self, cx) {
-            return true;
-        }
-
-        if self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape) {
-            return true;
-        }
-
-        if self.hide_context_menu(window, cx).is_some() {
-            return true;
-        }
-
-        if self.mouse_context_menu.take().is_some() {
-            return true;
-        }
-
-        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
-            return true;
-        }
-
-        if self.snippet_stack.pop().is_some() {
-            return true;
-        }
-
+        // Otherwise, hide anything that opens via specific action.
+        dismissed = dismissed || self.take_rename(false, window, cx).is_some();
+        dismissed = dismissed || self.hide_context_menu(window, cx).is_some();
+        dismissed = dismissed || self.mouse_context_menu.take().is_some();
+        dismissed = dismissed || self.snippet_stack.pop().is_some();
+        // todo! Should this really be dismissed on entering normal mode?
         if self.mode == EditorMode::Full && self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
-            return true;
+            dismissed = true;
+        }
+        if reason != VimModeChange && self.clear_expanded_diff_hunks(cx) {
+            if !dismissed {
+                cx.notify()
+            }
+            dismissed = true;
         }
 
-        false
+        // todo! Should this be grouped with the "specific action" group?
+        if reason != VimModeChange && self.mode == EditorMode::Full {
+            dismissed = dismissed
+                || self.change_selections(Some(Autoscroll::fit()), window, cx, |s| s.try_cancel());
+        }
+
+        dismissed
     }
 
     fn linked_editing_ranges_for(
