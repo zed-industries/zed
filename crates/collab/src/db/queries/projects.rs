@@ -81,8 +81,9 @@ impl Database {
                         abs_path: ActiveValue::set(
                             worktree
                                 .abs_path
+                                .as_ref()
                                 .map(|path| path.to_db_string())
-                                .or_else(|| worktree.abs_path_deprecated)
+                                .or_else(|| worktree.abs_path_deprecated.clone())
                                 .unwrap_or_default(),
                         ),
                         root_name: ActiveValue::set(worktree.root_name.clone()),
@@ -198,8 +199,9 @@ impl Database {
                     abs_path: ActiveValue::set(
                         worktree
                             .abs_path
+                            .as_ref()
                             .map(|path| path.to_db_string())
-                            .or_else(|| worktree.abs_path_deprecated)
+                            .or_else(|| worktree.abs_path_deprecated.clone())
                             .unwrap_or_default(),
                     ),
                     root_name: ActiveValue::set(worktree.root_name.clone()),
@@ -272,8 +274,9 @@ impl Database {
                 abs_path: ActiveValue::set(
                     update
                         .abs_path
+                        .as_ref()
                         .map(|path| path.to_db_string())
-                        .or_else(|| worktree.abs_path_deprecated)
+                        .or_else(|| update.abs_path_deprecated.clone())
                         .unwrap_or_default(),
                 ),
                 ..Default::default()
@@ -292,8 +295,9 @@ impl Database {
                         path: ActiveValue::set(
                             entry
                                 .path
+                                .as_ref()
                                 .map(|path| path.to_db_string())
-                                .or_else(entry.path_deprecated)
+                                .or_else(|| entry.path_deprecated.clone())
                                 .unwrap_or_default(),
                         ),
                         inode: ActiveValue::set(entry.inode as i64),
@@ -302,8 +306,9 @@ impl Database {
                         canonical_path: ActiveValue::set(
                             entry
                                 .canonical_path
+                                .as_ref()
                                 .map(|path| path.to_db_string())
-                                .or_else(|| entry.canonical_path_deprecated),
+                                .or_else(|| entry.canonical_path_deprecated.clone()),
                         ),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         git_status: ActiveValue::set(None),
@@ -439,8 +444,14 @@ impl Database {
                     .any(|repository| !repository.removed_statuses.is_empty());
 
                 if has_any_removed_statuses {
-                    worktree_repository_statuses::Entity::update_many()
-                        .filter(
+                    let use_deprecated_path =
+                        if let Some(repository) = update.updated_repositories.get(0) {
+                            repository.removed_statuses.is_empty()
+                        } else {
+                            false
+                        };
+                    let update_many = if !use_deprecated_path {
+                        worktree_repository_statuses::Entity::update_many().filter(
                             worktree_repository_statuses::Column::ProjectId
                                 .eq(project_id)
                                 .and(
@@ -449,17 +460,29 @@ impl Database {
                                 )
                                 .and(worktree_repository_statuses::Column::RepoPath.is_in(
                                     update.updated_repositories.iter().flat_map(|repository| {
-                                        if !repository.removed_statuses.is_empty() {
-                                            repository
-                                                .removed_statuses
-                                                .iter()
-                                                .map(|status_entry| status_entry.to_db_string())
-                                        } else {
-                                            repository.removed_statuses_deprecated.iter()
-                                        }
+                                        repository
+                                            .removed_statuses
+                                            .iter()
+                                            .map(|status_entry| status_entry.to_db_string())
                                     }),
                                 )),
                         )
+                    } else {
+                        worktree_repository_statuses::Entity::update_many().filter(
+                            worktree_repository_statuses::Column::ProjectId
+                                .eq(project_id)
+                                .and(
+                                    worktree_repository_statuses::Column::WorktreeId
+                                        .eq(worktree_id),
+                                )
+                                .and(worktree_repository_statuses::Column::RepoPath.is_in(
+                                    update.updated_repositories.iter().flat_map(|repository| {
+                                        repository.removed_statuses_deprecated.iter()
+                                    }),
+                                )),
+                        )
+                    };
+                    update_many
                         .set(worktree_repository_statuses::ActiveModel {
                             is_deleted: ActiveValue::Set(true),
                             scan_id: ActiveValue::Set(update.scan_id as i64),
