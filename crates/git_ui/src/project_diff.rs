@@ -163,6 +163,7 @@ impl ProjectDiff {
         };
 
         let Some(path) = git_repo
+            .read(cx)
             .repo_path_to_project_path(&entry.repo_path)
             .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
         else {
@@ -246,11 +247,11 @@ impl ProjectDiff {
                     continue;
                 };
                 // Craft some artificial paths so that created entries will appear last.
-            let path_key = if entry.status.is_created() {
-                PathKey::namespaced(ADDED_NAMESPACE, &abs_path)
-            } else {
-                PathKey::namespaced(CHANGED_NAMESPACE, &abs_path)
-            };
+                let path_key = if entry.status.is_created() {
+                    PathKey::namespaced(ADDED_NAMESPACE, &abs_path)
+                } else {
+                    PathKey::namespaced(CHANGED_NAMESPACE, &abs_path)
+                };
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self

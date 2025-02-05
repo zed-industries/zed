@@ -635,7 +635,11 @@ impl HeadlessProject {
             .map(RepoPath::new)
             .collect();
 
-        repository_handle.stage_entries(entries).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.stage_entries(entries)
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -657,7 +661,11 @@ impl HeadlessProject {
             .map(RepoPath::new)
             .collect();
 
-        repository_handle.unstage_entries(entries).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.unstage_entries(entries)
+            })?
+            .await??;
 
         Ok(proto::Ack {})
     }
@@ -675,7 +683,12 @@ impl HeadlessProject {
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
 
-        repository_handle.commit(name.zip(email)).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.commit(name.zip(email))
+            })?
+            .await??;
+
         Ok(proto::Ack {})
     }
 
@@ -688,8 +701,10 @@ impl HeadlessProject {
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-        let git_repository = match &repository_handle.git_repo {
-            GitRepo::Local(git_repository) => git_repository.clone(),
+        let git_repository = match repository_handle.update(&mut cx, |repository_handle, _| {
+            repository_handle.git_repo.clone()
+        })? {
+            GitRepo::Local(git_repository) => git_repository,
             GitRepo::Remote { .. } => {
                 anyhow::bail!("Cannot handle open commit message buffer for remote git repo")
             }
@@ -767,8 +782,11 @@ impl HeadlessProject {
                 .all_repositories()
                 .into_iter()
                 .find(|repository_handle| {
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
+                    repository_handle.read(cx).worktree_id == worktree_id
+                        && repository_handle
+                            .read(cx)
+                            .repository_entry
+                            .work_directory_id()
                             == work_directory_id
                 })
                 .context("missing repository handle")?;

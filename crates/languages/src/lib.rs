@@ -48,7 +48,7 @@ pub static LANGUAGE_GIT_COMMIT: LazyLock<Arc<Language>> = LazyLock::new(|| {
             line_comments: vec![Arc::from("#")],
             ..Default::default()
         },
-        Some(tree_sitter_gitcommit::language()),
+        Some(tree_sitter_gitcommit::LANGUAGE.into()),
     ))
 });
 
