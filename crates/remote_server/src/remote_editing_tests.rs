@@ -27,8 +27,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{path, separator};
 use unindent::Unindent as _;
+use util::{path, separator};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
