@@ -6384,6 +6384,7 @@ dependencies = [
  "lsp",
  "paths",
  "project",
+ "regex",
  "serde_json",
  "settings",
  "supermaven",
