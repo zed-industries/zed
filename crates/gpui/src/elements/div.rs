@@ -1799,31 +1799,46 @@ impl Interactivity {
             });
         }
 
+        let (scale_factor, scale_offset) = window.scale_factor();
+        let scale_factor = scale_factor / window.window_scale_factor();
+
         for listener in self.mouse_down_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+                let mut event = event.clone();
+                event.position = (event.position - scale_offset) / scale_factor;
+
+                listener(&event, phase, &hitbox, window, cx);
             })
         }
 
         for listener in self.mouse_up_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+                let mut event = event.clone();
+                event.position = (event.position - scale_offset) / scale_factor;
+
+                listener(&event, phase, &hitbox, window, cx);
             })
         }
 
         for listener in self.mouse_move_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+                let mut event = event.clone();
+                event.position = (event.position - scale_offset) / scale_factor;
+
+                listener(&event, phase, &hitbox, window, cx);
             })
         }
 
         for listener in self.scroll_wheel_listeners.drain(..) {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                listener(event, phase, &hitbox, window, cx);
+                let mut event = event.clone();
+                event.position = (event.position - scale_offset) / scale_factor;
+
+                listener(&event, phase, &hitbox, window, cx);
             })
         }
 
