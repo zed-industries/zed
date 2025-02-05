@@ -503,17 +503,17 @@
     }
   },
   {
+    "context": "Editor && inline_completion",
+    "bindings": {
+      // Changing the modifier currently breaks accepting while you also an LSP completions menu open
+      "alt-enter": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
     "context": "Editor && inline_completion && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"
-    }
-  },
-  {
-    "context": "Editor && inline_completion && showing_completions",
-    "bindings": {
-      // Currently, changing this binding breaks the preview behavior
-      "alt-enter": "editor::AcceptInlineCompletion"
     }
   },
   {
