@@ -661,7 +661,16 @@ impl Worktree {
             let snapshot = Snapshot::new(
                 worktree.id,
                 worktree.root_name,
-                Arc::from(PathBuf::from(worktree.abs_path.unwrap_or_default())),
+                worktree
+                    .abs_path
+                    .map(Into::<Arc<Path>>::into)
+                    .or_else(|| {
+                        worktree
+                            .abs_path_deprecated
+                            .map(PathBuf::from)
+                            .map(Into::into)
+                    })
+                    .unwrap_or(PathBuf::new().into()),
             );
 
             let background_snapshot = Arc::new(Mutex::new((snapshot.clone(), Vec::new())));
@@ -1174,7 +1183,11 @@ impl Worktree {
             (
                 this.scan_id(),
                 this.create_entry(
-                    PathBuf::from(request.path.unwrap_or_default()),
+                    request
+                        .path
+                        .map(Into::<PathBuf>::into)
+                        .or_else(|| request.path_deprecated.map(PathBuf::from))
+                        .unwrap_or(PathBuf::new().into()),
                     request.is_directory,
                     cx,
                 ),
@@ -1251,7 +1264,11 @@ impl Worktree {
                 this.scan_id(),
                 this.rename_entry(
                     ProjectEntryId::from_proto(request.entry_id),
-                    PathBuf::from(request.new_path.unwrap_or_default()),
+                    request
+                        .new_path
+                        .map(Into::<PathBuf>::into)
+                        .or_else(|| request.new_path_deprecated.map(PathBuf::from))
+                        .unwrap_or(PathBuf::new().into()),
                     cx,
                 ),
             )
@@ -1278,7 +1295,11 @@ impl Worktree {
                 this.copy_entry(
                     ProjectEntryId::from_proto(request.entry_id),
                     relative_worktree_source_path,
-                    PathBuf::from(request.new_path.unwrap_or_default()),
+                    request
+                        .new_path
+                        .map(Into::<PathBuf>::into)
+                        .or_else(|| request.new_path_deprecated.map(PathBuf::from))
+                        .unwrap_or(PathBuf::new().into()),
                     cx,
                 ),
             )
@@ -2487,7 +2508,13 @@ impl Snapshot {
             update.removed_entries.len()
         );
         self.update_abs_path(
-            SanitizedPath::from(PathBuf::from(update.abs_path.unwrap_or_default())),
+            SanitizedPath::from(
+                update
+                    .abs_path
+                    .map(Into::<PathBuf>::into)
+                    .or_else(|| update.abs_path_deprecated.map(Into::into))
+                    .context("Missing abs_path")?,
+            ),
             update.root_name,
         );
 
@@ -2546,16 +2573,29 @@ impl Snapshot {
                     .repositories
                     .contains(&PathKey(work_dir_entry.path.clone()), &())
                 {
-                    let edits = repository
-                        .removed_statuses
-                        .into_iter()
-                        .map(|path| Edit::Remove(PathKey(path.into())))
-                        .chain(repository.updated_statuses.into_iter().filter_map(
-                            |updated_status| {
-                                Some(Edit::Insert(updated_status.try_into().log_err()?))
-                            },
-                        ))
-                        .collect::<Vec<_>>();
+                    let edits = if !repository.removed_statuses.is_empty() {
+                        repository
+                            .removed_statuses
+                            .into_iter()
+                            .map(|path| Edit::Remove(PathKey(path.into())))
+                            .chain(repository.updated_statuses.into_iter().filter_map(
+                                |updated_status| {
+                                    Some(Edit::Insert(updated_status.try_into().log_err()?))
+                                },
+                            ))
+                            .collect::<Vec<_>>()
+                    } else {
+                        repository
+                            .removed_statuses_deprecated
+                            .into_iter()
+                            .map(|path| Edit::Remove(PathKey(PathBuf::from(path).into())))
+                            .chain(repository.updated_statuses.into_iter().filter_map(
+                                |updated_status| {
+                                    Some(Edit::Insert(updated_status.try_into().log_err()?))
+                                },
+                            ))
+                            .collect::<Vec<_>>()
+                    };
 
                     self.repositories
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
@@ -3659,7 +3699,11 @@ impl File {
 
         Ok(Self {
             worktree,
-            path: proto.path.context("Missing path")?.into(),
+            path: proto
+                .path
+                .map(Into::<Arc<Path>>::into)
+                .or_else(|| proto.path_deprecated.map(|path| Path::new(&path).into()))
+                .context("Missing path")?,
             disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
@@ -3790,7 +3834,17 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        let repo_path = RepoPath(value.repo_path.unwrap_or_default().into());
+        let repo_path = RepoPath(
+            value
+                .repo_path
+                .map(Into::into)
+                .or_else(|| {
+                    value
+                        .repo_path_deprecated
+                        .map(|path| Path::new(&path).into())
+                })
+                .context("Missing repo path")?,
+        );
         let status = status_from_proto(value.simple_status, value.status)?;
         Ok(Self { repo_path, status })
     }
@@ -6178,7 +6232,11 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             EntryKind::File
         };
 
-        let path: Arc<Path> = entry.path.unwrap_or_default().into();
+        let path: Arc<Path> = entry
+            .path
+            .map(Into::into)
+            .or_else(|| entry.path_deprecated.map(|path| Path::new(&path).into()))
+            .context("Missing path")?;
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         let is_always_included = always_included.is_match(path.as_ref());
         Ok(Entry {
@@ -6190,7 +6248,12 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Box::from(PathBuf::from(path_string))),
+                .map(|path_string| Box::from(PathBuf::from(path_string)))
+                .or_else(|| {
+                    entry
+                        .canonical_path_deprecated
+                        .map(|path| Box::from(Path::new(&path)))
+                }),
             is_ignored: entry.is_ignored,
             is_always_included,
             is_external: entry.is_external,
