@@ -31,6 +31,25 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
+/// A shared grammar for plain text, exposed for reuse by downstream crates.
+#[cfg(feature = "tree-sitter-gitcommit")]
+pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
+    std::sync::LazyLock::new(|| {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: "Git Commit".into(),
+                soft_wrap: Some(language::language_settings::SoftWrap::EditorWidth),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["COMMIT_EDITMSG".to_owned()],
+                    first_line_pattern: None,
+                },
+                line_comments: vec![Arc::from("#")],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_gitcommit::LANGUAGE.into()),
+        ))
+    });
+
 pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
@@ -53,6 +72,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
         ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
         ("yaml", tree_sitter_yaml::LANGUAGE),
+        ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
 
     macro_rules! language {
