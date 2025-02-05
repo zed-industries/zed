@@ -13,6 +13,8 @@ pub struct Model {
     pub scan_id: i64,
     pub branch: Option<String>,
     pub is_deleted: bool,
+    // JSON array typed string
+    pub current_merge_conflicts: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
