@@ -9,13 +9,14 @@ pub trait PanelHeader: workspace::Panel {
         Tab::container_height(cx)
     }
 
-    fn render_header_container(&self, _window: &mut Window, cx: &mut App) -> Div {
+    fn panel_header_container(&self, _window: &mut Window, cx: &mut App) -> Div {
         h_flex()
             .h(self.header_height(cx))
             .w_full()
+            .px_1()
             .flex_none()
             .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
+            .border_color(cx.theme().colors().border)
     }
 }
 

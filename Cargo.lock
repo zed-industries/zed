@@ -5251,6 +5251,7 @@ dependencies = [
  "language",
  "menu",
  "multi_buffer",
+ "panel",
  "picker",
  "postage",
  "project",
