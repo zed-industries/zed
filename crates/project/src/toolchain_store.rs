@@ -26,9 +26,9 @@ enum ToolchainStoreInner {
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_request_handler(Self::handle_activate_toolchain);
-        client.add_model_request_handler(Self::handle_list_toolchains);
-        client.add_model_request_handler(Self::handle_active_toolchain);
+        client.add_entity_request_handler(Self::handle_activate_toolchain);
+        client.add_entity_request_handler(Self::handle_list_toolchains);
+        client.add_entity_request_handler(Self::handle_active_toolchain);
     }
 
     pub fn local(
@@ -37,16 +37,16 @@ impl ToolchainStore {
         project_environment: Entity<ProjectEnvironment>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let model = cx.new(|_| LocalToolchainStore {
+        let entity = cx.new(|_| LocalToolchainStore {
             languages,
             worktree_store,
             project_environment,
             active_toolchains: Default::default(),
         });
-        let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
+        let subscription = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
-        Self(ToolchainStoreInner::Local(model, subscription))
+        Self(ToolchainStoreInner::Local(entity, subscription))
     }
     pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut App) -> Self {
         Self(ToolchainStoreInner::Remote(

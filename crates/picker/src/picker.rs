@@ -281,16 +281,16 @@ impl<D: PickerDelegate> Picker<D> {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
             }
             ContainerKind::List => {
-                let model = cx.entity().downgrade();
+                let entity = cx.entity().downgrade();
                 ElementContainer::List(ListState::new(
                     0,
                     gpui::ListAlignment::Top,
                     px(1000.),
                     move |ix, window, cx| {
-                        model
+                        entity
                             .upgrade()
-                            .map(|model| {
-                                model.update(cx, |this, cx| {
+                            .map(|entity| {
+                                entity.update(cx, |this, cx| {
                                     this.render_element(window, cx, ix).into_any_element()
                                 })
                             })

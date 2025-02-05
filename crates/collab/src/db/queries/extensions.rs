@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use chrono::Utc;
@@ -370,6 +371,7 @@ fn metadata_from_extension_and_version(
             repository: version.repository,
             schema_version: Some(version.schema_version),
             wasm_api_version: version.wasm_api_version,
+            provides: BTreeSet::default(),
         },
 
         published_at: convert_time_to_chrono(version.published_at),

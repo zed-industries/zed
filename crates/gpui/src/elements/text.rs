@@ -390,8 +390,10 @@ impl TextLayout {
 
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
+        let text_style = window.text_style();
         for line in &element_state.lines {
-            line.paint(line_origin, line_height, window, cx).log_err();
+            line.paint(line_origin, line_height, text_style.text_align, window, cx)
+                .log_err();
             line_origin.y += line.size(line_height).height;
         }
     }

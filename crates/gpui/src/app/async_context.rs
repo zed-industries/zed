@@ -151,7 +151,7 @@ impl AsyncApp {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        Ok(f(&mut lock))
+        Ok(lock.update(f))
     }
 
     /// Open a window with the given options based on the root view returned by the given function.
@@ -172,6 +172,7 @@ impl AsyncApp {
     }
 
     /// Schedule a future to be polled in the background.
+    #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -297,6 +298,7 @@ impl AsyncWindowContext {
 
     /// Schedule a future to be executed on the main thread. This is used for collecting
     /// the results of background tasks and updating the UI.
+    #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,

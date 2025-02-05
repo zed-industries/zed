@@ -21,8 +21,6 @@ pub struct InlineCompletion {
 pub enum DataCollectionState {
     /// The provider doesn't support data collection.
     Unsupported,
-    /// When there's a file not saved yet. In this case, we can't tell to which project it belongs.
-    Unknown,
     /// Data collection is enabled
     Enabled,
     /// Data collection is disabled or unanswered.
@@ -32,10 +30,6 @@ pub enum DataCollectionState {
 impl DataCollectionState {
     pub fn is_supported(&self) -> bool {
         !matches!(self, DataCollectionState::Unsupported)
-    }
-
-    pub fn is_unknown(&self) -> bool {
-        matches!(self, DataCollectionState::Unknown)
     }
 
     pub fn is_enabled(&self) -> bool {

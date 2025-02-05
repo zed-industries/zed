@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 
 /// Returns whether the given country code is supported by Google Gemini.
 ///
-/// https://ai.google.dev/gemini-api/docs/available-regions
+/// <https://ai.google.dev/gemini-api/docs/available-regions>
 pub fn is_supported_country(country_code: &str) -> bool {
     SUPPORTED_COUNTRIES.contains(&country_code)
 }

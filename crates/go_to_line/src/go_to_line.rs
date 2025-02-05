@@ -80,7 +80,7 @@ impl GoToLine {
             let last_line = editor
                 .buffer()
                 .read(cx)
-                .excerpts_for_buffer(&active_buffer, cx)
+                .excerpts_for_buffer(snapshot.remote_id(), cx)
                 .into_iter()
                 .map(move |(_, range)| text::ToPoint::to_point(&range.context.end, &snapshot).row)
                 .max()
