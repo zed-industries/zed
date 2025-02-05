@@ -1319,14 +1319,7 @@ impl LocalWorktree {
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_executor().spawn({
-            let abs_path = &snapshot.abs_path;
-            #[cfg(target_os = "windows")]
-            let abs_path = abs_path
-                .as_path()
-                .canonicalize()
-                .unwrap_or_else(|_| abs_path.as_path().to_path_buf());
-            #[cfg(not(target_os = "windows"))]
-            let abs_path = abs_path.as_path().to_path_buf();
+            let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
                 let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;

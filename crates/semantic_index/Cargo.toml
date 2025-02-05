@@ -44,9 +44,9 @@ sha2.workspace = true
 smol.workspace = true
 theme.workspace = true
 tree-sitter.workspace = true
-ui. workspace = true
+ui.workspace = true
 unindent.workspace = true
-util. workspace = true
+util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 

@@ -28,6 +28,8 @@ use unicase::UniCase;
 use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use util_macros::{separator, uri};
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -38,6 +40,50 @@ macro_rules! debug_panic {
             let backtrace = std::backtrace::Backtrace::capture();
             log::error!("{}\n{:?}", format_args!($($fmt_arg)*), backtrace);
         }
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        concat!("C:", util::separator!($path))
+    };
+}
+
+/// A macro to add "C:" to the beginning of a path literal on Windows, and replace all
+/// the separator from `/` to `\`.
+/// But on non-Windows platforms, it will return the path literal as is.
+///
+/// # Examples
+/// ```rust
+/// use util::path;
+///
+/// let path = path!("/Users/user/file.txt");
+/// #[cfg(target_os = "windows")]
+/// assert_eq!(path, "C:\\Users\\user\\file.txt");
+/// #[cfg(not(target_os = "windows"))]
+/// assert_eq!(path, "/Users/user/file.txt");
+/// ```
+#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        $path
     };
 }
 

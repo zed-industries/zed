@@ -265,13 +265,13 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let cmd = new_std_command(&self.git_binary_path)
+            let status = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .status()?;
-            if !cmd.success() {
-                return Err(anyhow!("Failed to stage paths: {cmd}"));
+            if !status.success() {
+                return Err(anyhow!("Failed to stage paths: {status}"));
             }
         }
         Ok(())
