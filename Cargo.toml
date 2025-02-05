@@ -465,7 +465,7 @@ runtimelib = { version = "0.25.0", default-features = false, features = [
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
-rustls = { version = "0.23.22", features = ["ring"] }
+rustls = { version = "0.23.22" }
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
