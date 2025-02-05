@@ -1997,12 +1997,15 @@ impl Project {
                 project_id,
                 id: id.into(),
             });
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |project, mut cx| async move {
                 let buffer_id = BufferId::new(request.await?.buffer_id)?;
-                this.update(&mut cx, |this, cx| {
-                    this.wait_for_remote_buffer(buffer_id, cx)
-                })?
-                .await
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store.update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })
+                    })?
+                    .await
             })
         } else {
             Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
@@ -2845,16 +2848,21 @@ impl Project {
 
         let proto_client = ssh_client.read(cx).proto_client();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|project, mut cx| async move {
             let buffer = proto_client
                 .request(proto::OpenServerSettings {
                     project_id: SSH_PROJECT_ID,
                 })
                 .await?;
 
-            let buffer = this
-                .update(&mut cx, |this, cx| {
-                    anyhow::Ok(this.wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx))
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    project.buffer_store.update(cx, |buffer_store, cx| {
+                        anyhow::Ok(
+                            buffer_store
+                                .wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx),
+                        )
+                    })
                 })??
                 .await;
 
@@ -3185,13 +3193,15 @@ impl Project {
         });
         let guard = self.retain_remotely_created_models(cx);
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |project, mut cx| async move {
             let response = request.await?;
             for buffer_id in response.buffer_ids {
                 let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = this
-                    .update(&mut cx, |this, cx| {
-                        this.wait_for_remote_buffer(buffer_id, cx)
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store.update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })
                     })?
                     .await?;
                 let _ = tx.send(buffer).await;
@@ -4128,17 +4138,6 @@ impl Project {
             })
             .detach_and_log_err(cx);
         buffer.read(cx).remote_id()
-    }
-
-    // TODO kb inline
-    pub fn wait_for_remote_buffer(
-        &mut self,
-        id: BufferId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.wait_for_remote_buffer(id, cx)
-        })
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
