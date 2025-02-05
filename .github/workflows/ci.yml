@@ -279,7 +279,10 @@ jobs:
 
       - name: Check dev drive space
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: ./script/exit-ci-if-dev-drive-is-full.ps1 35
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 55
+
+      - name: Check file system
+        run: get-volume
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
