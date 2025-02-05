@@ -131,7 +131,7 @@ impl BufferChangeSetState {
         let diff_bases_change = match mode {
             Mode::HeadOnly => DiffBasesChange::SetHead(message.committed_text),
             Mode::IndexOnly => DiffBasesChange::SetIndex(message.staged_text),
-            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.staged_text),
+            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.committed_text),
             Mode::IndexAndHead => DiffBasesChange::SetEach {
                 index: message.staged_text,
                 head: message.committed_text,
@@ -402,7 +402,7 @@ impl RemoteBufferStore {
                 .await?;
             let mode = Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
             let bases = match mode {
-                Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.staged_text),
+                Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
                 Mode::IndexAndHead => DiffBasesChange::SetEach {
                     head: response.committed_text,
                     index: response.staged_text,
@@ -896,7 +896,7 @@ impl LocalBufferStore {
                                 let diff_bases_change =
                                     match (needs_staged_text, needs_committed_text) {
                                         (true, true) => Some(if staged_text == committed_text {
-                                            DiffBasesChange::SetBoth(staged_text)
+                                            DiffBasesChange::SetBoth(committed_text)
                                         } else {
                                             DiffBasesChange::SetEach {
                                                 index: staged_text,
@@ -944,7 +944,7 @@ impl LocalBufferStore {
                                     (index, head, Mode::IndexAndHead)
                                 }
                                 DiffBasesChange::SetBoth(text) => {
-                                    (text, None, Mode::IndexMatchesHead)
+                                    (None, text, Mode::IndexMatchesHead)
                                 }
                             };
                             let message = proto::UpdateDiffBases {
