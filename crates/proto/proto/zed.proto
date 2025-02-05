@@ -3,6 +3,9 @@ package zed.messages;
 
 // Looking for a number? Search "// current max"
 
+// TODO:
+// Remove all the ***_deprecated field
+
 message PeerId {
     uint32 owner_id = 1;
     uint32 id = 2;
@@ -1813,7 +1816,7 @@ message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
     repeated StatusEntry updated_statuses = 3;
-    optional repeated string removed_statuses_deprecated = 4;
+    repeated string removed_statuses_deprecated = 4;
     repeated CrossPlatformPath removed_statuses = 5;
     repeated string current_merge_conflicts = 5;
 }
@@ -2700,7 +2703,7 @@ message Stage {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    optional repeated string paths_deprecated = 4;
+    repeated string paths_deprecated = 4;
     repeated CrossPlatformPath paths = 5;
 }
 
@@ -2708,7 +2711,7 @@ message Unstage {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    optional repeated string paths_deprecated = 4;
+    repeated string paths_deprecated = 4;
     repeated CrossPlatformPath paths = 5;
 }
 
