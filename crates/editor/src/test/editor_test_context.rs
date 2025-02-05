@@ -290,7 +290,7 @@ impl EditorTestContext {
             editor.project.as_ref().unwrap().read(cx).fs().as_fake()
         });
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
-        fs.set_index_for_repo(
+        fs.set_head_for_repo(
             &Self::root_path().join(".git"),
             &[(path.into(), diff_base.to_string())],
         );
