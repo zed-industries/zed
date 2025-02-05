@@ -680,7 +680,7 @@ pub struct Editor {
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     // enable_inline_completions is a switch that Vim can use to disable
     // edit predictions based on its mode.
-    enable_inline_completions: bool,
+    inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
     inlay_hint_cache: InlayHintCache,
@@ -1388,7 +1388,7 @@ impl Editor {
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             show_inline_completions_override: None,
-            enable_inline_completions: true,
+            inline_completions_hidden_for_vim_mode: false,
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             custom_context_menu: None,
             show_git_blame_gutter: false,
@@ -1818,11 +1818,19 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
-    pub fn set_inline_completions_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.enable_inline_completions = enabled;
-        if !self.enable_inline_completions {
-            self.take_active_inline_completion(cx);
-            cx.notify();
+    pub fn set_inline_completions_hidden_for_vim_mode(
+        &mut self,
+        hidden: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if hidden != self.inline_completions_hidden_for_vim_mode {
+            self.inline_completions_hidden_for_vim_mode = hidden;
+            if hidden {
+                self.update_visible_inline_completion(window, cx);
+            } else {
+                self.refresh_inline_completion(true, false, window, cx);
+            }
         }
     }
 
@@ -1905,6 +1913,10 @@ impl Editor {
         buffer_position: language::Anchor,
         cx: &App,
     ) -> bool {
+        if self.inline_completions_hidden_for_vim_mode {
+            return false;
+        }
+
         if !self.snippet_stack.is_empty() {
             return false;
         }
@@ -4655,8 +4667,7 @@ impl Editor {
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
         if !user_requested
-            && (!self.enable_inline_completions
-                || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
+            && (!self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
                 || !self.is_focused(window)
                 || buffer.read(cx).is_empty())
         {
@@ -4679,9 +4690,7 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.enable_inline_completions
-            || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-        {
+        if !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx) {
             return None;
         }
 
@@ -5018,7 +5027,6 @@ impl Editor {
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
         if completions_menu_has_precedence
             || !offset_selection.is_empty()
-            || !self.enable_inline_completions
             || self
                 .active_inline_completion
                 .as_ref()
@@ -5093,7 +5101,12 @@ impl Editor {
                 snapshot,
             }
         } else {
-            if !show_in_menu || !self.has_active_completions_menu() {
+            let show_completions_in_buffer = if show_in_menu && self.has_active_completions_menu() {
+                true
+            } else {
+                !self.inline_completions_hidden_for_vim_mode
+            };
+            if show_completions_in_buffer {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())

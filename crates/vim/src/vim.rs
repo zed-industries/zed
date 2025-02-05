@@ -1274,7 +1274,7 @@ impl Vim {
     }
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |vim, editor, _, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_cursor_shape(vim.cursor_shape(), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
@@ -1282,14 +1282,16 @@ impl Vim {
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
 
-            let enable_inline_completions = match vim.mode {
-                Mode::Insert | Mode::Replace => true,
+            let hide_inline_completions = match vim.mode {
+                Mode::Insert | Mode::Replace => false,
                 Mode::Normal => editor
                     .inline_completion_provider()
-                    .map_or(false, |provider| provider.show_completions_in_normal_mode()),
-                _ => false,
+                    .map_or(true, |provider| {
+                        dbg!(!provider.show_completions_in_normal_mode())
+                    }),
+                _ => true,
             };
-            editor.set_inline_completions_enabled(enable_inline_completions, cx);
+            editor.set_inline_completions_hidden_for_vim_mode(hide_inline_completions, window, cx);
         });
         cx.notify()
     }
