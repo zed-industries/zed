@@ -85,6 +85,7 @@ struct BufferChangeSetState {
     index_text: Option<Arc<String>>,
     head_changed: bool,
     index_changed: bool,
+    language_changed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -101,8 +102,7 @@ enum DiffBasesChange {
 impl BufferChangeSetState {
     fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.language = buffer.read(cx).language().cloned();
-        self.index_changed = self.index_text.is_some();
-        self.head_changed = self.head_text.is_some();
+        self.language_changed = true;
         let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
     }
 
@@ -149,34 +149,40 @@ impl BufferChangeSetState {
     ) -> oneshot::Receiver<()> {
         match diff_bases_change {
             DiffBasesChange::SetIndex(index) => {
-                let mut index = index.unwrap_or_default();
-                text::LineEnding::normalize(&mut index);
-                self.index_text = Some(Arc::new(index));
+                self.index_text = index.map(|mut index| {
+                    text::LineEnding::normalize(&mut index);
+                    Arc::new(index)
+                });
                 self.index_changed = true;
             }
             DiffBasesChange::SetHead(head) => {
-                let mut head = head.unwrap_or_default();
-                text::LineEnding::normalize(&mut head);
-                self.head_text = Some(Arc::new(head));
+                self.head_text = head.map(|mut head| {
+                    text::LineEnding::normalize(&mut head);
+                    Arc::new(head)
+                });
                 self.head_changed = true;
             }
             DiffBasesChange::SetBoth(text) => {
-                let mut text = text.unwrap_or_default();
-                text::LineEnding::normalize(&mut text);
-                self.head_text = Some(Arc::new(text));
-                self.index_text = self.head_text.clone();
+                let text = text.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::new(text)
+                });
+                self.head_text = text.clone();
+                self.index_text = text;
                 self.head_changed = true;
                 self.index_changed = true;
             }
             DiffBasesChange::SetEach { index, head } => {
-                let mut index = index.unwrap_or_default();
-                text::LineEnding::normalize(&mut index);
-                let mut head = head.unwrap_or_default();
-                text::LineEnding::normalize(&mut head);
-                self.index_text = Some(Arc::new(index));
-                self.head_text = Some(Arc::new(head));
-                self.head_changed = true;
+                self.index_text = index.map(|mut index| {
+                    text::LineEnding::normalize(&mut index);
+                    Arc::new(index)
+                });
                 self.index_changed = true;
+                self.head_text = head.map(|mut head| {
+                    text::LineEnding::normalize(&mut head);
+                    Arc::new(head)
+                });
+                self.head_changed = true;
             }
         }
 
@@ -199,6 +205,7 @@ impl BufferChangeSetState {
         let index = self.index_text.clone();
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
+        let language_changed = self.language_changed;
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
@@ -206,7 +213,7 @@ impl BufferChangeSetState {
         };
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
             if let Some(unstaged_changes) = &unstaged_changes {
-                let staged_snapshot = if index_changed {
+                let staged_snapshot = if index_changed || language_changed {
                     let staged_snapshot = cx.update(|cx| {
                         index.as_ref().map(|head| {
                             language::Buffer::build_snapshot(
@@ -238,6 +245,9 @@ impl BufferChangeSetState {
 
                 unstaged_changes.update(&mut cx, |unstaged_changes, cx| {
                     unstaged_changes.set_state(staged_snapshot.clone(), diff, &buffer, cx);
+                    if language_changed {
+                        cx.emit(BufferChangeSetEvent::LanguageChanged);
+                    }
                 })?;
             }
 
@@ -252,7 +262,7 @@ impl BufferChangeSetState {
                         )
                     })?
                 } else {
-                    let committed_snapshot = if head_changed {
+                    let committed_snapshot = if head_changed || language_changed {
                         let committed_snapshot = cx.update(|cx| {
                             head.as_ref().map(|head| {
                                 language::Buffer::build_snapshot(
@@ -284,6 +294,9 @@ impl BufferChangeSetState {
 
                 uncommitted_changes.update(&mut cx, |change_set, cx| {
                     change_set.set_state(snapshot, diff, &buffer, cx);
+                    if language_changed {
+                        cx.emit(BufferChangeSetEvent::LanguageChanged);
+                    }
                 })?;
             }
 
@@ -323,6 +336,7 @@ impl std::fmt::Debug for BufferChangeSet {
 
 pub enum BufferChangeSetEvent {
     DiffChanged { changed_range: Range<text::Anchor> },
+    LanguageChanged,
 }
 
 enum BufferStoreState {
