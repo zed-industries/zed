@@ -5245,6 +5245,7 @@ dependencies = [
  "language",
  "menu",
  "multi_buffer",
+ "panel",
  "picker",
  "postage",
  "project",
@@ -8819,6 +8820,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.90",
+]
+
+[[package]]
+name = "panel"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "ui",
+ "workspace",
 ]
 
 [[package]]

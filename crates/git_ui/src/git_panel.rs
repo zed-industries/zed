@@ -16,6 +16,7 @@ use git::{CommitAllChanges, CommitChanges, ToggleStaged};
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use panel::PanelHeader;
 use project::git::{GitEvent, Repository};
 use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -1060,6 +1061,10 @@ impl GitPanel {
             .style(ButtonStyle::Filled)
     }
 
+    pub fn indent_size(&self, window: &Window, cx: &mut Context<Self>) -> Pixels {
+        Checkbox::container_size(cx).to_pixels(window.rem_size())
+    }
+
     pub fn render_divider(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .items_center()
@@ -1069,7 +1074,7 @@ impl GitPanel {
 
     pub fn render_panel_header(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let all_repositories = self
@@ -1089,11 +1094,7 @@ impl GitPanel {
             n => format!("{} changes", n),
         };
 
-        h_flex()
-            .h(px(32.))
-            .items_center()
-            .px_2()
-            .bg(ElevationIndex::Surface.bg(cx))
+        self.panel_header_container(window, cx)
             .child(h_flex().gap_2().child(if all_repositories.len() <= 1 {
                 div()
                     .id("changes-label")
@@ -1304,7 +1305,12 @@ impl GitPanel {
         )
     }
 
-    fn render_entries(&self, has_write_access: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_entries(
+        &self,
+        has_write_access: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let entry_count = self.entries.len();
 
         v_flex()
@@ -1312,19 +1318,26 @@ impl GitPanel {
             .overflow_hidden()
             .child(
                 uniform_list(cx.entity().clone(), "entries", entry_count, {
-                    move |this, range, _window, cx| {
+                    move |this, range, window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
 
                         for ix in range {
                             match &this.entries.get(ix) {
                                 Some(GitListEntry::GitStatusEntry(entry)) => {
-                                    items.push(this.render_entry(ix, entry, has_write_access, cx));
+                                    items.push(this.render_entry(
+                                        ix,
+                                        entry,
+                                        has_write_access,
+                                        window,
+                                        cx,
+                                    ));
                                 }
                                 Some(GitListEntry::Header(header)) => {
-                                    items.push(this.render_header(
+                                    items.push(this.render_list_header(
                                         ix,
                                         header,
                                         has_write_access,
+                                        window,
                                         cx,
                                     ));
                                 }
@@ -1338,7 +1351,7 @@ impl GitPanel {
                 .with_decoration(
                     ui::indent_guides(
                         cx.entity().clone(),
-                        px(10.0),
+                        self.indent_size(window, cx),
                         IndentGuideColors::panel(cx),
                         |this, range, _windows, _cx| {
                             this.entries
@@ -1353,12 +1366,9 @@ impl GitPanel {
                     )
                     .with_render_fn(
                         cx.entity().clone(),
-                        move |_, params, window, cx| {
-                            let left_offset = Checkbox::container_size(cx)
-                                .to_pixels(window.rem_size())
-                                .half();
-                            const PADDING_Y: f32 = 4.;
+                        move |_, params, _, _| {
                             let indent_size = params.indent_size;
+                            let left_offset = indent_size - px(3.0);
                             let item_height = params.item_height;
 
                             params
@@ -1369,7 +1379,7 @@ impl GitPanel {
                                     let offset = if layout.continues_offscreen {
                                         px(0.)
                                     } else {
-                                        px(PADDING_Y)
+                                        px(4.0)
                                     };
                                     let bounds = Bounds::new(
                                         point(
@@ -1405,11 +1415,12 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
-    fn render_header(
+    fn render_list_header(
         &self,
         ix: usize,
         header: &GitHeaderEntry,
         has_write_access: bool,
+        _window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let checkbox = Checkbox::new(header.title(), self.header_state(header.header))
@@ -1420,7 +1431,6 @@ impl GitPanel {
 
         div()
             .w_full()
-            .px_0p5()
             .child(
                 ListHeader::new(header.title())
                     .start_slot(checkbox)
@@ -1438,7 +1448,8 @@ impl GitPanel {
                                 cx,
                             )
                         })
-                    }),
+                    })
+                    .inset(true),
             )
             .into_any_element()
     }
@@ -1448,6 +1459,7 @@ impl GitPanel {
         ix: usize,
         entry: &GitStatusEntry,
         has_write_access: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
@@ -1534,7 +1546,7 @@ impl GitPanel {
             .child(
                 ListItem::new(id)
                     .indent_level(1)
-                    .indent_step_size(px(10.0))
+                    .indent_step_size(Checkbox::container_size(cx).to_pixels(window.rem_size()))
                     .spacing(ListItemSpacing::Sparse)
                     .start_slot(start_slot)
                     .toggle_state(selected)
@@ -1689,16 +1701,14 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
             .child(self.render_panel_header(window, cx))
-            .child(self.render_divider(cx))
             .child(if has_entries {
-                self.render_entries(has_write_access, cx).into_any_element()
+                self.render_entries(has_write_access, window, cx)
+                    .into_any_element()
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
-            .child(self.render_divider(cx))
             .child(self.render_commit_editor(name_and_email, cx))
     }
 }
@@ -1761,3 +1771,5 @@ impl Panel for GitPanel {
         2
     }
 }
+
+impl PanelHeader for GitPanel {}

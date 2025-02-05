@@ -22,8 +22,10 @@ futures.workspace = true
 git.workspace = true
 gpui.workspace = true
 language.workspace = true
-multi_buffer.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
+panel.workspace = true
+picker.workspace = true
 postage.workspace = true
 project.workspace = true
 schemars.workspace = true
@@ -35,7 +37,6 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-picker.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
