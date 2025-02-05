@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use rpc::ExtensionProvides;
+
 use super::Database;
 use crate::db::ExtensionVersionConstraints;
 use crate::{
@@ -325,7 +327,10 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
                         repository: "ext1/repo".into(),
                         schema_version: 1,
                         wasm_api_version: Some("0.0.4".into()),
-                        provides: BTreeSet::default(),
+                        provides: BTreeSet::from_iter([
+                            ExtensionProvides::Grammars,
+                            ExtensionProvides::Languages,
+                        ]),
                         published_at: t0,
                     },
                     NewExtensionVersion {
@@ -336,7 +341,11 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
                         repository: "ext1/repo".into(),
                         schema_version: 1,
                         wasm_api_version: Some("0.0.4".into()),
-                        provides: BTreeSet::default(),
+                        provides: BTreeSet::from_iter([
+                            ExtensionProvides::Grammars,
+                            ExtensionProvides::Languages,
+                            ExtensionProvides::LanguageServers,
+                        ]),
                         published_at: t0,
                     },
                     NewExtensionVersion {
@@ -347,7 +356,11 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
                         repository: "ext1/repo".into(),
                         schema_version: 1,
                         wasm_api_version: Some("0.0.5".into()),
-                        provides: BTreeSet::default(),
+                        provides: BTreeSet::from_iter([
+                            ExtensionProvides::Grammars,
+                            ExtensionProvides::Languages,
+                            ExtensionProvides::LanguageServers,
+                        ]),
                         published_at: t0,
                     },
                 ],
@@ -396,7 +409,11 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
                 repository: "ext1/repo".into(),
                 schema_version: Some(1),
                 wasm_api_version: Some("0.0.4".into()),
-                provides: BTreeSet::default(),
+                provides: BTreeSet::from_iter([
+                    ExtensionProvides::Grammars,
+                    ExtensionProvides::Languages,
+                    ExtensionProvides::LanguageServers,
+                ]),
             },
             published_at: t0_chrono,
             download_count: 0,
