@@ -14404,6 +14404,15 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
+ "util_macros",
+]
+
+[[package]]
+name = "util_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
