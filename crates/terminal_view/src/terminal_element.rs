@@ -1073,6 +1073,15 @@ impl InputHandler for TerminalInputHandler {
     fn apple_press_and_hold_enabled(&mut self) -> bool {
         false
     }
+
+    fn character_index_for_point(
+        &mut self,
+        _point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Option<usize> {
+        None
+    }
 }
 
 pub fn is_blank(cell: &IndexedCell) -> bool {
