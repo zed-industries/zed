@@ -902,6 +902,7 @@ fn proto_status_to_db(
         status_entry
             .repo_path
             .map(|path| path.to_db_string())
+            .or_else(|| status_entry.repo_path_deprecated)
             .unwrap_or_default(),
         status_kind,
         first_status,
