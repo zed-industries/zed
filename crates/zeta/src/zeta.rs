@@ -958,8 +958,7 @@ impl LicenseDetectionWatcher {
         Self {
             is_open_source_rx,
             _is_open_source_task: cx.spawn(|_, _| async move {
-                // TODO: Don't display error if file not found
-                let Some(loaded_file) = loaded_file_fut.await.log_err() else {
+                let Ok(loaded_file) = loaded_file_fut.await else {
                     return;
                 };
 
