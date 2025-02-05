@@ -2289,7 +2289,7 @@ impl ContextEditor {
                 },
             ))
             .children(
-                KeyBinding::for_action_in(&Assist, &focus_handle, window)
+                KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
@@ -2342,7 +2342,7 @@ impl ContextEditor {
             .layer(ElevationIndex::ModalSurface)
             .child(Label::new("Suggest Edits"))
             .children(
-                KeyBinding::for_action_in(&Edit, &focus_handle, window)
+                KeyBinding::for_action_in(&Edit, &focus_handle, window, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {

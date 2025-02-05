@@ -200,6 +200,9 @@ pub fn example_group_with_title<T>(
     ComponentExampleGroup::with_title(title, examples)
 }
 
-pub fn theme_preview_keybinding(keystrokes: &str) -> KeyBinding {
-    KeyBinding::new(gpui::KeyBinding::new(keystrokes, gpui::NoAction {}, None))
+pub fn theme_preview_keybinding(keystrokes: &str, cx: &App) -> KeyBinding {
+    KeyBinding::new(
+        gpui::KeyBinding::new(keystrokes, gpui::NoAction {}, None),
+        cx,
+    )
 }

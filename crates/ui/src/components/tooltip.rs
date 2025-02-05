@@ -41,10 +41,10 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: None,
-            key_binding: KeyBinding::for_action(action, window),
+            key_binding: KeyBinding::for_action(action, window, cx),
         })
         .into()
     }
@@ -56,10 +56,10 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: None,
-            key_binding: KeyBinding::for_action_in(action, focus_handle, window),
+            key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
         })
         .into()
     }
@@ -71,10 +71,10 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
-            key_binding: action.and_then(|action| KeyBinding::for_action(action, window)),
+            key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
         })
         .into()
     }
@@ -87,11 +87,11 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyView {
-        cx.new(|_| Self {
+        cx.new(|cx| Self {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action
-                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window)),
+                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
         })
         .into()
     }
