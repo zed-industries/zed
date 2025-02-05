@@ -3,6 +3,7 @@ mod init;
 mod license_detection;
 mod onboarding_banner;
 mod onboarding_modal;
+mod onboarding_telemetry;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;

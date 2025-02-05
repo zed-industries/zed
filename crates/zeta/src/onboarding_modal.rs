@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::ZED_PREDICT_DATA_COLLECTION_CHOICE;
+use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::FeatureFlagAppExt as _;
@@ -61,16 +61,22 @@ impl ZedPredictModal {
     fn view_terms(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/terms-of-service");
         cx.notify();
+
+        onboarding_event!("ToS Link Clicked");
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
         cx.notify();
+
+        onboarding_event!("Blog Link clicked");
     }
 
     fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
         cx.notify();
+
+        onboarding_event!("Docs Link Clicked");
     }
 
     fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -106,6 +112,11 @@ impl ZedPredictModal {
             })
         })
         .detach_and_notify_err(window, cx);
+
+        onboarding_event!(
+            "Enable Clicked",
+            data_collection_opted_in = self.data_collection_opted_in,
+        );
     }
 
     fn sign_in(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -122,12 +133,15 @@ impl ZedPredictModal {
 
             this.update(&mut cx, |this, cx| {
                 this.sign_in_status = status;
+                onboarding_event!("Signed In");
                 cx.notify()
             })?;
 
             result
         })
         .detach_and_notify_err(window, cx);
+
+        onboarding_event!("Sign In Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -159,6 +173,7 @@ impl Render for ZedPredictModal {
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
+                onboarding_event!("Cancelled", trigger = "Action");
                 cx.emit(DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
@@ -241,6 +256,7 @@ impl Render for ZedPredictModal {
             .child(h_flex().absolute().top_2().right_2().child(
                 IconButton::new("cancel", IconName::X).on_click(cx.listener(
                     |_, _: &ClickEvent, _window, cx| {
+                        onboarding_event!("Cancelled", trigger = "X click");
                         cx.emit(DismissEvent);
                     },
                 )),
@@ -302,7 +318,7 @@ impl Render for ZedPredictModal {
                                 .label("Read and accept the")
                                 .on_click(cx.listener(move |this, state, _window, cx| {
                                     this.terms_of_service = *state == ToggleState::Selected;
-                                    cx.notify()
+                                    cx.notify();
                                 })),
                         )
                         .child(
@@ -340,7 +356,11 @@ impl Render for ZedPredictModal {
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.data_collection_expanded =
                                                 !this.data_collection_expanded;
-                                            cx.notify()
+                                            cx.notify();
+
+                                            if this.data_collection_expanded {
+                                                onboarding_event!("Data Collection Learn More Clicked");
+                                            }
                                         })),
                                 ),
                         )
