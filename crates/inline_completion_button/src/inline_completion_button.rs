@@ -399,7 +399,7 @@ impl InlineCompletionButton {
             menu = menu.toggleable_entry(
                 language.name(),
                 language_enabled,
-                IconPosition::Start,
+                IconPosition::End,
                 None,
                 move |_, cx| {
                     toggle_show_inline_completions_for_language(language.clone(), fs.clone(), cx)
@@ -412,7 +412,7 @@ impl InlineCompletionButton {
         menu = menu.toggleable_entry(
             "All Files",
             globally_enabled,
-            IconPosition::Start,
+            IconPosition::End,
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
@@ -424,7 +424,7 @@ impl InlineCompletionButton {
                 let provider = provider.clone();
                 menu = menu.item(
                     ContextMenuEntry::new("Share Training Data")
-                        .toggleable(IconPosition::Start, data_collection.is_enabled())
+                        .toggleable(IconPosition::End, data_collection.is_enabled())
                         .documentation_aside(|_| {
                             Label::new("Zed automatically detects if your project is open-source. This setting is only applicable in such cases.").into_any_element()
                         })
@@ -433,32 +433,38 @@ impl InlineCompletionButton {
                         }),
                 )
             }
+        }
 
-            if let Some(file) = &self.file {
-                let path = file.path().clone();
-                let path_enabled = settings.inline_completions_enabled_for_path(&path);
-                menu = menu.item(
-                    ContextMenuEntry::new("Exclude File")
-                        .toggleable(IconPosition::Start, !path_enabled)
-                        .documentation_aside(|_| {
-                            Label::new("Content from files specified in this setting is never captured by Zed's prediction model. You can list both specific file extensions and individual file names.").into_any_element()
-                        })
-                        .handler(move |window, cx| {
-                            if let Some(workspace) = window.root().flatten() {
-                                let workspace = workspace.downgrade();
-                                window
-                                    .spawn(cx, |cx| {
-                                        configure_disabled_globs(
-                                            workspace,
-                                            path_enabled.then_some(path.clone()),
-                                            cx,
-                                        )
-                                    })
-                                    .detach_and_log_err(cx);
-                            }
-                        }),
-                );
-            }
+        menu = menu.item(
+            ContextMenuEntry::new("Exclude Files")
+                .documentation_aside(|_| {
+                    Label::new("This item takes you to the settings where you can specify files that will never be captured by any edit prediction model. You can list both specific file extensions and individual file names.").into_any_element()
+                })
+                .handler(move |window, cx| {
+                    if let Some(workspace) = window.root().flatten() {
+                        let workspace = workspace.downgrade();
+                        window
+                            .spawn(cx, |cx| {
+                                configure_disabled_globs(
+                                    workspace,
+                                    None,
+                                    cx,
+                                )
+                            })
+                            .detach_and_log_err(cx);
+                    }
+                }),
+        );
+
+        if self.file.as_ref().map_or(false, |file| {
+            !all_language_settings(Some(file), cx).inline_completions_enabled_for_path(file.path())
+        }) {
+            menu = menu.item(
+                ContextMenuEntry::new("This file is excluded.")
+                    .disabled(true)
+                    .icon(IconName::ZedPredictDisabled)
+                    .icon_size(IconSize::Small),
+            );
         }
 
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
