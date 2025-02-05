@@ -36,7 +36,7 @@ use language::{
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
-    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language,
+    CompletionDocumentation, Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, File as _, Language,
     LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile,
     LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
     Transaction, Unclipped,
@@ -2854,37 +2854,37 @@ struct CoreSymbol {
 
 impl LspStore {
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_request_handler(Self::handle_multi_lsp_query);
-        client.add_model_request_handler(Self::handle_restart_language_servers);
-        client.add_model_request_handler(Self::handle_cancel_language_server_work);
-        client.add_model_message_handler(Self::handle_start_language_server);
-        client.add_model_message_handler(Self::handle_update_language_server);
-        client.add_model_message_handler(Self::handle_language_server_log);
-        client.add_model_message_handler(Self::handle_update_diagnostic_summary);
-        client.add_model_request_handler(Self::handle_format_buffers);
-        client.add_model_request_handler(Self::handle_resolve_completion_documentation);
-        client.add_model_request_handler(Self::handle_apply_code_action);
-        client.add_model_request_handler(Self::handle_inlay_hints);
-        client.add_model_request_handler(Self::handle_get_project_symbols);
-        client.add_model_request_handler(Self::handle_resolve_inlay_hint);
-        client.add_model_request_handler(Self::handle_open_buffer_for_symbol);
-        client.add_model_request_handler(Self::handle_refresh_inlay_hints);
-        client.add_model_request_handler(Self::handle_on_type_formatting);
-        client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
-        client.add_model_request_handler(Self::handle_register_buffer_with_language_servers);
-        client.add_model_request_handler(Self::handle_rename_project_entry);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetCodeActions>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetDefinition>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetDeclaration>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
-        client.add_model_request_handler(Self::handle_lsp_command::<GetReferences>);
-        client.add_model_request_handler(Self::handle_lsp_command::<PrepareRename>);
-        client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
-        client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
-        client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_entity_request_handler(Self::handle_multi_lsp_query);
+        client.add_entity_request_handler(Self::handle_restart_language_servers);
+        client.add_entity_request_handler(Self::handle_cancel_language_server_work);
+        client.add_entity_message_handler(Self::handle_start_language_server);
+        client.add_entity_message_handler(Self::handle_update_language_server);
+        client.add_entity_message_handler(Self::handle_language_server_log);
+        client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_entity_request_handler(Self::handle_format_buffers);
+        client.add_entity_request_handler(Self::handle_resolve_completion_documentation);
+        client.add_entity_request_handler(Self::handle_apply_code_action);
+        client.add_entity_request_handler(Self::handle_inlay_hints);
+        client.add_entity_request_handler(Self::handle_get_project_symbols);
+        client.add_entity_request_handler(Self::handle_resolve_inlay_hint);
+        client.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
+        client.add_entity_request_handler(Self::handle_refresh_inlay_hints);
+        client.add_entity_request_handler(Self::handle_on_type_formatting);
+        client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
+        client.add_entity_request_handler(Self::handle_rename_project_entry);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDefinition>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDeclaration>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetTypeDefinition>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetReferences>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -4359,7 +4359,7 @@ impl LspStore {
         } else {
             let mut completions = completions.borrow_mut();
             let completion = &mut completions[completion_index];
-            completion.documentation = Some(Documentation::Undocumented);
+            completion.documentation = Some(CompletionDocumentation::Undocumented);
         }
 
         // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
@@ -4434,16 +4434,16 @@ impl LspStore {
         let lsp_completion = serde_json::from_slice(&response.lsp_completion)?;
 
         let documentation = if response.documentation.is_empty() {
-            Documentation::Undocumented
+            CompletionDocumentation::Undocumented
         } else if response.documentation_is_markdown {
-            Documentation::MultiLineMarkdown(
+            CompletionDocumentation::MultiLineMarkdown(
                 markdown::parse_markdown(&response.documentation, Some(&language_registry), None)
                     .await,
             )
         } else if response.documentation.lines().count() <= 1 {
-            Documentation::SingleLine(response.documentation)
+            CompletionDocumentation::SingleLine(response.documentation)
         } else {
-            Documentation::MultiLinePlainText(response.documentation)
+            CompletionDocumentation::MultiLinePlainText(response.documentation)
         };
 
         let mut completions = completions.borrow_mut();

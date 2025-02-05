@@ -1040,6 +1040,7 @@ impl App {
 
     /// Spawns the future returned by the given function on the thread pool. The closure will be invoked
     /// with [AsyncApp], which allows the application state to be accessed across await points.
+    #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,
@@ -1418,7 +1419,7 @@ impl App {
     }
 
     /// Dispatch an action to the currently active window or global action handler
-    /// See [action::Action] for more information on how actions work
+    /// See [`crate::Action`] for more information on how actions work
     pub fn dispatch_action(&mut self, action: &dyn Action) {
         if let Some(active_window) = self.active_window() {
             active_window

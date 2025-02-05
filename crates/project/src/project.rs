@@ -22,7 +22,7 @@ mod project_tests;
 mod direnv;
 mod environment;
 pub use environment::EnvironmentErrorMessage;
-use git::RepositoryHandle;
+use git::Repository;
 pub mod search_history;
 mod yarn;
 
@@ -56,9 +56,9 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
-    CachedLspAdapter, Capability, CodeLabel, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped,
+    CachedLspAdapter, Capability, CodeLabel, CompletionDocumentation, File as _, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer,
@@ -157,7 +157,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Entity<SshRemoteClient>>,
     client_state: ProjectClientState,
-    git_state: Option<Entity<GitState>>,
+    git_state: Entity<GitState>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Entity<WorktreeStore>,
@@ -368,7 +368,7 @@ pub struct Completion {
     /// The id of the language server that produced this completion.
     pub server_id: LanguageServerId,
     /// The documentation for this completion.
-    pub documentation: Option<Documentation>,
+    pub documentation: Option<CompletionDocumentation>,
     /// The raw completion provided by the language server.
     pub lsp_completion: lsp::CompletionItem,
     /// Whether this completion has been resolved, to ensure it happens once per completion.
@@ -591,24 +591,25 @@ impl Project {
         Self::init_settings(cx);
 
         let client: AnyProtoClient = client.clone().into();
-        client.add_model_message_handler(Self::handle_add_collaborator);
-        client.add_model_message_handler(Self::handle_update_project_collaborator);
-        client.add_model_message_handler(Self::handle_remove_collaborator);
-        client.add_model_message_handler(Self::handle_update_project);
-        client.add_model_message_handler(Self::handle_unshare_project);
-        client.add_model_request_handler(Self::handle_update_buffer);
-        client.add_model_message_handler(Self::handle_update_worktree);
-        client.add_model_request_handler(Self::handle_synchronize_buffers);
+        client.add_entity_message_handler(Self::handle_add_collaborator);
+        client.add_entity_message_handler(Self::handle_update_project_collaborator);
+        client.add_entity_message_handler(Self::handle_remove_collaborator);
+        client.add_entity_message_handler(Self::handle_update_project);
+        client.add_entity_message_handler(Self::handle_unshare_project);
+        client.add_entity_request_handler(Self::handle_update_buffer);
+        client.add_entity_message_handler(Self::handle_update_worktree);
+        client.add_entity_request_handler(Self::handle_synchronize_buffers);
 
-        client.add_model_request_handler(Self::handle_search_candidate_buffers);
-        client.add_model_request_handler(Self::handle_open_buffer_by_id);
-        client.add_model_request_handler(Self::handle_open_buffer_by_path);
-        client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_entity_request_handler(Self::handle_search_candidate_buffers);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_id);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
+        client.add_entity_request_handler(Self::handle_open_new_buffer);
+        client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
 
-        client.add_model_request_handler(Self::handle_stage);
-        client.add_model_request_handler(Self::handle_unstage);
-        client.add_model_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_stage);
+        client.add_entity_request_handler(Self::handle_unstage);
+        client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -699,9 +700,7 @@ impl Project {
                 )
             });
 
-            let git_state = Some(
-                cx.new(|cx| GitState::new(&worktree_store, languages.clone(), None, None, cx)),
-            );
+            let git_state = cx.new(|cx| GitState::new(&worktree_store, None, None, cx));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -821,15 +820,14 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            let git_state = Some(cx.new(|cx| {
+            let git_state = cx.new(|cx| {
                 GitState::new(
                     &worktree_store,
-                    languages.clone(),
                     Some(ssh_proto.clone()),
                     Some(ProjectId(SSH_PROJECT_ID)),
                     cx,
                 )
-            }));
+            });
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -894,13 +892,13 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
 
-            ssh_proto.add_model_message_handler(Self::handle_create_buffer_for_peer);
-            ssh_proto.add_model_message_handler(Self::handle_update_worktree);
-            ssh_proto.add_model_message_handler(Self::handle_update_project);
-            ssh_proto.add_model_message_handler(Self::handle_toast);
-            ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
-            ssh_proto.add_model_message_handler(Self::handle_hide_toast);
-            ssh_proto.add_model_request_handler(Self::handle_update_buffer_from_ssh);
+            ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+            ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
+            ssh_proto.add_entity_message_handler(Self::handle_update_project);
+            ssh_proto.add_entity_message_handler(Self::handle_toast);
+            ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            ssh_proto.add_entity_message_handler(Self::handle_hide_toast);
+            ssh_proto.add_entity_request_handler(Self::handle_update_buffer_from_ssh);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -1027,16 +1025,14 @@ impl Project {
             SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
         })?;
 
-        let git_state = Some(cx.new(|cx| {
+        let git_state = cx.new(|cx| {
             GitState::new(
                 &worktree_store,
-                languages.clone(),
                 Some(client.clone().into()),
                 Some(ProjectId(remote_id)),
                 cx,
             )
-        }))
-        .transpose()?;
+        })?;
 
         let this = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
@@ -1113,17 +1109,19 @@ impl Project {
             .into_iter()
             .map(|s| match s {
                 EntitySubscription::BufferStore(subscription) => {
-                    subscription.set_model(&buffer_store, &mut cx)
+                    subscription.set_entity(&buffer_store, &mut cx)
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
-                    subscription.set_model(&worktree_store, &mut cx)
+                    subscription.set_entity(&worktree_store, &mut cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
-                    subscription.set_model(&settings_observer, &mut cx)
+                    subscription.set_entity(&settings_observer, &mut cx)
                 }
-                EntitySubscription::Project(subscription) => subscription.set_model(&this, &mut cx),
+                EntitySubscription::Project(subscription) => {
+                    subscription.set_entity(&this, &mut cx)
+                }
                 EntitySubscription::LspStore(subscription) => {
-                    subscription.set_model(&lsp_store, &mut cx)
+                    subscription.set_entity(&lsp_store, &mut cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1634,19 +1632,19 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&cx.entity(), &mut cx.to_async()),
+                .set_entity(&cx.entity(), &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.worktree_store, &mut cx.to_async()),
+                .set_entity(&self.worktree_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.buffer_store, &mut cx.to_async()),
+                .set_entity(&self.buffer_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.lsp_store, &mut cx.to_async()),
+                .set_entity(&self.lsp_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.settings_observer, &mut cx.to_async()),
+                .set_entity(&self.settings_observer, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -1971,6 +1969,20 @@ impl Project {
         })
     }
 
+    pub fn open_uncommitted_changes(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferChangeSet>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_uncommitted_changes(buffer, cx)
+        })
+    }
+
     pub fn open_buffer_by_id(
         &mut self,
         id: BufferId,
@@ -1985,12 +1997,15 @@ impl Project {
                 project_id,
                 id: id.into(),
             });
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |project, mut cx| async move {
                 let buffer_id = BufferId::new(request.await?.buffer_id)?;
-                this.update(&mut cx, |this, cx| {
-                    this.wait_for_remote_buffer(buffer_id, cx)
-                })?
-                .await
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store.update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })
+                    })?
+                    .await
             })
         } else {
             Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
@@ -2833,16 +2848,21 @@ impl Project {
 
         let proto_client = ssh_client.read(cx).proto_client();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|project, mut cx| async move {
             let buffer = proto_client
                 .request(proto::OpenServerSettings {
                     project_id: SSH_PROJECT_ID,
                 })
                 .await?;
 
-            let buffer = this
-                .update(&mut cx, |this, cx| {
-                    anyhow::Ok(this.wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx))
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    project.buffer_store.update(cx, |buffer_store, cx| {
+                        anyhow::Ok(
+                            buffer_store
+                                .wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx),
+                        )
+                    })
                 })??
                 .await;
 
@@ -3173,13 +3193,15 @@ impl Project {
         });
         let guard = self.retain_remotely_created_models(cx);
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |project, mut cx| async move {
             let response = request.await?;
             for buffer_id in response.buffer_ids {
                 let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = this
-                    .update(&mut cx, |this, cx| {
-                        this.wait_for_remote_buffer(buffer_id, cx)
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store.update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })
                     })?
                     .await?;
                 let _ = tx.send(buffer).await;
@@ -3974,21 +3996,8 @@ impl Project {
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = this.update(&mut cx, |project, cx| {
-            let repository_handle = project
-                .git_state()
-                .context("missing git state")?
-                .read(cx)
-                .all_repositories()
-                .into_iter()
-                .find(|repository_handle| {
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
-                            == work_directory_id
-                })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
-        })??;
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
         let entries = envelope
             .payload
@@ -3997,15 +4006,13 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
+
         repository_handle
-            .stage_entries(entries, err_sender)
-            .context("staging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during staging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.stage_entries(entries)
+            })?
+            .await??;
+        Ok(proto::Ack {})
     }
 
     async fn handle_unstage(
@@ -4015,21 +4022,8 @@ impl Project {
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = this.update(&mut cx, |project, cx| {
-            let repository_handle = project
-                .git_state()
-                .context("missing git state")?
-                .read(cx)
-                .all_repositories()
-                .into_iter()
-                .find(|repository_handle| {
-                    repository_handle.worktree_id == worktree_id
-                        && repository_handle.repository_entry.work_directory_id()
-                            == work_directory_id
-                })
-                .context("missing repository handle")?;
-            anyhow::Ok(repository_handle)
-        })??;
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
         let entries = envelope
             .payload
@@ -4038,15 +4032,13 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
+
         repository_handle
-            .unstage_entries(entries, err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.unstage_entries(entries)
+            })?
+            .await??;
+        Ok(proto::Ack {})
     }
 
     async fn handle_commit(
@@ -4056,34 +4048,60 @@ impl Project {
     ) -> Result<proto::Ack> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle = this.update(&mut cx, |project, cx| {
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+
+        let message = SharedString::from(envelope.payload.message);
+        let name = envelope.payload.name.map(SharedString::from);
+        let email = envelope.payload.email.map(SharedString::from);
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.commit(message, name.zip(email))
+            })?
+            .await??;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_open_commit_message_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenBufferResponse> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
+        let repository_handle =
+            Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
+        let buffer = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
+            })?
+            .await?;
+
+        let peer_id = envelope.original_sender_id()?;
+        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+    }
+
+    fn repository_for_request(
+        this: &Entity<Self>,
+        worktree_id: WorktreeId,
+        work_directory_id: ProjectEntryId,
+        cx: &mut AsyncApp,
+    ) -> Result<Entity<Repository>> {
+        this.update(cx, |project, cx| {
             let repository_handle = project
                 .git_state()
-                .context("missing git state")?
                 .read(cx)
                 .all_repositories()
                 .into_iter()
                 .find(|repository_handle| {
+                    let repository_handle = repository_handle.read(cx);
                     repository_handle.worktree_id == worktree_id
                         && repository_handle.repository_entry.work_directory_id()
                             == work_directory_id
                 })
                 .context("missing repository handle")?;
             anyhow::Ok(repository_handle)
-        })??;
-
-        let commit_message = envelope.payload.message;
-        let name = envelope.payload.name.map(SharedString::from);
-        let email = envelope.payload.email.map(SharedString::from);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .commit_with_message(commit_message, name.zip(email), err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+        })?
     }
 
     fn respond_to_open_buffer_request(
@@ -4120,16 +4138,6 @@ impl Project {
             })
             .detach_and_log_err(cx);
         buffer.read(cx).remote_id()
-    }
-
-    fn wait_for_remote_buffer(
-        &mut self,
-        id: BufferId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.wait_for_remote_buffer(id, cx)
-        })
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -4287,19 +4295,16 @@ impl Project {
         &self.buffer_store
     }
 
-    pub fn git_state(&self) -> Option<&Entity<GitState>> {
-        self.git_state.as_ref()
+    pub fn git_state(&self) -> &Entity<GitState> {
+        &self.git_state
     }
 
-    pub fn active_repository(&self, cx: &App) -> Option<RepositoryHandle> {
-        self.git_state()
-            .and_then(|git_state| git_state.read(cx).active_repository())
+    pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
+        self.git_state.read(cx).active_repository()
     }
 
-    pub fn all_repositories(&self, cx: &App) -> Vec<RepositoryHandle> {
-        self.git_state()
-            .map(|git_state| git_state.read(cx).all_repositories())
-            .unwrap_or_default()
+    pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
+        self.git_state.read(cx).all_repositories()
     }
 }
 

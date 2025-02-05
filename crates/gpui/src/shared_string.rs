@@ -16,7 +16,7 @@ impl SharedString {
         Self(ArcCow::Borrowed(str))
     }
 
-    /// Creates a [`SharedString`] from anything that can become an Arc<str>
+    /// Creates a [`SharedString`] from anything that can become an `Arc<str>`
     pub fn new(str: impl Into<Arc<str>>) -> Self {
         SharedString(ArcCow::Owned(str.into()))
     }

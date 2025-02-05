@@ -29,6 +29,23 @@ impl ToggleState {
             Self::Selected => Self::Unselected,
         }
     }
+
+    /// Creates a `ToggleState` from the given `any_checked` and `all_checked` flags.
+    pub fn from_any_and_all(any_checked: bool, all_checked: bool) -> Self {
+        match (any_checked, all_checked) {
+            (true, true) => Self::Selected,
+            (false, false) => Self::Unselected,
+            _ => Self::Indeterminate,
+        }
+    }
+
+    /// Returns whether this toggle state is selected
+    pub fn selected(&self) -> bool {
+        match self {
+            ToggleState::Indeterminate | ToggleState::Unselected => false,
+            ToggleState::Selected => true,
+        }
+    }
 }
 
 impl From<bool> for ToggleState {
@@ -41,12 +58,12 @@ impl From<bool> for ToggleState {
     }
 }
 
-impl From<Option<bool>> for ToggleState {
-    fn from(selected: Option<bool>) -> Self {
-        match selected {
-            Some(true) => Self::Selected,
-            Some(false) => Self::Unselected,
-            None => Self::Unselected,
-        }
-    }
-}
+// impl From<Option<bool>> for ToggleState {
+//     fn from(selected: Option<bool>) -> Self {
+//         match selected {
+//             Some(true) => Self::Selected,
+//             Some(false) => Self::Unselected,
+//             None => Self::Unselected,
+//         }
+//     }
+// }

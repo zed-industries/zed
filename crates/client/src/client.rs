@@ -379,7 +379,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Entity<T>, cx: &AsyncApp) -> Subscription {
+    pub fn set_entity(mut self, entity: &Entity<T>, cx: &AsyncApp) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -392,7 +392,7 @@ impl<T: 'static> PendingEntitySubscription<T> {
         handlers.entities_by_type_and_remote_id.insert(
             id,
             EntityMessageSubscriber::Entity {
-                handle: model.downgrade().into(),
+                handle: entity.downgrade().into(),
             },
         );
         drop(handlers);
@@ -686,8 +686,8 @@ impl Client {
         H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
         F: 'static + Future<Output = Result<()>>,
     {
-        self.add_message_handler_impl(entity, move |model, message, _, cx| {
-            handler(model, message, cx)
+        self.add_message_handler_impl(entity, move |entity, message, _, cx| {
+            handler(entity, message, cx)
         })
     }
 
@@ -709,7 +709,7 @@ impl Client {
         let message_type_id = TypeId::of::<M>();
         let mut state = self.handler_set.lock();
         state
-            .models_by_message_type
+            .entities_by_message_type
             .insert(message_type_id, entity.into());
 
         let prev_handler = state.message_handlers.insert(
@@ -738,7 +738,7 @@ impl Client {
 
     pub fn add_request_handler<M, E, H, F>(
         self: &Arc<Self>,
-        model: WeakEntity<E>,
+        entity: WeakEntity<E>,
         handler: H,
     ) -> Subscription
     where
@@ -747,7 +747,7 @@ impl Client {
         H: 'static + Sync + Fn(Entity<E>, TypedEnvelope<M>, AsyncApp) -> F + Send + Sync,
         F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_message_handler_impl(model, move |handle, envelope, this, cx| {
+        self.add_message_handler_impl(entity, move |handle, envelope, this, cx| {
             Self::respond_to_request(envelope.receipt(), handler(handle, envelope, cx), this)
         })
     }
@@ -1948,9 +1948,9 @@ mod tests {
 
         let (done_tx1, done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
-        AnyProtoClient::from(client.clone()).add_model_message_handler(
-            move |model: Entity<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match model.update(&mut cx, |model, _| model.id).unwrap() {
+        AnyProtoClient::from(client.clone()).add_entity_message_handler(
+            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
+                match entity.update(&mut cx, |entity, _| entity.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
@@ -1958,15 +1958,15 @@ mod tests {
                 async { Ok(()) }
             },
         );
-        let model1 = cx.new(|_| TestModel {
+        let entity1 = cx.new(|_| TestEntity {
             id: 1,
             subscription: None,
         });
-        let model2 = cx.new(|_| TestModel {
+        let entity2 = cx.new(|_| TestEntity {
             id: 2,
             subscription: None,
         });
-        let model3 = cx.new(|_| TestModel {
+        let entity3 = cx.new(|_| TestEntity {
             id: 3,
             subscription: None,
         });
@@ -1974,17 +1974,17 @@ mod tests {
         let _subscription1 = client
             .subscribe_to_entity(1)
             .unwrap()
-            .set_model(&model1, &mut cx.to_async());
+            .set_entity(&entity1, &mut cx.to_async());
         let _subscription2 = client
             .subscribe_to_entity(2)
             .unwrap()
-            .set_model(&model2, &mut cx.to_async());
+            .set_entity(&entity2, &mut cx.to_async());
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = client
             .subscribe_to_entity(3)
             .unwrap()
-            .set_model(&model3, &mut cx.to_async());
+            .set_entity(&entity3, &mut cx.to_async());
         drop(subscription3);
 
         server.send(proto::JoinProject { project_id: 1 });
@@ -2006,11 +2006,11 @@ mod tests {
         });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.new(|_| TestModel::default());
+        let entity = cx.new(|_| TestEntity::default());
         let (done_tx1, _done_rx1) = smol::channel::unbounded();
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
-            model.downgrade(),
+            entity.downgrade(),
             move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx1.try_send(()).unwrap();
                 async { Ok(()) }
@@ -2018,7 +2018,7 @@ mod tests {
         );
         drop(subscription1);
         let _subscription2 = client.add_message_handler(
-            model.downgrade(),
+            entity.downgrade(),
             move |_, _: TypedEnvelope<proto::Ping>, _| {
                 done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
@@ -2041,27 +2041,27 @@ mod tests {
         });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let model = cx.new(|_| TestModel::default());
+        let entity = cx.new(|_| TestEntity::default());
         let (done_tx, done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
-            model.clone().downgrade(),
-            move |model: Entity<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
-                model
-                    .update(&mut cx, |model, _| model.subscription.take())
+            entity.clone().downgrade(),
+            move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::Ping>, mut cx| {
+                entity
+                    .update(&mut cx, |entity, _| entity.subscription.take())
                     .unwrap();
                 done_tx.try_send(()).unwrap();
                 async { Ok(()) }
             },
         );
-        model.update(cx, |model, _| {
-            model.subscription = Some(subscription);
+        entity.update(cx, |entity, _| {
+            entity.subscription = Some(subscription);
         });
         server.send(proto::Ping {});
         done_rx.recv().await.unwrap();
     }
 
     #[derive(Default)]
-    struct TestModel {
+    struct TestEntity {
         id: usize,
         subscription: Option<Subscription>,
     }

@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
-    SharedString, Task, TaskLabel, Window,
+    SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -236,36 +236,35 @@ pub async fn prepare_completion_documentation(
     documentation: &lsp::Documentation,
     language_registry: &Arc<LanguageRegistry>,
     language: Option<Arc<Language>>,
-) -> Documentation {
+) -> CompletionDocumentation {
     match documentation {
         lsp::Documentation::String(text) => {
             if text.lines().count() <= 1 {
-                Documentation::SingleLine(text.clone())
+                CompletionDocumentation::SingleLine(text.clone())
             } else {
-                Documentation::MultiLinePlainText(text.clone())
+                CompletionDocumentation::MultiLinePlainText(text.clone())
             }
         }
 
         lsp::Documentation::MarkupContent(lsp::MarkupContent { kind, value }) => match kind {
             lsp::MarkupKind::PlainText => {
                 if value.lines().count() <= 1 {
-                    Documentation::SingleLine(value.clone())
+                    CompletionDocumentation::SingleLine(value.clone())
                 } else {
-                    Documentation::MultiLinePlainText(value.clone())
+                    CompletionDocumentation::MultiLinePlainText(value.clone())
                 }
             }
 
             lsp::MarkupKind::Markdown => {
                 let parsed = parse_markdown(value, Some(language_registry), language).await;
-                Documentation::MultiLineMarkdown(parsed)
+                CompletionDocumentation::MultiLineMarkdown(parsed)
             }
         },
     }
 }
 
-/// Documentation associated with a [`Completion`].
 #[derive(Clone, Debug)]
-pub enum Documentation {
+pub enum CompletionDocumentation {
     /// There is no documentation for this completion.
     Undocumented,
     /// A single line of documentation.
@@ -617,6 +616,11 @@ impl HighlightedText {
             syntax_theme,
         );
         highlighted_text.build()
+    }
+
+    pub fn to_styled_text(&self, default_style: &TextStyle) -> StyledText {
+        gpui::StyledText::new(self.text.clone())
+            .with_highlights(default_style, self.highlights.iter().cloned())
     }
 }
 
@@ -994,6 +998,34 @@ impl Buffer {
                 language,
                 non_text_state_update_count: 0,
             }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_snapshot_sync(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let mut syntax = SyntaxMap::new(&text).snapshot();
+        if let Some(language) = language.clone() {
+            let text = text.clone();
+            let language = language.clone();
+            let language_registry = language_registry.clone();
+            syntax.reparse(&text, language_registry, language);
+        }
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language,
+            non_text_state_update_count: 0,
         }
     }
 
@@ -1910,12 +1942,17 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.capability != Capability::ReadOnly
-            && (self.has_conflict
-                || self.file.as_ref().map_or(false, |file| {
-                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
-                })
-                || self.has_unsaved_edits())
+        if self.capability == Capability::ReadOnly {
+            return false;
+        }
+        if self.has_conflict || self.has_unsaved_edits() {
+            return true;
+        }
+        match self.file.as_ref().map(|f| f.disk_state()) {
+            Some(DiskState::New) => !self.is_empty(),
+            Some(DiskState::Deleted) => true,
+            _ => false,
+        }
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -2893,12 +2930,19 @@ impl BufferSnapshot {
             let mut indent_from_prev_row = false;
             let mut outdent_from_prev_row = false;
             let mut outdent_to_row = u32::MAX;
+            let mut from_regex = false;
 
             while let Some((indent_row, delta)) = indent_changes.peek() {
                 match indent_row.cmp(&row) {
                     Ordering::Equal => match delta {
-                        Ordering::Less => outdent_from_prev_row = true,
-                        Ordering::Greater => indent_from_prev_row = true,
+                        Ordering::Less => {
+                            from_regex = true;
+                            outdent_from_prev_row = true
+                        }
+                        Ordering::Greater => {
+                            indent_from_prev_row = true;
+                            from_regex = true
+                        }
                         _ => {}
                     },
 
@@ -2931,32 +2975,32 @@ impl BufferSnapshot {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else {
                 None

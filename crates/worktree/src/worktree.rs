@@ -87,7 +87,7 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// May correspond to a directory or a single file.
 /// Possible examples:
 /// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
-/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+/// * a directory opened in Zed — may be added as a visible entry to the current worktree
 ///
 /// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
@@ -199,7 +199,7 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
-    pub work_directory_id: ProjectEntryId,
+    work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
 }
@@ -886,12 +886,36 @@ impl Worktree {
                             }
                         }
                     }
-                    Ok(None)
+                    Err(anyhow!("No repository found for {path:?}"))
                 })
             }
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load staged files")))
             }
+        }
+    }
+
+    pub fn load_committed_file(&self, path: &Path, cx: &App) -> Task<Result<Option<String>>> {
+        match self {
+            Worktree::Local(this) => {
+                let path = Arc::from(path);
+                let snapshot = this.snapshot();
+                cx.background_executor().spawn(async move {
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&repo.work_directory_id)
+                            {
+                                return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
+                            }
+                        }
+                    }
+                    Err(anyhow!("No repository found for {path:?}"))
+                })
+            }
+            Worktree::Remote(_) => Task::ready(Err(anyhow!(
+                "remote worktrees can't yet load committed files"
+            ))),
         }
     }
 
@@ -1295,14 +1319,7 @@ impl LocalWorktree {
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_executor().spawn({
-            let abs_path = &snapshot.abs_path;
-            #[cfg(target_os = "windows")]
-            let abs_path = abs_path
-                .as_path()
-                .canonicalize()
-                .unwrap_or_else(|_| abs_path.as_path().to_path_buf());
-            #[cfg(not(target_os = "windows"))]
-            let abs_path = abs_path.as_path().to_path_buf();
+            let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
                 let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
@@ -2665,21 +2682,10 @@ impl Snapshot {
 
     /// Get the repository whose work directory contains the given path.
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositoryEntry> {
-        let mut cursor = self.repositories.cursor::<PathProgress>(&());
-        let mut repository = None;
-
-        // Git repositories may contain other git repositories. As a side effect of
-        // lexicographic sorting by path, deeper repositories will be after higher repositories
-        // So, let's loop through every matching repository until we can't find any more to find
-        // the deepest repository that could contain this path.
-        while cursor.seek_forward(&PathTarget::Contains(path), Bias::Left, &())
-            && cursor.item().is_some()
-        {
-            repository = cursor.item();
-            cursor.next(&());
-        }
-
-        repository
+        self.repositories
+            .iter()
+            .filter(|repo| repo.work_directory.directory_contains(path))
+            .last()
     }
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
@@ -5965,7 +5971,6 @@ impl<'a> Iterator for Traversal<'a> {
 enum PathTarget<'a> {
     Path(&'a Path),
     Successor(&'a Path),
-    Contains(&'a Path),
 }
 
 impl<'a> PathTarget<'a> {
@@ -5977,13 +5982,6 @@ impl<'a> PathTarget<'a> {
                     Ordering::Greater
                 } else {
                     Ordering::Equal
-                }
-            }
-            PathTarget::Contains(path) => {
-                if path.starts_with(other) {
-                    Ordering::Equal
-                } else {
-                    Ordering::Greater
                 }
             }
         }

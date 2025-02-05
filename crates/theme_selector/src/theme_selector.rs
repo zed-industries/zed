@@ -13,6 +13,7 @@ use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
+use zed_actions::Extensions;
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 
@@ -319,6 +320,35 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     theme_match.string.clone(),
                     theme_match.positions.clone(),
                 )),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_2()
+                .gap_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("docs", "Theme Docs").on_click(cx.listener(|_, _, _, cx| {
+                        cx.open_url("https://zed.dev/docs/themes");
+                    })),
+                )
+                .child(div().flex_grow())
+                .child(
+                    Button::new("more-themes", "Install Themes").on_click(cx.listener({
+                        move |_, _, window, cx| {
+                            window.dispatch_action(Box::new(Extensions), cx);
+                        }
+                    })),
+                )
+                .into_any_element(),
         )
     }
 }

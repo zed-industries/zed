@@ -183,6 +183,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Spawn the future returned by the given function.
     /// The function is provided a weak handle to the entity owned by this context and a context that can be held across await points.
     /// The returned task must be held or detached.
+    #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakEntity<T>, AsyncApp) -> Fut) -> Task<R>
     where
         T: 'static,
@@ -583,6 +584,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// The given callback is invoked with a [`WeakEntity<V>`] to avoid leaking the view for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
+    #[track_caller]
     pub fn spawn_in<Fut, R>(
         &self,
         window: &Window,

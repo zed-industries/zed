@@ -317,6 +317,7 @@ impl TestAppContext {
     }
 
     /// Run the given task on the main thread.
+    #[track_caller]
     pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncApp) -> Fut) -> Task<R>
     where
         Fut: Future<Output = R> + 'static,

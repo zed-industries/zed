@@ -86,9 +86,6 @@ impl Render for DiagnosticIndicator {
 
         h_flex()
             .gap_2()
-            .pl_1()
-            .border_l_1()
-            .border_color(cx.theme().colors().border)
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
@@ -160,7 +157,7 @@ impl DiagnosticIndicator {
             (buffer, cursor_position)
         });
         let new_diagnostic = buffer
-            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
+            .diagnostics_in_range::<usize>(cursor_position..cursor_position)
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);
