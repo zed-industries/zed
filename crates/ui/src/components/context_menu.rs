@@ -9,7 +9,7 @@ use gpui::{
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use settings::Settings;
-use std::{collections::HashMap, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 use theme::ThemeSettings;
 
 pub enum ContextMenuItem {
@@ -135,7 +135,7 @@ pub struct ContextMenu {
     clicked: bool,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
-    documentation_aside_fn: HashMap<usize, Rc<dyn Fn(&mut App) -> AnyElement>>,
+    documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
 }
 
 impl Focusable for ContextMenu {
@@ -172,7 +172,7 @@ impl ContextMenu {
                     clicked: false,
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
-                    documentation_aside_fn: Default::default(),
+                    documentation_aside: None,
                 },
                 window,
                 cx,
@@ -430,13 +430,13 @@ impl ContextMenu {
     }
 
     fn select_index(&mut self, ix: usize) -> Option<usize> {
-        self.documentation_aside_fn.clear();
+        self.documentation_aside = None;
         let item = self.items.get(ix)?;
         if item.is_selectable() {
             self.selected_index = Some(ix);
             if let ContextMenuItem::Entry(entry) = item {
                 if let Some(callback) = &entry.documentation_aside {
-                    self.documentation_aside_fn.insert(ix, callback.clone());
+                    self.documentation_aside = Some((ix, callback.clone()));
                 }
             }
         }
@@ -510,9 +510,8 @@ impl Render for ContextMenu {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
 
         let aside = self
-            .documentation_aside_fn
-            .iter()
-            .next()
+            .documentation_aside
+            .as_ref()
             .map(|(_, callback)| callback.clone());
 
         h_flex()
@@ -523,9 +522,9 @@ impl Render for ContextMenu {
                 this.child(
                     WithRemSize::new(ui_font_size)
                         .occlude()
+                        .elevation_2(cx)
                         .p_2()
                         .max_w_80()
-                        .elevation_2(cx)
                         .child(aside(cx)),
                 )
             })
@@ -650,13 +649,14 @@ impl Render for ContextMenu {
                                                     documentation_aside_callback,
                                                     |this, documentation_aside_callback| {
                                                         this.occlude().on_hover(cx.listener(
-                                                            move |context_menu, hovered, _, cx| {
+                                                            move |menu, hovered, _, cx| {
                                                                 if *hovered {
-                                                                    context_menu.documentation_aside_fn.insert(ix, documentation_aside_callback.clone());
-                                                                } else {
-                                                                    context_menu.documentation_aside_fn.remove(&ix);
+                                                                    menu.documentation_aside = Some((ix, documentation_aside_callback.clone()));
+                                                                    cx.notify();
+                                                                } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix) {
+                                                                    menu.documentation_aside = None;
+                                                                    cx.notify();
                                                                 }
-                                                                cx.notify();
                                                             },
                                                         ))
                                                     },
