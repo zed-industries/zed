@@ -8826,7 +8826,10 @@ dependencies = [
 name = "panel"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "gpui",
+ "settings",
+ "theme",
  "ui",
  "workspace",
 ]

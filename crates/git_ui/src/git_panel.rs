@@ -9,20 +9,21 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
-use editor::{Editor, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
+use editor::{Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
 use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{CommitAllChanges, CommitChanges, ToggleStaged};
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use panel::PanelHeader;
+use panel::{
+    panel_editor_container, panel_editor_style, panel_filled_button, panel_icon_button, PanelHeader,
+};
 use project::git::{GitEvent, Repository};
 use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize};
-use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, IndentGuideColors,
     ListHeader, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
@@ -160,6 +161,7 @@ pub struct GitPanel {
     commit_pending: bool,
     can_commit: bool,
     can_commit_all: bool,
+    enable_auto_coauthors: bool,
 }
 
 fn commit_message_editor(
@@ -167,19 +169,6 @@ fn commit_message_editor(
     window: &mut Window,
     cx: &mut Context<'_, Editor>,
 ) -> Editor {
-    let theme = ThemeSettings::get_global(cx);
-
-    let mut text_style = window.text_style();
-    let refinement = TextStyleRefinement {
-        font_family: Some(theme.buffer_font.family.clone()),
-        font_features: Some(FontFeatures::disable_ligatures()),
-        font_size: Some(px(12.).into()),
-        color: Some(cx.theme().colors().editor_foreground),
-        background_color: Some(gpui::transparent_black()),
-        ..Default::default()
-    };
-    text_style.refine(&refinement);
-
     let mut commit_editor = if let Some(commit_message_buffer) = commit_message_buffer {
         let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
         Editor::new(
@@ -197,7 +186,6 @@ fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_text_style_refinement(refinement);
     commit_editor.set_placeholder_text("Enter commit message", cx);
     commit_editor
 }
@@ -274,6 +262,7 @@ impl GitPanel {
                 workspace,
                 can_commit: false,
                 can_commit_all: false,
+                enable_auto_coauthors: true,
             };
             git_panel.schedule_update(false, window, cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
@@ -999,6 +988,10 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn toggle_auto_coauthors(&mut self, cx: &mut App) {
+        self.enable_auto_coauthors = !self.enable_auto_coauthors;
+    }
+
     fn header_state(&self, header_type: Section) -> ToggleState {
         let mut count = 0;
         let mut staged_count = 0;
@@ -1154,19 +1147,32 @@ impl GitPanel {
     pub fn render_commit_editor(
         &self,
         name_and_email: Option<(SharedString, SharedString)>,
-        cx: &Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let can_commit = !self.commit_pending && self.can_commit && !editor.read(cx).is_empty(cx);
-        let can_commit_all =
-            !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
+        // let can_commit_all =
+        //     !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
 
-        let commit_staged_button = self
-            .panel_button("commit-staged-changes", "Commit")
+        // let branch_name = "some_branch";
+
+        let panel_editor_style = panel_editor_style(true, window, cx);
+
+        // let staged_changes = self
+        //     .entries
+        //     .iter()
+        //     .filter_map(|e| e.status_entry())
+        //     .filter(|status_entry| status_entry.is_staged == Some(true))
+        //     .count();
+
+        // let changes_string = format!("{} changes to {}", staged_changes, branch_name);
+
+        let commit_staged_button = panel_filled_button("Commit")
             .tooltip(move |window, cx| {
                 let focus_handle = focus_handle_1.clone();
                 Tooltip::for_action_in(
@@ -1177,7 +1183,9 @@ impl GitPanel {
                     cx,
                 )
             })
-            .disabled(!can_commit)
+            .when(!can_commit, |this| {
+                this.disabled(true).style(ButtonStyle::Transparent)
+            })
             .on_click({
                 let name_and_email = name_and_email.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -1185,8 +1193,7 @@ impl GitPanel {
                 })
             });
 
-        let commit_all_button = self
-            .panel_button("commit-all-changes", "Commit All")
+        let commit_all_button = panel_filled_button("Commit All")
             .tooltip(move |window, cx| {
                 let focus_handle = focus_handle_2.clone();
                 Tooltip::for_action_in(
@@ -1197,7 +1204,9 @@ impl GitPanel {
                     cx,
                 )
             })
-            .disabled(!can_commit_all)
+            .when(!can_commit, |this| {
+                this.disabled(true).style(ButtonStyle::Transparent)
+            })
             .on_click({
                 let name_and_email = name_and_email.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -1210,29 +1219,57 @@ impl GitPanel {
                 })
             });
 
-        div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
-            v_flex()
-                .id("commit-editor-container")
-                .relative()
-                .h_full()
-                .py_2p5()
-                .px_3()
-                .bg(cx.theme().colors().editor_background)
-                .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
-                    window.focus(&editor_focus_handle);
-                }))
-                .child(self.commit_editor.clone())
-                .child(
-                    h_flex()
-                        .absolute()
-                        .bottom_2p5()
-                        .right_3()
-                        .gap_1p5()
-                        .child(div().gap_1().flex_grow())
-                        .child(commit_all_button)
-                        .child(commit_staged_button),
-                ),
-        )
+        let co_author_button = panel_icon_button("add-co-author", IconName::UserGroup)
+            .icon_color(if self.enable_auto_coauthors {
+                Color::Muted
+            } else {
+                Color::Accent
+            })
+            .icon_size(IconSize::Small)
+            .toggle_state(self.enable_auto_coauthors)
+            .on_click({
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.toggle_auto_coauthors(cx);
+                })
+            })
+            .tooltip(move |window, cx| {
+                Tooltip::with_meta(
+                    "Toggle automatic co-authors",
+                    None,
+                    "Automatically adds current collaborators",
+                    window,
+                    cx,
+                )
+            });
+
+        panel_editor_container(window, cx)
+            .id("commit-editor-container")
+            .relative()
+            .w_full()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .h(px(140.))
+            .bg(cx.theme().colors().editor_background)
+            .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
+                window.focus(&editor_focus_handle);
+            }))
+            .child(EditorElement::new(&self.commit_editor, panel_editor_style))
+            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .items_center()
+                    .h_8()
+                    .justify_between()
+                    .gap_1()
+                    .child(co_author_button)
+                    .map(|this| {
+                        if self.current_modifiers.alt {
+                            this.child(commit_all_button)
+                        } else {
+                            this.child(commit_staged_button)
+                        }
+                    }),
+            )
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1709,7 +1746,7 @@ impl Render for GitPanel {
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
-            .child(self.render_commit_editor(name_and_email, cx))
+            .child(self.render_commit_editor(name_and_email, window, cx))
     }
 }
 
