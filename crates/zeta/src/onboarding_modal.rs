@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{Zeta, ZED_PREDICT_DATA_COLLECTION_CHOICE};
+use crate::ZED_PREDICT_DATA_COLLECTION_CHOICE;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::FeatureFlagAppExt as _;
@@ -11,10 +11,9 @@ use gpui::{
 };
 use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
 use settings::{update_settings_file, Settings};
-use ui::{prelude::*, Checkbox, TintColor, Tooltip};
+use ui::{prelude::*, Checkbox, TintColor};
 use util::ResultExt;
 use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
-use worktree::Worktree;
 
 /// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
@@ -26,7 +25,6 @@ pub struct ZedPredictModal {
     terms_of_service: bool,
     data_collection_expanded: bool,
     data_collection_opted_in: bool,
-    worktrees: Vec<Entity<Worktree>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -48,8 +46,6 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let worktrees = workspace.visible_worktrees(cx).collect();
-
         workspace.toggle_modal(window, cx, |_window, cx| Self {
             user_store,
             client,
@@ -59,7 +55,6 @@ impl ZedPredictModal {
             terms_of_service: false,
             data_collection_expanded: false,
             data_collection_opted_in: false,
-            worktrees,
         });
     }
 
@@ -106,13 +101,6 @@ impl ZedPredictModal {
                         .get_or_insert(Default::default())
                         .inline_completion_provider = Some(InlineCompletionProvider::Zed);
                 });
-
-                if this.worktrees.is_empty() {
-                    cx.emit(DismissEvent);
-                    return;
-                }
-
-                Zeta::register(None, this.client.clone(), this.user_store.clone(), cx);
 
                 cx.emit(DismissEvent);
             })
@@ -336,17 +324,6 @@ impl Render for ZedPredictModal {
                                     )
                                     .label("Optionally share training data (OSS-only).")
                                     .fill()
-                                    .when(self.worktrees.is_empty(), |element| {
-                                        element.disabled(true).tooltip(move |window, cx| {
-                                            Tooltip::with_meta(
-                                                "No Project Open",
-                                                None,
-                                                "Open a project to enable this option.",
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                    })
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
                                             this.data_collection_opted_in =
@@ -355,7 +332,6 @@ impl Render for ZedPredictModal {
                                         },
                                     )),
                                 )
-                                // TODO: show each worktree if more than 1
                                 .child(
                                     Button::new("learn-more", "Learn More")
                                         .icon(accordion_icons.0)
