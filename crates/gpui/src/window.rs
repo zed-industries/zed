@@ -2333,11 +2333,11 @@ impl Window {
 
         let (scale_factor, offset) = self.scale_factor();
         let content_mask = self.content_mask();
-        let clipped_bounds = bounds.intersect(&content_mask.bounds);
+        let clipped_bounds = (bounds + offset)
+            .scale(scale_factor)
+            .intersect(&content_mask.bounds.scale(self.window_scale_factor()));
         if !clipped_bounds.is_empty() {
-            self.next_frame
-                .scene
-                .push_layer((clipped_bounds + offset).scale(scale_factor));
+            self.next_frame.scene.push_layer(clipped_bounds);
         }
 
         let result = f(self);
@@ -2361,7 +2361,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let (scale_factor, offset) = self.scale_factor();
-        let content_mask = self.content_mask() + offset;
+        let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
@@ -2369,7 +2369,7 @@ impl Window {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: (shadow_bounds + offset).scale(scale_factor),
-                content_mask: content_mask.scale(scale_factor),
+                content_mask: content_mask.scale(self.window_scale_factor()),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
             });
@@ -2392,7 +2392,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds: (quad.bounds + offset).scale(scale_factor),
-            content_mask: (content_mask + offset).scale(scale_factor),
+            content_mask: content_mask.scale(self.window_scale_factor()),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(scale_factor),
@@ -2403,18 +2403,18 @@ impl Window {
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
+    pub fn paint_path(&mut self, path: Path<Pixels>, color: impl Into<Background>) {
         self.invalidator.debug_assert_paint();
 
         let (scale_factor, offset) = self.scale_factor();
-        let content_mask = self.content_mask();
+        let mut path = path.offset(offset).scale(scale_factor);
+        path.content_mask = self.content_mask().scale(self.window_scale_factor());
+
         let opacity = self.element_opacity();
-        path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
-        self.next_frame
-            .scene
-            .insert_primitive(path.offset(offset).scale(scale_factor));
+
+        self.next_frame.scene.insert_primitive(path);
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -2445,7 +2445,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds: (bounds + offset).scale(scale_factor),
-            content_mask: (content_mask + offset).scale(scale_factor),
+            content_mask: content_mask.scale(self.window_scale_factor()),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
             wavy: style.wavy,
@@ -2476,7 +2476,7 @@ impl Window {
             order: 0,
             pad: 0,
             bounds: (bounds + offset).scale(scale_factor),
-            content_mask: (content_mask + offset).scale(scale_factor),
+            content_mask: content_mask.scale(self.window_scale_factor()),
             thickness: style.thickness.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: false,
@@ -2530,7 +2530,7 @@ impl Window {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(scale_factor);
+            let content_mask = self.content_mask().scale(self.window_scale_factor());
             self.next_frame.scene.insert_primitive(MonochromeSprite {
                 order: 0,
                 pad: 0,
@@ -2587,7 +2587,7 @@ impl Window {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(scale_factor);
+            let content_mask = self.content_mask().scale(self.window_scale_factor());
             let opacity = self.element_opacity();
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
@@ -2639,7 +2639,7 @@ impl Window {
         else {
             return Ok(());
         };
-        let content_mask = (self.content_mask() + offset).scale(scale_factor);
+        let content_mask = self.content_mask().scale(self.window_scale_factor());
 
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
@@ -2689,7 +2689,7 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
-        let content_mask = (self.content_mask() + offset).scale(scale_factor);
+        let content_mask = self.content_mask().scale(self.window_scale_factor());
         let corner_radii = corner_radii.scale(scale_factor);
         let opacity = self.element_opacity();
 
@@ -2717,7 +2717,7 @@ impl Window {
 
         let (scale_factor, offset) = self.scale_factor();
         let bounds = (bounds + offset).scale(scale_factor);
-        let content_mask = (self.content_mask() + offset).scale(scale_factor);
+        let content_mask = self.content_mask().scale(self.window_scale_factor());
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,

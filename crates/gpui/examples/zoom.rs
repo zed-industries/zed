@@ -1,4 +1,9 @@
-use gpui::{div, prelude::*, px, rgb, size, white, App, Application, Bounds, Window};
+use std::{f32::consts::PI, time::Duration};
+
+use gpui::{
+    div, prelude::*, px, rgb, size, white, Animation, AnimationExt, App, Application, Bounds,
+    Window,
+};
 
 struct MainView {}
 
@@ -14,7 +19,15 @@ impl Render for MainView {
             .child(ChildElement { zoom: 1.0 })
             .child(ChildElement { zoom: 0.75 })
             .child(ChildElement { zoom: 0.5 })
-            .child(ChildElement { zoom: 0.25 })
+            .with_animation(
+                "animation",
+                Animation::new(Duration::from_millis(2000)).repeat(),
+                |el, delta| {
+                    el.child(ChildElement {
+                        zoom: (2.0 * delta * PI).sin() * 0.25 + 0.75,
+                    })
+                },
+            )
     }
 }
 
