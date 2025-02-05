@@ -277,9 +277,9 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build
 
-      - name: Debug print
+      - name: Check dev drive space
         working-directory: ${{ env.ZED_WORKSPACE }}
-        run: ./script/clear-target-dir-if-larger-than.ps1 100
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 55
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file

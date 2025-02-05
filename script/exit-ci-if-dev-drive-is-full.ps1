@@ -17,6 +17,6 @@ $current_size_gb = (Get-ChildItem -Recurse -Force -File -Path "target" | Measure
 Write-Host "target directory size: ${current_size_gb}GB. max size: ${MAX_SIZE_IN_GB}GB"
 
 if ($current_size_gb -gt $MAX_SIZE_IN_GB) {
-    Write-Host "clearing target directory"
-    Remove-Item -Path "target" -Recurse -Force
+    Write-Host "Dev drive is almost full, increase the size first!"
+    exit 1
 }

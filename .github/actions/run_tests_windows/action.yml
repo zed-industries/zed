@@ -23,6 +23,4 @@ runs:
     - name: Run tests
       shell: pwsh
       working-directory: ${{ inputs.working-directory }}
-      run: |
-        cargo nextest run --workspace --no-fail-fast
-        pwd
+      run: cargo nextest run --workspace --no-fail-fast
