@@ -1001,6 +1001,23 @@ impl Buffer {
         }
     }
 
+    pub fn build_empty_snapshot(cx: &mut App) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text =
+            TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
+        let syntax = SyntaxMap::new(&text).snapshot();
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language: None,
+            non_text_state_update_count: 0,
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn build_snapshot_sync(
         text: Rope,

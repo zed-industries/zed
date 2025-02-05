@@ -74,6 +74,18 @@ impl BufferDiff {
         }
     }
 
+    pub fn new_with_single_insertion(buffer: &BufferSnapshot) -> Self {
+        Self {
+            tree: SumTree::from_item(
+                InternalDiffHunk {
+                    buffer_range: Anchor::MIN..Anchor::MAX,
+                    diff_base_byte_range: 0..0,
+                },
+                buffer,
+            ),
+        }
+    }
+
     pub fn build(diff_base: Option<&str>, buffer: &text::BufferSnapshot) -> Self {
         let mut tree = SumTree::new(buffer);
 
