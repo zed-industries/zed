@@ -886,7 +886,7 @@ impl Worktree {
                             }
                         }
                     }
-                    Ok(None)
+                    Err(anyhow!("No repository found for {path:?}"))
                 })
             }
             Worktree::Remote(_) => {
@@ -910,7 +910,7 @@ impl Worktree {
                             }
                         }
                     }
-                    Ok(None)
+                    Err(anyhow!("No repository found for {path:?}"))
                 })
             }
             Worktree::Remote(_) => Task::ready(Err(anyhow!(
