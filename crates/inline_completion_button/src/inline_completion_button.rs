@@ -380,15 +380,10 @@ impl InlineCompletionButton {
         })
     }
 
-    // Predict Edits at Cursor – alt-tab
-    // Automatically Predict:
-    // ✓ PATH
-    // ✓ Rust
-    // ✓ All Files
     pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
-        menu = menu.header("Predict Edits For:");
+        menu = menu.header("Show Predict Edits For");
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
@@ -416,7 +411,7 @@ impl InlineCompletionButton {
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
-        menu = menu.separator().header("Privacy Settings:");
+        menu = menu.separator().header("Privacy Settings");
 
         if let Some(provider) = &self.inline_completion_provider {
             let data_collection = provider.data_collection_state(cx);
