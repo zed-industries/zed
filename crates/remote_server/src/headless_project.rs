@@ -2,7 +2,6 @@ use anyhow::{anyhow, Context as _, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::{CreateOptions, Fs};
-use futures::channel::mpsc;
 use git::{repository::RepoPath, COMMIT_MESSAGE};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, SharedString};
 use http_client::HttpClient;
@@ -204,21 +203,21 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_entity(), Self::handle_shutdown_remote_server);
         client.add_request_handler(cx.weak_entity(), Self::handle_ping);
 
-        client.add_model_request_handler(Self::handle_add_worktree);
+        client.add_entity_request_handler(Self::handle_add_worktree);
         client.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
-        client.add_model_request_handler(Self::handle_open_buffer_by_path);
-        client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_request_handler(Self::handle_find_search_candidates);
-        client.add_model_request_handler(Self::handle_open_server_settings);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
+        client.add_entity_request_handler(Self::handle_open_new_buffer);
+        client.add_entity_request_handler(Self::handle_find_search_candidates);
+        client.add_entity_request_handler(Self::handle_open_server_settings);
 
-        client.add_model_request_handler(BufferStore::handle_update_buffer);
-        client.add_model_message_handler(BufferStore::handle_close_buffer);
+        client.add_entity_request_handler(BufferStore::handle_update_buffer);
+        client.add_entity_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_model_request_handler(Self::handle_stage);
-        client.add_model_request_handler(Self::handle_unstage);
-        client.add_model_request_handler(Self::handle_commit);
-        client.add_model_request_handler(Self::handle_open_commit_message_buffer);
+        client.add_entity_request_handler(Self::handle_stage);
+        client.add_entity_request_handler(Self::handle_unstage);
+        client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
 
         client.add_request_handler(
             extensions.clone().downgrade(),
@@ -654,15 +653,9 @@ impl HeadlessProject {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .stage_entries(entries, err_sender)
-            .context("staging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during staging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.stage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_unstage(
@@ -682,15 +675,10 @@ impl HeadlessProject {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .unstage_entries(entries, err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.unstage_entries(entries).await?;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_commit(
@@ -705,17 +693,9 @@ impl HeadlessProject {
 
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        cx.update(|cx| {
-            repository_handle
-                .commit(name.zip(email), err_sender, cx)
-                .context("unstaging entries")
-        })??;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.commit(name.zip(email)).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_open_commit_message_buffer(

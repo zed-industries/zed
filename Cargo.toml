@@ -156,7 +156,6 @@ members = [
     "crates/worktree",
     "crates/zed",
     "crates/zed_actions",
-    "crates/zed_predict_onboarding",
     "crates/zeta",
 
     #
@@ -356,7 +355,6 @@ workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
-zed_predict_onboarding = { path = "crates/zed_predict_onboarding" }
 zeta = { path = "crates/zeta" }
 
 #
@@ -475,7 +473,7 @@ runtimelib = { version = "0.25.0", default-features = false, features = [
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
-rustls = { version = "0.23.22", features = ["ring"] }
+rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
@@ -556,6 +554,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
+zed_llm_client = "0.1.1"
 zstd = "0.11"
 metal = "0.31"
 
@@ -616,7 +615,6 @@ features = [
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
 cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-real-async-tls = { git = "https://github.com/zed-industries/async-tls", rev = "1e759a4b5e370f87dc15e40756ac4f8815b61d9d", package = "async-tls"}
 
 [profile.dev]
 split-debuginfo = "unpacked"

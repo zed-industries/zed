@@ -1001,6 +1001,34 @@ impl Buffer {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_snapshot_sync(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let mut syntax = SyntaxMap::new(&text).snapshot();
+        if let Some(language) = language.clone() {
+            let text = text.clone();
+            let language = language.clone();
+            let language_registry = language_registry.clone();
+            syntax.reparse(&text, language_registry, language);
+        }
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language,
+            non_text_state_update_count: 0,
+        }
+    }
+
     /// Retrieve a snapshot of the buffer's current state. This is computationally
     /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {
@@ -1914,12 +1942,17 @@ impl Buffer {
 
     /// Checks if the buffer has unsaved changes.
     pub fn is_dirty(&self) -> bool {
-        self.capability != Capability::ReadOnly
-            && (self.has_conflict
-                || self.file.as_ref().map_or(false, |file| {
-                    matches!(file.disk_state(), DiskState::New | DiskState::Deleted)
-                })
-                || self.has_unsaved_edits())
+        if self.capability == Capability::ReadOnly {
+            return false;
+        }
+        if self.has_conflict || self.has_unsaved_edits() {
+            return true;
+        }
+        match self.file.as_ref().map(|f| f.disk_state()) {
+            Some(DiskState::New) => !self.is_empty(),
+            Some(DiskState::Deleted) => true,
+            _ => false,
+        }
     }
 
     /// Checks if the buffer and its file have both changed since the buffer
@@ -2897,12 +2930,19 @@ impl BufferSnapshot {
             let mut indent_from_prev_row = false;
             let mut outdent_from_prev_row = false;
             let mut outdent_to_row = u32::MAX;
+            let mut from_regex = false;
 
             while let Some((indent_row, delta)) = indent_changes.peek() {
                 match indent_row.cmp(&row) {
                     Ordering::Equal => match delta {
-                        Ordering::Less => outdent_from_prev_row = true,
-                        Ordering::Greater => indent_from_prev_row = true,
+                        Ordering::Less => {
+                            from_regex = true;
+                            outdent_from_prev_row = true
+                        }
+                        Ordering::Greater => {
+                            indent_from_prev_row = true;
+                            from_regex = true
+                        }
                         _ => {}
                     },
 
@@ -2935,32 +2975,32 @@ impl BufferSnapshot {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if indent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if outdent_to_row < prev_row {
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if outdent_from_prev_row {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
-                    within_error,
+                    within_error: within_error && !from_regex,
                 })
             } else {
                 None

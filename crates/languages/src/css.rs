@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use language::{LspAdapter, LspAdapterDelegate};
+use gpui::AsyncApp;
+use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::Fs;
@@ -37,6 +38,24 @@ impl CssLspAdapter {
 impl LspAdapter for CssLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-css-language-server".into())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate
+            .which("vscode-css-language-server".as_ref())
+            .await?;
+        let env = delegate.shell_env().await;
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec!["--stdio".into()],
+        })
     }
 
     async fn fetch_latest_server_version(

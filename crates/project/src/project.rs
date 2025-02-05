@@ -622,27 +622,27 @@ impl Project {
         Self::init_settings(cx);
 
         let client: AnyProtoClient = client.clone().into();
-        client.add_model_message_handler(Self::handle_add_collaborator);
-        client.add_model_message_handler(Self::handle_update_project_collaborator);
-        client.add_model_message_handler(Self::handle_remove_collaborator);
-        client.add_model_message_handler(Self::handle_update_project);
-        client.add_model_message_handler(Self::handle_unshare_project);
-        client.add_model_request_handler(Self::handle_update_buffer);
-        client.add_model_message_handler(Self::handle_update_worktree);
-        client.add_model_request_handler(Self::handle_synchronize_buffers);
+        client.add_entity_message_handler(Self::handle_add_collaborator);
+        client.add_entity_message_handler(Self::handle_update_project_collaborator);
+        client.add_entity_message_handler(Self::handle_remove_collaborator);
+        client.add_entity_message_handler(Self::handle_update_project);
+        client.add_entity_message_handler(Self::handle_unshare_project);
+        client.add_entity_request_handler(Self::handle_update_buffer);
+        client.add_entity_message_handler(Self::handle_update_worktree);
+        client.add_entity_request_handler(Self::handle_synchronize_buffers);
 
-        client.add_model_request_handler(Self::handle_search_candidate_buffers);
-        client.add_model_request_handler(Self::handle_open_buffer_by_id);
-        client.add_model_request_handler(Self::handle_open_buffer_by_path);
-        client.add_model_request_handler(Self::handle_open_new_buffer);
-        client.add_model_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_entity_request_handler(Self::handle_search_candidate_buffers);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_id);
+        client.add_entity_request_handler(Self::handle_open_buffer_by_path);
+        client.add_entity_request_handler(Self::handle_open_new_buffer);
+        client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
 
-        client.add_model_request_handler(Self::handle_stage);
-        client.add_model_request_handler(Self::handle_unstage);
-        client.add_model_request_handler(Self::handle_commit);
-        client.add_model_request_handler(Self::handle_open_commit_message_buffer);
+        client.add_entity_request_handler(Self::handle_stage);
+        client.add_entity_request_handler(Self::handle_unstage);
+        client.add_entity_request_handler(Self::handle_commit);
+        client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
 
-        client.add_model_message_handler(Self::handle_toggle_ignore_breakpoints);
+        client.add_entity_message_handler(Self::handle_toggle_ignore_breakpoints);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -947,13 +947,13 @@ impl Project {
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.dap_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.settings_observer);
 
-            ssh_proto.add_model_message_handler(Self::handle_create_buffer_for_peer);
-            ssh_proto.add_model_message_handler(Self::handle_update_worktree);
-            ssh_proto.add_model_message_handler(Self::handle_update_project);
-            ssh_proto.add_model_message_handler(Self::handle_toast);
-            ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
-            ssh_proto.add_model_message_handler(Self::handle_hide_toast);
-            ssh_proto.add_model_request_handler(Self::handle_update_buffer_from_ssh);
+            ssh_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+            ssh_proto.add_entity_message_handler(Self::handle_update_worktree);
+            ssh_proto.add_entity_message_handler(Self::handle_update_project);
+            ssh_proto.add_entity_message_handler(Self::handle_toast);
+            ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
+            ssh_proto.add_entity_message_handler(Self::handle_hide_toast);
+            ssh_proto.add_entity_request_handler(Self::handle_update_buffer_from_ssh);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -1179,20 +1179,22 @@ impl Project {
             .into_iter()
             .map(|s| match s {
                 EntitySubscription::BufferStore(subscription) => {
-                    subscription.set_model(&buffer_store, &mut cx)
+                    subscription.set_entity(&buffer_store, &mut cx)
                 }
                 EntitySubscription::WorktreeStore(subscription) => {
-                    subscription.set_model(&worktree_store, &mut cx)
+                    subscription.set_entity(&worktree_store, &mut cx)
                 }
                 EntitySubscription::SettingsObserver(subscription) => {
-                    subscription.set_model(&settings_observer, &mut cx)
+                    subscription.set_entity(&settings_observer, &mut cx)
                 }
-                EntitySubscription::Project(subscription) => subscription.set_model(&this, &mut cx),
+                EntitySubscription::Project(subscription) => {
+                    subscription.set_entity(&this, &mut cx)
+                }
                 EntitySubscription::LspStore(subscription) => {
-                    subscription.set_model(&lsp_store, &mut cx)
+                    subscription.set_entity(&lsp_store, &mut cx)
                 }
                 EntitySubscription::DapStore(subscription) => {
-                    subscription.set_model(&dap_store, &mut cx)
+                    subscription.set_entity(&dap_store, &mut cx)
                 }
             })
             .collect::<Vec<_>>();
@@ -1987,22 +1989,22 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&cx.entity(), &mut cx.to_async()),
+                .set_entity(&cx.entity(), &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.worktree_store, &mut cx.to_async()),
+                .set_entity(&self.worktree_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.buffer_store, &mut cx.to_async()),
+                .set_entity(&self.buffer_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.lsp_store, &mut cx.to_async()),
+                .set_entity(&self.lsp_store, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.dap_store, &mut cx.to_async()),
+                .set_entity(&self.settings_observer, &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&self.settings_observer, &mut cx.to_async()),
+                .set_entity(&self.dap_store, &mut cx.to_async()),
         ]);
 
         self.buffer_store.update(cx, |buffer_store, cx| {
@@ -2333,6 +2335,20 @@ impl Project {
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.open_unstaged_changes(buffer, cx)
+        })
+    }
+
+    pub fn open_uncommitted_changes(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferChangeSet>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_uncommitted_changes(buffer, cx)
         })
     }
 
@@ -4437,15 +4453,9 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .stage_entries(entries, err_sender)
-            .context("staging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during staging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.stage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_unstage(
@@ -4465,15 +4475,9 @@ impl Project {
             .map(PathBuf::from)
             .map(RepoPath::new)
             .collect();
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        repository_handle
-            .unstage_entries(entries, err_sender)
-            .context("unstaging entries")?;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+
+        repository_handle.unstage_entries(entries).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_commit(
@@ -4488,17 +4492,8 @@ impl Project {
 
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
-        let (err_sender, mut err_receiver) = mpsc::channel(1);
-        cx.update(|cx| {
-            repository_handle
-                .commit(name.zip(email), err_sender, cx)
-                .context("unstaging entries")
-        })??;
-        if let Some(error) = err_receiver.next().await {
-            Err(error.context("error during unstaging"))
-        } else {
-            Ok(proto::Ack {})
-        }
+        repository_handle.commit(name.zip(email)).await?;
+        Ok(proto::Ack {})
     }
 
     async fn handle_open_commit_message_buffer(

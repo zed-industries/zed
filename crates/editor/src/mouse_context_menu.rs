@@ -229,9 +229,10 @@ pub fn deploy_context_menu(
             cx,
         ),
         None => {
+            let character_size = editor.character_size(window);
             let menu_position = MenuPosition::PinnedToEditor {
                 source: source_anchor,
-                offset: editor.character_size(window),
+                offset: gpui::point(character_size.width, character_size.height),
             };
             Some(MouseContextMenu::new(
                 menu_position,

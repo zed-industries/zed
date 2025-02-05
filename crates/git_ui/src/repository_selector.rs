@@ -49,7 +49,7 @@ impl RepositorySelector {
     fn handle_project_git_event(
         &mut self,
         git_state: &Entity<GitState>,
-        _event: &project::git::Event,
+        _event: &project::git::GitEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
