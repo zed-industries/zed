@@ -379,8 +379,6 @@ pub mod simple_message_notification {
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
-        tertiary_click_message: Option<SharedString>,
-        tertiary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         more_info_message: Option<SharedString>,
         more_info_url: Option<Arc<str>>,
         show_close_button: bool,
@@ -408,8 +406,6 @@ pub mod simple_message_notification {
                 click_message: None,
                 secondary_on_click: None,
                 secondary_click_message: None,
-                tertiary_on_click: None,
-                tertiary_click_message: None,
                 more_info_message: None,
                 more_info_url: None,
                 show_close_button: true,
@@ -446,22 +442,6 @@ pub mod simple_message_notification {
             F: 'static + Fn(&mut Window, &mut Context<Self>),
         {
             self.secondary_on_click = Some(Arc::new(on_click));
-            self
-        }
-
-        pub fn with_tertiary_click_message<S>(mut self, message: S) -> Self
-        where
-            S: Into<SharedString>,
-        {
-            self.tertiary_click_message = Some(message.into());
-            self
-        }
-
-        pub fn on_tertiary_click<F>(mut self, on_click: F) -> Self
-        where
-            F: 'static + Fn(&mut Window, &mut Context<Self>),
-        {
-            self.tertiary_on_click = Some(Arc::new(on_click));
             self
         }
 
@@ -558,37 +538,22 @@ pub mod simple_message_notification {
                                 }))
                         }))
                         .child(
-                            h_flex()
-                                .w_full()
-                                .gap_1()
-                                .justify_end()
-                                .children(self.tertiary_click_message.iter().map(|message| {
-                                    Button::new(message.clone(), message.clone())
-                                        .label_size(LabelSize::Small)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            if let Some(on_click) = this.tertiary_on_click.as_ref()
-                                            {
-                                                (on_click)(window, cx)
-                                            };
-                                            this.dismiss(cx)
-                                        }))
-                                }))
-                                .children(
-                                    self.more_info_message
-                                        .iter()
-                                        .zip(self.more_info_url.iter())
-                                        .map(|(message, url)| {
-                                            let url = url.clone();
-                                            Button::new(message.clone(), message.clone())
-                                                .label_size(LabelSize::Small)
-                                                .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::Indicator)
-                                                .icon_color(Color::Muted)
-                                                .on_click(cx.listener(move |_, _, _, cx| {
-                                                    cx.open_url(&url);
-                                                }))
-                                        }),
-                                ),
+                            h_flex().w_full().justify_end().children(
+                                self.more_info_message
+                                    .iter()
+                                    .zip(self.more_info_url.iter())
+                                    .map(|(message, url)| {
+                                        let url = url.clone();
+                                        Button::new(message.clone(), message.clone())
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::Indicator)
+                                            .icon_color(Color::Muted)
+                                            .on_click(cx.listener(move |_, _, _, cx| {
+                                                cx.open_url(&url);
+                                            }))
+                                    }),
+                            ),
                         ),
                 )
         }
