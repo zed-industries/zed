@@ -1317,7 +1317,7 @@ impl GitPanel {
         let is_staged = self.entry_is_staged(entry.status_entry()?);
 
         let checkbox = Checkbox::new("stage-file", is_staged.into())
-            // .disabled(!has_write_access)
+            .disabled(!self.has_write_access(cx))
             .fill()
             .elevation(ElevationIndex::Surface)
             .on_click({
@@ -1629,6 +1629,16 @@ impl GitPanel {
                     ),
             )
             .into_any_element()
+    }
+
+    fn has_write_access(&self, cx: &App) -> bool {
+        let room = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
+
+        room.as_ref()
+            .map_or(true, |room| room.read(cx).local_participant().can_write())
     }
 }
 
