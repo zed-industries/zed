@@ -567,14 +567,6 @@ impl ExtensionsPage {
             _ => None,
         };
 
-        let mut provides = extension.manifest.provides.clone();
-        // TODO: Remove before merging.
-        if provides.is_empty() {
-            provides.insert(ExtensionProvides::Themes);
-            provides.insert(ExtensionProvides::IconThemes);
-            provides.insert(ExtensionProvides::LanguageServers);
-        }
-
         ExtensionCard::new()
             .overridden_by_dev_extension(has_dev_extension)
             .child(
@@ -597,13 +589,15 @@ impl ExtensionsPage {
                                     }),
                             )
                             .map(|parent| {
-                                if provides.is_empty() {
+                                if extension.manifest.provides.is_empty() {
                                     return parent;
                                 }
 
                                 parent.child(
                                     h_flex().gap_2().children(
-                                        provides
+                                        extension
+                                            .manifest
+                                            .provides
                                             .iter()
                                             .map(|provides| {
                                                 let label = match provides {
