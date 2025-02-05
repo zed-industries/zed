@@ -4041,11 +4041,12 @@ impl Project {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
+        let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.commit(name.zip(email))
+                repository_handle.commit(message, name.zip(email))
             })?
             .await??;
         Ok(proto::Ack {})

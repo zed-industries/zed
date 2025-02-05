@@ -676,7 +676,8 @@ impl GitPanel {
         if !self.can_commit {
             return;
         }
-        if self.commit_editor.read(cx).is_empty(cx) {
+        let message = self.commit_editor.read(cx).text(cx);
+        if message.trim().is_empty() {
             return;
         }
         self.commit_pending = true;
@@ -686,7 +687,7 @@ impl GitPanel {
         let commit_editor = self.commit_editor.clone();
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
             let commit = active_repository.update(&mut cx, |active_repository, _| {
-                active_repository.commit(name_and_email)
+                active_repository.commit(SharedString::from(message), name_and_email)
             })?;
             let result = maybe!(async {
                 save_task.await?;
@@ -722,7 +723,9 @@ impl GitPanel {
         if !self.can_commit_all {
             return;
         }
-        if self.commit_editor.read(cx).is_empty(cx) {
+
+        let message = self.commit_editor.read(cx).text(cx);
+        if message.trim().is_empty() {
             return;
         }
         self.commit_pending = true;
@@ -747,8 +750,12 @@ impl GitPanel {
                 save_task.await?;
                 cx.update(|_, cx| active_repository.read(cx).stage_entries(tracked_files))?
                     .await??;
-                cx.update(|_, cx| active_repository.read(cx).commit(name_and_email))?
-                    .await??;
+                cx.update(|_, cx| {
+                    active_repository
+                        .read(cx)
+                        .commit(SharedString::from(message), name_and_email)
+                })?
+                .await??;
                 Ok(())
             })
             .await;

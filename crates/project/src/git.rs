@@ -52,6 +52,7 @@ pub enum GitRepo {
 enum Message {
     Commit {
         git_repo: GitRepo,
+        message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
     },
     Stage(GitRepo, Vec<RepoPath>),
@@ -256,10 +257,12 @@ impl GitState {
             }
             Message::Commit {
                 git_repo,
+                message,
                 name_and_email,
             } => {
                 match git_repo {
                     GitRepo::Local(repo) => repo.commit(
+                        message.as_ref(),
                         name_and_email
                             .as_ref()
                             .map(|(name, email)| (name.as_ref(), email.as_ref())),
@@ -276,6 +279,7 @@ impl GitState {
                                 project_id: project_id.0,
                                 worktree_id: worktree_id.to_proto(),
                                 work_directory_id: work_directory_id.to_proto(),
+                                message: String::from(message),
                                 name: name.map(String::from),
                                 email: email.map(String::from),
                             })
@@ -479,6 +483,7 @@ impl Repository {
 
     pub fn commit(
         &self,
+        message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
@@ -486,6 +491,7 @@ impl Repository {
             .unbounded_send((
                 Message::Commit {
                     git_repo: self.git_repo.clone(),
+                    message,
                     name_and_email,
                 },
                 result_tx,
