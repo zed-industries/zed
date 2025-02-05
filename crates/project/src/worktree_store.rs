@@ -284,21 +284,27 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_name = PathBuf::from(
-                response
-                    .canonicalized_path
-                    .clone()
-                    .context("Missing path")?,
-            )
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or(
-                response
-                    .canonicalized_path
-                    .clone()
-                    .context("Missing path")?
-                    .to_native_string(),
-            );
+            let root_name = response
+                .canonicalized_path
+                .clone()
+                .map(PathBuf::from)
+                .or_else(|| {
+                    response
+                        .canonical_path_deprecated
+                        .clone()
+                        .map(PathBuf::from)
+                })
+                .context("Missing path")?
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(
+                    response
+                        .canonicalized_path
+                        .clone()
+                        .map(|path| path.to_native_string())
+                        .or_else(|| response.canonical_path_deprecated)
+                        .context("Missing path")?,
+                );
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -1139,7 +1145,15 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: project_path.path.context("Missing path")?.into(),
+            path: project_path
+                .path
+                .map(Into::<Arc<Path>>::into)
+                .or_else(|| {
+                    project_path
+                        .path_deprecated
+                        .map(|path| Path::new(&path).into())
+                })
+                .context("Missing path")?,
         };
 
         let branches = this
@@ -1170,7 +1184,15 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: project_path.path.context("Missing path")?.into(),
+            path: project_path
+                .path
+                .map(Into::<Arc<Path>>::into)
+                .or_else(|| {
+                    project_path
+                        .path_deprecated
+                        .map(|path| Path::new(&path).into())
+                })
+                .context("Missing path")?,
         };
         let new_branch = update_branch.payload.branch_name;
 
