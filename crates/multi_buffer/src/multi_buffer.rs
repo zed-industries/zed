@@ -1424,24 +1424,19 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-        let (mut insert_after, excerpt_ids) =
-            if let Some(existing) = self.buffers_by_path.get(&path) {
-                (*existing.last().unwrap(), existing.clone())
-            } else {
-                (
-                    self.buffers_by_path
-                        .range(..path.clone())
-                        .next_back()
-                        .map(|(_, value)| *value.last().unwrap())
-                        .unwrap_or(ExcerptId::min()),
-                    Vec::default(),
-                )
-            };
+
+        let mut insert_after = self
+            .buffers_by_path
+            .range(..path.clone())
+            .next_back()
+            .map(|(_, value)| *value.last().unwrap())
+            .unwrap_or(ExcerptId::min());
+        let existing = self.buffers_by_path.get(&path).cloned().unwrap_or_default();
 
         let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
 
         let mut new_iter = new.into_iter().peekable();
-        let mut existing_iter = excerpt_ids.into_iter().peekable();
+        let mut existing_iter = existing.into_iter().peekable();
 
         let mut new_excerpt_ids = Vec::new();
         let mut to_remove = Vec::new();
@@ -1495,7 +1490,6 @@ impl MultiBuffer {
             // maybe merge overlapping excerpts?
             // it's hard to distinguish between a manually expanded excerpt, and one that
             // got smaller because of a missing diff.
-            //
             if existing_start == new.context.start && existing_end == new.context.end {
                 new_excerpt_ids.append(&mut self.insert_excerpts_after(
                     insert_after,
