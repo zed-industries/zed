@@ -14,7 +14,11 @@ use settings::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
     SettingsSources, SettingsStore,
 };
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
@@ -343,7 +347,19 @@ impl SettingsObserver {
             this.update_settings(
                 worktree,
                 [(
-                    envelope.payload.path.clone().unwrap().into(),
+                    envelope
+                        .payload
+                        .path
+                        .clone()
+                        .map(Into::<Arc<Path>>::into)
+                        .or_else(|| {
+                            envelope
+                                .payload
+                                .path_deprecated
+                                .map(PathBuf::from)
+                                .map(Into::into)
+                        })
+                        .unwrap_or(PathBuf::new().into()),
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],

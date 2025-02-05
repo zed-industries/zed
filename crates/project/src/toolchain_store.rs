@@ -122,9 +122,11 @@ impl ToolchainStore {
                 name: toolchain.name.into(),
                 path: toolchain
                     .path
-                    .context("Missing path")?
-                    .to_native_string()
-                    .into(),
+                    // todo(windows)
+                    // to_native_string or to_db_string?
+                    .map(|path| path.to_native_string().into())
+                    .or_else(|| toolchain.path_deprecated.map(Into::into))
+                    .context("Missing path")?,
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
@@ -412,7 +414,12 @@ impl RemoteToolchainStore {
                     Some(Toolchain {
                         language_name: language_name.clone(),
                         name: toolchain.name.into(),
-                        path: toolchain.path?.to_native_string().into(),
+                        // todo(windows)
+                        // to_native_string or to_db_string?
+                        path: toolchain
+                            .path
+                            .map(|path| path.to_native_string().into())
+                            .or_else(|| toolchain.path_deprecated.map(Into::into))?,
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })
@@ -453,7 +460,12 @@ impl RemoteToolchainStore {
                 Some(Toolchain {
                     language_name: language_name.clone(),
                     name: toolchain.name.into(),
-                    path: toolchain.path?.to_native_string().into(),
+                    // todo(windows)
+                    // to_native_string or to_db_string?
+                    path: toolchain
+                        .path
+                        .map(|path| path.to_native_string().into())
+                        .or_else(|| toolchain.path_deprecated.map(Into::into))?,
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })

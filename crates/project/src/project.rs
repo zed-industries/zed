@@ -296,7 +296,15 @@ impl ProjectPath {
     pub fn from_proto(p: proto::ProjectPath) -> Self {
         Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: p.path.unwrap_or_default().into(),
+            path: p
+                .path
+                .map(Into::<Arc<Path>>::into)
+                .or_else(|| {
+                    p.path_deprecated
+                        .map(PathBuf::from)
+                        .map(Into::<Arc<Path>>::into)
+                })
+                .unwrap_or(PathBuf::new().into()),
         }
     }
 
@@ -3347,7 +3355,10 @@ impl Project {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from(response.path?),
+                        path: response
+                            .path
+                            .map(Into::into)
+                            .or_else(|| response.path_deprecated.map(Into::into))?,
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -3972,7 +3983,18 @@ impl Project {
             this.open_buffer(
                 ProjectPath {
                     worktree_id,
-                    path: envelope.payload.path.unwrap_or_default().into(),
+                    path: envelope
+                        .payload
+                        .path
+                        .map(Into::<Arc<Path>>::into)
+                        .or_else(|| {
+                            envelope
+                                .payload
+                                .path_deprecated
+                                .map(PathBuf::from)
+                                .map(Into::into)
+                        })
+                        .unwrap_or(PathBuf::new().into()),
                 },
                 cx,
             )

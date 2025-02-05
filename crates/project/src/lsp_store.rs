@@ -5960,8 +5960,9 @@ impl LspStore {
                 .payload
                 .new_path
                 .clone()
-                .context("Missing new path")?
-                .into();
+                .map(Into::into)
+                .or_else(|| envelope.payload.new_path_deprecated.clone().map(Into::into))
+                .context("Missing new path")?;
             (root_path.join(&old_path), root_path.join(&new_path))
         };
 
@@ -5995,9 +5996,10 @@ impl LspStore {
                     path: message
                         .path
                         .as_ref()
-                        .context("Missing path")?
-                        .clone()
-                        .into(),
+                        .map(PathBuf::from)
+                        .or_else(|| message.path_deprecated.clone().map(PathBuf::from))
+                        .map(Into::into)
+                        .context("Missing path")?,
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message.language_server_id as usize);
@@ -7902,7 +7904,17 @@ impl LspStore {
         let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
         let path = ProjectPath {
             worktree_id,
-            path: serialized_symbol.path.context("Missing path")?.into(),
+            path: serialized_symbol
+                .path
+                .map(Into::<Arc<Path>>::into)
+                .or_else(|| {
+                    serialized_symbol
+                        .path_deprecated
+                        .map(PathBuf::from)
+                        .map(Into::into)
+                })
+                .context("Missing path")?
+                .into(),
         };
 
         let start = serialized_symbol
