@@ -63,10 +63,10 @@ pub use editor_settings::{
     CurrentLineHighlight, EditorSettings, ScrollBeyondLastLine, SearchSettings, ShowScrollbar,
 };
 pub use editor_settings_controls::*;
-use element::LineWithInvisibles;
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
 };
+use element::{LineWithInvisibles, PositionMap};
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
 
@@ -306,6 +306,7 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);
+            workspace.register_action(Editor::cancel_language_server_work);
         },
     )
     .detach();
@@ -715,6 +716,7 @@ pub struct Editor {
         >,
     >,
     last_bounds: Option<Bounds<Pixels>>,
+    last_position_map: Option<Rc<PositionMap>>,
     expect_bounds_change: Option<Bounds<Pixels>>,
     tasks: BTreeMap<(BufferId, BufferRow), RunnableTasks>,
     tasks_update_task: Option<Task<()>>,
@@ -1283,7 +1285,7 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            get_unstaged_changes_for_buffers(
+            get_uncommitted_changes_for_buffer(
                 &project,
                 buffer.read(cx).all_buffers(),
                 buffer.clone(),
@@ -1377,6 +1379,7 @@ impl Editor {
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
+            last_position_map: None,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -3943,10 +3946,6 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, window, cx)
     }
 
-    fn toggle_zed_predict_onboarding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-    }
-
     fn do_completion(
         &mut self,
         item_ix: Option<usize>,
@@ -5418,6 +5417,7 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
@@ -5441,7 +5441,11 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(cx.listener(|this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.toggle_zed_predict_onboarding(window, cx)
+                        this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
+                        window.dispatch_action(
+                            zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                            cx,
+                        );
                     }))
                     .child(
                         h_flex()
@@ -5470,6 +5474,7 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
+                start_row,
                 line_layouts,
                 style,
                 cx,
@@ -5479,6 +5484,7 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
+                    start_row,
                     line_layouts,
                     style,
                     cx,
@@ -5511,6 +5517,11 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
+        let is_move = self
+            .active_inline_completion
+            .as_ref()
+            .map_or(false, |c| c.is_move());
+
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5539,23 +5550,18 @@ impl Editor {
                                     } else {
                                         None
                                     },
+                                    !is_move,
                                 )),
                         )
                         .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(
-                            if self
-                                .active_inline_completion
-                                .as_ref()
-                                .map_or(false, |c| c.is_move())
-                            {
-                                div()
-                                    .child(ui::Key::new(&accept_keystroke.key, None))
-                                    .font(buffer_font.clone())
-                                    .into_any()
-                            } else {
-                                Label::new("Preview").color(Color::Muted).into_any_element()
-                            },
-                        ),
+                        .child(if is_move {
+                            div()
+                                .child(ui::Key::new(&accept_keystroke.key, None))
+                                .font(buffer_font.clone())
+                                .into_any()
+                        } else {
+                            Label::new("Preview").color(Color::Muted).into_any_element()
+                        }),
                 )
                 .into_any(),
         )
@@ -5565,6 +5571,7 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
+        start_row: DisplayRow,
         line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         cx: &mut Context<Editor>,
@@ -5672,11 +5679,13 @@ impl Editor {
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let start_column_x =
-                    line_layouts[start_point.row as usize].x_for_index(start_point.column as usize);
-                let target_column_x = line_layouts[target_point.row as usize]
-                    .x_for_index(target_point.column as usize);
-                let cursor_relative_position = target_column_x - start_column_x;
+                let cursor_relative_position = line_layouts
+                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                    .map(|line| {
+                        let start_column_x = line.x_for_index(start_point.column as usize);
+                        let target_column_x = line.x_for_index(target_point.column as usize);
+                        target_column_x - start_column_x
+                    });
 
                 let fade_before = start_point.column > 0;
                 let fade_after = end_point.column < snapshot.line_len(end_point.row);
@@ -5719,15 +5728,17 @@ impl Editor {
                                             ),
                                         )
                                     })
-                                    .child(
-                                        div()
-                                            .w(px(2.))
-                                            .h_full()
-                                            .bg(cursor_color)
-                                            .absolute()
-                                            .top_0()
-                                            .left(cursor_relative_position),
-                                    ),
+                                    .when_some(cursor_relative_position, |parent, position| {
+                                        parent.child(
+                                            div()
+                                                .w(px(2.))
+                                                .h_full()
+                                                .bg(cursor_color)
+                                                .absolute()
+                                                .top_0()
+                                                .left(position),
+                                        )
+                                    }),
                             )
                         }),
                 )
@@ -10135,12 +10146,12 @@ impl Editor {
             let mut diagnostics;
             if direction == Direction::Prev {
                 diagnostics = buffer
-                    .diagnostics_in_range::<_, usize>(0..search_start)
+                    .diagnostics_in_range::<usize>(0..search_start)
                     .collect::<Vec<_>>();
                 diagnostics.reverse();
             } else {
                 diagnostics = buffer
-                    .diagnostics_in_range::<_, usize>(search_start..buffer.len())
+                    .diagnostics_in_range::<usize>(search_start..buffer.len())
                     .collect::<Vec<_>>();
             };
             let group = diagnostics
@@ -11304,18 +11315,21 @@ impl Editor {
     }
 
     fn cancel_language_server_work(
-        &mut self,
+        workspace: &mut Workspace,
         _: &actions::CancelLanguageServerWork,
         _: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Workspace>,
     ) {
-        if let Some(project) = self.project.clone() {
-            self.buffer.update(cx, |multi_buffer, cx| {
-                project.update(cx, |project, cx| {
-                    project.cancel_language_server_work_for_buffers(multi_buffer.all_buffers(), cx);
-                });
-            })
-        }
+        let project = workspace.project();
+        let buffers = workspace
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .map_or(HashSet::default(), |editor| {
+                editor.read(cx).buffer.read(cx).all_buffers()
+            });
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work_for_buffers(buffers, cx);
+        });
     }
 
     fn show_character_palette(
@@ -11331,8 +11345,9 @@ impl Editor {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
+            let primary_range_end = active_diagnostics.primary_range.end.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .diagnostics_in_range::<usize>(primary_range_start..primary_range_end)
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
@@ -13642,7 +13657,7 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).change_set_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_unstaged_changes_for_buffers(
+                        get_uncommitted_changes_for_buffer(
                             project,
                             [buffer.clone()],
                             self.buffer.clone(),
@@ -14059,7 +14074,8 @@ impl Editor {
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
 
-        let copilot_enabled = all_language_settings(file, cx).inline_completions.provider
+        let edit_predictions_provider = all_language_settings(file, cx).inline_completions.provider;
+        let copilot_enabled = edit_predictions_provider
             == language::language_settings::InlineCompletionProvider::Copilot;
         let copilot_enabled_for_language = self
             .buffer
@@ -14074,6 +14090,7 @@ impl Editor {
             vim_mode,
             copilot_enabled,
             copilot_enabled_for_language,
+            edit_predictions_provider,
             is_via_ssh = project.is_via_ssh(),
         );
     }
@@ -14386,7 +14403,7 @@ impl Editor {
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
 
-    fn character_size(&self, window: &mut Window) -> gpui::Point<Pixels> {
+    fn character_size(&self, window: &mut Window) -> gpui::Size<Pixels> {
         let text_layout_details = self.text_layout_details(window);
         let style = &text_layout_details.editor_style;
         let font_id = window.text_system().resolve_font(&style.text.font());
@@ -14394,11 +14411,11 @@ impl Editor {
         let line_height = style.text.line_height_in_pixels(window.rem_size());
         let em_width = window.text_system().em_width(font_id, font_size).unwrap();
 
-        gpui::Point::new(em_width, line_height)
+        gpui::Size::new(em_width, line_height)
     }
 }
 
-fn get_unstaged_changes_for_buffers(
+fn get_uncommitted_changes_for_buffer(
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
@@ -14407,7 +14424,7 @@ fn get_unstaged_changes_for_buffers(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_unstaged_changes(buffer.clone(), cx))
+            tasks.push(project.open_uncommitted_changes(buffer.clone(), cx))
         }
     });
     cx.spawn(|mut cx| async move {
@@ -15902,9 +15919,9 @@ impl EntityInputHandler for Editor {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Bounds<Pixels>> {
         let text_layout_details = self.text_layout_details(window);
-        let gpui::Point {
-            x: em_width,
-            y: line_height,
+        let gpui::Size {
+            width: em_width,
+            height: line_height,
         } = self.character_size(window);
 
         let snapshot = self.snapshot(window, cx);
@@ -15921,6 +15938,24 @@ impl EntityInputHandler for Editor {
             origin: element_bounds.origin + point(x, y),
             size: size(em_width, line_height),
         })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: gpui::Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let position_map = self.last_position_map.as_ref()?;
+        if !position_map.text_hitbox.contains(&point) {
+            return None;
+        }
+        let display_point = position_map.point_for_position(point).previous_valid;
+        let anchor = position_map
+            .snapshot
+            .display_point_to_anchor(display_point, Bias::Left);
+        let utf16_offset = anchor.to_offset_utf16(&position_map.snapshot.buffer_snapshot);
+        Some(utf16_offset.0)
     }
 }
 

@@ -137,7 +137,7 @@ impl WindowInvalidator {
         self.inner.borrow_mut().dirty_views = views;
     }
 
-    pub fn not_painting(&self) -> bool {
+    pub fn not_drawing(&self) -> bool {
         self.inner.borrow().draw_phase == DrawPhase::None
     }
 
@@ -1035,7 +1035,7 @@ impl Window {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
-        if self.invalidator.not_painting() {
+        if self.invalidator.not_drawing() {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
         }

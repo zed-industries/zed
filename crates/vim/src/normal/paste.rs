@@ -696,10 +696,18 @@ mod test {
 
         // not testing nvim as it doesn't have a filename
         cx.simulate_keystrokes("\" % p");
+        #[cfg(not(target_os = "windows"))]
         cx.assert_state(
             indoc! {"
                     The quick brown
                     dogdir/file.rˇs"},
+            Mode::Normal,
+        );
+        #[cfg(target_os = "windows")]
+        cx.assert_state(
+            indoc! {"
+                    The quick brown
+                    dogdir\\file.rˇs"},
             Mode::Normal,
         );
     }

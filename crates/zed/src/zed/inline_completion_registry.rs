@@ -94,7 +94,20 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
+
             if new_provider != provider {
+                let tos_accepted = user_store
+                    .read(cx)
+                    .current_user_has_accepted_terms()
+                    .unwrap_or(false);
+
+                telemetry::event!(
+                    "Edit Prediction Provider Changed",
+                    from = provider,
+                    to = new_provider,
+                    zed_ai_tos_accepted = tos_accepted,
+                );
+
                 provider = new_provider;
                 assign_inline_completion_providers(
                     &editors,
@@ -104,11 +117,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
 
-                if !user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false)
-                {
+                if !tos_accepted {
                     match provider {
                         InlineCompletionProvider::Zed => {
                             let Some(window) = cx.active_window() else {
