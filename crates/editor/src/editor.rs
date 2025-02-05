@@ -5400,7 +5400,7 @@ impl Editor {
     }
 
     fn edit_prediction_cursor_popover_height(&self) -> Pixels {
-        px(32.)
+        px(30.)
     }
 
     fn current_user_player_color(&self, cx: &mut App) -> PlayerColor {
@@ -5465,8 +5465,9 @@ impl Editor {
 
         fn pending_completion_container() -> Div {
             h_flex()
+                .h_full()
                 .flex_1()
-                .gap_3()
+                .gap_2()
                 .child(Icon::new(IconName::ZedPredict))
         }
 
@@ -5529,39 +5530,35 @@ impl Editor {
                 .max_w(max_width)
                 .flex_1()
                 .px_2()
-                .gap_3()
                 .elevation_2(cx)
                 .child(completion)
+                .child(ui::Divider::vertical())
                 .child(
                     h_flex()
-                        .border_l_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .h_full()
+                        .gap_1()
                         .pl_2()
-                        .child(
-                            h_flex()
-                                .font(buffer_font.clone())
-                                .p_1()
-                                .rounded_sm()
-                                .children(ui::render_modifiers(
-                                    &accept_keystroke.modifiers,
-                                    PlatformStyle::platform(),
-                                    if window.modifiers() == accept_keystroke.modifiers {
-                                        Some(Color::Accent)
-                                    } else {
-                                        None
-                                    },
-                                    !is_move,
-                                )),
-                        )
-                        .opacity(if has_completion { 1.0 } else { 0.1 })
+                        .child(h_flex().font(buffer_font.clone()).gap_1().children(
+                            ui::render_modifiers(
+                                &accept_keystroke.modifiers,
+                                PlatformStyle::platform(),
+                                if window.modifiers() == accept_keystroke.modifiers {
+                                    Some(Color::Accent)
+                                } else {
+                                    None
+                                },
+                                !is_move,
+                            ),
+                        ))
                         .child(if is_move {
                             div()
                                 .child(ui::Key::new(&accept_keystroke.key, None))
                                 .font(buffer_font.clone())
                                 .into_any()
                         } else {
-                            Label::new("Preview").color(Color::Muted).into_any_element()
-                        }),
+                            Label::new("Preview").into_any_element()
+                        })
+                        .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
                 .into_any(),
         )
@@ -5660,7 +5657,14 @@ impl Editor {
                     Icon::new(IconName::ZedPredict).into_any_element()
                 };
 
-                Some(h_flex().flex_1().gap_3().child(left).child(preview))
+                Some(
+                    h_flex()
+                        .h_full()
+                        .flex_1()
+                        .gap_2()
+                        .child(left)
+                        .child(preview),
+                )
             }
 
             InlineCompletion::Move {
