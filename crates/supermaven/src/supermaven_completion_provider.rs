@@ -3,7 +3,7 @@ use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
-use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
+use language::{Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
     path::Path,
@@ -113,16 +113,8 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         false
     }
 
-    fn is_enabled(&self, buffer: &Entity<Buffer>, cursor_position: Anchor, cx: &App) -> bool {
-        if !self.supermaven.read(cx).is_enabled() {
-            return false;
-        }
-
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
+        self.supermaven.read(cx).is_enabled()
     }
 
     fn is_refreshing(&self) -> bool {
