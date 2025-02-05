@@ -254,7 +254,7 @@ jobs:
       - name: Cache dependencies
         uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
-          # save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: ${{ env.ZED_WORKSPACE }}
           cache-provider: "github"
 
@@ -280,9 +280,6 @@ jobs:
       - name: Check dev drive space
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: ./script/exit-ci-if-dev-drive-is-full.ps1 55
-
-      - name: Check file system
-        run: get-volume
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
