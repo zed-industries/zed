@@ -1,4 +1,4 @@
-use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
+use crate::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
     client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
@@ -131,7 +131,7 @@ pub enum OpenEntry {
         name: String,
     },
     Variable {
-        scope_id: u64,
+        scope_name: String,
         name: String,
         depth: usize,
     },
@@ -146,7 +146,7 @@ impl OpenEntry {
             proto::variable_list_open_entry::Entry::Variable(state) => Some(Self::Variable {
                 name: state.name.clone(),
                 depth: state.depth as usize,
-                scope_id: state.scope_id,
+                scope_name: state.scope_name.clone(),
             }),
         }
     }
@@ -161,12 +161,12 @@ impl OpenEntry {
             OpenEntry::Variable {
                 name,
                 depth,
-                scope_id,
+                scope_name,
             } => {
                 proto::variable_list_open_entry::Entry::Variable(proto::DebuggerOpenEntryVariable {
                     name: name.clone(),
                     depth: *depth as u64,
-                    scope_id: *scope_id,
+                    scope_name: scope_name.clone(),
                 })
             }
         };
@@ -324,7 +324,6 @@ impl ScopeVariableIndex {
     }
 }
 
-type StackFrameId = u64;
 type ScopeId = u64;
 
 pub struct VariableList {
@@ -470,7 +469,7 @@ impl VariableList {
             self.add_variables(variables.clone());
         }
 
-        self.build_entries(true, true, cx);
+        self.build_entries(true, cx);
         cx.notify();
     }
 
@@ -511,13 +510,51 @@ impl VariableList {
         cx: &mut Context<Self>,
     ) {
         match event {
-            StackFrameListEvent::SelectedStackFrameChanged => {
-                self.build_entries(true, true, cx);
+            StackFrameListEvent::SelectedStackFrameChanged(stack_frame_id) => {
+                self.handle_selected_stack_frame_changed(*stack_frame_id, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {
-                self.fetch_variables(cx);
+                self.entries.clear();
+                self.variables.clear();
+                self.scopes.clear();
             }
         }
+    }
+
+    fn handle_selected_stack_frame_changed(
+        &mut self,
+        stack_frame_id: StackFrameId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.scopes.contains_key(&stack_frame_id) {
+            return self.build_entries(true, cx);
+        }
+
+        self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
+            let task = this.update(&mut cx, |variable_list, cx| {
+                variable_list.fetch_variables_for_stack_frame(stack_frame_id, cx)
+            })?;
+
+            let (scopes, variables) = task.await?;
+
+            this.update(&mut cx, |variable_list, cx| {
+                variable_list.scopes.insert(stack_frame_id, scopes);
+
+                for (scope_id, variables) in variables.into_iter() {
+                    let mut variable_index = ScopeVariableIndex::new();
+                    variable_index.add_variables(scope_id, variables);
+
+                    variable_list
+                        .variables
+                        .insert((stack_frame_id, scope_id), variable_index);
+                }
+
+                variable_list.build_entries(true, cx);
+                variable_list.send_update_proto_message(cx);
+
+                variable_list.fetch_variables_task.take();
+            })
+        }));
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -599,14 +636,15 @@ impl VariableList {
         }
     }
 
-    fn toggle_variable(
+    pub fn toggle_variable(
         &mut self,
-        scope_id: u64,
+        scope: &Scope,
         variable: &Variable,
         depth: usize,
         cx: &mut Context<Self>,
     ) {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+        let scope_id = scope.variables_reference;
 
         let Some(variable_index) = self.variables_by_scope(stack_frame_id, scope_id) else {
             return;
@@ -614,8 +652,8 @@ impl VariableList {
 
         let entry_id = OpenEntry::Variable {
             depth,
-            scope_id,
             name: variable.name.clone(),
+            scope_name: scope.name.clone(),
         };
 
         let has_children = variable.variables_reference > 0;
@@ -678,24 +716,15 @@ impl VariableList {
             }
         };
 
-        self.build_entries(false, true, cx);
+        self.build_entries(false, cx);
     }
 
-    pub fn build_entries(
-        &mut self,
-        open_first_scope: bool,
-        keep_open_entries: bool,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn build_entries(&mut self, open_first_scope: bool, cx: &mut Context<Self>) {
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
         let Some(scopes) = self.scopes.get(&stack_frame_id) else {
             return;
         };
-
-        if !keep_open_entries {
-            self.open_entries.clear();
-        }
 
         let mut entries: Vec<VariableListEntry> = Vec::default();
         for scope in scopes {
@@ -753,7 +782,7 @@ impl VariableList {
                     .binary_search(&OpenEntry::Variable {
                         depth,
                         name: variable.name.clone(),
-                        scope_id: scope.variables_reference,
+                        scope_name: scope.name.clone(),
                     })
                     .is_err()
                 {
@@ -832,6 +861,7 @@ impl VariableList {
 
     fn fetch_nested_variables(
         &self,
+        scope: &Scope,
         container_reference: u64,
         depth: usize,
         open_entries: &Vec<OpenEntry>,
@@ -840,14 +870,13 @@ impl VariableList {
         let stack_frame_list = self.stack_frame_list.read(cx);
         let thread_id = stack_frame_list.thread_id();
         let stack_frame_id = stack_frame_list.current_stack_frame_id();
-        let scope_id = container_reference;
 
         let variables_task = self.dap_store.update(cx, |store, cx| {
             store.variables(
                 &self.client_id,
                 thread_id,
                 stack_frame_id,
-                scope_id,
+                scope.variables_reference,
                 self.session_id,
                 container_reference,
                 cx,
@@ -855,6 +884,7 @@ impl VariableList {
         });
 
         cx.spawn({
+            let scope = scope.clone();
             let open_entries = open_entries.clone();
             |this, mut cx| async move {
                 let mut variables = Vec::new();
@@ -869,13 +899,14 @@ impl VariableList {
                     if open_entries
                         .binary_search(&OpenEntry::Variable {
                             depth,
-                            scope_id: container_reference,
-                            name: variable.name.clone(),
+                            name: variable.name,
+                            scope_name: scope.name.clone(),
                         })
                         .is_ok()
                     {
                         let task = this.update(&mut cx, |this, cx| {
                             this.fetch_nested_variables(
+                                &scope,
                                 variable.variables_reference,
                                 depth + 1,
                                 &open_entries,
@@ -895,7 +926,6 @@ impl VariableList {
     fn fetch_variables_for_stack_frame(
         &self,
         stack_frame_id: u64,
-        open_entries: &Vec<OpenEntry>,
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<Scope>, HashMap<u64, Vec<VariableContainer>>)>> {
         let scopes_task = self.dap_store.update(cx, |store, cx| {
@@ -903,15 +933,29 @@ impl VariableList {
         });
 
         cx.spawn({
-            let open_entries = open_entries.clone();
             |this, mut cx| async move {
                 let mut variables = HashMap::new();
 
                 let scopes = scopes_task.await?;
 
+                let open_entries = this.read_with(&cx, |variable_list, _| {
+                    variable_list
+                        .open_entries
+                        .iter()
+                        .filter(|entry| matches!(entry, OpenEntry::Variable { .. }))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })?;
+
                 for scope in scopes.iter() {
                     let variables_task = this.update(&mut cx, |this, cx| {
-                        this.fetch_nested_variables(scope.variables_reference, 1, &open_entries, cx)
+                        this.fetch_nested_variables(
+                            scope,
+                            scope.variables_reference,
+                            1,
+                            &open_entries,
+                            cx,
+                        )
                     })?;
 
                     variables.insert(scope.variables_reference, variables_task.await?);
@@ -922,77 +966,20 @@ impl VariableList {
         })
     }
 
-    fn fetch_variables(&mut self, cx: &mut Context<Self>) {
-        if self.dap_store.read(cx).upstream_client().is_some() {
-            return;
-        }
+    fn send_update_proto_message(&self, cx: &mut Context<Self>) {
+        if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
+            let request = UpdateDebugAdapter {
+                client_id: self.client_id.to_proto(),
+                session_id: self.session_id.to_proto(),
+                thread_id: Some(self.stack_frame_list.read(cx).thread_id()),
+                project_id: *project_id,
+                variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(
+                    self.to_proto(),
+                )),
+            };
 
-        let stack_frames = self.stack_frame_list.read(cx).stack_frames().clone();
-
-        self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
-            let mut tasks = Vec::with_capacity(stack_frames.len());
-
-            let open_entries = this.update(&mut cx, |this, _| {
-                this.open_entries
-                    .iter()
-                    .filter(|e| matches!(e, OpenEntry::Variable { .. }))
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })?;
-
-            for stack_frame in stack_frames.clone().into_iter() {
-                let task = this.update(&mut cx, |this, cx| {
-                    this.fetch_variables_for_stack_frame(stack_frame.id, &open_entries, cx)
-                });
-
-                tasks.push(
-                    cx.background_executor()
-                        .spawn(async move { anyhow::Ok((stack_frame.id, task?.await?)) }),
-                );
-            }
-
-            let results = futures::future::join_all(tasks).await;
-
-            this.update(&mut cx, |this, cx| {
-                let mut new_variables = BTreeMap::new();
-                let mut new_scopes = HashMap::new();
-
-                for (stack_frame_id, (scopes, variables)) in
-                    results.into_iter().filter_map(|result| result.ok())
-                {
-                    new_scopes.insert(stack_frame_id, scopes);
-
-                    for (scope_id, variables) in variables.into_iter() {
-                        let mut variable_index = ScopeVariableIndex::new();
-                        variable_index.add_variables(scope_id, variables);
-
-                        new_variables.insert((stack_frame_id, scope_id), variable_index);
-                    }
-                }
-
-                std::mem::swap(&mut this.variables, &mut new_variables);
-                std::mem::swap(&mut this.scopes, &mut new_scopes);
-
-                this.entries.clear();
-                this.build_entries(true, true, cx);
-
-                if let Some((client, project_id)) = this.dap_store.read(cx).downstream_client() {
-                    let request = UpdateDebugAdapter {
-                        client_id: this.client_id.to_proto(),
-                        session_id: this.session_id.to_proto(),
-                        thread_id: Some(this.stack_frame_list.read(cx).thread_id()),
-                        project_id: *project_id,
-                        variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(
-                            this.to_proto(),
-                        )),
-                    };
-
-                    client.send(request).log_err();
-                };
-
-                this.fetch_variables_task.take();
-            })
-        }));
+            client.send(request).log_err();
+        };
     }
 
     fn deploy_variable_context_menu(
@@ -1095,7 +1082,7 @@ impl VariableList {
                             window.focus(&editor.focus_handle(cx))
                         });
 
-                        this.build_entries(false, true, cx);
+                        this.build_entries(false, cx);
                     }),
                 )
             })
@@ -1124,7 +1111,7 @@ impl VariableList {
             return;
         };
 
-        self.build_entries(false, true, cx);
+        self.build_entries(false, cx);
     }
 
     fn set_variable_value(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -1162,7 +1149,7 @@ impl VariableList {
             set_value_task.await?;
 
             this.update_in(&mut cx, |this, window, cx| {
-                this.build_entries(false, true, cx);
+                this.build_entries(false, cx);
                 this.invalidate(window, cx);
             })
         })
@@ -1170,6 +1157,10 @@ impl VariableList {
     }
 
     pub fn invalidate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.variables.clear();
+        self.scopes.clear();
+        self.entries.clear();
+
         self.stack_frame_list.update(cx, |stack_frame_list, cx| {
             stack_frame_list.invalidate(window, cx);
         });
@@ -1247,18 +1238,13 @@ impl VariableList {
                     let entry_id = &OpenEntry::Variable {
                         depth: *depth,
                         name: variable.name.clone(),
-                        scope_id: scope.variables_reference,
+                        scope_name: scope.name.clone(),
                     };
 
                     if self.open_entries.binary_search(entry_id).is_err() {
                         self.select_prev(&SelectPrev, window, cx);
                     } else {
-                        self.toggle_variable(
-                            scope.variables_reference,
-                            &variable.clone(),
-                            *depth,
-                            cx,
-                        );
+                        self.toggle_variable(&scope.clone(), &variable.clone(), *depth, cx);
                     }
                 }
                 VariableListEntry::SetVariableEditor { .. } => {}
@@ -1294,18 +1280,13 @@ impl VariableList {
                     let entry_id = &OpenEntry::Variable {
                         depth: *depth,
                         name: variable.name.clone(),
-                        scope_id: scope.variables_reference,
+                        scope_name: scope.name.clone(),
                     };
 
                     if self.open_entries.binary_search(entry_id).is_ok() {
                         self.select_next(&SelectNext, window, cx);
                     } else {
-                        self.toggle_variable(
-                            scope.variables_reference,
-                            &variable.clone(),
-                            *depth,
-                            cx,
-                        );
+                        self.toggle_variable(&scope.clone(), &variable.clone(), *depth, cx);
                     }
                 }
                 VariableListEntry::SetVariableEditor { .. } => {}
@@ -1330,17 +1311,6 @@ impl VariableList {
                     .child(self.set_variable_editor.clone()),
             )
             .into_any_element()
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn toggle_variable_in_test(
-        &mut self,
-        scope_id: u64,
-        variable: &Variable,
-        depth: usize,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_variable(scope_id, variable, depth, cx);
     }
 
     #[track_caller]
@@ -1390,7 +1360,7 @@ impl VariableList {
                         .binary_search(&OpenEntry::Variable {
                             depth: *depth,
                             name: variable.name.clone(),
-                            scope_id: scope.variables_reference,
+                            scope_name: scope.name.clone(),
                         })
                         .is_ok();
 
@@ -1419,11 +1389,10 @@ impl VariableList {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let scope_id = scope.variables_reference;
         let entry_id = OpenEntry::Variable {
             depth,
-            scope_id,
             name: variable.name.clone(),
+            scope_name: scope.name.clone(),
         };
         let disclosed = has_children.then(|| self.open_entries.binary_search(&entry_id).is_ok());
 
@@ -1477,9 +1446,10 @@ impl VariableList {
                 .toggle(disclosed)
                 .when(has_children, |list_item| {
                     list_item.on_toggle(cx.listener({
+                        let scope = scope.clone();
                         let variable = variable.clone();
                         move |this, _, _window, cx| {
-                            this.toggle_variable(scope_id, &variable, depth, cx)
+                            this.toggle_variable(&scope, &variable, depth, cx)
                         }
                     }))
                 })

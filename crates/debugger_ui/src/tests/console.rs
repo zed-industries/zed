@@ -739,7 +739,7 @@ async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestApp
             .update(cx, |variable_list, cx| {
                 variable_list.toggle_entry(
                     &variable_list::OpenEntry::Variable {
-                        scope_id: scopes[0].variables_reference,
+                        scope_name: scopes[0].name.clone(),
                         name: scope1_variables[0].name.clone(),
                         depth: 1,
                     },

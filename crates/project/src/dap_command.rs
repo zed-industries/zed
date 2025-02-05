@@ -828,7 +828,7 @@ impl DapCommand for VariablesCommand {
     ) -> Result<Self::Response> {
         let variables = response?;
 
-        dap_store.update(cx, |this, cx| {
+        dap_store.update(cx, |this, _| {
             if let Some((downstream_clients, project_id)) = this.downstream_client() {
                 let update = proto::UpdateDebugAdapter {
                     project_id: *project_id,
@@ -846,7 +846,7 @@ impl DapCommand for VariablesCommand {
                 };
 
                 downstream_clients.send(update.clone()).log_err();
-                cx.emit(crate::dap_store::DapStoreEvent::UpdateDebugAdapter(update));
+                // cx.emit(crate::dap_store::DapStoreEvent::UpdateDebugAdapter(update));
             }
         })?;
 

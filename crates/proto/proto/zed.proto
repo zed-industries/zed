@@ -2617,7 +2617,7 @@ message DebuggerOpenEntryScope {
 }
 
 message DebuggerOpenEntryVariable {
-    uint64 scope_id = 1;
+    string scope_name = 1;
     string name = 2;
     uint64 depth = 3;
 }

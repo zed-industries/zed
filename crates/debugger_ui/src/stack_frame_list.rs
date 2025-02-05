@@ -19,9 +19,11 @@ use workspace::Workspace;
 use crate::debugger_panel_item::DebugPanelItemEvent::Stopped;
 use crate::debugger_panel_item::{self, DebugPanelItem};
 
+pub type StackFrameId = u64;
+
 #[derive(Debug)]
 pub enum StackFrameListEvent {
-    SelectedStackFrameChanged,
+    SelectedStackFrameChanged(StackFrameId),
     StackFramesUpdated,
 }
 
@@ -31,12 +33,12 @@ pub struct StackFrameList {
     focus_handle: FocusHandle,
     session_id: DebugSessionId,
     dap_store: Entity<DapStore>,
-    current_stack_frame_id: u64,
     stack_frames: Vec<StackFrame>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
+    current_stack_frame_id: StackFrameId,
     fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
 
@@ -244,7 +246,9 @@ impl StackFrameList {
     ) -> Task<Result<()>> {
         self.current_stack_frame_id = stack_frame.id;
 
-        cx.emit(StackFrameListEvent::SelectedStackFrameChanged);
+        cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
+            stack_frame.id,
+        ));
         cx.notify();
 
         if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
