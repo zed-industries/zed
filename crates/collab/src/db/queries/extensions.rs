@@ -10,6 +10,7 @@ impl Database {
     pub async fn get_extensions(
         &self,
         filter: Option<&str>,
+        provides_filter: Option<&BTreeSet<ExtensionProvides>>,
         max_schema_version: i32,
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
@@ -24,6 +25,10 @@ impl Database {
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
+            }
+
+            if let Some(provides_filter) = provides_filter {
+                condition = apply_provides_filter(condition, provides_filter);
             }
 
             self.get_extensions_where(condition, Some(limit as u64), &tx)
@@ -383,6 +388,49 @@ impl Database {
         })
         .await
     }
+}
+
+fn apply_provides_filter(
+    mut condition: Condition,
+    provides_filter: &BTreeSet<ExtensionProvides>,
+) -> Condition {
+    if provides_filter.contains(&ExtensionProvides::Themes) {
+        condition = condition.add(extension_version::Column::ProvidesThemes.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::IconThemes) {
+        condition = condition.add(extension_version::Column::ProvidesIconThemes.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::Languages) {
+        condition = condition.add(extension_version::Column::ProvidesLanguages.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::Grammars) {
+        condition = condition.add(extension_version::Column::ProvidesGrammars.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::LanguageServers) {
+        condition = condition.add(extension_version::Column::ProvidesLanguageServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::ContextServers) {
+        condition = condition.add(extension_version::Column::ProvidesContextServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::SlashCommands) {
+        condition = condition.add(extension_version::Column::ProvidesSlashCommands.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::IndexedDocsProviders) {
+        condition = condition.add(extension_version::Column::ProvidesIndexedDocsProviders.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::Snippets) {
+        condition = condition.add(extension_version::Column::ProvidesSnippets.eq(true));
+    }
+
+    condition
 }
 
 fn metadata_from_extension_and_version(

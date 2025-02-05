@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use strum::EnumString;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct ExtensionApiManifest {
@@ -17,8 +18,11 @@ pub struct ExtensionApiManifest {
     pub provides: BTreeSet<ExtensionProvides>,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
+#[derive(
+    Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize, EnumString,
+)]
 #[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum ExtensionProvides {
     Themes,
     IconThemes,
