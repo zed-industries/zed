@@ -16,8 +16,8 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize,
-    PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*, ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName,
+    IconSize, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -94,7 +94,8 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
-            inline_completions_enabled,
+            show_inline_completions,
+            inline_completion_enabled,
         ) = editor.update(cx, |editor, cx| {
             (
                 editor.selection_menu_enabled(cx),
@@ -103,6 +104,7 @@ impl Render for QuickActionBar {
                 editor.git_blame_inline_enabled(),
                 editor.show_git_blame_gutter(),
                 editor.auto_signature_help_enabled(cx),
+                editor.should_show_inline_completions(cx),
                 editor.inline_completions_enabled(cx),
             )
         });
@@ -285,12 +287,12 @@ impl Render for QuickActionBar {
                             },
                         );
 
-                        menu = menu.toggleable_entry(
-                            "Edit Predictions",
-                            inline_completions_enabled,
-                            IconPosition::Start,
-                            Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
-                            {
+                        let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
+                            .toggleable(IconPosition::Start, inline_completion_enabled && show_inline_completions)
+                            .disabled(!inline_completion_enabled)
+                            .action(Some(
+                                editor::actions::ToggleInlineCompletions.boxed_clone(),
+                            )).handler({
                                 let editor = editor.clone();
                                 move |window, cx| {
                                     editor
@@ -303,8 +305,14 @@ impl Render for QuickActionBar {
                                         })
                                         .ok();
                                 }
-                            },
-                        );
+                            });
+                        if !inline_completion_enabled {
+                            inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
+                            });
+                        }
+
+                        menu = menu.item(inline_completion_entry);
 
                         menu = menu.separator();
 

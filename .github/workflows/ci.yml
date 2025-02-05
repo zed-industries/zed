@@ -228,7 +228,6 @@ jobs:
         if: always()
         run: rm -rf ./../.cargo
 
-  # todo(windows): Actually run the tests
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
@@ -269,9 +268,18 @@ jobs:
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
+      - name: Run tests
+        uses: ./.github/actions/run_tests_windows
+        with:
+          working-directory: ${{ env.ZED_WORKSPACE }}
+
       - name: Build Zed
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build
+
+      - name: Check dev drive space
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: ./script/exit-ci-if-dev-drive-is-full.ps1 55
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file

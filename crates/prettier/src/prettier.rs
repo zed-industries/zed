@@ -946,7 +946,7 @@ mod tests {
         .await {
             Ok(path) => panic!("Expected to fail for prettier in package.json but not in node_modules found, but got path {path:?}"),
             Err(e) => {
-                let message = e.to_string();
+                let message = e.to_string().replace("\\\\", "/");
                 assert!(message.contains("/root/work/full-stack-foundations/exercises/03.loading/01.problem.loader"), "Error message should mention which project had prettier defined");
                 assert!(message.contains("/root/work/full-stack-foundations"), "Error message should mention potential candidates without prettier node_modules contents");
             },

@@ -5254,7 +5254,6 @@ dependencies = [
  "picker",
  "postage",
  "project",
- "rpc",
  "schemars",
  "serde",
  "serde_derive",
@@ -6385,9 +6384,11 @@ dependencies = [
  "lsp",
  "paths",
  "project",
+ "regex",
  "serde_json",
  "settings",
  "supermaven",
+ "telemetry",
  "theme",
  "ui",
  "workspace",
@@ -7007,6 +7008,7 @@ dependencies = [
  "tree-sitter-cpp",
  "tree-sitter-css",
  "tree-sitter-diff",
+ "tree-sitter-gitcommit",
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
@@ -13945,6 +13947,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-gitcommit"
+version = "0.0.1"
+source = "git+https://github.com/zed-industries/tree-sitter-git-commit?rev=88309716a69dd13ab83443721ba6e0b491d37ee9#88309716a69dd13ab83443721ba6e0b491d37ee9"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-go"
 version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14405,6 +14416,15 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
+ "util_macros",
+]
+
+[[package]]
+name = "util_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]

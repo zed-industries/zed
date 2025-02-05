@@ -262,6 +262,7 @@ mod tests {
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
+    use util::{path, separator};
     use workspace::{AppState, Workspace};
 
     use crate::task_context;
@@ -271,7 +272,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".zed": {
                     "tasks.json": r#"[
@@ -295,7 +296,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(
@@ -375,17 +376,18 @@ mod tests {
                 task_context(workspace, window, cx)
             })
             .await;
+
         assert_eq!(
             first_context,
             TaskContext {
-                cwd: Some("/dir".into()),
+                cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "/dir/rust/b.rs".into()),
+                    (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, "rust/b.rs".into()),
-                    (VariableName::Dirname, "/dir/rust".into()),
+                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
-                    (VariableName::WorktreeRoot, "/dir".into()),
+                    (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                 ]),
@@ -407,14 +409,14 @@ mod tests {
                 })
                 .await,
             TaskContext {
-                cwd: Some("/dir".into()),
+                cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "/dir/rust/b.rs".into()),
+                    (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, "rust/b.rs".into()),
-                    (VariableName::Dirname, "/dir/rust".into()),
+                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
-                    (VariableName::WorktreeRoot, "/dir".into()),
+                    (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
@@ -433,14 +435,14 @@ mod tests {
                 })
                 .await,
             TaskContext {
-                cwd: Some("/dir".into()),
+                cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "/dir/a.ts".into()),
+                    (VariableName::File, path!("/dir/a.ts").into()),
                     (VariableName::Filename, "a.ts".into()),
                     (VariableName::RelativeFile, "a.ts".into()),
-                    (VariableName::Dirname, "/dir".into()),
+                    (VariableName::Dirname, path!("/dir").into()),
                     (VariableName::Stem, "a".into()),
-                    (VariableName::WorktreeRoot, "/dir".into()),
+                    (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                     (VariableName::Symbol, "this_is_a_test".into()),
