@@ -23,15 +23,18 @@ pub fn excerpt_for_cursor_position(
 
     while let Some(parent) = snapshot.syntax_ancestor(scope_range.clone()) {
         let parent_tokens = tokens_for_bytes(parent.byte_range().len());
-        if parent_tokens <= editable_region_token_limit {
-            scope_range = Point::new(
-                parent.start_position().row as u32,
-                parent.start_position().column as u32,
-            )
-                ..Point::new(
-                    parent.end_position().row as u32,
-                    parent.end_position().column as u32,
-                );
+        let parent_point_range = Point::new(
+            parent.start_position().row as u32,
+            parent.start_position().column as u32,
+        )
+            ..Point::new(
+                parent.end_position().row as u32,
+                parent.end_position().column as u32,
+            );
+        if parent_point_range == scope_range {
+            break;
+        } else if parent_tokens <= editable_region_token_limit {
+            scope_range = parent_point_range;
             remaining_edit_tokens = editable_region_token_limit - parent_tokens;
         } else {
             break;
