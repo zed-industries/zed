@@ -97,8 +97,8 @@ use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions,
+    IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -4654,6 +4654,18 @@ impl Editor {
         }
     }
 
+    fn inline_completion_preview_mode(&self, cx: &App) -> language::InlineCompletionPreviewMode {
+        let cursor = self.selections.newest_anchor().head();
+
+        self.buffer
+            .read(cx)
+            .text_anchor_for_position(cursor, cx)
+            .map(|(buffer, _)| {
+                all_language_settings(buffer.read(cx).file(), cx).inline_completions_preview_mode()
+            })
+            .unwrap_or_default()
+    }
+
     fn should_show_inline_completions_in_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -5017,11 +5029,12 @@ impl Editor {
         }
 
         if self.has_visible_completions_menu() {
-            true
-        } else {
-            // TODO az: check setting
-            has_completion
+            return true;
         }
+
+        has_completion
+            && self.inline_completion_preview_mode(cx)
+                == InlineCompletionPreviewMode::WhenHoldingModifier
     }
 
     fn update_inline_completion_preview(
