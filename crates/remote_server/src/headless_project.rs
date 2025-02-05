@@ -367,9 +367,11 @@ impl HeadlessProject {
             .await?;
 
         let response = this.update(&mut cx, |_, cx| {
+            let canonicalized_path: proto::CrossPlatformPath = canonicalized.into();
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: Some(proto::CrossPlatformPath::from(canonicalized)),
+                canonical_path_deprecated: Some(canonicalized_path.to_db_string()),
+                canonicalized_path: Some(canonicalized_path),
             })
         })?;
 
@@ -601,10 +603,12 @@ impl HeadlessProject {
         let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
+        let path: proto::CrossPlatformPath = expanded.into();
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: Some(proto::CrossPlatformPath::from(expanded)),
+            path_deprecated: Some(path.to_db_string()),
+            path: Some(path),
         })
     }
 
