@@ -14431,10 +14431,8 @@ fn get_uncommitted_changes_for_buffer(
         let change_sets = futures::future::join_all(tasks).await;
         buffer
             .update(&mut cx, |buffer, cx| {
-                for change_set in change_sets {
-                    if let Ok(change_set) = change_set {
-                        buffer.add_change_set(change_set, cx);
-                    }
+                for change_set in change_sets.into_iter().flatten() {
+                    buffer.add_change_set(change_set, cx);
                 }
             })
             .ok();
