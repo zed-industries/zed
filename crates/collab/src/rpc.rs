@@ -1437,19 +1437,15 @@ fn notify_rejoined_projects(
 
     for project in rejoined_projects {
         for worktree in mem::take(&mut project.worktrees) {
+            let cross_platform_path = proto::CrossPlatformPath {
+                path: worktree.abs_path.clone(),
+            };
             // Stream this worktree's entries.
             let message = proto::UpdateWorktree {
                 project_id: project.id.to_proto(),
                 worktree_id: worktree.id,
-                abs_path_deprecated: Some(
-                    proto::CrossPlatformPath {
-                        path: worktree.abs_path.clone(),
-                    }
-                    .to_db_string(),
-                ),
-                abs_path: Some(proto::CrossPlatformPath {
-                    path: worktree.abs_path.clone(),
-                }),
+                abs_path_deprecated: Some(cross_platform_path.to_db_string()),
+                abs_path: Some(cross_platform_path),
                 root_name: worktree.root_name,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
@@ -1843,19 +1839,17 @@ fn join_project_internal(
     let worktrees = project
         .worktrees
         .iter()
-        .map(|(id, worktree)| proto::WorktreeMetadata {
-            id: *id,
-            root_name: worktree.root_name.clone(),
-            visible: worktree.visible,
-            abs_path_deprecated: Some(
-                proto::CrossPlatformPath {
-                    path: worktree.abs_path.clone(),
-                }
-                .to_db_string(),
-            ),
-            abs_path: Some(proto::CrossPlatformPath {
+        .map(|(id, worktree)| {
+            let abs_path = proto::CrossPlatformPath {
                 path: worktree.abs_path.clone(),
-            }),
+            };
+            proto::WorktreeMetadata {
+                id: *id,
+                root_name: worktree.root_name.clone(),
+                visible: worktree.visible,
+                abs_path_deprecated: Some(abs_path.to_db_string()),
+                abs_path: Some(abs_path),
+            }
         })
         .collect::<Vec<_>>();
 

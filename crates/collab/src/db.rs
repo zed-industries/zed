@@ -668,19 +668,17 @@ impl RejoinedProject {
             worktrees: self
                 .worktrees
                 .iter()
-                .map(|worktree| proto::WorktreeMetadata {
-                    id: worktree.id,
-                    root_name: worktree.root_name.clone(),
-                    visible: worktree.visible,
-                    abs_path_deprecated: Some(
-                        proto::CrossPlatformPath {
-                            path: worktree.abs_path.clone(),
-                        }
-                        .to_db_string(),
-                    ),
-                    abs_path: Some(proto::CrossPlatformPath {
+                .map(|worktree| {
+                    let abs_path = proto::CrossPlatformPath {
                         path: worktree.abs_path.clone(),
-                    }),
+                    };
+                    proto::WorktreeMetadata {
+                        id: worktree.id,
+                        root_name: worktree.root_name.clone(),
+                        visible: worktree.visible,
+                        abs_path_deprecated: Some(abs_path.to_db_string()),
+                        abs_path: Some(abs_path),
+                    }
                 })
                 .collect(),
             collaborators: self
@@ -861,11 +859,10 @@ fn db_status_to_proto(
                 ))
             }
         };
+    let path = proto::CrossPlatformPath::from_db_string(entry.repo_path);
     Ok(proto::StatusEntry {
-        repo_path_deprecated: Some(entry.repo_path.clone()),
-        repo_path: Some(proto::CrossPlatformPath {
-            path: entry.repo_path.split('/').map(String::from).collect(),
-        }),
+        repo_path_deprecated: Some(path.to_db_string()),
+        repo_path: Some(path),
         simple_status,
         status: Some(proto::GitFileStatus {
             variant: Some(variant),

@@ -1248,6 +1248,7 @@ impl Room {
         };
 
         cx.notify();
+        println!("==> set_location: {:?}", location);
         cx.background_executor().spawn(async move {
             client
                 .request(proto::UpdateParticipantLocation {

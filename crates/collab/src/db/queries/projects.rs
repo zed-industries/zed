@@ -506,8 +506,7 @@ impl Database {
                         .path
                         .as_ref()
                         .context("Missing path")?
-                        .path
-                        .join("/"),
+                        .to_db_string(),
                 ),
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
@@ -608,7 +607,7 @@ impl Database {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(
-                        update.path.as_ref().context("Missing path")?.path.join("/"),
+                        update.path.as_ref().context("Missing path")?.to_db_string(),
                     ),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
@@ -837,9 +836,7 @@ impl Database {
                         .diagnostic_summaries
                         .push(proto::DiagnosticSummary {
                             path_deprecated: Some(db_summary.path.clone()),
-                            path: Some(proto::CrossPlatformPath {
-                                path: db_summary.path.split('/').map(Into::into).collect(),
-                            }),
+                            path: Some(proto::CrossPlatformPath::from_db_string(db_summary.path)),
                             language_server_id: db_summary.language_server_id as u64,
                             error_count: db_summary.error_count as u32,
                             warning_count: db_summary.warning_count as u32,
