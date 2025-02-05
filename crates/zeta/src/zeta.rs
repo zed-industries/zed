@@ -57,10 +57,10 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 // TODO(mgsloan): more systematic way to choose or tune these fairly arbitrary constants?
-const MAX_CONTEXT_TOKENS: usize = 64;
-const MAX_OUTPUT_TOKENS: usize = 256;
-const MAX_EVENT_TOKENS: usize = 512;
-const MAX_OUTLINE_TOKENS: usize = 512;
+const MAX_CONTEXT_TOKENS: usize = 100;
+const MAX_OUTPUT_TOKENS: usize = 300;
+const MAX_EVENT_TOKENS: usize = 400;
+const MAX_OUTLINE_TOKENS: usize = 400;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 8;
@@ -1000,7 +1000,7 @@ fn prompt_for_events<'a>(events: &VecDeque<Event>, mut remaining_tokens: usize) 
         if !result.is_empty() {
             result.insert_str(0, "\n\n");
         }
-        result.push_str(&event_string);
+        result.insert_str(0, &event_string);
         remaining_tokens = remaining_tokens.saturating_sub(event_tokens);
         if remaining_tokens == 0 {
             break;
