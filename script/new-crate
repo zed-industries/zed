@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# Try to make sure we are in the zed repo root
+if [ ! -d "crates" ] || [ ! -d "script" ]; then
+    echo "Error: Run from the \`zed\` repo root"
+    exit 1
+fi
+
+if [ ! -f "Cargo.toml" ]; then
+    echo "Error: Run from the \`zed\` repo root"
+    exit 1
+fi
+
+# Check for at least one argument (crate name)
+if [ $# -eq 0 ]; then
+    echo "Usage: $0 <crate_name> [optional_license_flag]"
+    exit 1
+fi
+
+# Get crate name from first argument
+CRATE_NAME="$1"
+
+# Determine license mode and file
+if [[ "${2,,}" == *"apache"* ]]; then
+    LICENSE_MODE="Apache-2.0"
+    LICENSE_FILE="LICENSE-APACHE"
+elif [[ "${2,,}" == *"agpl"* ]]; then
+    LICENSE_MODE="AGPL-3.0-or-later"
+    LICENSE_FILE="LICENSE-AGPL"
+else
+    LICENSE_MODE="GPL-3.0-or-later"
+    LICENSE_FILE="LICENSE"
+fi
+
+# Validate crate name (lowercase, alphanumeric and underscores)
+if [[ ! "$CRATE_NAME" =~ ^[a-z0-9_]+$ ]]; then
+    echo "Error: Crate name must be lowercase and contain only alphanumeric characters and underscores"
+    exit 1
+fi
+
+# Create crate directory
+CRATE_PATH="crates/$CRATE_NAME"
+mkdir -p "$CRATE_PATH/src"
+
+# Symlink the appropriate license file
+ln -s "../../../$LICENSE_FILE" "$CRATE_PATH/LICENSE"
+
+# Prepare Cargo.toml template content
+CARGO_TOML_TEMPLATE=$(cat << EOF
+[package]
+name = "$CRATE_NAME"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "$LICENSE_MODE"
+
+[lints]
+workspace = true
+
+[lib]
+name = "$CRATE_NAME"
+path = "src/$CRATE_NAME.rs"
+
+[dependencies]
+anyhow.workspace = true
+gpui.workspace = true
+ui.workspace = true
+util.workspace = true
+
+# Uncomment other workspace dependencies as needed
+# assistant.workspace = true
+# client.workspace = true
+# project.workspace = true
+# settings.workspace = true
+
+[features]
+default = []
+EOF
+)
+
+# Create Cargo.toml file
+echo "$CARGO_TOML_TEMPLATE" > "$CRATE_PATH/Cargo.toml"
+
+# Create initial source file
+echo "// TODO: Implement $CRATE_NAME crate" > "$CRATE_PATH/src/$CRATE_NAME.rs"
+
+# Add crate to Cargo.toml workspace
+if ! grep -q "\"crates/$CRATE_NAME\"" Cargo.toml; then
+    sed -i "/members = \[/a\    \"crates/$CRATE_NAME\"," Cargo.toml
+fi
+
+# Add workspace dependency to Cargo.toml
+DEPENDENCY_TEMPLATE=$(cat << EOF
+$CRATE_NAME = { path = "crates/$CRATE_NAME" }
+EOF
+)
+sed -i "/# Workspace member crates/a$DEPENDENCY_TEMPLATE" Cargo.toml
+
+echo "Created new crate: $CRATE_NAME in $CRATE_PATH"
+echo "License: $LICENSE_MODE (symlinked from $LICENSE_FILE)"
+echo "Don't forget to update the crate's dependencies and implement its functionality!"
