@@ -568,9 +568,12 @@ impl ExtensionsPage {
         };
 
         let mut provides = extension.manifest.provides.clone();
-        provides.insert(ExtensionProvides::Themes);
-        provides.insert(ExtensionProvides::IconThemes);
-        provides.insert(ExtensionProvides::LanguageServers);
+        // TODO: Remove before merging.
+        if provides.is_empty() {
+            provides.insert(ExtensionProvides::Themes);
+            provides.insert(ExtensionProvides::IconThemes);
+            provides.insert(ExtensionProvides::LanguageServers);
+        }
 
         ExtensionCard::new()
             .overridden_by_dev_extension(has_dev_extension)
@@ -580,7 +583,6 @@ impl ExtensionsPage {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_end()
                             .child(
                                 Headline::new(extension.manifest.name.clone())
                                     .size(HeadlineSize::Medium),
@@ -625,7 +627,9 @@ impl ExtensionsPage {
                                                 };
                                                 div()
                                                     .bg(cx.theme().colors().element_background)
+                                                    .px_0p5()
                                                     .border_1()
+                                                    .border_color(cx.theme().colors().border)
                                                     .rounded_md()
                                                     .child(
                                                         Label::new(label).size(LabelSize::XSmall),
