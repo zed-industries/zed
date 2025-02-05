@@ -15,6 +15,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
+use std::path::Path;
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
@@ -341,10 +342,18 @@ impl Repository {
     }
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
-        if path.worktree_id != self.worktree_id {
+        self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    }
+
+    pub fn worktree_id_path_to_repo_path(
+        &self,
+        worktree_id: WorktreeId,
+        path: &Path,
+    ) -> Option<RepoPath> {
+        if worktree_id != self.worktree_id {
             return None;
         }
-        self.repository_entry.relativize(&path.path).log_err()
+        self.repository_entry.relativize(path).log_err()
     }
 
     pub fn open_commit_buffer(
