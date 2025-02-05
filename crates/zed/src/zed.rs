@@ -49,7 +49,7 @@ use std::time::Duration;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
-use ui::PopoverMenuHandle;
+use ui::{prelude::*, PopoverMenuHandle};
 use util::markdown::MarkdownString;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
@@ -1177,8 +1177,8 @@ fn show_keymap_file_json_error(
     show_app_notification(notification_id, cx, move |cx| {
         cx.new(|_cx| {
             MessageNotification::new(message.clone())
-                .with_click_message("Open keymap file")
-                .on_click(|window, cx| {
+                .primary_message("Open Keymap File")
+                .primary_on_click(|window, cx| {
                     window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                     cx.emit(DismissEvent);
                 })
@@ -1220,8 +1220,8 @@ fn show_keymap_file_load_error(
                             ))
                             .into_any()
                     })
-                    .with_click_message("Open keymap file")
-                    .on_click(|window, cx| {
+                    .primary_message("Open Keymap File")
+                    .primary_on_click(|window, cx| {
                         window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                         cx.emit(DismissEvent);
                     })
@@ -1273,8 +1273,9 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
             show_app_notification(id, cx, move |cx| {
                 cx.new(|_cx| {
                     MessageNotification::new(format!("Invalid user settings file\n{error}"))
-                        .with_click_message("Open settings file")
-                        .on_click(|window, cx| {
+                        .primary_message("Open Settings File")
+                        .primary_icon(IconName::Settings)
+                        .primary_on_click(|window, cx| {
                             window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
                             cx.emit(DismissEvent);
                         })
