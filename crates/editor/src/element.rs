@@ -3170,7 +3170,7 @@ impl EditorElement {
                     };
                     let mut element = self
                         .render_context_menu(line_height, menu_height, y_flipped, window, cx)
-                        .unwrap();
+                        .expect("Visible context menu should always render.");
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     Some((CursorPopoverType::CodeContextMenu, element, size))
                 } else {
@@ -3328,8 +3328,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let editor = self.editor.read(cx);
+        if !editor.context_menu_visible() {
+            return;
+        }
         let Some(crate::ContextMenuOrigin::GutterIndicator(gutter_row)) =
-            self.editor.read(cx).context_menu_origin()
+            editor.context_menu_origin()
         else {
             return;
         };
@@ -3357,11 +3361,9 @@ impl EditorElement {
             window,
             cx,
             move |height, _max_width_for_stable_x, y_flipped, window, cx| {
-                let Some(mut element) =
-                    self.render_context_menu(line_height, height, y_flipped, window, cx)
-                else {
-                    return vec![];
-                };
+                let mut element = self
+                    .render_context_menu(line_height, height, y_flipped, window, cx)
+                    .expect("Visible context menu should always render.");
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 vec![(CursorPopoverType::CodeContextMenu, element, size)]
             },
