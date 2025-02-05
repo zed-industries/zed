@@ -13,6 +13,7 @@ test-support = [
     "load-grammars"
 ]
 load-grammars = [
+    "tree-sitter",
     "tree-sitter-bash",
     "tree-sitter-c",
     "tree-sitter-cpp",
@@ -29,7 +30,6 @@ load-grammars = [
     "tree-sitter-rust",
     "tree-sitter-typescript",
     "tree-sitter-yaml",
-    "tree-sitter",
 ]
 
 [dependencies]
@@ -46,12 +46,12 @@ log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
-pet.workspace = true
-pet-fs.workspace = true
-pet-core.workspace = true
 pet-conda.workspace = true
+pet-core.workspace = true
+pet-fs.workspace = true
 pet-poetry.workspace = true
 pet-reporter.workspace = true
+pet.workspace = true
 project.workspace = true
 regex.workspace = true
 rope.workspace = true
@@ -83,15 +83,15 @@ tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 
 [dev-dependencies]
-tree-sitter.workspace = true
+pretty_assertions.workspace = true
 text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
-unindent.workspace = true
-workspace = { workspace = true, features = ["test-support"] }
-tree-sitter-typescript.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-go.workspace = true
+tree-sitter-bash.workspace = true
 tree-sitter-c.workspace = true
 tree-sitter-css.workspace = true
-tree-sitter-bash.workspace = true
-pretty_assertions.workspace = true
+tree-sitter-go.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
+tree-sitter.workspace = true
+unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
