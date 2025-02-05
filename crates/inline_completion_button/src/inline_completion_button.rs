@@ -17,8 +17,12 @@ use language::{
     },
     File, Language,
 };
+use regex::Regex;
 use settings::{update_settings_file, Settings, SettingsStore};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
     prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, PopoverMenu,
@@ -440,9 +444,8 @@ impl InlineCompletionButton {
                         let workspace = workspace.downgrade();
                         window
                             .spawn(cx, |cx| {
-                                configure_disabled_globs(
+                                open_disabled_globs_setting_in_editor(
                                     workspace,
-                                    None,
                                     cx,
                                 )
                             })
@@ -617,9 +620,8 @@ impl SupermavenButtonStatus {
     }
 }
 
-async fn configure_disabled_globs(
+async fn open_disabled_globs_setting_in_editor(
     workspace: WeakEntity<Workspace>,
-    path_to_disable: Option<Arc<Path>>,
     mut cx: AsyncWindowContext,
 ) -> Result<()> {
     let settings_editor = workspace
@@ -638,37 +640,34 @@ async fn configure_disabled_globs(
             let text = item.buffer().read(cx).snapshot(cx).text();
 
             let settings = cx.global::<SettingsStore>();
-            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                let inline_completion_settings =
-                    file.inline_completions.get_or_insert_with(Default::default);
-                let globs = inline_completion_settings
-                    .disabled_globs
-                    .get_or_insert_with(|| {
-                        settings
-                            .get::<AllLanguageSettings>(None)
-                            .inline_completions
-                            .disabled_globs
-                            .iter()
-                            .map(|glob| glob.glob().to_string())
-                            .collect()
-                    });
 
-                if let Some(path_to_disable) = &path_to_disable {
-                    globs.push(path_to_disable.to_string_lossy().into_owned());
-                } else {
-                    globs.clear();
-                }
+            // Ensure that we always have "inline_completions { "disabled_globs": [] }"
+            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
+                file.inline_completions
+                    .get_or_insert_with(Default::default)
+                    .disabled_globs
+                    .get_or_insert_with(|| Vec::new());
             });
 
             if !edits.is_empty() {
-                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_ranges(edits.iter().map(|e| e.0.clone()));
-                });
+                item.edit(edits.iter().cloned(), cx);
+            }
 
-                // When *enabling* a path, don't actually perform an edit, just select the range.
-                if path_to_disable.is_some() {
-                    item.edit(edits.iter().cloned(), cx);
-                }
+            let text = item.buffer().read(cx).snapshot(cx).text();
+
+            static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+                Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
+            });
+            // Only capture [...]
+            let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
+                captures
+                    .name("content")
+                    .map(|inner_match| inner_match.start()..inner_match.end())
+            });
+            if let Some(range) = range {
+                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
+                    selections.select_ranges(vec![range]);
+                });
             }
         })?;
 
