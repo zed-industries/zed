@@ -349,46 +349,48 @@ impl Repository {
 
     pub fn open_commit_buffer(
         &mut self,
-        languages: Arc<LanguageRegistry>,
+        languages: Option<Arc<LanguageRegistry>>,
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Entity<Buffer>>> {
-        match &self.git_repo {
-            GitRepo::Local(_) => self.open_local_commit_buffer(languages, buffer_store, cx),
-            GitRepo::Remote {
-                project_id,
-                client,
-                worktree_id,
-                work_directory_id,
-            } => {
+        if let GitRepo::Remote {
+            project_id,
+            client,
+            worktree_id,
+            work_directory_id,
+        } = self.git_repo.clone()
+        {
+            let client = client.clone();
+            cx.spawn(|_, mut cx| async move {
                 let request = client.request(proto::OpenCommitMessageBuffer {
                     project_id: project_id.0,
                     worktree_id: worktree_id.to_proto(),
                     work_directory_id: work_directory_id.to_proto(),
                 });
-                let git_commit_language = languages.language_for_name("Git Commit");
-                cx.spawn(|_, mut cx| async move {
-                    let response = request.await.context("requesting to open commit buffer")?;
-                    let buffer_id = BufferId::new(response.buffer_id)?;
-                    let buffer = buffer_store
-                        .update(&mut cx, |buffer_store, cx| {
-                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
-                        })?
-                        .await?;
-                    let git_commit_language = git_commit_language.await?;
+                let response = request.await.context("requesting to open commit buffer")?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+                let buffer = buffer_store
+                    .update(&mut cx, |buffer_store, cx| {
+                        buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                    })?
+                    .await?;
+                if let Some(language_registry) = languages {
+                    let git_commit_language =
+                        language_registry.language_for_name("Git Commit").await?;
                     buffer.update(&mut cx, |buffer, cx| {
-                        // TODO kb is it already done on buffer sync?
-                        buffer.set_language(Some(git_commit_language), cx)
+                        buffer.set_language(Some(git_commit_language), cx);
                     })?;
-                    Ok(buffer)
-                })
-            }
+                }
+                Ok(buffer)
+            })
+        } else {
+            self.open_local_commit_buffer(languages, buffer_store, cx)
         }
     }
 
     fn open_local_commit_buffer(
         &mut self,
-        language_registry: Arc<LanguageRegistry>,
+        language_registry: Option<Arc<LanguageRegistry>>,
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Entity<Buffer>>> {
@@ -397,14 +399,17 @@ impl Repository {
         }
 
         cx.spawn(|this, mut cx| async move {
-            let git_commit_language = language_registry.language_for_name("Git Commit").await?;
-
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
                 .await?;
-            buffer.update(&mut cx, |buffer, cx| {
-                buffer.set_language(Some(git_commit_language), cx);
-            })?;
+
+            if let Some(language_registry) = language_registry {
+                let git_commit_language = language_registry.language_for_name("Git Commit").await?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_language(Some(git_commit_language), cx);
+                })?;
+            }
+
             this.update(&mut cx, |this, _| {
                 this.commit_message_buffer = Some(buffer.clone());
             })?;

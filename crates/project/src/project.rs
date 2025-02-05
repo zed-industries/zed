@@ -4063,11 +4063,7 @@ impl Project {
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
         let buffer = repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.open_commit_buffer(
-                    this.read(cx).languages.clone(),
-                    this.read(cx).buffer_store.clone(),
-                    cx,
-                )
+                repository_handle.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })?
             .await?;
 

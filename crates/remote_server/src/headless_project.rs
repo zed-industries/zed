@@ -704,11 +704,7 @@ impl HeadlessProject {
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
         let buffer = repository
             .update(&mut cx, |repository, cx| {
-                repository.open_commit_buffer(
-                    this.read(cx).languages.clone(),
-                    this.read(cx).buffer_store.clone(),
-                    cx,
-                )
+                repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })?
             .await?;
 
