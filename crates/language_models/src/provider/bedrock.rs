@@ -66,11 +66,6 @@ pub struct State {
     _subscription: Subscription,
 }
 
-pub struct BedrockLanguageModelProvider {
-    http_client: AwsHttpClient,
-    state: gpui::Entity<State>,
-}
-
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let delete_aa_id = cx.delete_credentials(
@@ -182,6 +177,12 @@ impl State {
     }
 }
 
+pub struct BedrockLanguageModelProvider {
+    http_client: AwsHttpClient,
+    handler: tokio::runtime::Handle,
+    state: gpui::Entity<State>,
+}
+
 impl BedrockLanguageModelProvider {
     // This has to succeed
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
@@ -197,8 +198,11 @@ impl BedrockLanguageModelProvider {
 
         let coerced_client = AwsHttpClient::new(http_client.clone());
 
+        let tokio_handle = Tokio::handle(cx);
+
         Self {
             http_client: coerced_client,
+            handler: tokio_handle,
             state,
         }
     }
@@ -247,6 +251,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     http_client: self.http_client.clone(),
+                    handler: self.handler.clone(),  // internally reference counted, can be freely cloned
                     state: self.state.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -285,6 +290,7 @@ struct BedrockModel {
     id: LanguageModelId,
     model: Model,
     http_client: AwsHttpClient,
+    handler: tokio::runtime::Handle,
     state: gpui::Entity<State>,
     request_limiter: RateLimiter,
 }
@@ -321,11 +327,11 @@ impl BedrockModel {
                 .build(),
         );
 
-        Tokio::spawn(cx.app,async move {
+        // this will most likely have a compile time error fix when you get back online
+        handler.spawn(async move {
             let request = bedrock::stream_completion(runtime_client, request);
             request.await.context("Failed to stream completion")
         }).boxed()
-
     }
 }
 
@@ -379,6 +385,8 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
+            // Here, we're going to have something like a Box<JoinHandle> or something like that
+            // Figure out how to consume from it unless await just resolves that 
             let response = request.await.map_err(|e| anyhow!(e))?;
             Ok(map_to_language_model_completion_events(response))
         });
@@ -435,6 +443,8 @@ pub fn get_bedrock_tokens(
                     }
                 }
 
+                // TODO: Really figure out how to stop using Tiktoken
+                // and use the ConverseStream.UsageOutput method
                 if !string_contents.is_empty() {
                     string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
                         role: match message.role {
