@@ -6503,6 +6503,7 @@ dependencies = [
  "serde_json",
  "settings",
  "supermaven",
+ "telemetry",
  "theme",
  "ui",
  "workspace",
