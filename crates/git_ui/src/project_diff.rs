@@ -1,8 +1,4 @@
-use std::{
-    any::{Any, TypeId},
-    path::Path,
-    sync::Arc,
-};
+use std::any::{Any, TypeId};
 
 use anyhow::Result;
 use collections::HashSet;
@@ -14,7 +10,7 @@ use gpui::{
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt};
-use multi_buffer::MultiBuffer;
+use multi_buffer::{MultiBuffer, PathKey};
 use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -25,7 +21,7 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
-use crate::git_panel::GitPanel;
+use crate::git_panel::{GitPanel, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -37,17 +33,20 @@ pub(crate) struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
-    pending_scroll: Option<Arc<Path>>,
+    pending_scroll: Option<PathKey>,
 
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
 
 struct DiffBuffer {
-    abs_path: Arc<Path>,
+    path_key: PathKey,
     buffer: Entity<Buffer>,
     change_set: Entity<BufferChangeSet>,
 }
+
+const CHANGED_NAMESPACE: &'static str = "0";
+const ADDED_NAMESPACE: &'static str = "1";
 
 impl ProjectDiff {
     pub(crate) fn register(
@@ -72,7 +71,7 @@ impl ProjectDiff {
 
     pub fn deploy_at(
         workspace: &mut Workspace,
-        path: Option<Arc<Path>>,
+        entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -92,9 +91,9 @@ impl ProjectDiff {
             );
             project_diff
         };
-        if let Some(path) = path {
+        if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
-                project_diff.scroll_to(path, window, cx);
+                project_diff.scroll_to(entry, window, cx);
             })
         }
     }
@@ -126,10 +125,8 @@ impl ProjectDiff {
         let git_state_subscription = cx.subscribe_in(
             &git_state,
             window,
-            move |this, _git_state, event, _window, _cx| match event {
-                project::git::Event::RepositoriesUpdated => {
-                    *this.update_needed.borrow_mut() = ();
-                }
+            move |this, _git_state, _event, _window, _cx| {
+                *this.update_needed.borrow_mut() = ();
             },
         );
 
@@ -155,15 +152,39 @@ impl ProjectDiff {
         }
     }
 
-    pub fn scroll_to(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path, cx) {
+    pub fn scroll_to(
+        &mut self,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(git_repo) = self.git_state.read(cx).active_repository() else {
+            return;
+        };
+
+        let Some(path) = git_repo
+            .repo_path_to_project_path(&entry.repo_path)
+            .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
+        else {
+            return;
+        };
+        let path_key = if entry.status.is_created() {
+            PathKey::namespaced(ADDED_NAMESPACE, &path)
+        } else {
+            PathKey::namespaced(CHANGED_NAMESPACE, &path)
+        };
+        self.scroll_to_path(path_key, window, cx)
+    }
+
+    fn scroll_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
                     s.select_ranges([position..position]);
                 })
             })
         } else {
-            self.pending_scroll = Some(path);
+            self.pending_scroll = Some(path_key);
         }
     }
 
@@ -223,9 +244,14 @@ impl ProjectDiff {
             let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
                 continue;
             };
-            let abs_path = Arc::from(abs_path);
+            // Craft some artificial paths so that created entries will appear last.
+            let path_key = if entry.status.is_created() {
+                PathKey::namespaced(ADDED_NAMESPACE, &abs_path)
+            } else {
+                PathKey::namespaced(CHANGED_NAMESPACE, &abs_path)
+            };
 
-            previous_paths.remove(&abs_path);
+            previous_paths.remove(&path_key);
             let load_buffer = self
                 .project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx));
@@ -235,11 +261,11 @@ impl ProjectDiff {
                 let buffer = load_buffer.await?;
                 let changes = project
                     .update(&mut cx, |project, cx| {
-                        project.open_unstaged_changes(buffer.clone(), cx)
+                        project.open_uncommitted_changes(buffer.clone(), cx)
                     })?
                     .await?;
                 Ok(DiffBuffer {
-                    abs_path,
+                    path_key,
                     buffer,
                     change_set: changes,
                 })
@@ -259,7 +285,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let abs_path = diff_buffer.abs_path;
+        let path_key = diff_buffer.path_key;
         let buffer = diff_buffer.buffer;
         let change_set = diff_buffer.change_set;
 
@@ -272,15 +298,15 @@ impl ProjectDiff {
 
         self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
-                abs_path.clone(),
+                path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
         });
-        if self.pending_scroll.as_ref() == Some(&abs_path) {
-            self.scroll_to(abs_path, window, cx);
+        if self.pending_scroll.as_ref() == Some(&path_key) {
+            self.scroll_to_path(path_key, window, cx);
         }
     }
 

@@ -6,7 +6,7 @@ use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
-use std::{env, path::PathBuf};
+use std::env;
 use util::test::sample_text;
 
 #[ctor::ctor]
@@ -1596,7 +1596,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path1: Arc<Path> = Arc::from(PathBuf::from("path1"));
+    let path1: PathKey = PathKey::namespaced("0", Path::new("/"));
     let buf2 = cx.new(|cx| {
         Buffer::local(
             indoc! {
@@ -1615,7 +1615,7 @@ fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let path2: Arc<Path> = Arc::from(PathBuf::from("path2"));
+    let path2 = PathKey::namespaced("x", Path::new("/"));
 
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
     multibuffer.update(cx, |multibuffer, cx| {

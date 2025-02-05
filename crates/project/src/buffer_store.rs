@@ -149,37 +149,32 @@ impl BufferChangeSetState {
     ) -> oneshot::Receiver<()> {
         match diff_bases_change {
             DiffBasesChange::SetIndex(index) => {
-                self.index_text = index.map(|mut text| {
-                    text::LineEnding::normalize(&mut text);
-                    Arc::new(text)
-                });
+                let mut index = index.unwrap_or_default();
+                text::LineEnding::normalize(&mut index);
+                self.index_text = Some(Arc::new(index));
                 self.index_changed = true;
             }
             DiffBasesChange::SetHead(head) => {
-                self.head_text = head.map(|mut text| {
-                    text::LineEnding::normalize(&mut text);
-                    Arc::new(text)
-                });
+                let mut head = head.unwrap_or_default();
+                text::LineEnding::normalize(&mut head);
+                self.head_text = Some(Arc::new(head));
                 self.head_changed = true;
             }
-            DiffBasesChange::SetBoth(mut text) => {
-                if let Some(text) = text.as_mut() {
-                    text::LineEnding::normalize(text);
-                }
-                self.head_text = text.map(Arc::new);
+            DiffBasesChange::SetBoth(text) => {
+                let mut text = text.unwrap_or_default();
+                text::LineEnding::normalize(&mut text);
+                self.head_text = Some(Arc::new(text));
                 self.index_text = self.head_text.clone();
                 self.head_changed = true;
                 self.index_changed = true;
             }
             DiffBasesChange::SetEach { index, head } => {
-                self.index_text = index.map(|mut text| {
-                    text::LineEnding::normalize(&mut text);
-                    Arc::new(text)
-                });
-                self.head_text = head.map(|mut text| {
-                    text::LineEnding::normalize(&mut text);
-                    Arc::new(text)
-                });
+                let mut index = index.unwrap_or_default();
+                text::LineEnding::normalize(&mut index);
+                let mut head = head.unwrap_or_default();
+                text::LineEnding::normalize(&mut head);
+                self.index_text = Some(Arc::new(index));
+                self.head_text = Some(Arc::new(head));
                 self.head_changed = true;
                 self.index_changed = true;
             }

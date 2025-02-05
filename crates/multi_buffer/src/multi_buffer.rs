@@ -67,7 +67,7 @@ pub struct MultiBuffer {
     /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
     // only used by consumers using `set_excerpts_for_buffer`
-    buffers_by_path: BTreeMap<Arc<Path>, Vec<ExcerptId>>,
+    buffers_by_path: BTreeMap<PathKey, Vec<ExcerptId>>,
     diff_bases: HashMap<BufferId, ChangeSetState>,
     all_diff_hunks_expanded: bool,
     subscriptions: Topic,
@@ -140,6 +140,15 @@ impl MultiBufferDiffHunk {
         } else {
             DiffHunkStatus::Modified
         }
+    }
+}
+
+#[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
+pub struct PathKey(String);
+
+impl PathKey {
+    pub fn namespaced(namespace: &str, path: &Path) -> Self {
+        Self(format!("{}/{}", namespace, path.to_string_lossy()))
     }
 }
 
@@ -1395,7 +1404,7 @@ impl MultiBuffer {
         anchor_ranges
     }
 
-    pub fn location_for_path(&self, path: &Arc<Path>, cx: &App) -> Option<Anchor> {
+    pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
         let excerpt_id = self.buffers_by_path.get(path)?.first()?;
         let snapshot = self.snapshot(cx);
         let excerpt = snapshot.excerpt(*excerpt_id)?;
@@ -1408,7 +1417,7 @@ impl MultiBuffer {
 
     pub fn set_excerpts_for_path(
         &mut self,
-        path: Arc<Path>,
+        path: PathKey,
         buffer: Entity<Buffer>,
         ranges: Vec<Range<Point>>,
         context_line_count: u32,
@@ -1517,11 +1526,11 @@ impl MultiBuffer {
         }
     }
 
-    pub fn paths(&self) -> impl Iterator<Item = Arc<Path>> + '_ {
+    pub fn paths(&self) -> impl Iterator<Item = PathKey> + '_ {
         self.buffers_by_path.keys().cloned()
     }
 
-    pub fn remove_excerpts_for_path(&mut self, path: Arc<Path>, cx: &mut Context<Self>) {
+    pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
         if let Some(to_remove) = self.buffers_by_path.remove(&path) {
             self.remove_excerpts(to_remove, cx)
         }

@@ -5619,13 +5619,13 @@ async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
 
     let base_text = r#"
         impl A {
-            // this is an unstaged comment
+            // this is an uncommitted comment
 
             fn b() {
                 c();
             }
 
-            // this is another unstaged comment
+            // this is another uncommitted comment
 
             fn d() {
                 // e
@@ -5668,13 +5668,13 @@ async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
     cx.assert_state_with_diff(
         "
         ˇimpl A {
-      -     // this is an unstaged comment
+      -     // this is an uncommitted comment
 
             fn b() {
                 c();
             }
 
-      -     // this is another unstaged comment
+      -     // this is another uncommitted comment
       -
             fn d() {
                 // e
@@ -5691,13 +5691,13 @@ async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
 
     let expected_display_text = "
         impl A {
-            // this is an unstaged comment
+            // this is an uncommitted comment
 
             fn b() {
                 ⋯
             }
 
-            // this is another unstaged comment
+            // this is another uncommitted comment
 
             fn d() {
                 ⋯
