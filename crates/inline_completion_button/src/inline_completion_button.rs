@@ -75,9 +75,7 @@ impl Render for InlineCompletionButton {
                 };
                 let status = copilot.read(cx).status();
 
-                let enabled = self
-                    .editor_enabled
-                    .unwrap_or_else(|| all_language_settings.show_inline_completions(None, cx));
+                let enabled = self.editor_enabled.unwrap_or(false);
 
                 let icon = match status {
                     Status::Error(_) => IconName::CopilotError,
@@ -232,9 +230,7 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                let enabled = self
-                    .editor_enabled
-                    .unwrap_or_else(|| all_language_settings.show_inline_completions(None, cx));
+                let enabled = self.editor_enabled.unwrap_or(false);
 
                 let zeta_icon = if enabled {
                     IconName::ZedPredict
@@ -273,6 +269,10 @@ impl Render for InlineCompletionButton {
                             })
                             .on_click(cx.listener(
                                 move |_, _, window, cx| {
+                                    telemetry::event!(
+                                        "Pending ToS Clicked",
+                                        source = "Edit Prediction Status Button"
+                                    );
                                     window.dispatch_action(
                                         zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                                         cx,
@@ -424,6 +424,8 @@ impl InlineCompletionButton {
                 let enabled = data_collection.is_enabled();
 
                 menu = menu.item(
+                    // TODO: We want to add something later that communicates whether
+                    // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::End, data_collection.is_enabled())
                         .documentation_aside(|_| {
