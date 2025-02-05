@@ -1960,7 +1960,10 @@ async fn test_ignore_breakpoints(
 
         let breakpoints_ignored = active_debug_panel_item.read(cx).are_breakpoints_ignored(cx);
 
-        assert_eq!(session_id, active_debug_panel_item.read(cx).session_id());
+        assert_eq!(
+            session_id,
+            active_debug_panel_item.read(cx).session().read(cx).id()
+        );
         assert_eq!(false, breakpoints_ignored);
         assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
         assert_eq!(1, active_debug_panel_item.read(cx).thread_id());

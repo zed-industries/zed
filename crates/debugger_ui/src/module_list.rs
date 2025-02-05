@@ -1,6 +1,6 @@
 use anyhow::Result;
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSession,
     Module, ModuleEvent,
 };
 use gpui::{list, AnyElement, Entity, FocusHandle, Focusable, ListState, Task};
@@ -14,15 +14,15 @@ pub struct ModuleList {
     modules: Vec<Module>,
     focus_handle: FocusHandle,
     dap_store: Entity<DapStore>,
+    session: Entity<DebugSession>,
     client_id: DebugAdapterClientId,
-    session_id: DebugSessionId,
 }
 
 impl ModuleList {
     pub fn new(
         dap_store: Entity<DapStore>,
+        session: Entity<DebugSession>,
         client_id: &DebugAdapterClientId,
-        session_id: &DebugSessionId,
         cx: &mut Context<Self>,
     ) -> Self {
         let weak_entity = cx.weak_entity();
@@ -42,10 +42,10 @@ impl ModuleList {
 
         let this = Self {
             list,
+            session,
             dap_store,
             focus_handle,
             client_id: *client_id,
-            session_id: *session_id,
             modules: Vec::default(),
         };
 
@@ -128,7 +128,7 @@ impl ModuleList {
     fn propagate_updates(&self, cx: &Context<Self>) {
         if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
             let request = UpdateDebugAdapter {
-                session_id: self.session_id.to_proto(),
+                session_id: self.session.read(cx).id().to_proto(),
                 client_id: self.client_id.to_proto(),
                 project_id: *id,
                 thread_id: None,

@@ -1,8 +1,8 @@
 use crate::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
-    Scope, ScopePresentationHint, Variable,
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSession, Scope,
+    ScopePresentationHint, Variable,
 };
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
@@ -330,11 +330,11 @@ pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
     dap_store: Entity<DapStore>,
-    session_id: DebugSessionId,
     open_entries: Vec<OpenEntry>,
+    session: Entity<DebugSession>,
     client_id: DebugAdapterClientId,
-    set_variable_editor: Entity<Editor>,
     _subscriptions: Vec<Subscription>,
+    set_variable_editor: Entity<Editor>,
     selection: Option<VariableListEntry>,
     stack_frame_list: Entity<StackFrameList>,
     scopes: HashMap<StackFrameId, Vec<Scope>>,
@@ -347,10 +347,10 @@ pub struct VariableList {
 
 impl VariableList {
     pub fn new(
-        stack_frame_list: &Entity<StackFrameList>,
-        dap_store: Entity<DapStore>,
+        session: Entity<DebugSession>,
         client_id: &DebugAdapterClientId,
-        session_id: &DebugSessionId,
+        dap_store: Entity<DapStore>,
+        stack_frame_list: Entity<StackFrameList>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -382,17 +382,18 @@ impl VariableList {
         .detach();
 
         let _subscriptions =
-            vec![cx.subscribe(stack_frame_list, Self::handle_stack_frame_list_events)];
+            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
 
         Self {
             list,
+            session,
             dap_store,
             focus_handle,
             _subscriptions,
             selection: None,
+            stack_frame_list,
             set_variable_editor,
             client_id: *client_id,
-            session_id: *session_id,
             open_context_menu: None,
             set_variable_state: None,
             fetch_variables_task: None,
@@ -400,7 +401,6 @@ impl VariableList {
             entries: Default::default(),
             variables: Default::default(),
             open_entries: Default::default(),
-            stack_frame_list: stack_frame_list.clone(),
         }
     }
 
@@ -672,7 +672,7 @@ impl VariableList {
                 thread_id,
                 stack_frame_id,
                 scope_id,
-                self.session_id,
+                self.session.read(cx).id(),
                 variable.variables_reference,
                 cx,
             )
@@ -877,7 +877,7 @@ impl VariableList {
                 thread_id,
                 stack_frame_id,
                 scope.variables_reference,
-                self.session_id,
+                self.session.read(cx).id(),
                 container_reference,
                 cx,
             )
@@ -970,7 +970,7 @@ impl VariableList {
         if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
             let request = UpdateDebugAdapter {
                 client_id: self.client_id.to_proto(),
-                session_id: self.session_id.to_proto(),
+                session_id: self.session.read(cx).id().to_proto(),
                 thread_id: Some(self.stack_frame_list.read(cx).thread_id()),
                 project_id: *project_id,
                 variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(

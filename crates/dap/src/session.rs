@@ -19,14 +19,18 @@ impl DebugSessionId {
     }
 }
 
-pub enum DebugSession {
+pub struct DebugSession {
+    id: DebugSessionId,
+    mode: DebugSessionMode,
+    ignore_breakpoints: bool,
+}
+
+pub enum DebugSessionMode {
     Local(LocalDebugSession),
     Remote(RemoteDebugSession),
 }
 
 pub struct LocalDebugSession {
-    id: DebugSessionId,
-    ignore_breakpoints: bool,
     configuration: DebugAdapterConfig,
     clients: HashMap<DebugAdapterClientId, Arc<DebugAdapterClient>>,
 }
@@ -80,77 +84,63 @@ impl LocalDebugSession {
     pub fn client_ids(&self) -> impl Iterator<Item = DebugAdapterClientId> + '_ {
         self.clients.keys().cloned()
     }
-
-    pub fn id(&self) -> DebugSessionId {
-        self.id
-    }
 }
 
 pub struct RemoteDebugSession {
-    id: DebugSessionId,
-    ignore_breakpoints: bool,
     label: String,
 }
 
 impl DebugSession {
     pub fn new_local(id: DebugSessionId, configuration: DebugAdapterConfig) -> Self {
-        Self::Local(LocalDebugSession {
+        Self {
             id,
             ignore_breakpoints: false,
-            configuration,
-            clients: HashMap::default(),
-        })
+            mode: DebugSessionMode::Local(LocalDebugSession {
+                configuration,
+                clients: HashMap::default(),
+            }),
+        }
     }
 
     pub fn as_local(&self) -> Option<&LocalDebugSession> {
-        match self {
-            DebugSession::Local(local) => Some(local),
+        match &self.mode {
+            DebugSessionMode::Local(local) => Some(local),
             _ => None,
         }
     }
 
     pub fn as_local_mut(&mut self) -> Option<&mut LocalDebugSession> {
-        match self {
-            DebugSession::Local(local) => Some(local),
+        match &mut self.mode {
+            DebugSessionMode::Local(local) => Some(local),
             _ => None,
         }
     }
 
     pub fn new_remote(id: DebugSessionId, label: String, ignore_breakpoints: bool) -> Self {
-        Self::Remote(RemoteDebugSession {
+        Self {
             id,
-            label: label.clone(),
             ignore_breakpoints,
-        })
-    }
-
-    pub fn id(&self) -> DebugSessionId {
-        match self {
-            DebugSession::Local(local) => local.id,
-            DebugSession::Remote(remote) => remote.id,
+            mode: DebugSessionMode::Remote(RemoteDebugSession { label }),
         }
     }
 
+    pub fn id(&self) -> DebugSessionId {
+        self.id
+    }
+
     pub fn name(&self) -> String {
-        match self {
-            DebugSession::Local(local) => local.configuration.label.clone(),
-            DebugSession::Remote(remote) => remote.label.clone(),
+        match &self.mode {
+            DebugSessionMode::Local(local) => local.configuration.label.clone(),
+            DebugSessionMode::Remote(remote) => remote.label.clone(),
         }
     }
 
     pub fn ignore_breakpoints(&self) -> bool {
-        match self {
-            DebugSession::Local(local) => local.ignore_breakpoints,
-            DebugSession::Remote(remote) => remote.ignore_breakpoints,
-        }
+        self.ignore_breakpoints
     }
 
     pub fn set_ignore_breakpoints(&mut self, ignore: bool, cx: &mut Context<Self>) {
-        match self {
-            DebugSession::Local(local) => local.ignore_breakpoints = ignore,
-            DebugSession::Remote(remote) => remote.ignore_breakpoints = ignore,
-        }
-
+        self.ignore_breakpoints = ignore;
         cx.notify();
     }
 }

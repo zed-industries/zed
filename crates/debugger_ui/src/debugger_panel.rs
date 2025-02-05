@@ -346,7 +346,7 @@ impl DebugPanel {
                 let thread_panel = item.downcast::<DebugPanelItem>().unwrap();
 
                 let thread_id = thread_panel.read(cx).thread_id();
-                let session_id = thread_panel.read(cx).session_id();
+                let session_id = thread_panel.read(cx).session().read(cx).id();
                 let client_id = thread_panel.read(cx).client_id();
 
                 self.thread_states.remove(&(client_id, thread_id));
@@ -758,19 +758,16 @@ impl DebugPanel {
             return;
         };
 
-        let Some(session_name) = self
+        let Some(session) = self
             .dap_store
             .read(cx)
             .session_by_id(session_id)
-            .map(|session| session.read(cx).name())
+            .map(|session| session)
         else {
-            return; // this can never happen
+            return; // this can/should never happen
         };
 
-        let session_id = *session_id;
         let client_id = *client_id;
-
-        let session_name = SharedString::from(session_name);
 
         cx.spawn_in(window, {
             let event = event.clone();
@@ -789,18 +786,17 @@ impl DebugPanel {
 
                     let existing_item = this.debug_panel_item_by_client(&client_id, thread_id, cx);
                     if existing_item.is_none() {
-                        let debug_panel = cx.entity().clone();
+                        let debug_panel = cx.entity();
                         this.pane.update(cx, |pane, cx| {
                             let tab = cx.new(|cx| {
                                 DebugPanelItem::new(
-                                    debug_panel,
-                                    this.workspace.clone(),
-                                    this.dap_store.clone(),
-                                    thread_state.clone(),
-                                    &session_id,
+                                    session,
                                     &client_id,
-                                    session_name,
                                     thread_id,
+                                    thread_state,
+                                    this.dap_store.clone(),
+                                    &debug_panel,
+                                    this.workspace.clone(),
                                     window,
                                     cx,
                                 )
@@ -1025,6 +1021,10 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         let session_id = DebugSessionId::from_proto(payload.session_id);
+        let Some(session) = self.dap_store.read(cx).session_by_id(&session_id) else {
+            return;
+        };
+
         let client_id = DebugAdapterClientId::from_proto(payload.client_id);
         let thread_id = payload.thread_id;
         let thread_state = payload.thread_state.clone().unwrap();
@@ -1045,18 +1045,17 @@ impl DebugPanel {
             self.thread_states
                 .insert((client_id, thread_id), thread_state.clone());
 
-            let debug_panel = cx.entity().clone();
+            let debug_panel = cx.entity();
             let debug_panel_item = self.pane.update(cx, |pane, cx| {
                 let debug_panel_item = cx.new(|cx| {
                     DebugPanelItem::new(
-                        debug_panel,
-                        self.workspace.clone(),
-                        self.dap_store.clone(),
-                        thread_state,
-                        &session_id,
+                        session,
                         &client_id,
-                        payload.session_name.clone().into(),
                         thread_id,
+                        thread_state,
+                        self.dap_store.clone(),
+                        &debug_panel,
+                        self.workspace.clone(),
                         window,
                         cx,
                     )

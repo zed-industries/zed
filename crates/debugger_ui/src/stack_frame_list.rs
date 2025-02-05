@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use dap::client::DebugAdapterClientId;
 use dap::proto_conversions::ProtoConversion;
-use dap::session::DebugSessionId;
+use dap::session::DebugSession;
 use dap::StackFrame;
 use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
@@ -31,8 +31,8 @@ pub struct StackFrameList {
     thread_id: u64,
     list: ListState,
     focus_handle: FocusHandle,
-    session_id: DebugSessionId,
     dap_store: Entity<DapStore>,
+    session: Entity<DebugSession>,
     stack_frames: Vec<StackFrame>,
     entries: Vec<StackFrameEntry>,
     workspace: WeakEntity<Workspace>,
@@ -51,11 +51,11 @@ pub enum StackFrameEntry {
 impl StackFrameList {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        workspace: &WeakEntity<Workspace>,
+        workspace: WeakEntity<Workspace>,
         debug_panel_item: &Entity<DebugPanelItem>,
-        dap_store: &Entity<DapStore>,
+        dap_store: Entity<DapStore>,
+        session: Entity<DebugSession>,
         client_id: &DebugAdapterClientId,
-        session_id: &DebugSessionId,
         thread_id: u64,
         window: &Window,
         cx: &mut Context<Self>,
@@ -85,14 +85,14 @@ impl StackFrameList {
 
         Self {
             list,
+            session,
+            workspace,
+            dap_store,
             thread_id,
             focus_handle,
             _subscriptions,
             client_id: *client_id,
-            session_id: *session_id,
             entries: Default::default(),
-            workspace: workspace.clone(),
-            dap_store: dap_store.clone(),
             fetch_stack_frames_task: None,
             stack_frames: Default::default(),
             current_stack_frame_id: Default::default(),
@@ -254,7 +254,7 @@ impl StackFrameList {
         if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
             let request = UpdateDebugAdapter {
                 client_id: self.client_id.to_proto(),
-                session_id: self.session_id.to_proto(),
+                session_id: self.session.read(cx).id().to_proto(),
                 project_id: *id,
                 thread_id: Some(self.thread_id),
                 variant: Some(rpc::proto::update_debug_adapter::Variant::StackFrameList(

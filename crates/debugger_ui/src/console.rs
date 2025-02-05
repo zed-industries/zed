@@ -3,7 +3,7 @@ use crate::{
     variable_list::VariableList,
 };
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSession,
     OutputEvent, OutputEventGroup,
 };
 use editor::{
@@ -34,8 +34,8 @@ pub struct Console {
     groups: Vec<OutputGroup>,
     console: Entity<Editor>,
     query_bar: Entity<Editor>,
-    session_id: DebugSessionId,
     dap_store: Entity<DapStore>,
+    session: Entity<DebugSession>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
     variable_list: Entity<VariableList>,
@@ -44,11 +44,11 @@ pub struct Console {
 
 impl Console {
     pub fn new(
-        stack_frame_list: &Entity<StackFrameList>,
-        session_id: &DebugSessionId,
+        session: Entity<DebugSession>,
         client_id: &DebugAdapterClientId,
-        variable_list: Entity<VariableList>,
         dap_store: Entity<DapStore>,
+        stack_frame_list: Entity<StackFrameList>,
+        variable_list: Entity<VariableList>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -84,18 +84,18 @@ impl Console {
         });
 
         let _subscriptions =
-            vec![cx.subscribe(stack_frame_list, Self::handle_stack_frame_list_events)];
+            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
 
         Self {
+            session,
             console,
             dap_store,
             query_bar,
             variable_list,
             _subscriptions,
+            stack_frame_list,
             client_id: *client_id,
             groups: Vec::default(),
-            session_id: *session_id,
-            stack_frame_list: stack_frame_list.clone(),
         }
     }
 
@@ -132,7 +132,7 @@ impl Console {
                     project_id: *project_id,
                     client_id: self.client_id.to_proto(),
                     thread_id: None,
-                    session_id: self.session_id.to_proto(),
+                    session_id: self.session.read(cx).id().to_proto(),
                     variant: Some(proto::update_debug_adapter::Variant::OutputEvent(
                         event.to_proto(),
                     )),

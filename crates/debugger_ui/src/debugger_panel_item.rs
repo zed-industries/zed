@@ -6,7 +6,7 @@ use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use crate::variable_list::VariableList;
 
 use dap::proto_conversions::{self, ProtoConversion};
-use dap::session::DebugSessionId;
+use dap::session::DebugSession;
 use dap::{
     client::DebugAdapterClientId, debugger_settings::DebuggerSettings, Capabilities,
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent,
@@ -65,9 +65,8 @@ pub struct DebugPanelItem {
     console: Entity<Console>,
     focus_handle: FocusHandle,
     remote_id: Option<ViewId>,
-    session_name: SharedString,
     dap_store: Entity<DapStore>,
-    session_id: DebugSessionId,
+    session: Entity<DebugSession>,
     show_console_indicator: bool,
     module_list: Entity<ModuleList>,
     active_thread_item: ThreadItem,
@@ -83,14 +82,13 @@ pub struct DebugPanelItem {
 impl DebugPanelItem {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        debug_panel: Entity<DebugPanel>,
-        workspace: WeakEntity<Workspace>,
-        dap_store: Entity<DapStore>,
-        thread_state: Entity<ThreadState>,
-        session_id: &DebugSessionId,
+        session: Entity<DebugSession>,
         client_id: &DebugAdapterClientId,
-        session_name: SharedString,
         thread_id: u64,
+        thread_state: Entity<ThreadState>,
+        dap_store: Entity<DapStore>,
+        debug_panel: &Entity<DebugPanel>,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -100,34 +98,41 @@ impl DebugPanelItem {
 
         let stack_frame_list = cx.new(|cx| {
             StackFrameList::new(
-                &workspace, &this, &dap_store, client_id, session_id, thread_id, window, cx,
+                workspace.clone(),
+                &this,
+                dap_store.clone(),
+                session.clone(),
+                client_id,
+                thread_id,
+                window,
+                cx,
             )
         });
 
         let variable_list = cx.new(|cx| {
             VariableList::new(
-                &stack_frame_list,
+                session.clone(),
+                client_id,
                 dap_store.clone(),
-                &client_id,
-                session_id,
+                stack_frame_list.clone(),
                 window,
                 cx,
             )
         });
 
         let module_list =
-            cx.new(|cx| ModuleList::new(dap_store.clone(), &client_id, &session_id, cx));
+            cx.new(|cx| ModuleList::new(dap_store.clone(), session.clone(), &client_id, cx));
 
         let loaded_source_list =
             cx.new(|cx| LoadedSourceList::new(&this, dap_store.clone(), &client_id, cx));
 
         let console = cx.new(|cx| {
             Console::new(
-                &stack_frame_list,
-                session_id,
+                session.clone(),
                 client_id,
-                variable_list.clone(),
                 dap_store.clone(),
+                stack_frame_list.clone(),
+                variable_list.clone(),
                 window,
                 cx,
             )
@@ -136,7 +141,7 @@ impl DebugPanelItem {
         cx.observe(&module_list, |_, _, cx| cx.notify()).detach();
 
         let _subscriptions = vec![
-            cx.subscribe_in(&debug_panel, window, {
+            cx.subscribe_in(debug_panel, window, {
                 move |this: &mut Self, _, event: &DebugPanelEvent, window, cx| {
                     match event {
                         DebugPanelEvent::Stopped {
@@ -182,11 +187,11 @@ impl DebugPanelItem {
         ];
 
         Self {
+            session,
             console,
             thread_id,
             dap_store,
             workspace,
-            session_name,
             module_list,
             thread_state,
             focus_handle,
@@ -196,7 +201,6 @@ impl DebugPanelItem {
             stack_frame_list,
             loaded_source_list,
             client_id: *client_id,
-            session_id: *session_id,
             show_console_indicator: false,
             active_thread_item: ThreadItem::Variables,
         }
@@ -209,7 +213,7 @@ impl DebugPanelItem {
 
         SetDebuggerPanelItem {
             project_id,
-            session_id: self.session_id.to_proto(),
+            session_id: self.session.read(cx).id().to_proto(),
             client_id: self.client_id.to_proto(),
             thread_id: self.thread_id,
             console: None,
@@ -219,7 +223,7 @@ impl DebugPanelItem {
             variable_list,
             stack_frame_list,
             loaded_source_list: None,
-            session_name: self.session_name.to_string(),
+            session_name: self.session.read(cx).name(),
         }
     }
 
@@ -434,7 +438,7 @@ impl DebugPanelItem {
             let message = proto_conversions::capabilities_to_proto(
                 &self.dap_store.read(cx).capabilities_by_id(client_id),
                 *project_id,
-                self.session_id.to_proto(),
+                self.session.read(cx).id().to_proto(),
                 self.client_id.to_proto(),
             );
 
@@ -480,8 +484,8 @@ impl DebugPanelItem {
         }
     }
 
-    pub fn session_id(&self) -> DebugSessionId {
-        self.session_id
+    pub fn session(&self) -> &Entity<DebugSession> {
+        &self.session
     }
 
     pub fn client_id(&self) -> DebugAdapterClientId {
@@ -519,8 +523,7 @@ impl DebugPanelItem {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn are_breakpoints_ignored(&self, cx: &App) -> bool {
-        self.dap_store
-            .read_with(cx, |dap, cx| dap.ignore_breakpoints(&self.session_id, cx))
+        self.session.read(cx).ignore_breakpoints()
     }
 
     pub fn capabilities(&self, cx: &mut Context<Self>) -> Capabilities {
@@ -711,7 +714,7 @@ impl DebugPanelItem {
         self.dap_store.update(cx, |store, cx| {
             store
                 .terminate_threads(
-                    &self.session_id,
+                    &self.session.read(cx).id(),
                     &self.client_id,
                     Some(vec![self.thread_id; 1]),
                     cx,
@@ -729,15 +732,9 @@ impl DebugPanelItem {
     }
 
     pub fn toggle_ignore_breakpoints(&mut self, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    project
-                        .toggle_ignore_breakpoints(&self.session_id, &self.client_id, cx)
-                        .detach_and_log_err(cx);
-                })
-            })
-            .ok();
+        self.session.update(cx, |session, cx| {
+            session.set_ignore_breakpoints(!session.ignore_breakpoints(), cx);
+        });
     }
 }
 
@@ -756,21 +753,25 @@ impl Item for DebugPanelItem {
         &self,
         params: workspace::item::TabContentParams,
         _window: &Window,
-        _: &App,
+        cx: &App,
     ) -> AnyElement {
-        Label::new(format!("{} - Thread {}", self.session_name, self.thread_id))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
+        Label::new(format!(
+            "{} - Thread {}",
+            self.session.read(cx).name(),
+            self.thread_id
+        ))
+        .color(if params.selected {
+            Color::Default
+        } else {
+            Color::Muted
+        })
+        .into_any_element()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         Some(SharedString::from(format!(
             "{} Thread {} - {:?}",
-            self.session_name,
+            self.session.read(cx).name(),
             self.thread_id,
             self.thread_state.read(cx).status,
         )))
@@ -992,9 +993,7 @@ impl Render for DebugPanelItem {
                             .child(
                                 IconButton::new(
                                     "debug-ignore-breakpoints",
-                                    if self.dap_store.update(cx, |store, cx| {
-                                        store.ignore_breakpoints(&self.session_id, cx)
-                                    }) {
+                                    if self.session.read(cx).ignore_breakpoints() {
                                         IconName::DebugIgnoreBreakpoints
                                     } else {
                                         IconName::DebugBreakpoint

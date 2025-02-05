@@ -2090,10 +2090,11 @@ impl DapStore {
         for session in local_store
             .sessions
             .values()
-            .filter_map(|session| session.read(cx).as_local())
+            .filter(|session| session.read(cx).as_local().is_some())
         {
-            let ignore_breakpoints = self.ignore_breakpoints(&session.id(), cx);
-            for client in session.clients().collect::<Vec<_>>() {
+            let session = session.read(cx);
+            let ignore_breakpoints = session.ignore_breakpoints();
+            for client in session.as_local().unwrap().clients().collect::<Vec<_>>() {
                 tasks.push(self.send_breakpoints(
                     &client.id(),
                     Arc::from(absolute_path.clone()),
