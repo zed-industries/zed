@@ -8197,8 +8197,8 @@ impl HighlightedRange {
         };
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
-        let mut builder = gpui::PathBuilder::fill();
-        builder.curve_to(first_top_right + curve_height, first_top_right);
+        let mut path = gpui::Path::new(first_top_right - top_curve_width);
+        path.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();
         while let Some((ix, line)) = iter.next() {
@@ -8209,42 +8209,42 @@ impl HighlightedRange {
 
                 match next_top_right.x.partial_cmp(&bottom_right.x).unwrap() {
                     Ordering::Equal => {
-                        builder.line_to(bottom_right);
+                        path.line_to(bottom_right);
                     }
                     Ordering::Less => {
                         let curve_width = curve_width(next_top_right.x, bottom_right.x);
-                        builder.line_to(bottom_right - curve_height);
+                        path.line_to(bottom_right - curve_height);
                         if self.corner_radius > Pixels::ZERO {
-                            builder.curve_to(bottom_right - curve_width, bottom_right);
+                            path.curve_to(bottom_right - curve_width, bottom_right);
                         }
-                        builder.line_to(next_top_right + curve_width);
+                        path.line_to(next_top_right + curve_width);
                         if self.corner_radius > Pixels::ZERO {
-                            builder.curve_to(next_top_right + curve_height, next_top_right);
+                            path.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                     Ordering::Greater => {
                         let curve_width = curve_width(bottom_right.x, next_top_right.x);
-                        builder.line_to(bottom_right - curve_height);
+                        path.line_to(bottom_right - curve_height);
                         if self.corner_radius > Pixels::ZERO {
-                            builder.curve_to(bottom_right + curve_width, bottom_right);
+                            path.curve_to(bottom_right + curve_width, bottom_right);
                         }
-                        builder.line_to(next_top_right - curve_width);
+                        path.line_to(next_top_right - curve_width);
                         if self.corner_radius > Pixels::ZERO {
-                            builder.curve_to(next_top_right + curve_height, next_top_right);
+                            path.curve_to(next_top_right + curve_height, next_top_right);
                         }
                     }
                 }
             } else {
                 let curve_width = curve_width(line.start_x, line.end_x);
-                builder.line_to(bottom_right - curve_height);
+                path.line_to(bottom_right - curve_height);
                 if self.corner_radius > Pixels::ZERO {
-                    builder.curve_to(bottom_right - curve_width, bottom_right);
+                    path.curve_to(bottom_right - curve_width, bottom_right);
                 }
 
                 let bottom_left = point(line.start_x, bottom_right.y);
-                builder.line_to(bottom_left + curve_width);
+                path.line_to(bottom_left + curve_width);
                 if self.corner_radius > Pixels::ZERO {
-                    builder.curve_to(bottom_left - curve_height, bottom_left);
+                    path.curve_to(bottom_left - curve_height, bottom_left);
                 }
             }
         }
@@ -8252,26 +8252,24 @@ impl HighlightedRange {
         if first_line.start_x > last_line.start_x {
             let curve_width = curve_width(last_line.start_x, first_line.start_x);
             let second_top_left = point(last_line.start_x, start_y + self.line_height);
-            builder.line_to(second_top_left + curve_height);
+            path.line_to(second_top_left + curve_height);
             if self.corner_radius > Pixels::ZERO {
-                builder.curve_to(second_top_left + curve_width, second_top_left);
+                path.curve_to(second_top_left + curve_width, second_top_left);
             }
             let first_bottom_left = point(first_line.start_x, second_top_left.y);
-            builder.line_to(first_bottom_left - curve_width);
+            path.line_to(first_bottom_left - curve_width);
             if self.corner_radius > Pixels::ZERO {
-                builder.curve_to(first_bottom_left - curve_height, first_bottom_left);
+                path.curve_to(first_bottom_left - curve_height, first_bottom_left);
             }
         }
 
-        builder.line_to(first_top_left + curve_height);
+        path.line_to(first_top_left + curve_height);
         if self.corner_radius > Pixels::ZERO {
-            builder.curve_to(first_top_left + top_curve_width, first_top_left);
+            path.curve_to(first_top_left + top_curve_width, first_top_left);
         }
-        builder.line_to(first_top_right - top_curve_width);
+        path.line_to(first_top_right - top_curve_width);
 
-        if let Ok(path) = builder.build() {
-            window.paint_path(path, self.color);
-        }
+        window.paint_path(path, self.color);
     }
 }
 
