@@ -299,28 +299,27 @@ impl LspCommand for PrepareRename {
         _: LanguageServerId,
         mut cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
-        buffer.update(&mut cx, |buffer, _| {
-            match message {
-                Some(lsp::PrepareRenameResponse::Range(range))
-                | Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
-                    let Range { start, end } = range_from_lsp(range);
-                    if buffer.clip_point_utf16(start, Bias::Left) == start.0
-                        && buffer.clip_point_utf16(end, Bias::Left) == end.0
-                    {
-                        Ok(PrepareRenameResponse::Success(
-                            buffer.anchor_after(start)..buffer.anchor_before(end),
-                        ))
-                    } else {
-                        Ok(PrepareRenameResponse::InvalidPosition)
-                    }
-                }
-                Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
-                    Err(anyhow!("Invalid for language server to send a `defaultBehavior` response to `prepareRename`"))
-                }
-                None => {
+        buffer.update(&mut cx, |buffer, _| match message {
+            Some(lsp::PrepareRenameResponse::Range(range))
+            | Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
+                let Range { start, end } = range_from_lsp(range);
+                if buffer.clip_point_utf16(start, Bias::Left) == start.0
+                    && buffer.clip_point_utf16(end, Bias::Left) == end.0
+                {
+                    Ok(PrepareRenameResponse::Success(
+                        buffer.anchor_after(start)..buffer.anchor_before(end),
+                    ))
+                } else {
                     Ok(PrepareRenameResponse::InvalidPosition)
                 }
             }
+            Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
+                let snapshot = buffer.snapshot();
+                let (range, _) = snapshot.surrounding_word(self.position);
+                let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
+                Ok(PrepareRenameResponse::Success(range))
+            }
+            None => Ok(PrepareRenameResponse::InvalidPosition),
         })?
     }
 
