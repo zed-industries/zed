@@ -872,7 +872,12 @@ impl GitPanel {
             return;
         };
         let load_buffer = active_repo.update(cx, |active_repo, cx| {
-            active_repo.open_commit_buffer(&self.project, cx)
+            let project = self.project.read(cx);
+            active_repo.open_commit_buffer(
+                project.languages().clone(),
+                project.buffer_store().clone(),
+                cx,
+            )
         });
 
         cx.spawn_in(window, |git_panel, mut cx| async move {

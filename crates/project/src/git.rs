@@ -349,18 +349,12 @@ impl Repository {
 
     pub fn open_commit_buffer(
         &mut self,
-        project: &Entity<Project>,
+        languages: Arc<LanguageRegistry>,
+        buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Entity<Buffer>>> {
         match &self.git_repo {
-            GitRepo::Local(_) => {
-                let project = project.read(cx);
-                self.open_local_commit_buffer(
-                    project.languages().clone(),
-                    project.buffer_store().clone(),
-                    cx,
-                )
-            }
+            GitRepo::Local(_) => self.open_local_commit_buffer(languages, buffer_store, cx),
             GitRepo::Remote {
                 project_id,
                 client,
@@ -372,19 +366,18 @@ impl Repository {
                     worktree_id: worktree_id.to_proto(),
                     work_directory_id: work_directory_id.to_proto(),
                 });
-                let git_commit_language =
-                    project.read(cx).languages().language_for_name("gitcommit");
-                let project = project.downgrade();
+                let git_commit_language = languages.language_for_name("Git Commit");
                 cx.spawn(|_, mut cx| async move {
                     let response = request.await.context("requesting to open commit buffer")?;
                     let buffer_id = BufferId::new(response.buffer_id)?;
-                    let buffer = project
-                        .update(&mut cx, {
-                            |project, cx| project.wait_for_remote_buffer(buffer_id, cx)
+                    let buffer = buffer_store
+                        .update(&mut cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
                         })?
                         .await?;
                     let git_commit_language = git_commit_language.await?;
                     buffer.update(&mut cx, |buffer, cx| {
+                        // TODO kb is it already done on buffer sync?
                         buffer.set_language(Some(git_commit_language), cx)
                     })?;
                     Ok(buffer)
@@ -404,7 +397,7 @@ impl Repository {
         }
 
         cx.spawn(|this, mut cx| async move {
-            let git_commit_language = language_registry.language_for_name("gitcommit").await?;
+            let git_commit_language = language_registry.language_for_name("Git Commit").await?;
 
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?

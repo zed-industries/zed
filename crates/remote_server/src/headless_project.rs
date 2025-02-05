@@ -700,57 +700,15 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
-        let repository_handle =
+        let repository =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-        let git_repository = match repository_handle.update(&mut cx, |repository_handle, _| {
-            repository_handle.git_repo.clone()
-        })? {
-            GitRepo::Local(git_repository) => git_repository,
-            GitRepo::Remote { .. } => {
-                anyhow::bail!("Cannot handle open commit message buffer for remote git repo")
-            }
-        };
-        let commit_message_file = git_repository.dot_git_dir().join(*COMMIT_MESSAGE);
-        let fs = this.update(&mut cx, |headless_project, _| headless_project.fs.clone())?;
-        fs.create_file(
-            &commit_message_file,
-            CreateOptions {
-                overwrite: false,
-                ignore_if_exists: true,
-            },
-        )
-        .await
-        .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
-
-        let (worktree, relative_path) = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .worktree_store
-                    .update(cx, |worktree_store, cx| {
-                        worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
-                    })
-            })?
-            .await
-            .with_context(|| {
-                format!("deriving worktree for commit message file {commit_message_file:?}")
-            })?;
-
-        let buffer = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(
-                            ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: Arc::from(relative_path),
-                            },
-                            cx,
-                        )
-                    })
-            })
-            .with_context(|| {
-                format!("opening buffer for commit message file {commit_message_file:?}")
+        let buffer = repository
+            .update(&mut cx, |repository, cx| {
+                repository.open_commit_buffer(
+                    this.read(cx).languages.clone(),
+                    this.read(cx).buffer_store.clone(),
+                    cx,
+                )
             })?
             .await?;
 
