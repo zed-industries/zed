@@ -16,6 +16,7 @@ use git::{CommitAllChanges, CommitChanges, ToggleStaged};
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use panel::PanelHeader;
 use project::git::{GitEvent, Repository};
 use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
@@ -74,15 +75,15 @@ struct SerializedGitPanel {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Section {
-    Changed,
-    Created,
+    Tracked,
+    New,
 }
 
 impl Section {
     pub fn contains(&self, status: FileStatus) -> bool {
         match self {
-            Section::Changed => !status.is_created(),
-            Section::Created => status.is_created(),
+            Section::Tracked => !status.is_created(),
+            Section::New => status.is_created(),
         }
     }
 }
@@ -98,8 +99,8 @@ impl GitHeaderEntry {
     }
     pub fn title(&self) -> &'static str {
         match self.header {
-            Section::Changed => "Changed",
-            Section::Created => "New",
+            Section::Tracked => "Changed",
+            Section::New => "New",
         }
     }
 }
@@ -111,9 +112,9 @@ enum GitListEntry {
 }
 
 impl GitListEntry {
-    fn status_entry(&self) -> Option<GitStatusEntry> {
+    fn status_entry(&self) -> Option<&GitStatusEntry> {
         match self {
-            GitListEntry::GitStatusEntry(entry) => Some(entry.clone()),
+            GitListEntry::GitStatusEntry(entry) => Some(entry),
             _ => None,
         }
     }
@@ -128,7 +129,7 @@ pub struct GitStatusEntry {
     pub(crate) is_staged: Option<bool>,
 }
 
-pub struct PendingOperation {
+struct PendingOperation {
     finished: bool,
     will_become_staged: bool,
     repo_paths: HashSet<RepoPath>,
@@ -157,8 +158,10 @@ pub struct GitPanel {
     pending: Vec<PendingOperation>,
     commit_task: Task<Result<()>>,
     commit_pending: bool,
-    can_commit: bool,
-    can_commit_all: bool,
+    tracked_staged_count: usize,
+    tracked_count: usize,
+    new_staged_count: usize,
+    new_count: usize,
 }
 
 fn commit_message_editor(
@@ -271,8 +274,10 @@ impl GitPanel {
                 commit_editor,
                 project,
                 workspace,
-                can_commit: false,
-                can_commit_all: false,
+                tracked_staged_count: 0,
+                tracked_count: 0,
+                new_staged_count: 0,
+                new_count: 0,
             };
             git_panel.schedule_update(false, window, cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
@@ -578,7 +583,7 @@ impl GitPanel {
                         section.contains(&status_entry)
                             && status_entry.is_staged != Some(goal_staged_state)
                     })
-                    .map(|status_entry| status_entry.repo_path)
+                    .map(|status_entry| status_entry.repo_path.clone())
                     .collect::<Vec<_>>();
 
                 (goal_staged_state, entries)
@@ -592,10 +597,12 @@ impl GitPanel {
             repo_paths: repo_paths.iter().cloned().collect(),
             finished: false,
         });
+        let repo_paths = repo_paths.clone();
+        let active_repository = active_repository.clone();
+        self.update_counts();
+        cx.notify();
 
         cx.spawn({
-            let repo_paths = repo_paths.clone();
-            let active_repository = active_repository.clone();
             |this, mut cx| async move {
                 let result = cx
                     .update(|cx| {
@@ -672,7 +679,8 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-        if !self.can_commit {
+        if !self.has_staged_changes() {
+            self.commit_tracked_changes(&Default::default(), name_and_email, window, cx);
             return;
         }
         let message = self.commit_editor.read(cx).text(cx);
@@ -715,7 +723,7 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
-        if !self.can_commit_all {
+        if !self.has_staged_changes() || !self.has_tracked_changes() {
             return;
         }
 
@@ -730,10 +738,10 @@ impl GitPanel {
             .iter()
             .filter_map(|entry| entry.status_entry())
             .filter(|status_entry| {
-                Section::Changed.contains(status_entry.status)
+                Section::Tracked.contains(status_entry.status)
                     && !status_entry.is_staged.unwrap_or(false)
             })
-            .map(|status_entry| status_entry.repo_path)
+            .map(|status_entry| status_entry.repo_path.clone())
             .collect::<Vec<_>>();
 
         self.commit_task = cx.spawn_in(window, |git_panel, mut cx| async move {
@@ -910,10 +918,6 @@ impl GitPanel {
         let repo = repo.read(cx);
         let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path));
 
-        let mut has_changed_checked_boxes = false;
-        let mut has_changed = false;
-        let mut has_added_checked_boxes = false;
-
         // Second pass - create entries with proper depth calculation
         for entry in repo.status() {
             let (depth, difference) =
@@ -950,15 +954,8 @@ impl GitPanel {
             };
 
             if is_new {
-                if entry.is_staged != Some(false) {
-                    has_added_checked_boxes = true
-                }
                 new_entries.push(entry);
             } else {
-                has_changed = true;
-                if entry.is_staged != Some(false) {
-                    has_changed_checked_boxes = true
-                }
                 changed_entries.push(entry);
             }
         }
@@ -969,7 +966,7 @@ impl GitPanel {
 
         if changed_entries.len() > 0 {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
-                header: Section::Changed,
+                header: Section::Tracked,
             }));
             self.entries.extend(
                 changed_entries
@@ -979,7 +976,7 @@ impl GitPanel {
         }
         if new_entries.len() > 0 {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
-                header: Section::Created,
+                header: Section::New,
             }));
             self.entries
                 .extend(new_entries.into_iter().map(GitListEntry::GitStatusEntry));
@@ -987,39 +984,62 @@ impl GitPanel {
 
         for (ix, entry) in self.entries.iter().enumerate() {
             if let Some(status_entry) = entry.status_entry() {
-                self.entries_by_path.insert(status_entry.repo_path, ix);
+                self.entries_by_path
+                    .insert(status_entry.repo_path.clone(), ix);
             }
         }
-        self.can_commit = has_changed_checked_boxes || has_added_checked_boxes;
-        self.can_commit_all = has_changed || has_added_checked_boxes;
+        self.update_counts();
 
         self.select_first_entry_if_none(cx);
 
         cx.notify();
     }
 
-    fn header_state(&self, header_type: Section) -> ToggleState {
-        let mut count = 0;
-        let mut staged_count = 0;
-        'outer: for entry in &self.entries {
-            let Some(entry) = entry.status_entry() else {
+    fn update_counts(&mut self) {
+        self.new_count = 0;
+        self.tracked_count = 0;
+        self.new_staged_count = 0;
+        self.tracked_staged_count = 0;
+        for entry in &self.entries {
+            let Some(status_entry) = entry.status_entry() else {
                 continue;
             };
-            if entry.status.is_created() != (header_type == Section::Created) {
-                continue;
-            }
-            count += 1;
-            for pending in self.pending.iter().rev() {
-                if pending.repo_paths.contains(&entry.repo_path) {
-                    if pending.will_become_staged {
-                        staged_count += 1;
-                    }
-                    continue 'outer;
+            if status_entry.status.is_created() {
+                self.new_count += 1;
+                if self.entry_appears_staged(status_entry) != Some(false) {
+                    self.new_staged_count += 1;
+                }
+            } else {
+                self.tracked_count += 1;
+                if self.entry_appears_staged(status_entry) != Some(false) {
+                    self.tracked_staged_count += 1;
                 }
             }
-            staged_count += entry.status.is_staged().unwrap_or(false) as usize;
         }
+    }
 
+    fn entry_appears_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
+        for pending in self.pending.iter().rev() {
+            if pending.repo_paths.contains(&entry.repo_path) {
+                return Some(pending.will_become_staged);
+            }
+        }
+        entry.is_staged
+    }
+
+    fn has_staged_changes(&self) -> bool {
+        self.tracked_staged_count > 0 || self.new_staged_count > 0
+    }
+
+    fn has_tracked_changes(&self) -> bool {
+        self.tracked_count > 0
+    }
+
+    fn header_state(&self, header_type: Section) -> ToggleState {
+        let (staged_count, count) = match header_type {
+            Section::New => (self.new_staged_count, self.new_count),
+            Section::Tracked => (self.tracked_staged_count, self.tracked_count),
+        };
         if staged_count == 0 {
             ToggleState::Unselected
         } else if count == staged_count {
@@ -1060,6 +1080,10 @@ impl GitPanel {
             .style(ButtonStyle::Filled)
     }
 
+    pub fn indent_size(&self, window: &Window, cx: &mut Context<Self>) -> Pixels {
+        Checkbox::container_size(cx).to_pixels(window.rem_size())
+    }
+
     pub fn render_divider(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .items_center()
@@ -1069,7 +1093,7 @@ impl GitPanel {
 
     pub fn render_panel_header(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let all_repositories = self
@@ -1089,11 +1113,7 @@ impl GitPanel {
             n => format!("{} changes", n),
         };
 
-        h_flex()
-            .h(px(32.))
-            .items_center()
-            .px_2()
-            .bg(ElevationIndex::Surface.bg(cx))
+        self.panel_header_container(window, cx)
             .child(h_flex().gap_2().child(if all_repositories.len() <= 1 {
                 div()
                     .id("changes-label")
@@ -1156,56 +1176,33 @@ impl GitPanel {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let editor = self.commit_editor.clone();
-        let can_commit = !self.commit_pending && self.can_commit && !editor.read(cx).is_empty(cx);
-        let can_commit_all =
-            !self.commit_pending && self.can_commit_all && !editor.read(cx).is_empty(cx);
+        let can_commit =
+            (self.has_staged_changes() || self.has_tracked_changes()) && !self.commit_pending;
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
 
         let focus_handle_1 = self.focus_handle(cx).clone();
-        let focus_handle_2 = self.focus_handle(cx).clone();
+        let tooltip = if self.has_staged_changes() {
+            "Commit staged changes"
+        } else {
+            "Commit changes to tracked files"
+        };
+        let title = if self.has_staged_changes() {
+            "Commit"
+        } else {
+            "Commit All"
+        };
 
-        let commit_staged_button = self
-            .panel_button("commit-staged-changes", "Commit")
+        let commit_button = self
+            .panel_button("commit-changes", title)
             .tooltip(move |window, cx| {
                 let focus_handle = focus_handle_1.clone();
-                Tooltip::for_action_in(
-                    "Commit all staged changes",
-                    &CommitChanges,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
+                Tooltip::for_action_in(tooltip, &CommitChanges, &focus_handle, window, cx)
             })
             .disabled(!can_commit)
             .on_click({
                 let name_and_email = name_and_email.clone();
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.commit_changes(&CommitChanges, name_and_email.clone(), window, cx)
-                })
-            });
-
-        let commit_all_button = self
-            .panel_button("commit-all-changes", "Commit All")
-            .tooltip(move |window, cx| {
-                let focus_handle = focus_handle_2.clone();
-                Tooltip::for_action_in(
-                    "Commit all changes, including unstaged changes",
-                    &CommitAllChanges,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
-            })
-            .disabled(!can_commit_all)
-            .on_click({
-                let name_and_email = name_and_email.clone();
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.commit_tracked_changes(
-                        &CommitAllChanges,
-                        name_and_email.clone(),
-                        window,
-                        cx,
-                    )
                 })
             });
 
@@ -1228,8 +1225,7 @@ impl GitPanel {
                         .right_3()
                         .gap_1p5()
                         .child(div().gap_1().flex_grow())
-                        .child(commit_all_button)
-                        .child(commit_staged_button),
+                        .child(commit_button),
                 ),
         )
     }
@@ -1304,7 +1300,12 @@ impl GitPanel {
         )
     }
 
-    fn render_entries(&self, has_write_access: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_entries(
+        &self,
+        has_write_access: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let entry_count = self.entries.len();
 
         v_flex()
@@ -1312,19 +1313,26 @@ impl GitPanel {
             .overflow_hidden()
             .child(
                 uniform_list(cx.entity().clone(), "entries", entry_count, {
-                    move |this, range, _window, cx| {
+                    move |this, range, window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
 
                         for ix in range {
                             match &this.entries.get(ix) {
                                 Some(GitListEntry::GitStatusEntry(entry)) => {
-                                    items.push(this.render_entry(ix, entry, has_write_access, cx));
+                                    items.push(this.render_entry(
+                                        ix,
+                                        entry,
+                                        has_write_access,
+                                        window,
+                                        cx,
+                                    ));
                                 }
                                 Some(GitListEntry::Header(header)) => {
-                                    items.push(this.render_header(
+                                    items.push(this.render_list_header(
                                         ix,
                                         header,
                                         has_write_access,
+                                        window,
                                         cx,
                                     ));
                                 }
@@ -1338,7 +1346,7 @@ impl GitPanel {
                 .with_decoration(
                     ui::indent_guides(
                         cx.entity().clone(),
-                        px(10.0),
+                        self.indent_size(window, cx),
                         IndentGuideColors::panel(cx),
                         |this, range, _windows, _cx| {
                             this.entries
@@ -1353,12 +1361,9 @@ impl GitPanel {
                     )
                     .with_render_fn(
                         cx.entity().clone(),
-                        move |_, params, window, cx| {
-                            let left_offset = Checkbox::container_size(cx)
-                                .to_pixels(window.rem_size())
-                                .half();
-                            const PADDING_Y: f32 = 4.;
+                        move |_, params, _, _| {
                             let indent_size = params.indent_size;
+                            let left_offset = indent_size - px(3.0);
                             let item_height = params.item_height;
 
                             params
@@ -1369,7 +1374,7 @@ impl GitPanel {
                                     let offset = if layout.continues_offscreen {
                                         px(0.)
                                     } else {
-                                        px(PADDING_Y)
+                                        px(4.0)
                                     };
                                     let bounds = Bounds::new(
                                         point(
@@ -1405,22 +1410,31 @@ impl GitPanel {
         Label::new(label.into()).color(color).single_line()
     }
 
-    fn render_header(
+    fn render_list_header(
         &self,
         ix: usize,
         header: &GitHeaderEntry,
         has_write_access: bool,
+        _window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let checkbox = Checkbox::new(header.title(), self.header_state(header.header))
+        let header_state = if self.has_staged_changes() {
+            self.header_state(header.header)
+        } else {
+            match header.header {
+                Section::Tracked => ToggleState::Selected,
+                Section::New => ToggleState::Unselected,
+            }
+        };
+        let checkbox = Checkbox::new(header.title(), header_state)
             .disabled(!has_write_access)
+            .placeholder(!self.has_staged_changes())
             .fill()
             .elevation(ElevationIndex::Surface);
         let selected = self.selected_entry == Some(ix);
 
         div()
             .w_full()
-            .px_0p5()
             .child(
                 ListHeader::new(header.title())
                     .start_slot(checkbox)
@@ -1438,7 +1452,8 @@ impl GitPanel {
                                 cx,
                             )
                         })
-                    }),
+                    })
+                    .inset(true),
             )
             .into_any_element()
     }
@@ -1448,6 +1463,7 @@ impl GitPanel {
         ix: usize,
         entry: &GitStatusEntry,
         has_write_access: bool,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let display_name = entry
@@ -1495,14 +1511,19 @@ impl GitPanel {
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
 
-        let is_staged = pending
+        let mut is_staged = pending
             .or_else(|| entry.is_staged)
             .map(ToggleState::from)
             .unwrap_or(ToggleState::Indeterminate);
 
+        if !self.has_staged_changes() && !entry.status.is_created() {
+            is_staged = ToggleState::Selected;
+        }
+
         let checkbox = Checkbox::new(id, is_staged)
             .disabled(!has_write_access)
             .fill()
+            .placeholder(!self.has_staged_changes())
             .elevation(ElevationIndex::Surface)
             .on_click({
                 let entry = entry.clone();
@@ -1520,6 +1541,7 @@ impl GitPanel {
             .id(("start-slot", ix))
             .gap(DynamicSpacing::Base04.rems(cx))
             .child(checkbox)
+            .tooltip(|window, cx| Tooltip::for_action("Stage File", &ToggleStaged, window, cx))
             .child(git_status_icon(status, cx))
             .on_mouse_down(MouseButton::Left, |_, _, cx| {
                 // prevent the list item active state triggering when toggling checkbox
@@ -1534,7 +1556,7 @@ impl GitPanel {
             .child(
                 ListItem::new(id)
                     .indent_level(1)
-                    .indent_step_size(px(10.0))
+                    .indent_step_size(Checkbox::container_size(cx).to_pixels(window.rem_size()))
                     .spacing(ListItemSpacing::Sparse)
                     .start_slot(start_slot)
                     .toggle_state(selected)
@@ -1689,16 +1711,14 @@ impl Render for GitPanel {
             }))
             .size_full()
             .overflow_hidden()
-            .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
             .child(self.render_panel_header(window, cx))
-            .child(self.render_divider(cx))
             .child(if has_entries {
-                self.render_entries(has_write_access, cx).into_any_element()
+                self.render_entries(has_write_access, window, cx)
+                    .into_any_element()
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
-            .child(self.render_divider(cx))
             .child(self.render_commit_editor(name_and_email, cx))
     }
 }
@@ -1761,3 +1781,5 @@ impl Panel for GitPanel {
         2
     }
 }
+
+impl PanelHeader for GitPanel {}
