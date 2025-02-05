@@ -2856,8 +2856,11 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+    pub fn insert_hitbox(&mut self, mut bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
+
+        let (scale_factor, offset) = self.scale_factor();
+        bounds = (bounds + offset) * px(scale_factor / self.window_scale_factor());
 
         let content_mask = self.content_mask();
         let id = self.next_hitbox_id;
