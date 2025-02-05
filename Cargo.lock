@@ -5249,7 +5249,6 @@ dependencies = [
  "git",
  "gpui",
  "language",
- "languages",
  "menu",
  "multi_buffer",
  "picker",
