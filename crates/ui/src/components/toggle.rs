@@ -175,7 +175,6 @@ impl RenderOnce for Checkbox {
             }
             ToggleState::Unselected => None,
         };
-        if self.placeholder {}
 
         let bg_color = self.bg_color(cx);
         let border_color = self.border_color(cx);
