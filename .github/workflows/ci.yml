@@ -277,10 +277,6 @@ jobs:
         with:
           node-version: "18"
 
-      - name: Debug print
-        working-directory: ${{ env.ZED_WORKSPACE }}
-        run: ./script/clear-target-dir-if-larger-than.ps1 100
-
       - name: Run tests
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo nextest run --workspace --no-fail-fast
@@ -288,6 +284,10 @@ jobs:
       - name: Build Zed
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build
+
+      - name: Debug print
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: ./script/clear-target-dir-if-larger-than.ps1 100
 
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
