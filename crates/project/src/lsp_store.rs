@@ -7913,8 +7913,7 @@ impl LspStore {
                         .map(PathBuf::from)
                         .map(Into::into)
                 })
-                .context("Missing path")?
-                .into(),
+                .context("Missing path")?,
         };
 
         let start = serialized_symbol
