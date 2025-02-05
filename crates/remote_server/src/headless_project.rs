@@ -328,9 +328,10 @@ impl HeadlessProject {
         let path = message
             .payload
             .path
-            .clone()
-            .unwrap_or_default()
-            .to_native_string();
+            .as_ref()
+            .map(|path| path.to_native_string())
+            .or_else(|| message.payload.path_deprecated)
+            .context("Missing path")?;
         let path = shellexpand::tilde(&path).to_string();
 
         let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
@@ -426,7 +427,18 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id,
-                        path: message.payload.path.unwrap_or_default().into(),
+                        path: message
+                            .payload
+                            .path
+                            .map(Into::<Arc<Path>>::into)
+                            .or_else(|| {
+                                message
+                                    .payload
+                                    .path_deprecated
+                                    .map(PathBuf::from)
+                                    .map(Into::<Arc<Path>>::into)
+                            })
+                            .context("missing path")?,
                     },
                     cx,
                 )
@@ -570,9 +582,10 @@ impl HeadlessProject {
         let path = envelope
             .payload
             .path
-            .clone()
-            .unwrap_or_default()
-            .to_native_string();
+            .as_ref()
+            .map(|path| path.to_native_string())
+            .or_else(|| envelope.payload.path_deprecated)
+            .context("Missing path")?;
         let expanded = shellexpand::tilde(&path).to_string();
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
 
@@ -595,9 +608,10 @@ impl HeadlessProject {
         let path = envelope
             .payload
             .path
-            .clone()
-            .unwrap_or_default()
-            .to_native_string();
+            .as_ref()
+            .map(|path| path.to_native_string())
+            .or_else(|| envelope.payload.path_deprecated)
+            .context("Missing path")?;
         let expanded = shellexpand::tilde(&path).to_string();
 
         let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
