@@ -862,14 +862,9 @@ impl Worktree {
         }
     }
 
-    pub fn load_file(
-        &self,
-        path: &Path,
-        skip_file_contents: bool,
-        cx: &Context<Worktree>,
-    ) -> Task<Result<LoadedFile>> {
+    pub fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, skip_file_contents, cx),
+            Worktree::Local(this) => this.load_file(path, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -897,6 +892,30 @@ impl Worktree {
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load staged files")))
             }
+        }
+    }
+
+    pub fn load_committed_file(&self, path: &Path, cx: &App) -> Task<Result<Option<String>>> {
+        match self {
+            Worktree::Local(this) => {
+                let path = Arc::from(path);
+                let snapshot = this.snapshot();
+                cx.background_executor().spawn(async move {
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&repo.work_directory_id)
+                            {
+                                return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
+                            }
+                        }
+                    }
+                    Ok(None)
+                })
+            }
+            Worktree::Remote(_) => Task::ready(Err(anyhow!(
+                "remote worktrees can't yet load committed files"
+            ))),
         }
     }
 
@@ -1587,12 +1606,7 @@ impl LocalWorktree {
         })
     }
 
-    fn load_file(
-        &self,
-        path: &Path,
-        skip_file_contents: bool,
-        cx: &Context<Worktree>,
-    ) -> Task<Result<LoadedFile>> {
+    fn load_file(&self, path: &Path, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1601,11 +1615,7 @@ impl LocalWorktree {
 
         cx.spawn(|this, _cx| async move {
             let abs_path = abs_path?;
-            let text = if skip_file_contents {
-                String::new()
-            } else {
-                fs.load(&abs_path).await?
-            };
+            let text = fs.load(&abs_path).await?;
 
             let worktree = this
                 .upgrade()

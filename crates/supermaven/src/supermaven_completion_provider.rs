@@ -34,7 +34,7 @@ impl SupermavenCompletionProvider {
     }
 }
 
-// Computes the inline completion from the difference between the completion text.
+// Computes the edit prediction from the difference between the completion text.
 // this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
 // for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
 // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.

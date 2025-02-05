@@ -5624,7 +5624,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
 
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("src/main.rs"), staged_contents)],
+        &[("src/main.rs".into(), staged_contents)],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -5669,7 +5669,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
 
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
-        &[(Path::new("src/main.rs"), staged_contents)],
+        &[("src/main.rs".into(), staged_contents)],
     );
 
     cx.run_until_parked();
@@ -5679,6 +5679,108 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
             &unstaged_changes.base_text.as_ref().unwrap().text(),
+            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = r#"
+        fn main() {
+            println!("hello world");
+        }
+    "#
+    .unindent();
+    let staged_contents = r#"
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+    let file_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs".into(), staged_contents)],
+    );
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs".into(), committed_contents)],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let uncommitted_changes = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &[
+                (0..1, "", "// print goodbye\n"),
+                (
+                    2..3,
+                    "    println!(\"hello world\");\n",
+                    "    println!(\"goodbye world\");\n",
+                ),
+            ],
+        );
+    });
+
+    let committed_contents = r#"
+        // print goodbye
+        fn main() {
+        }
+    "#
+    .unindent();
+
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs".into(), committed_contents)],
+    );
+
+    cx.run_until_parked();
+    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &uncommitted_changes.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });

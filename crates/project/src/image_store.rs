@@ -387,18 +387,18 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
-            let model = cx.new(|cx| ImageItem {
+            let entity = cx.new(|cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
                 reload_task: None,
             })?;
 
-            let image_id = cx.read_entity(&model, |model, _| model.id)?;
+            let image_id = cx.read_entity(&entity, |model, _| model.id)?;
 
             this.update(&mut cx, |this, cx| {
                 image_store.update(cx, |image_store, cx| {
-                    image_store.add_image(model.clone(), cx)
+                    image_store.add_image(entity.clone(), cx)
                 })??;
                 this.local_image_ids_by_path.insert(
                     ProjectPath {
@@ -415,7 +415,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 anyhow::Ok(())
             })??;
 
-            Ok(model)
+            Ok(entity)
         })
     }
 

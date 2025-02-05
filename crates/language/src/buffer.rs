@@ -1001,6 +1001,34 @@ impl Buffer {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_snapshot_sync(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut App,
+    ) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let mut syntax = SyntaxMap::new(&text).snapshot();
+        if let Some(language) = language.clone() {
+            let text = text.clone();
+            let language = language.clone();
+            let language_registry = language_registry.clone();
+            syntax.reparse(&text, language_registry, language);
+        }
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language,
+            non_text_state_update_count: 0,
+        }
+    }
+
     /// Retrieve a snapshot of the buffer's current state. This is computationally
     /// cheap, and allows reading from the buffer on a background thread.
     pub fn snapshot(&self) -> BufferSnapshot {

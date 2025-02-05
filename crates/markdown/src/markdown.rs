@@ -821,13 +821,13 @@ impl Element for MarkdownElement {
         let mut context = KeyContext::default();
         context.add("Markdown");
         window.set_key_context(context);
-        let model = self.markdown.clone();
+        let entity = self.markdown.clone();
         window.on_action(std::any::TypeId::of::<crate::Copy>(), {
             let text = rendered_markdown.text.clone();
             move |_, phase, window, cx| {
                 let text = text.clone();
                 if phase == DispatchPhase::Bubble {
-                    model.update(cx, move |this, cx| this.copy(&text, window, cx))
+                    entity.update(cx, move |this, cx| this.copy(&text, window, cx))
                 }
             }
         });

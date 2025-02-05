@@ -382,7 +382,7 @@ mod tests {
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
         });
 
-        // Ensure existing inline completion is interpolated when inserting again.
+        // Ensure existing edit prediction is interpolated when inserting again.
         cx.simulate_keystroke("c");
         executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {

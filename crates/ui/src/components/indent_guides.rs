@@ -47,14 +47,14 @@ pub struct IndentGuides {
 }
 
 pub fn indent_guides<V: Render>(
-    model: Entity<V>,
+    entity: Entity<V>,
     indent_size: Pixels,
     colors: IndentGuideColors,
     compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut Window, &mut Context<V>) -> SmallVec<[usize; 64]>
         + 'static,
 ) -> IndentGuides {
     let compute_indents_fn = Box::new(move |range, window: &mut Window, cx: &mut App| {
-        model.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
+        entity.update(cx, |this, cx| compute_indents_fn(this, range, window, cx))
     });
     IndentGuides {
         colors,
@@ -78,7 +78,7 @@ impl IndentGuides {
     /// Sets a custom callback that will be called when the indent guides need to be rendered.
     pub fn with_render_fn<V: Render>(
         mut self,
-        model: Entity<V>,
+        entity: Entity<V>,
         render_fn: impl Fn(
                 &mut V,
                 RenderIndentGuideParams,
@@ -88,7 +88,7 @@ impl IndentGuides {
             + 'static,
     ) -> Self {
         let render_fn = move |params, window: &mut Window, cx: &mut App| {
-            model.update(cx, |this, cx| render_fn(this, params, window, cx))
+            entity.update(cx, |this, cx| render_fn(this, params, window, cx))
         };
         self.render_fn = Some(Box::new(render_fn));
         self

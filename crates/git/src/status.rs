@@ -153,6 +153,7 @@ impl FileStatus {
                 (StatusCode::Added, _) | (_, StatusCode::Added) => true,
                 _ => false,
             },
+            FileStatus::Untracked => true,
             _ => false,
         }
     }
