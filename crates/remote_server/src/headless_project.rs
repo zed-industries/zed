@@ -438,7 +438,7 @@ impl HeadlessProject {
                                     .map(PathBuf::from)
                                     .map(Into::<Arc<Path>>::into)
                             })
-                            .context("missing path")?,
+                            .unwrap_or(PathBuf::new().into()),
                     },
                     cx,
                 )
