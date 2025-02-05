@@ -5523,6 +5523,14 @@ impl Editor {
             .as_ref()
             .map_or(false, |c| c.is_move());
 
+        let modifier_color = if !has_completion {
+            Color::Muted
+        } else if window.modifiers() == accept_keystroke.modifiers {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5542,11 +5550,7 @@ impl Editor {
                             ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
-                                if window.modifiers() == accept_keystroke.modifiers {
-                                    Some(Color::Accent)
-                                } else {
-                                    None
-                                },
+                                Some(modifier_color),
                                 !is_move,
                             ),
                         ))
