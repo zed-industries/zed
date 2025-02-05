@@ -2756,12 +2756,16 @@ impl Window {
 
         cx.layout_id_buffer.clear();
         cx.layout_id_buffer.extend(children);
-        let rem_size = self.rem_size();
 
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_layout(style, rem_size, &cx.layout_id_buffer)
+        let rem_size = self.rem_size();
+        let scale = self.scale_factor().0 / self.window_scale_factor();
+
+        self.layout_engine.as_mut().unwrap().request_layout(
+            style,
+            rem_size,
+            scale,
+            &cx.layout_id_buffer,
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -2778,15 +2782,34 @@ impl Window {
     >(
         &mut self,
         style: Style,
-        measure: F,
+        mut measure: F,
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
+        let scale = self.scale_factor().0 / self.window_scale_factor();
+
         self.layout_engine
             .as_mut()
             .unwrap()
-            .request_measured_layout(style, rem_size, measure)
+            .request_measured_layout(
+                style,
+                rem_size,
+                scale,
+                move |mut known_size, mut available_space, window, app| {
+                    // Unscale size inputs to measure function
+                    known_size = known_size.map(|size| size.map(|size| size / scale));
+                    available_space = available_space.map(|space| match space {
+                        AvailableSpace::Definite(pixels) => {
+                            AvailableSpace::Definite(pixels / scale)
+                        }
+                        x => x,
+                    });
+
+                    // Rescale output size
+                    measure(known_size, available_space, window, app).map(|size| size * scale)
+                },
+            )
     }
 
     /// Compute the layout for the given id within the given available space.
