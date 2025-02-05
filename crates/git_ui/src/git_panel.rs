@@ -902,14 +902,13 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let project = self.project.clone();
         let handle = cx.entity().downgrade();
         self.reopen_commit_buffer(window, cx);
-        self.update_visible_entries_task = cx.spawn_in(window, |git_panel, mut cx| async move {
+        self.update_visible_entries_task = cx.spawn_in(window, |_, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             if let Some(git_panel) = handle.upgrade() {
                 git_panel
-                    .update_in(&mut cx, |git_panel, window, cx| {
+                    .update_in(&mut cx, |git_panel, _, cx| {
                         if clear_pending {
                             git_panel.clear_pending();
                         }

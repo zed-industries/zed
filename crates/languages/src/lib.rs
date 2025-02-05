@@ -74,7 +74,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("tsx", tree_sitter_typescript::LANGUAGE_TSX),
         ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
         ("yaml", tree_sitter_yaml::LANGUAGE),
-        ("gitcommit", tree_sitter_gitcommit::language()),
+        ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
 
     macro_rules! language {

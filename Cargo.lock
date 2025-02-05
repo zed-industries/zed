@@ -4372,7 +4372,7 @@ dependencies = [
  "theme",
  "tokio",
  "toml 0.8.19",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "wasmtime",
 ]
 
@@ -6804,7 +6804,7 @@ dependencies = [
  "task",
  "text",
  "theme",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
@@ -6957,7 +6957,7 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "ui",
  "util",
  "workspace",
@@ -7001,7 +7001,7 @@ dependencies = [
  "text",
  "theme",
  "toml 0.8.19",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
  "tree-sitter-cpp",
@@ -7858,7 +7858,7 @@ dependencies = [
  "sum_tree",
  "text",
  "theme",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "util",
 ]
 
@@ -11693,7 +11693,7 @@ dependencies = [
  "smol",
  "tempfile",
  "theme",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "ui",
  "unindent",
  "util",
@@ -11881,7 +11881,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "smallvec",
- "tree-sitter 0.23.2",
+ "tree-sitter",
  "tree-sitter-json",
  "unindent",
  "util",
@@ -13863,16 +13863,6 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.20.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e747b1f9b7b931ed39a548c1fae149101497de3c1fc8d9e18c62c1a66c683d3d"
-dependencies = [
- "cc",
- "regex",
-]
-
-[[package]]
-name = "tree-sitter"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0203df02a3b6dd63575cc1d6e609edc2181c9a11867a271b25cfd2abff3ec5ca"
@@ -13957,10 +13947,10 @@ dependencies = [
 [[package]]
 name = "tree-sitter-gitcommit"
 version = "0.0.1"
-source = "git+https://github.com/the-mikedavis/tree-sitter-git-commit?rev=6f193a66e9aa872760823dff020960c6cedc37b3#6f193a66e9aa872760823dff020960c6cedc37b3"
+source = "git+https://github.com/zed-industries/tree-sitter-git-commit?rev=88309716a69dd13ab83443721ba6e0b491d37ee9#88309716a69dd13ab83443721ba6e0b491d37ee9"
 dependencies = [
  "cc",
- "tree-sitter 0.20.10",
+ "tree-sitter-language",
 ]
 
 [[package]]
@@ -14007,7 +13997,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8766b5ad3721517f8259e6394aefda9c686aebf7a8c74ab8624f2c3b46902fd5"
 dependencies = [
  "cc",
- "tree-sitter 0.23.2",
+ "tree-sitter",
 ]
 
 [[package]]
