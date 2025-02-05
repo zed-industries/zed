@@ -11,20 +11,18 @@ if [ ! -f "Cargo.toml" ]; then
     exit 1
 fi
 
-# Check for at least one argument (crate name)
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <crate_name> [optional_license_flag]"
     exit 1
 fi
 
-# Get crate name from first argument
 CRATE_NAME="$1"
 
-# Determine license mode and file
-if [[ "${2,,}" == *"apache"* ]]; then
+LICENSE_FLAG=$(echo "${2}" | tr '[:upper:]' '[:lower:]')
+if [[ "$LICENSE_FLAG" == *"apache"* ]]; then
     LICENSE_MODE="Apache-2.0"
     LICENSE_FILE="LICENSE-APACHE"
-elif [[ "${2,,}" == *"agpl"* ]]; then
+elif [[ "$LICENSE_FLAG" == *"agpl"* ]]; then
     LICENSE_MODE="AGPL-3.0-or-later"
     LICENSE_FILE="LICENSE-AGPL"
 else
@@ -32,21 +30,18 @@ else
     LICENSE_FILE="LICENSE"
 fi
 
-# Validate crate name (lowercase, alphanumeric and underscores)
 if [[ ! "$CRATE_NAME" =~ ^[a-z0-9_]+$ ]]; then
     echo "Error: Crate name must be lowercase and contain only alphanumeric characters and underscores"
     exit 1
 fi
 
-# Create crate directory
 CRATE_PATH="crates/$CRATE_NAME"
 mkdir -p "$CRATE_PATH/src"
 
-# Symlink the appropriate license file
-ln -s "../../../$LICENSE_FILE" "$CRATE_PATH/LICENSE"
+# Symlink the license
+ln -sf "../../../$LICENSE_FILE" "$CRATE_PATH/LICENSE"
 
-# Prepare Cargo.toml template content
-CARGO_TOML_TEMPLATE=$(cat << EOF
+CARGO_TOML_TEMPLATE=$(cat << 'EOF'
 [package]
 name = "$CRATE_NAME"
 version = "0.1.0"
@@ -78,24 +73,15 @@ default = []
 EOF
 )
 
-# Create Cargo.toml file
-echo "$CARGO_TOML_TEMPLATE" > "$CRATE_PATH/Cargo.toml"
+# Populate template
+CARGO_TOML_CONTENT=$(echo "$CARGO_TOML_TEMPLATE" | sed \
+    -e "s/\$CRATE_NAME/$CRATE_NAME/g" \
+    -e "s/\$LICENSE_MODE/$LICENSE_MODE/g")
 
-# Create initial source file
-echo "// TODO: Implement $CRATE_NAME crate" > "$CRATE_PATH/src/$CRATE_NAME.rs"
+echo "$CARGO_TOML_CONTENT" > "$CRATE_PATH/Cargo.toml"
 
-# Add crate to Cargo.toml workspace
-if ! grep -q "\"crates/$CRATE_NAME\"" Cargo.toml; then
-    sed -i "/members = \[/a\    \"crates/$CRATE_NAME\"," Cargo.toml
-fi
-
-# Add workspace dependency to Cargo.toml
-DEPENDENCY_TEMPLATE=$(cat << EOF
-$CRATE_NAME = { path = "crates/$CRATE_NAME" }
-EOF
-)
-sed -i "/# Workspace member crates/a$DEPENDENCY_TEMPLATE" Cargo.toml
+echo "//! # $CRATE_NAME" > "$CRATE_PATH/src/$CRATE_NAME.rs"
 
 echo "Created new crate: $CRATE_NAME in $CRATE_PATH"
 echo "License: $LICENSE_MODE (symlinked from $LICENSE_FILE)"
-echo "Don't forget to update the crate's dependencies and implement its functionality!"
+echo "Don't forget to add the new crate to the workspace!"
