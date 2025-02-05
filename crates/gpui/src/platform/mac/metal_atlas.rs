@@ -13,23 +13,18 @@ use std::borrow::Cow;
 pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, path_sample_count: u32) -> Self {
+    pub(crate) fn new(device: Device) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
             device: AssertSend(device),
             monochrome_textures: Default::default(),
             polychrome_textures: Default::default(),
             path_textures: Default::default(),
             tiles_by_key: Default::default(),
-            path_sample_count,
         }))
     }
 
     pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
         self.0.lock().texture(id).metal_texture.clone()
-    }
-
-    pub(crate) fn msaa_texture(&self, id: AtlasTextureId) -> Option<metal::Texture> {
-        self.0.lock().texture(id).msaa_texture.clone()
     }
 
     pub(crate) fn allocate(
@@ -59,7 +54,6 @@ struct MetalAtlasState {
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
     path_textures: AtlasTextureList<MetalAtlasTexture>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
-    path_sample_count: u32,
 }
 
 impl PlatformAtlas for MetalAtlas {
@@ -182,18 +176,6 @@ impl MetalAtlasState {
         texture_descriptor.set_usage(usage);
         let metal_texture = self.device.new_texture(&texture_descriptor);
 
-        // We currently only enable MSAA for path textures.
-        let msaa_texture = if self.path_sample_count > 1 && kind == AtlasTextureKind::Path {
-            let mut descriptor = texture_descriptor.clone();
-            descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-            descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-            descriptor.set_sample_count(self.path_sample_count as _);
-            let msaa_texture = self.device.new_texture(&descriptor);
-            Some(msaa_texture)
-        } else {
-            None
-        };
-
         let texture_list = match kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
@@ -209,7 +191,6 @@ impl MetalAtlasState {
             },
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             metal_texture: AssertSend(metal_texture),
-            msaa_texture: AssertSend(msaa_texture),
             live_atlas_keys: 0,
         };
 
@@ -236,7 +217,6 @@ struct MetalAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
     metal_texture: AssertSend<metal::Texture>,
-    msaa_texture: AssertSend<Option<metal::Texture>>,
     live_atlas_keys: u32,
 }
 

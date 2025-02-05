@@ -25,8 +25,7 @@ use gpui::{
 };
 use http_client::{HttpClient, Method};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
-    OffsetRangeExt, Point, ToOffset, ToPoint,
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, Point, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
@@ -953,20 +952,33 @@ impl LicenseDetectionWatcher {
     pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
 
-        let loaded_file_fut = worktree.load_file(Path::new("LICENSE"), cx);
+        const LICENSE_FILES_TO_CHECK: [&'static str; 2] = ["LICENSE", "LICENCE"]; // US and UK English spelling
+
+        // Check if worktree is a single file, if so we do not need to check for a LICENSE file
+        let task = if worktree.abs_path().is_file() {
+            Task::ready(())
+        } else {
+            let loaded_files_task = futures::future::join_all(
+                LICENSE_FILES_TO_CHECK
+                    .iter()
+                    .map(|file| worktree.load_file(Path::new(file), cx)),
+            );
+
+            cx.background_executor().spawn(async move {
+                for loaded_file in loaded_files_task.await {
+                    if let Some(content) = loaded_file.log_err() {
+                        if is_license_eligible_for_data_collection(&content.text) {
+                            *is_open_source_tx.borrow_mut() = true;
+                            break;
+                        }
+                    }
+                }
+            })
+        };
 
         Self {
             is_open_source_rx,
-            _is_open_source_task: cx.spawn(|_, _| async move {
-                let Ok(loaded_file) = loaded_file_fut.await else {
-                    return;
-                };
-
-                let is_loaded_file_open_source_thing: bool =
-                    is_license_eligible_for_data_collection(&loaded_file.text);
-
-                *is_open_source_tx.borrow_mut() = is_loaded_file_open_source_thing;
-            }),
+            _is_open_source_task: task,
         }
     }
 
@@ -1456,15 +1468,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
-        cx: &App,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
+        _cx: &App,
     ) -> bool {
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        true
     }
 
     fn needs_terms_acceptance(&self, cx: &App) -> bool {

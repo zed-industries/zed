@@ -5207,8 +5207,9 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     |cx| {
                         cx.new(|_| {
                             MessageNotification::new("Failed to load the database file.")
-                                .with_click_message("File an issue")
-                                .on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
+                                .primary_message("File an Issue")
+                                .primary_icon(IconName::Plus)
+                                .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
                 );
