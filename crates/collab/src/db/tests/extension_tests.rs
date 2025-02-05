@@ -20,7 +20,7 @@ async fn test_extensions(db: &Arc<Database>) {
     let versions = db.get_known_extension_versions().await.unwrap();
     assert!(versions.is_empty());
 
-    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
+    let extensions = db.get_extensions(None, None, 1, 5).await.unwrap();
     assert!(extensions.is_empty());
 
     let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
@@ -90,7 +90,7 @@ async fn test_extensions(db: &Arc<Database>) {
     );
 
     // The latest version of each extension is returned.
-    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
+    let extensions = db.get_extensions(None, None, 1, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[
@@ -128,7 +128,7 @@ async fn test_extensions(db: &Arc<Database>) {
     );
 
     // Extensions with too new of a schema version are excluded.
-    let extensions = db.get_extensions(None, 0, 5).await.unwrap();
+    let extensions = db.get_extensions(None, None, 0, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[ExtensionMetadata {
@@ -168,7 +168,7 @@ async fn test_extensions(db: &Arc<Database>) {
         .unwrap());
 
     // Extensions are returned in descending order of total downloads.
-    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
+    let extensions = db.get_extensions(None, None, 1, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[
@@ -258,7 +258,7 @@ async fn test_extensions(db: &Arc<Database>) {
         .collect()
     );
 
-    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
+    let extensions = db.get_extensions(None, None, 1, 5).await.unwrap();
     assert_eq!(
         extensions,
         &[
@@ -306,7 +306,7 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
     let versions = db.get_known_extension_versions().await.unwrap();
     assert!(versions.is_empty());
 
-    let extensions = db.get_extensions(None, 1, 5).await.unwrap();
+    let extensions = db.get_extensions(None, None, 1, 5).await.unwrap();
     assert!(extensions.is_empty());
 
     let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();

@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
-use client::ExtensionMetadata;
+use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
@@ -575,7 +575,6 @@ impl ExtensionsPage {
                     .child(
                         h_flex()
                             .gap_2()
-                            .items_end()
                             .child(
                                 Headline::new(extension.manifest.name.clone())
                                     .size(HeadlineSize::Medium),
@@ -588,7 +587,52 @@ impl ExtensionsPage {
                                         Headline::new(format!("(v{installed_version} installed)",))
                                             .size(HeadlineSize::XSmall)
                                     }),
-                            ),
+                            )
+                            .map(|parent| {
+                                if extension.manifest.provides.is_empty() {
+                                    return parent;
+                                }
+
+                                parent.child(
+                                    h_flex().gap_2().children(
+                                        extension
+                                            .manifest
+                                            .provides
+                                            .iter()
+                                            .map(|provides| {
+                                                let label = match provides {
+                                                    ExtensionProvides::Themes => "Themes",
+                                                    ExtensionProvides::IconThemes => "Icon Themes",
+                                                    ExtensionProvides::Languages => "Languages",
+                                                    ExtensionProvides::Grammars => "Grammars",
+                                                    ExtensionProvides::LanguageServers => {
+                                                        "Language Servers"
+                                                    }
+                                                    ExtensionProvides::ContextServers => {
+                                                        "Context Servers"
+                                                    }
+                                                    ExtensionProvides::SlashCommands => {
+                                                        "Slash Commands"
+                                                    }
+                                                    ExtensionProvides::IndexedDocsProviders => {
+                                                        "Indexed Docs Providers"
+                                                    }
+                                                    ExtensionProvides::Snippets => "Snippets",
+                                                };
+                                                div()
+                                                    .bg(cx.theme().colors().element_background)
+                                                    .px_0p5()
+                                                    .border_1()
+                                                    .border_color(cx.theme().colors().border)
+                                                    .rounded_md()
+                                                    .child(
+                                                        Label::new(label).size(LabelSize::XSmall),
+                                                    )
+                                            })
+                                            .collect::<Vec<_>>(),
+                                    ),
+                                )
+                            }),
                     )
                     .child(
                         h_flex()
