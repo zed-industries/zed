@@ -715,13 +715,6 @@ impl Path<Pixels> {
         }
     }
 
-    /// Move the start, current point to the given point.
-    pub fn move_to(&mut self, to: Point<Pixels>) {
-        self.contour_count += 1;
-        self.start = to;
-        self.current = to;
-    }
-
     /// Draw a straight line from the current point to the given point.
     pub fn line_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;
@@ -751,8 +744,7 @@ impl Path<Pixels> {
         self.current = to;
     }
 
-    /// Push a triangle to the Path.
-    pub fn push_triangle(
+    fn push_triangle(
         &mut self,
         xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
         st: (Point<f32>, Point<f32>, Point<f32>),
