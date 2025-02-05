@@ -24,7 +24,7 @@ impl Render for MainView {
                 Animation::new(Duration::from_millis(2000)).repeat(),
                 |el, delta| {
                     el.child(ChildElement {
-                        zoom: (2.0 * delta * PI).sin() * 0.25 + 0.75,
+                        zoom: (2.0 * delta * PI).sin() * 0.5 + 1.0,
                     })
                 },
             )

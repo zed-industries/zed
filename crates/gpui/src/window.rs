@@ -2010,7 +2010,11 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
-        if let Some(mask) = mask {
+        if let Some(mut mask) = mask {
+            let (mut scale_factor, offset) = self.scale_factor();
+            mask.bounds.origin += offset; // offset doesn't need scaling based on window_scale_factor because offsets are only dependent on element scaling
+            mask.bounds *= scale_factor / self.window_scale_factor();
+
             let mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
             let result = f(self);
