@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::str::FromStr;
 
 use chrono::Utc;
@@ -283,6 +282,39 @@ impl Database {
                         description: ActiveValue::Set(version.description.clone()),
                         schema_version: ActiveValue::Set(version.schema_version),
                         wasm_api_version: ActiveValue::Set(version.wasm_api_version.clone()),
+                        provides_themes: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Themes),
+                        ),
+                        provides_icon_themes: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::IconThemes),
+                        ),
+                        provides_languages: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Languages),
+                        ),
+                        provides_grammars: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Grammars),
+                        ),
+                        provides_language_servers: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::LanguageServers),
+                        ),
+                        provides_context_servers: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::ContextServers),
+                        ),
+                        provides_slash_commands: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::SlashCommands),
+                        ),
+                        provides_indexed_docs_providers: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::IndexedDocsProviders),
+                        ),
+                        provides_snippets: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Snippets),
+                        ),
                         download_count: ActiveValue::NotSet,
                     }
                 }))
@@ -357,6 +389,8 @@ fn metadata_from_extension_and_version(
     extension: extension::Model,
     version: extension_version::Model,
 ) -> ExtensionMetadata {
+    let provides = version.provides();
+
     ExtensionMetadata {
         id: extension.external_id.into(),
         manifest: rpc::ExtensionApiManifest {
@@ -371,7 +405,7 @@ fn metadata_from_extension_and_version(
             repository: version.repository,
             schema_version: Some(version.schema_version),
             wasm_api_version: version.wasm_api_version,
-            provides: BTreeSet::default(),
+            provides,
         },
 
         published_at: convert_time_to_chrono(version.published_at),

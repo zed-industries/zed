@@ -391,6 +391,7 @@ async fn fetch_extension_manifest(
         repository: manifest.repository,
         schema_version: manifest.schema_version.unwrap_or(0),
         wasm_api_version: manifest.wasm_api_version,
+        provides: manifest.provides,
         published_at,
     })
 }
