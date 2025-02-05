@@ -430,6 +430,7 @@ CREATE TABLE IF NOT EXISTS billing_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users(id),
+    has_overdue_invoices BOOLEAN NOT NULL DEFAULT FALSE,
     stripe_customer_id TEXT NOT NULL
 );
 

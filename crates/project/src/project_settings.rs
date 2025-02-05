@@ -240,7 +240,7 @@ pub struct SettingsObserver {
 /// upstream.
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
-        client.add_model_message_handler(Self::handle_update_worktree_settings);
+        client.add_entity_message_handler(Self::handle_update_worktree_settings);
     }
 
     pub fn new_local(

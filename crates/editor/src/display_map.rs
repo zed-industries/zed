@@ -508,7 +508,7 @@ impl DisplayMap {
 
     pub(crate) fn splice_inlays(
         &mut self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
         cx: &mut Context<Self>,
     ) {
@@ -1142,12 +1142,7 @@ impl DisplaySnapshot {
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
-        let (buffer, range) = self
-            .buffer_snapshot
-            .buffer_line_for_row(buffer_row)
-            .unwrap();
-
-        buffer.line_indent_for_row(range.start.row)
+        self.buffer_snapshot.line_indent_for_row(buffer_row)
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {

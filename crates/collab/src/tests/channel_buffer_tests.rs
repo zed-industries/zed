@@ -342,7 +342,7 @@ async fn test_multiple_handles_to_channel_buffer(
         future::try_join3(channel_buffer_1, channel_buffer_2, channel_buffer_3)
             .await
             .unwrap();
-    let channel_buffer_model_id = channel_buffer.entity_id();
+    let channel_buffer_entity_id = channel_buffer.entity_id();
     assert_eq!(channel_buffer, channel_buffer_2);
     assert_eq!(channel_buffer, channel_buffer_3);
 
@@ -366,7 +366,7 @@ async fn test_multiple_handles_to_channel_buffer(
         .update(cx_a, |store, cx| store.open_channel_buffer(channel_id, cx))
         .await
         .unwrap();
-    assert_ne!(channel_buffer.entity_id(), channel_buffer_model_id);
+    assert_ne!(channel_buffer.entity_id(), channel_buffer_entity_id);
     channel_buffer.update(cx_a, |buffer, cx| {
         buffer.buffer().update(cx, |buffer, _| {
             assert_eq!(buffer.text(), "hello");

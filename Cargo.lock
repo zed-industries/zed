@@ -1024,22 +1024,6 @@ dependencies = [
 
 [[package]]
 name = "async-tungstenite"
-version = "0.25.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cca750b12e02c389c1694d35c16539f88b8bbaa5945934fdc1b41a776688589"
-dependencies = [
- "async-native-tls",
- "async-std",
- "async-tls",
- "futures-io",
- "futures-util",
- "log",
- "pin-project-lite",
- "tungstenite 0.21.0",
-]
-
-[[package]]
-name = "async-tungstenite"
 version = "0.28.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c348fb0b6d132c596eca3dcd941df48fb597aafcb07a738ec41c004b087dc99"
@@ -2560,7 +2544,7 @@ dependencies = [
  "anyhow",
  "async-native-tls",
  "async-recursion 0.3.2",
- "async-tungstenite 0.28.2",
+ "async-tungstenite",
  "chrono",
  "clock",
  "cocoa 0.26.0",
@@ -2694,7 +2678,7 @@ dependencies = [
  "assistant_tool",
  "async-stripe",
  "async-trait",
- "async-tungstenite 0.28.2",
+ "async-tungstenite",
  "audio",
  "aws-config",
  "aws-sdk-kinesis",
@@ -3969,7 +3953,6 @@ dependencies = [
  "db",
  "emojis",
  "env_logger 0.11.6",
- "feature_flags",
  "file_icons",
  "fs",
  "futures 0.3.31",
@@ -4020,7 +4003,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
- "zed_predict_onboarding",
+ "zed_actions",
 ]
 
 [[package]]
@@ -5261,12 +5244,17 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "feature_flags",
  "futures 0.3.31",
  "git",
  "gpui",
+ "language",
  "menu",
+ "multi_buffer",
  "picker",
+ "postage",
  "project",
+ "rpc",
  "schemars",
  "serde",
  "serde_derive",
@@ -6404,7 +6392,6 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
- "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -6718,7 +6705,7 @@ checksum = "49c1ba895c5271ff8dcae51c347fd3588905ba0025a57e20955fd231fe1228cc"
 dependencies = [
  "anyhow",
  "async-trait",
- "async-tungstenite 0.28.2",
+ "async-tungstenite",
  "futures 0.3.31",
  "jupyter-protocol",
  "serde",
@@ -7000,6 +6987,7 @@ dependencies = [
  "pet-fs",
  "pet-poetry",
  "pet-reporter",
+ "pretty_assertions",
  "project",
  "regex",
  "rope",
@@ -7144,7 +7132,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
  "cxx",
  "jni",
@@ -7209,7 +7197,7 @@ checksum = "4ee93343901ab17bd981295f2cf0026d4ad018c7c31ba84549a4ddbb47a45104"
 [[package]]
 name = "livekit"
 version = "0.7.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
  "chrono",
  "futures-util",
@@ -7231,9 +7219,9 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
- "async-tungstenite 0.25.1",
+ "async-tungstenite",
  "futures-util",
  "http 0.2.12",
  "jsonwebtoken",
@@ -7256,7 +7244,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -7273,7 +7261,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.3.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
  "async-io",
  "async-std",
@@ -8676,9 +8664,9 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.68"
+version = "0.10.70"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6174bc48f102d208783c2c84bf931bb75927a617866870de8a4ea85597f871f5"
+checksum = "61cfb4e166a8bb8c9b55c500bc2308550148ece889be90f609377e58140f42c6"
 dependencies = [
  "bitflags 2.8.0",
  "cfg-if",
@@ -8717,9 +8705,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.104"
+version = "0.9.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45abf306cbf99debc8195b66b7346498d7b10c210de50418b5ccd7ceba08c741"
+checksum = "8b22d5b84be05a8d6947c7cb71f7c849aa0f112acd4bf51c2a7c1c988ac0a9dc"
 dependencies = [
  "cc",
  "libc",
@@ -10584,6 +10572,7 @@ dependencies = [
  "settings",
  "smol",
  "task",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -10790,7 +10779,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-dispatcher",
- "async-tungstenite 0.28.2",
+ "async-tungstenite",
  "base64 0.22.1",
  "client",
  "collections",
@@ -11093,7 +11082,7 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tungstenite 0.28.2",
+ "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "collections",
@@ -13530,7 +13519,7 @@ dependencies = [
  "windows 0.58.0",
  "workspace",
  "zed_actions",
- "zed_predict_onboarding",
+ "zeta",
 ]
 
 [[package]]
@@ -14140,7 +14129,6 @@ dependencies = [
  "http 1.2.0",
  "httparse",
  "log",
- "native-tls",
  "rand 0.8.5",
  "sha1",
  "thiserror 1.0.69",
@@ -15261,7 +15249,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.5"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
  "cc",
  "cxx",
@@ -15274,7 +15262,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.5"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=811ceae29fabee455f110c56cd66b3f49a7e5003#811ceae29fabee455f110c56cd66b3f49a7e5003"
 dependencies = [
  "fs2",
  "regex",
@@ -16041,6 +16029,7 @@ dependencies = [
  "sqlez",
  "strum",
  "task",
+ "telemetry",
  "tempfile",
  "theme",
  "ui",
@@ -16423,7 +16412,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.173.0"
+version = "0.174.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16547,7 +16536,6 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
- "zed_predict_onboarding",
  "zeta",
 ]
 
@@ -16648,6 +16636,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_llm_client"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54ca07d631d9d758f1820c7a7e7854ca00619b9783a5b6b3b6057fef06c786cb"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "zed_lua"
 version = "0.1.1"
 dependencies = [
@@ -16659,25 +16656,6 @@ name = "zed_php"
 version = "0.2.4"
 dependencies = [
  "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_predict_onboarding"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "client",
- "db",
- "feature_flags",
- "fs",
- "gpui",
- "language",
- "menu",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
 ]
 
 [[package]]
@@ -16865,6 +16843,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "call",
+ "chrono",
  "client",
  "clock",
  "collections",
@@ -16874,6 +16853,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.6",
  "feature_flags",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -16883,6 +16863,8 @@ dependencies = [
  "language_models",
  "log",
  "menu",
+ "postage",
+ "regex",
  "reqwest_client",
  "rpc",
  "serde",
@@ -16895,10 +16877,13 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
+ "unindent",
  "util",
  "uuid",
  "workspace",
  "worktree",
+ "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]

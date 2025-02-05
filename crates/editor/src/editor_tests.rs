@@ -62,9 +62,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor1 = cx.add_window({
         let events = events.clone();
         |window, cx| {
-            let model = cx.entity().clone();
+            let entity = cx.entity().clone();
             cx.subscribe_in(
-                &model,
+                &entity,
                 window,
                 move |_, _, event: &EditorEvent, _, _| match event {
                     EditorEvent::Edited { .. } => events.borrow_mut().push(("editor1", "edited")),
@@ -5619,13 +5619,13 @@ async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
 
     let base_text = r#"
         impl A {
-            // this is an unstaged comment
+            // this is an uncommitted comment
 
             fn b() {
                 c();
             }
 
-            // this is another unstaged comment
+            // this is another uncommitted comment
 
             fn d() {
                 // e
@@ -5668,13 +5668,13 @@ async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
     cx.assert_state_with_diff(
         "
         ˇimpl A {
-      -     // this is an unstaged comment
+      -     // this is an uncommitted comment
 
             fn b() {
                 c();
             }
 
-      -     // this is another unstaged comment
+      -     // this is another uncommitted comment
       -
             fn d() {
                 // e
@@ -5691,13 +5691,13 @@ async fn test_fold_function_bodies(cx: &mut gpui::TestAppContext) {
 
     let expected_display_text = "
         impl A {
-            // this is an unstaged comment
+            // this is an uncommitted comment
 
             fn b() {
                 ⋯
             }
 
-            // this is another unstaged comment
+            // this is another uncommitted comment
 
             fn d() {
                 ⋯
@@ -10196,15 +10196,15 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let is_still_following = Rc::new(RefCell::new(true));
     let follower_edit_event_count = Rc::new(RefCell::new(0));
     let pending_update = Rc::new(RefCell::new(None));
-    let leader_model = leader.root(cx).unwrap();
-    let follower_model = follower.root(cx).unwrap();
+    let leader_entity = leader.root(cx).unwrap();
+    let follower_entity = follower.root(cx).unwrap();
     _ = follower.update(cx, {
         let update = pending_update.clone();
         let is_still_following = is_still_following.clone();
         let follower_edit_event_count = follower_edit_event_count.clone();
         |_, window, cx| {
             cx.subscribe_in(
-                &leader_model,
+                &leader_entity,
                 window,
                 move |_, leader, event, window, cx| {
                     leader.read(cx).add_event_to_update_proto(
@@ -10218,7 +10218,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             .detach();
 
             cx.subscribe_in(
-                &follower_model,
+                &follower_entity,
                 window,
                 move |_, _, event: &EditorEvent, _window, _cx| {
                     if matches!(Editor::to_follow_event(event), Some(FollowEvent::Unfollow)) {
@@ -10384,11 +10384,11 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following the editor when it has no excerpts.
     let mut state_message =
         leader.update_in(cx, |leader, window, cx| leader.to_state_proto(window, cx));
-    let workspace_model = workspace.root(cx).unwrap();
+    let workspace_entity = workspace.root(cx).unwrap();
     let follower_1 = cx
         .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
-                workspace_model,
+                workspace_entity,
                 ViewId {
                     creator: Default::default(),
                     id: 0,
@@ -10486,11 +10486,11 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following separately after it already has excerpts.
     let mut state_message =
         leader.update_in(cx, |leader, window, cx| leader.to_state_proto(window, cx));
-    let workspace_model = workspace.root(cx).unwrap();
+    let workspace_entity = workspace.root(cx).unwrap();
     let follower_2 = cx
         .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
-                workspace_model,
+                workspace_entity,
                 ViewId {
                     creator: Default::default(),
                     id: 0,
@@ -11706,10 +11706,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
                         .entries
                         .borrow()
                         .iter()
-                        .flat_map(|c| match c {
-                            CompletionEntry::Match(mat) => Some(mat.string.clone()),
-                            _ => None,
-                        })
+                        .map(|mat| mat.string.clone())
                         .collect::<Vec<String>>(),
                     items_out
                         .iter()
@@ -11851,13 +11848,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
-    entries
-        .iter()
-        .flat_map(|e| match e {
-            CompletionEntry::Match(mat) => Some(mat.string.clone()),
-            _ => None,
-        })
-        .collect()
+    entries.iter().map(|mat| mat.string.clone()).collect()
 }
 
 #[gpui::test]
@@ -12439,8 +12430,8 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let change_set = cx
-                .new(|cx| BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx));
+            let change_set =
+                cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
@@ -13133,9 +13124,8 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let change_set = cx.new(|cx| {
-                    BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
-                });
+                let change_set =
+                    cx.new(|cx| BufferChangeSet::new_with_base_text(&diff_base, &buffer, cx));
                 editor
                     .buffer
                     .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
@@ -13220,7 +13210,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     init_test(cx, |_| {});
 
     let base = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\n";
-    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\n";
+    let text = "aaa\nBBB\nBB2\nccc\nDDD\nEEE\nfff\nggg\nhhh\niii\n";
 
     let buffer = cx.new(|cx| Buffer::local(text.to_string(), cx));
     let multi_buffer = cx.new(|cx| {
@@ -13233,7 +13223,11 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
                     primary: None,
                 },
                 ExcerptRange {
-                    context: Point::new(5, 0)..Point::new(7, 0),
+                    context: Point::new(4, 0)..Point::new(7, 0),
+                    primary: None,
+                },
+                ExcerptRange {
+                    context: Point::new(9, 0)..Point::new(10, 0),
                     primary: None,
                 },
             ],
@@ -13247,8 +13241,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     editor
         .update(cx, |editor, _window, cx| {
-            let change_set =
-                cx.new(|cx| BufferChangeSet::new_with_base_text(base.to_string(), &buffer, cx));
+            let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base, &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
@@ -13263,14 +13256,22 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     cx.executor().run_until_parked();
 
+    // When the start of a hunk coincides with the start of its excerpt,
+    // the hunk is expanded. When the start of a a hunk is earlier than
+    // the start of its excerpt, the hunk is not expanded.
     cx.assert_state_with_diff(
         "
             ˇaaa
           - bbb
           + BBB
 
+          - ddd
+          - eee
+          + DDD
           + EEE
             fff
+
+            iii
         "
         .unindent(),
     );
@@ -13508,8 +13509,8 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
 
     cx.set_state(indoc! { "
         one
-        TWO
-        ˇthree
+        ˇTWO
+        three
         four
         five
     "});
@@ -13522,15 +13523,14 @@ async fn test_toggling_adjacent_diff_hunks(cx: &mut TestAppContext) {
         indoc! { "
             one
           - two
-          + TWO
-            ˇthree
+          + ˇTWO
+            three
             four
             five
         "}
         .to_string(),
     );
     cx.update_editor(|editor, window, cx| {
-        editor.move_up(&Default::default(), window, cx);
         editor.move_up(&Default::default(), window, cx);
         editor.toggle_selected_diff_hunks(&Default::default(), window, cx);
     });
@@ -14410,12 +14410,8 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let change_set = cx.new(|cx| {
-                let mut change_set = BufferChangeSet::new(&buffer, cx);
-                let _ =
-                    change_set.set_base_text(base_text.into(), buffer.read(cx).text_snapshot(), cx);
-                change_set
-            });
+            let change_set =
+                cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
 
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer.add_change_set(change_set, cx);
@@ -15468,8 +15464,7 @@ async fn assert_highlighted_edits(
             &edit_preview,
             include_deletions,
             cx,
-        )
-        .expect("Missing highlighted edits");
+        );
         assertion_fn(highlighted_edits, cx)
     });
 }

@@ -864,7 +864,7 @@ mod tests {
             })
             .collect();
         let snapshot = display_map.update(cx, |map, cx| {
-            map.splice_inlays(Vec::new(), inlays, cx);
+            map.splice_inlays(&[], inlays, cx);
             map.snapshot(cx)
         });
 
