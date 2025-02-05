@@ -1,4 +1,3 @@
-# TODO kb credits to original extension (git-firefly)
 name = "Git Commit"
 grammar = "git_commit"
 path_suffixes = [

@@ -198,7 +198,6 @@ fn commit_message_editor(
     commit_editor.set_show_indent_guides(false, cx);
     commit_editor.set_text_style_refinement(refinement);
     commit_editor.set_placeholder_text("Enter commit message", cx);
-    commit_editor.clear(window, cx);
     commit_editor
 }
 

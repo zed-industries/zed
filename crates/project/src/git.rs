@@ -353,6 +353,10 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Entity<Buffer>>> {
+        if let Some(buffer) = self.commit_message_buffer.clone() {
+            return Task::ready(Ok(buffer));
+        }
+
         if let GitRepo::Remote {
             project_id,
             client,
@@ -361,7 +365,7 @@ impl Repository {
         } = self.git_repo.clone()
         {
             let client = client.clone();
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn(|repository, mut cx| async move {
                 let request = client.request(proto::OpenCommitMessageBuffer {
                     project_id: project_id.0,
                     worktree_id: worktree_id.to_proto(),
@@ -381,6 +385,9 @@ impl Repository {
                         buffer.set_language(Some(git_commit_language), cx);
                     })?;
                 }
+                repository.update(&mut cx, |repository, _| {
+                    repository.commit_message_buffer = Some(buffer.clone());
+                })?;
                 Ok(buffer)
             })
         } else {
@@ -394,11 +401,7 @@ impl Repository {
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Entity<Buffer>>> {
-        if let Some(buffer) = self.commit_message_buffer.clone() {
-            return Task::ready(Ok(buffer));
-        }
-
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|repository, mut cx| async move {
             let buffer = buffer_store
                 .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
                 .await?;
@@ -410,8 +413,8 @@ impl Repository {
                 })?;
             }
 
-            this.update(&mut cx, |this, _| {
-                this.commit_message_buffer = Some(buffer.clone());
+            repository.update(&mut cx, |repository, _| {
+                repository.commit_message_buffer = Some(buffer.clone());
             })?;
             Ok(buffer)
         })
