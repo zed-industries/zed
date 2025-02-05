@@ -534,6 +534,41 @@ impl ComponentPreview for Button {
                     ),
                 ],
             ),
+            example_group_with_title(
+                "Elevation",
+                vec![
+                    single_example(
+                        "Background",
+                        Button::new("background", "Background")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::Background),
+                    ),
+                    single_example(
+                        "Surface",
+                        Button::new("surface", "Surface")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::Surface),
+                    ),
+                    single_example(
+                        "EditorSurface",
+                        Button::new("editor_surface", "Editor Surface")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::EditorSurface),
+                    ),
+                    single_example(
+                        "ElevatedSurface",
+                        Button::new("elevated_surface", "Elevated Surface")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ElevatedSurface),
+                    ),
+                    single_example(
+                        "ModalSurface",
+                        Button::new("modal_surface", "Modal Surface")
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface),
+                    ),
+                ],
+            ),
         ]
     }
 }
