@@ -2,7 +2,8 @@
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
 use gpui::{
-    relative, Action, AnyElement, App, FocusHandle, IntoElement, Keystroke, Modifiers, Window,
+    relative, Action, AnyElement, App, FocusHandle, Global, IntoElement, Keystroke, Modifiers,
+    Window,
 };
 
 #[derive(Debug, IntoElement, Clone)]
@@ -16,18 +17,24 @@ pub struct KeyBinding {
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
     size: Option<Pixels>,
+
+    /// Determines whether the keybinding is meant for vim mode.
+    vim_mode: bool,
 }
+
+struct VimStyle(bool);
+impl Global for VimStyle {}
 
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
-    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
+    pub fn for_action(action: &dyn Action, window: &mut Window, cx: &App) -> Option<Self> {
         let key_binding = window
             .bindings_for_action(action)
             .into_iter()
             .rev()
             .next()?;
-        Some(Self::new(key_binding))
+        Some(Self::new(key_binding, cx))
     }
 
     /// Like `for_action`, but lets you specify the context from which keybindings are matched.
@@ -35,20 +42,30 @@ impl KeyBinding {
         action: &dyn Action,
         focus: &FocusHandle,
         window: &mut Window,
+        cx: &App,
     ) -> Option<Self> {
         let key_binding = window
             .bindings_for_action_in(action, focus)
             .into_iter()
             .rev()
             .next()?;
-        Some(Self::new(key_binding))
+        Some(Self::new(key_binding, cx))
     }
 
-    pub fn new(key_binding: gpui::KeyBinding) -> Self {
+    pub fn enable_vim_mode(cx: &mut App) {
+        cx.set_global(VimStyle(true));
+    }
+
+    pub fn disable_vim_mode(cx: &mut App) {
+        cx.set_global(VimStyle(false));
+    }
+
+    pub fn new(key_binding: gpui::KeyBinding, cx: &App) -> Self {
         Self {
             key_binding,
             platform_style: PlatformStyle::platform(),
             size: None,
+            vim_mode: cx.try_global::<VimStyle>().is_some_and(|g| g.0),
         }
     }
 
@@ -62,6 +79,31 @@ impl KeyBinding {
     pub fn size(mut self, size: Pixels) -> Self {
         self.size = Some(size);
         self
+    }
+
+    pub fn vim_mode(mut self, enabled: bool) -> Self {
+        self.vim_mode = enabled;
+        self
+    }
+
+    fn render_key(&self, keystroke: &Keystroke, color: Option<Color>) -> AnyElement {
+        let key_icon = icon_for_key(keystroke, self.platform_style);
+        match key_icon {
+            Some(icon) => KeyIcon::new(icon, color).into_any_element(),
+            None => {
+                if self.vim_mode {
+                    if keystroke.modifiers.shift && keystroke.key.len() == 1 {
+                        Key::new(&keystroke.key.to_ascii_uppercase(), color).into_any_element()
+                    } else {
+                        Key::new(&keystroke.key, color).into_any_element()
+                    }
+                } else {
+                    Key::new(capitalize(&keystroke.key), color)
+                        .size(self.size)
+                        .into_any_element()
+                }
+            }
+        }
     }
 }
 
@@ -94,25 +136,8 @@ impl RenderOnce for KeyBinding {
                         self.size,
                         false,
                     ))
-                    .map(|el| {
-                        el.child(render_key(&keystroke, self.platform_style, None, self.size))
-                    })
+                    .map(|el| el.child(self.render_key(&keystroke, None)))
             }))
-    }
-}
-
-pub fn render_key(
-    keystroke: &Keystroke,
-    platform_style: PlatformStyle,
-    color: Option<Color>,
-    size: Option<Pixels>,
-) -> AnyElement {
-    let key_icon = icon_for_key(keystroke, platform_style);
-    match key_icon {
-        Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
-        None => Key::new(capitalize(&keystroke.key), color)
-            .size(size)
-            .into_any_element(),
     }
 }
 

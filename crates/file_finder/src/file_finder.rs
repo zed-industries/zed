@@ -1317,7 +1317,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("open-selection", "Open")
-                        .key_binding(KeyBinding::for_action(&menu::Confirm, window))
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)
                         }),
@@ -1334,6 +1334,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     &ToggleMenu,
                                     &context,
                                     window,
+                                    cx,
                                 )),
                         )
                         .menu({

@@ -387,7 +387,7 @@ impl Render for ProposedChangesEditorToolbar {
             Some(editor) => {
                 let focus_handle = editor.focus_handle(cx);
                 let keybinding =
-                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window)
+                    KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
                         .map(|binding| binding.into_any_element());
 
                 button_like.children(keybinding).on_click({

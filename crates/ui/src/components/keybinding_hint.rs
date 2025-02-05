@@ -210,22 +210,22 @@ impl ComponentPreview for KeybindingHint {
         "Used to display hint text for keyboard shortcuts. Can have a prefix and suffix."
     }
 
-    fn examples(window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(window: &mut Window, cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         let home_fallback = gpui::KeyBinding::new("home", menu::SelectFirst, None);
-        let home = KeyBinding::for_action(&menu::SelectFirst, window)
-            .unwrap_or(KeyBinding::new(home_fallback));
+        let home = KeyBinding::for_action(&menu::SelectFirst, window, cx)
+            .unwrap_or(KeyBinding::new(home_fallback, cx));
 
         let end_fallback = gpui::KeyBinding::new("end", menu::SelectLast, None);
-        let end = KeyBinding::for_action(&menu::SelectLast, window)
-            .unwrap_or(KeyBinding::new(end_fallback));
+        let end = KeyBinding::for_action(&menu::SelectLast, window, cx)
+            .unwrap_or(KeyBinding::new(end_fallback, cx));
 
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
-        let enter = KeyBinding::for_action(&menu::Confirm, window)
-            .unwrap_or(KeyBinding::new(enter_fallback));
+        let enter = KeyBinding::for_action(&menu::Confirm, window, cx)
+            .unwrap_or(KeyBinding::new(enter_fallback, cx));
 
         let escape_fallback = gpui::KeyBinding::new("escape", menu::Cancel, None);
-        let escape = KeyBinding::for_action(&menu::Cancel, window)
-            .unwrap_or(KeyBinding::new(escape_fallback));
+        let escape = KeyBinding::for_action(&menu::Cancel, window, cx)
+            .unwrap_or(KeyBinding::new(escape_fallback, cx));
 
         vec![
             example_group_with_title(
