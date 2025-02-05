@@ -724,6 +724,9 @@ impl LanguageServer {
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
+                        prepare_support_default_behavior: Some(
+                            PrepareSupportDefaultBehavior::IDENTIFIER,
+                        ),
                         ..Default::default()
                     }),
                     hover: Some(HoverClientCapabilities {
