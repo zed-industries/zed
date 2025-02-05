@@ -10700,6 +10700,7 @@ dependencies = [
  "sysinfo",
  "telemetry_events",
  "toml 0.8.19",
+ "unindent",
  "util",
  "worktree",
 ]
