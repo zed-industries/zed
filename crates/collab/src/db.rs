@@ -672,6 +672,12 @@ impl RejoinedProject {
                     id: worktree.id,
                     root_name: worktree.root_name.clone(),
                     visible: worktree.visible,
+                    abs_path_deprecated: Some(
+                        proto::CrossPlatformPath {
+                            path: worktree.abs_path.clone(),
+                        }
+                        .to_db_string(),
+                    ),
                     abs_path: Some(proto::CrossPlatformPath {
                         path: worktree.abs_path.clone(),
                     }),
@@ -856,6 +862,7 @@ fn db_status_to_proto(
             }
         };
     Ok(proto::StatusEntry {
+        repo_path_deprecated: Some(entry.repo_path.clone()),
         repo_path: Some(proto::CrossPlatformPath {
             path: entry.repo_path.split('/').map(String::from).collect(),
         }),

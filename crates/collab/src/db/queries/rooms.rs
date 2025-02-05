@@ -653,12 +653,14 @@ impl Database {
                         worktree.updated_entries.push(proto::Entry {
                             id: db_entry.id as u64,
                             is_dir: db_entry.is_dir,
+                            path_deprecated: Some(db_entry.path.clone()),
                             path: Some(proto::CrossPlatformPath::from(db_entry.path)),
                             inode: db_entry.inode as u64,
                             mtime: Some(proto::Timestamp {
                                 seconds: db_entry.mtime_seconds as u64,
                                 nanos: db_entry.mtime_nanos as u32,
                             }),
+                            canonical_path_deprecated: db_entry.canonical_path.clone(),
                             canonical_path: db_entry
                                 .canonical_path
                                 .map(proto::CrossPlatformPath::from_db_string),
@@ -726,12 +728,14 @@ impl Database {
                             )
                             .stream(tx)
                             .await?;
+                        let mut removed_statuses_deprecated = Vec::new();
                         let mut removed_statuses = Vec::new();
                         let mut updated_statuses = Vec::new();
 
                         while let Some(db_status) = db_statuses.next().await {
                             let db_status: worktree_repository_statuses::Model = db_status?;
                             if db_status.is_deleted {
+                                removed_statuses_deprecated.push(db_status.repo_path.clone());
                                 removed_statuses.push(proto::CrossPlatformPath::from_db_string(
                                     db_status.repo_path,
                                 ));
@@ -751,6 +755,7 @@ impl Database {
                             work_directory_id: db_repository.work_directory_id as u64,
                             branch: db_repository.branch,
                             updated_statuses,
+                            removed_statuses_deprecated,
                             removed_statuses,
                             current_merge_conflicts,
                         });

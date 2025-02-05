@@ -630,11 +630,13 @@ impl RemoteBufferStore {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
         cx.spawn(move |this, mut cx| async move {
+            let path: proto::CrossPlatformPath = path.into();
             let response = client
                 .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id,
-                    path: Some(path.into()),
+                    path_deprecated: Some(path.to_db_string()),
+                    path: Some(path),
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;

@@ -1441,6 +1441,12 @@ fn notify_rejoined_projects(
             let message = proto::UpdateWorktree {
                 project_id: project.id.to_proto(),
                 worktree_id: worktree.id,
+                abs_path_deprecated: Some(
+                    proto::CrossPlatformPath {
+                        path: worktree.abs_path.clone(),
+                    }
+                    .to_db_string(),
+                ),
                 abs_path: Some(proto::CrossPlatformPath {
                     path: worktree.abs_path.clone(),
                 }),
@@ -1469,14 +1475,16 @@ fn notify_rejoined_projects(
             }
 
             for settings_file in worktree.settings_files {
+                let path = proto::CrossPlatformPath {
+                    path: worktree.abs_path.clone(),
+                };
                 session.peer.send(
                     session.connection_id,
                     proto::UpdateWorktreeSettings {
                         project_id: project.id.to_proto(),
                         worktree_id: worktree.id,
-                        path: Some(proto::CrossPlatformPath {
-                            path: settings_file.path,
-                        }),
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path),
                         content: Some(settings_file.content),
                         kind: Some(settings_file.kind.to_proto().into()),
                     },
@@ -1839,6 +1847,12 @@ fn join_project_internal(
             id: *id,
             root_name: worktree.root_name.clone(),
             visible: worktree.visible,
+            abs_path_deprecated: Some(
+                proto::CrossPlatformPath {
+                    path: worktree.abs_path.clone(),
+                }
+                .to_db_string(),
+            ),
             abs_path: Some(proto::CrossPlatformPath {
                 path: worktree.abs_path.clone(),
             }),
@@ -1876,13 +1890,15 @@ fn join_project_internal(
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
+        let abs_path = proto::CrossPlatformPath {
+            path: worktree.abs_path.clone(),
+        };
         // Stream this worktree's entries.
         let message = proto::UpdateWorktree {
             project_id: project_id.to_proto(),
             worktree_id,
-            abs_path: Some(proto::CrossPlatformPath {
-                path: worktree.abs_path.clone(),
-            }),
+            abs_path_deprecated: Some(abs_path.to_db_string()),
+            abs_path: Some(abs_path),
             root_name: worktree.root_name,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
@@ -1908,14 +1924,16 @@ fn join_project_internal(
         }
 
         for settings_file in worktree.settings_files {
+            let path = proto::CrossPlatformPath {
+                path: settings_file.path,
+            };
             session.peer.send(
                 session.connection_id,
                 proto::UpdateWorktreeSettings {
                     project_id: project_id.to_proto(),
                     worktree_id: worktree.id,
-                    path: Some(proto::CrossPlatformPath {
-                        path: settings_file.path,
-                    }),
+                    path_deprecated: Some(path.to_db_string()),
+                    path: Some(path),
                     content: Some(settings_file.content),
                     kind: Some(settings_file.kind.to_proto() as i32),
                 },

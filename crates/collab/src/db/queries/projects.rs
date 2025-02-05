@@ -743,12 +743,14 @@ impl Database {
                     worktree.entries.push(proto::Entry {
                         id: db_entry.id as u64,
                         is_dir: db_entry.is_dir,
+                        path_deprecated: Some(db_entry.path.clone()),
                         path: Some(proto::CrossPlatformPath::from_db_string(db_entry.path)),
                         inode: db_entry.inode as u64,
                         mtime: Some(proto::Timestamp {
                             seconds: db_entry.mtime_seconds as u64,
                             nanos: db_entry.mtime_nanos as u32,
                         }),
+                        canonical_path_deprecated: db_entry.canonical_path.clone(),
                         canonical_path: db_entry
                             .canonical_path
                             .map(proto::CrossPlatformPath::from_db_string),
@@ -813,6 +815,7 @@ impl Database {
                             work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
                             updated_statuses,
+                            removed_statuses_deprecated: Vec::new(),
                             removed_statuses: Vec::new(),
                             current_merge_conflicts,
                         },
@@ -833,6 +836,7 @@ impl Database {
                     worktree
                         .diagnostic_summaries
                         .push(proto::DiagnosticSummary {
+                            path_deprecated: Some(db_summary.path.clone()),
                             path: Some(proto::CrossPlatformPath {
                                 path: db_summary.path.split('/').map(Into::into).collect(),
                             }),

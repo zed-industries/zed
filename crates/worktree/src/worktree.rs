@@ -6366,3 +6366,34 @@ impl CreatedEntry {
         }
     }
 }
+
+impl ProjectEntryId {
+    pub const MAX: Self = Self(usize::MAX);
+    pub const MIN: Self = Self(usize::MIN);
+
+    pub fn new(counter: &AtomicUsize) -> Self {
+        Self(counter.fetch_add(1, SeqCst))
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CreatedEntry {
+    pub fn to_included(self) -> Option<Entry> {
+        match self {
+            CreatedEntry::Included(entry) => Some(entry),
+            CreatedEntry::Excluded { .. } => None,
+        }
+    }
+}
