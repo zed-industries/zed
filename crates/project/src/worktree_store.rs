@@ -268,10 +268,12 @@ impl WorktreeStore {
         cx.spawn(|this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
+            let path: proto::CrossPlatformPath = abs_path.clone().into();
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
-                    path: Some(abs_path.clone().into()),
+                    path_deprecated: Some(path.to_db_string()),
+                    path: Some(path),
                     visible,
                 })
                 .await?;
@@ -306,6 +308,10 @@ impl WorktreeStore {
                         id: response.worktree_id,
                         root_name,
                         visible,
+                        abs_path_deprecated: response
+                            .canonicalized_path
+                            .as_ref()
+                            .map(|path| path.to_db_string()),
                         abs_path: response.canonicalized_path,
                     },
                     client,
@@ -603,11 +609,13 @@ impl WorktreeStore {
         self.worktrees()
             .map(|worktree| {
                 let worktree = worktree.read(cx);
+                let abs_path: proto::CrossPlatformPath = worktree.abs_path().into();
                 proto::WorktreeMetadata {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name().into(),
                     visible: worktree.is_visible(),
-                    abs_path: Some(worktree.abs_path().into()),
+                    abs_path_deprecated: Some(abs_path.to_db_string()),
+                    abs_path: Some(abs_path),
                 }
             })
             .collect()
@@ -930,11 +938,13 @@ impl WorktreeStore {
                 Task::ready(branches)
             }
             Worktree::Remote(remote_worktree) => {
+                let path: proto::CrossPlatformPath = project_path.path.into();
                 let request = remote_worktree.client().request(proto::GitBranches {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: project_path.worktree_id.to_proto(),
-                        path: Some(project_path.path.into()), // Root path
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path), // Root path
                     }),
                 });
 
@@ -1001,11 +1011,13 @@ impl WorktreeStore {
                 Task::ready(result)
             }
             Worktree::Remote(remote_worktree) => {
+                let path: proto::CrossPlatformPath = repository.path.into();
                 let request = remote_worktree.client().request(proto::UpdateGitBranch {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: repository.worktree_id.to_proto(),
-                        path: Some(repository.path.into()), // Root path
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path), // Root path
                     }),
                     branch_name: new_branch,
                 });

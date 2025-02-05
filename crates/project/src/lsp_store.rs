@@ -5461,12 +5461,14 @@ impl LspStore {
 
         if !old_summary.is_empty() || !new_summary.is_empty() {
             if let Some((downstream_client, project_id)) = &self.downstream_client {
+                let path: proto::CrossPlatformPath = worktree_path.clone().into();
                 downstream_client
                     .send(proto::UpdateDiagnosticSummary {
                         project_id: *project_id,
                         worktree_id: worktree_id.to_proto(),
                         summary: Some(proto::DiagnosticSummary {
-                            path: Some(worktree_path.clone().into()),
+                            path_deprecated: Some(path.to_db_string()),
+                            path: Some(path),
                             language_server_id: server_id.0 as u64,
                             error_count: new_summary.error_count as u32,
                             warning_count: new_summary.warning_count as u32,
@@ -6024,12 +6026,14 @@ impl LspStore {
                         .insert(server_id, summary);
                 }
                 if let Some((downstream_client, project_id)) = &this.downstream_client {
+                    let path: proto::CrossPlatformPath = project_path.path.clone().into();
                     downstream_client
                         .send(proto::UpdateDiagnosticSummary {
                             project_id: *project_id,
                             worktree_id: worktree_id.to_proto(),
                             summary: Some(proto::DiagnosticSummary {
-                                path: Some(project_path.path.clone().into()),
+                                path_deprecated: Some(path.to_db_string()),
+                                path: Some(path),
                                 language_server_id: server_id.0 as u64,
                                 error_count: summary.error_count as u32,
                                 warning_count: summary.warning_count as u32,
@@ -7214,12 +7218,14 @@ impl LspStore {
             summaries.retain(|path, summaries_by_server_id| {
                 if summaries_by_server_id.remove(&server_id).is_some() {
                     if let Some((client, project_id)) = self.downstream_client.clone() {
+                        let path: proto::CrossPlatformPath = path.into();
                         client
                             .send(proto::UpdateDiagnosticSummary {
                                 project_id,
                                 worktree_id: worktree_id.to_proto(),
                                 summary: Some(proto::DiagnosticSummary {
-                                    path: Some(path.into()),
+                                    path_deprecated: Some(path.to_db_string()),
+                                    path: Some(path),
                                     language_server_id: server_id.0 as u64,
                                     error_count: 0,
                                     warning_count: 0,
@@ -7869,11 +7875,13 @@ impl LspStore {
     }
 
     fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
+        let path: proto::CrossPlatformPath = symbol.path.path.clone().into();
         proto::Symbol {
             language_server_name: symbol.language_server_name.0.to_string(),
             source_worktree_id: symbol.source_worktree_id.to_proto(),
             worktree_id: symbol.path.worktree_id.to_proto(),
-            path: Some(symbol.path.path.clone().into()),
+            path_deprecated: Some(path.to_db_string()),
+            path: Some(path),
             name: symbol.name.clone(),
             kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
             start: Some(proto::PointUtf16 {
@@ -8367,8 +8375,10 @@ impl DiagnosticSummary {
         language_server_id: LanguageServerId,
         path: &Path,
     ) -> proto::DiagnosticSummary {
+        let path: proto::CrossPlatformPath = path.into();
         proto::DiagnosticSummary {
-            path: Some(path.into()),
+            path_deprecated: Some(path.to_db_string()),
+            path: Some(path),
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,

@@ -301,9 +301,11 @@ impl ProjectPath {
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
+        let path: proto::CrossPlatformPath = self.path.clone().into();
         proto::ProjectPath {
             worktree_id: self.worktree_id.to_proto(),
-            path: Some(self.path.clone().into()),
+            path_deprecated: Some(path.to_db_string()),
+            path: Some(path),
         }
     }
 
@@ -3332,12 +3334,14 @@ impl Project {
                 })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request_path: proto::CrossPlatformPath = path.into();
             let request = ssh_client
                 .read(cx)
                 .proto_client()
                 .request(proto::GetPathMetadata {
                     project_id: SSH_PROJECT_ID,
-                    path: Some(path.into()),
+                    path_deprecated: Some(request_path.to_db_string()),
+                    path: Some(request_path),
                 });
             cx.background_executor().spawn(async move {
                 let response = request.await.log_err()?;
@@ -3413,9 +3417,11 @@ impl Project {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.ssh_client.as_ref() {
+            let path: proto::CrossPlatformPath = query.into();
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
-                path: Some(query.into()),
+                path_deprecated: Some(path.to_db_string()),
+                path: Some(path),
             };
 
             let response = session.read(cx).proto_client().request(request);

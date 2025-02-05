@@ -284,11 +284,13 @@ impl SettingsObserver {
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
             for (path, content) in store.local_settings(worktree.read(cx).id()) {
+                let path: proto::CrossPlatformPath = path.into();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: Some(path.into()),
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
@@ -297,11 +299,13 @@ impl SettingsObserver {
                     .log_err();
             }
             for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
+                let path: proto::CrossPlatformPath = path.into();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path: Some(path.into()),
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
@@ -543,11 +547,13 @@ impl SettingsObserver {
             };
 
             if let Some(downstream_client) = &self.downstream_client {
+                let path: proto::CrossPlatformPath = directory.into();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id: self.project_id,
                         worktree_id: remote_worktree_id.to_proto(),
-                        path: Some(directory.into()),
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path),
                         content: file_content,
                         kind: Some(local_settings_kind_to_proto(kind).into()),
                     })

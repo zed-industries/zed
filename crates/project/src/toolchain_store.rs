@@ -148,10 +148,14 @@ impl ToolchainStore {
             .await;
 
         Ok(proto::ActiveToolchainResponse {
-            toolchain: toolchain.map(|toolchain| proto::Toolchain {
-                name: toolchain.name.into(),
-                path: Some(toolchain.path.to_string().into()),
-                raw_json: toolchain.as_json.to_string(),
+            toolchain: toolchain.map(|toolchain| {
+                let path: proto::CrossPlatformPath = toolchain.path.to_string().into();
+                proto::Toolchain {
+                    name: toolchain.name.into(),
+                    path_deprecated: Some(path.to_db_string()),
+                    path: Some(toolchain.path.to_string().into()),
+                    raw_json: toolchain.as_json.to_string(),
+                }
             }),
         })
     }
@@ -187,10 +191,14 @@ impl ToolchainStore {
             toolchains
                 .toolchains
                 .into_iter()
-                .map(|toolchain| proto::Toolchain {
-                    name: toolchain.name.to_string(),
-                    path: Some(toolchain.path.to_string().into()),
-                    raw_json: toolchain.as_json.to_string(),
+                .map(|toolchain| {
+                    let path: proto::CrossPlatformPath = toolchain.path.to_string().into();
+                    proto::Toolchain {
+                        name: toolchain.name.to_string(),
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path),
+                        raw_json: toolchain.as_json.to_string(),
+                    }
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -358,6 +366,7 @@ impl RemoteToolchainStore {
         let project_id = self.project_id;
         let client = self.client.clone();
         cx.spawn(move |_| async move {
+            let path: proto::CrossPlatformPath = toolchain.path.to_string().into();
             let _ = client
                 .request(proto::ActivateToolchain {
                     project_id,
@@ -365,7 +374,8 @@ impl RemoteToolchainStore {
                     language_name: toolchain.language_name.into(),
                     toolchain: Some(proto::Toolchain {
                         name: toolchain.name.into(),
-                        path: Some(toolchain.path.to_string().into()),
+                        path_deprecated: Some(path.to_db_string()),
+                        path: Some(path),
                         raw_json: toolchain.as_json.to_string(),
                     }),
                 })
