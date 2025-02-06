@@ -6358,6 +6358,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "language",
+ "project",
 ]
 
 [[package]]
@@ -16568,11 +16569,12 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54ca07d631d9d758f1820c7a7e7854ca00619b9783a5b6b3b6057fef06c786cb"
+checksum = "9ea4d8ead1e1158e5ebdd6735df25973781da70de5c8008e3a13595865ca4f31"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -16795,6 +16797,7 @@ dependencies = [
  "log",
  "menu",
  "postage",
+ "project",
  "regex",
  "reqwest_client",
  "rpc",

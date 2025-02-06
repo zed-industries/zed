@@ -32,10 +32,7 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
-use lsp::{
-    CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions,
-    LanguageServerName,
-};
+use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -73,12 +70,12 @@ use util::serde::default_true;
 
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic_set::DiagnosticEntry;
+pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use language_registry::{
     AvailableLanguage, LanguageNotFound, LanguageQueries, LanguageRegistry,
     LanguageServerBinaryStatus, QUERY_FILENAME_PREFIXES,
 };
-pub use lsp::LanguageServerId;
+pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
 pub use syntax_map::{OwnedSyntaxLayer, SyntaxLayer, ToTreeSitterPoint, TreeSitterOptions};
 pub use text::{AnchorRangeExt, LineEnding};

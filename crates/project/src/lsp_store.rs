@@ -166,6 +166,19 @@ pub struct LocalLspStore {
 }
 
 impl LocalLspStore {
+    /// Returns the running language server for the given ID. Note if the language server is starting, it will not be returned.
+    pub fn running_language_server_for_id(
+        &self,
+        id: LanguageServerId,
+    ) -> Option<&Arc<LanguageServer>> {
+        let language_server_state = self.language_servers.get(&id)?;
+
+        match language_server_state {
+            LanguageServerState::Running { server, .. } => Some(server),
+            LanguageServerState::Starting(_) => None,
+        }
+    }
+
     fn start_language_server(
         &mut self,
         worktree_handle: &Entity<Worktree>,
