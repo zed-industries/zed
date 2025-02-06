@@ -149,7 +149,7 @@ pub trait ToProto {
 
 impl FromProto for PathBuf {
     fn from_proto(proto: String) -> Self {
-        proto.split('/').collect()
+        proto.split("/").collect()
     }
 }
 
@@ -163,10 +163,7 @@ impl ToProto for PathBuf {
     #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
         self.components()
-            .filter_map(|comp| match comp {
-                std::path::Component::RootDir => None,
-                _ => Some(comp.as_os_str().to_string_lossy().to_string()),
-            })
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join("/")
     }
@@ -181,10 +178,7 @@ impl ToProto for &Path {
     #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
         self.components()
-            .filter_map(|comp| match comp {
-                std::path::Component::RootDir => None,
-                _ => Some(comp.as_os_str().to_string_lossy().to_string()),
-            })
+            .map(|comp| comp.as_os_str().to_string_lossy().to_string())
             .collect::<Vec<_>>()
             .join("/")
     }
@@ -814,5 +808,23 @@ mod tests {
             id: u32::MAX,
         };
         assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_proto() {
+        fn generate_proto_path(path: PathBuf) -> PathBuf {
+            let proto = path.to_proto();
+            PathBuf::from_proto(proto)
+        }
+
+        let path = PathBuf::from("C:\\foo\\bar");
+        assert_eq!(path, generate_proto_path(path.clone()));
+
+        let path = PathBuf::from("C:/foo/bar/");
+        assert_eq!(path, generate_proto_path(path.clone()));
+
+        let path = PathBuf::from("C:/foo\\bar\\");
+        assert_eq!(path, generate_proto_path(path.clone()));
     }
 }

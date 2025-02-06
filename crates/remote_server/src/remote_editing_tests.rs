@@ -961,7 +961,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -980,14 +980,14 @@ async fn test_adding_then_removing_then_adding_worktrees(
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (_worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
         })
         .await
         .unwrap();
 
     let (worktree_2, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project2", true, cx)
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
         })
         .await
         .unwrap();
@@ -997,7 +997,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
 
     let (worktree_2, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project2", true, cx)
+            project.find_or_create_worktree(path!("/code/project2"), true, cx)
         })
         .await
         .unwrap();
