@@ -12441,10 +12441,10 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_2.clone(), base_text_2),
             (buffer_3.clone(), base_text_3),
         ] {
-            let change_set = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
             editor
                 .buffer
-                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
         }
     });
     cx.executor().run_until_parked();
@@ -13134,11 +13134,10 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_2.clone(), file_2_old),
                 (buffer_3.clone(), file_3_old),
             ] {
-                let change_set =
-                    cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
+                let diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, &buffer, cx));
                 editor
                     .buffer
-                    .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
+                    .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
             }
         })
         .unwrap();
@@ -13251,10 +13250,10 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     });
     editor
         .update(cx, |editor, _window, cx| {
-            let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base, &buffer, cx));
             editor
                 .buffer
-                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx))
         })
         .unwrap();
 
@@ -14420,10 +14419,10 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
 
         editor.buffer().update(cx, |multibuffer, cx| {
             let buffer = multibuffer.as_singleton().unwrap();
-            let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
+            let diff = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
 
             multibuffer.set_all_diff_hunks_expanded(cx);
-            multibuffer.add_change_set(change_set, cx);
+            multibuffer.add_diff(diff, cx);
 
             buffer.read(cx).remote_id()
         })

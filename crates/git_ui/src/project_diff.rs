@@ -44,7 +44,7 @@ pub(crate) struct ProjectDiff {
 struct DiffBuffer {
     path_key: PathKey,
     buffer: Entity<Buffer>,
-    change_set: Entity<BufferDiff>,
+    diff: Entity<BufferDiff>,
 }
 
 const CONFLICT_NAMESPACE: &'static str = "0";
@@ -286,13 +286,13 @@ impl ProjectDiff {
                     let buffer = load_buffer.await?;
                     let changes = project
                         .update(&mut cx, |project, cx| {
-                            project.open_uncommitted_changes(buffer.clone(), cx)
+                            project.open_uncommitted_diff(buffer.clone(), cx)
                         })?
                         .await?;
                     Ok(DiffBuffer {
                         path_key,
                         buffer,
-                        change_set: changes,
+                        diff: changes,
                     })
                 }));
             }
@@ -313,15 +313,14 @@ impl ProjectDiff {
     ) {
         let path_key = diff_buffer.path_key;
         let buffer = diff_buffer.buffer;
-        let change_set = diff_buffer.change_set;
+        let diff = diff_buffer.diff;
 
         let snapshot = buffer.read(cx).snapshot();
-        let change_set = change_set.read(cx);
-        let diff_hunk_ranges = if change_set.snapshot.base_text.is_none() {
+        let diff = diff.read(cx);
+        let diff_hunk_ranges = if diff.snapshot.base_text.is_none() {
             vec![Point::zero()..snapshot.max_point()]
         } else {
-            change_set
-                .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+            diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>()
         };

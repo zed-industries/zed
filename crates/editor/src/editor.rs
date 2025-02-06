@@ -1287,7 +1287,7 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            get_uncommitted_changes_for_buffer(
+            get_uncommitted_diff_for_buffer(
                 &project,
                 buffer.read(cx).all_buffers(),
                 buffer.clone(),
@@ -13733,7 +13733,7 @@ impl Editor {
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_changes_for_buffer(
+                        get_uncommitted_diff_for_buffer(
                             project,
                             [buffer.clone()],
                             self.buffer.clone(),
@@ -14492,7 +14492,7 @@ impl Editor {
     }
 }
 
-fn get_uncommitted_changes_for_buffer(
+fn get_uncommitted_diff_for_buffer(
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
@@ -14501,15 +14501,15 @@ fn get_uncommitted_changes_for_buffer(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_changes(buffer.clone(), cx))
+            tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
         }
     });
     cx.spawn(|mut cx| async move {
-        let change_sets = futures::future::join_all(tasks).await;
+        let diffs = futures::future::join_all(tasks).await;
         buffer
             .update(&mut cx, |buffer, cx| {
-                for change_set in change_sets.into_iter().flatten() {
-                    buffer.add_change_set(change_set, cx);
+                for diff in diffs.into_iter().flatten() {
+                    buffer.add_diff(diff, cx);
                 }
             })
             .ok();

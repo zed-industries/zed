@@ -1956,7 +1956,7 @@ impl Project {
         })
     }
 
-    pub fn open_unstaged_changes(
+    pub fn open_unstaged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -1966,11 +1966,11 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_changes(buffer, cx)
+            buffer_store.open_unstaged_diff(buffer, cx)
         })
     }
 
-    pub fn open_uncommitted_changes(
+    pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
@@ -1980,7 +1980,7 @@ impl Project {
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_uncommitted_changes(buffer, cx)
+            buffer_store.open_uncommitted_diff(buffer, cx)
         })
     }
 
