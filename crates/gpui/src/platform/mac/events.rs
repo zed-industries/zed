@@ -129,7 +129,7 @@ impl PlatformInput {
                     Self::MouseDown(MouseDownEvent {
                         button,
                         position,
-                        unscaled_position: position,
+                        absolute_position: position,
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
                         first_mouse: false,
@@ -158,7 +158,7 @@ impl PlatformInput {
                     Self::MouseUp(MouseUpEvent {
                         button,
                         position,
-                        unscaled_position: position,
+                        absolute_position: position,
                         modifiers: read_modifiers(native_event),
                         click_count: native_event.clickCount() as usize,
                     })
@@ -185,7 +185,7 @@ impl PlatformInput {
                         Self::MouseDown(MouseDownEvent {
                             button: MouseButton::Navigate(direction),
                             position,
-                            unscaled_position: position,
+                            absolute_position: position,
                             modifiers: read_modifiers(native_event),
                             click_count: 1,
                             first_mouse: false,
@@ -221,7 +221,7 @@ impl PlatformInput {
 
                 Self::ScrollWheel(ScrollWheelEvent {
                     position,
-                    unscaled_position: position,
+                    absolute_position: position,
                     delta,
                     touch_phase: phase,
                     modifiers: read_modifiers(native_event),
@@ -249,7 +249,7 @@ impl PlatformInput {
                     Self::MouseMove(MouseMoveEvent {
                         pressed_button: Some(pressed_button),
                         position,
-                        unscaled_position: position,
+                        absolute_position: position,
                         modifiers: read_modifiers(native_event),
                     })
                 })
@@ -262,7 +262,7 @@ impl PlatformInput {
 
                 Self::MouseMove(MouseMoveEvent {
                     position,
-                    unscaled_position: position,
+                    absolute_position: position,
                     pressed_button: None,
                     modifiers: read_modifiers(native_event),
                 })

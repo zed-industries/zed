@@ -1528,7 +1528,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     }
                     let input = PlatformInput::MouseMove(MouseMoveEvent {
                         position: state.mouse_location.unwrap(),
-                        unscaled_position: state.mouse_location.unwrap(),
+                        absolute_position: state.mouse_location.unwrap(),
                         pressed_button: state.button_pressed,
                         modifiers: state.modifiers,
                     });
@@ -1594,7 +1594,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             let input = PlatformInput::MouseDown(MouseDownEvent {
                                 button,
                                 position: state.mouse_location.unwrap(),
-                                unscaled_position: state.mouse_location.unwrap(),
+                                absolute_position: state.mouse_location.unwrap(),
                                 modifiers: state.modifiers,
                                 click_count: state.click.current_count,
                                 first_mouse: state.enter_token.take().is_some(),
@@ -1610,7 +1610,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             let input = PlatformInput::MouseUp(MouseUpEvent {
                                 button,
                                 position: state.mouse_location.unwrap(),
-                                unscaled_position: state.mouse_location.unwrap(),
+                                absolute_position: state.mouse_location.unwrap(),
                                 modifiers: state.modifiers,
                                 click_count: state.click.current_count,
                             });
@@ -1725,7 +1725,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         if let Some(window) = state.mouse_focused_window.clone() {
                             let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
                                 position: state.mouse_location.unwrap(),
-                                unscaled_position: state.mouse_location.unwrap(),
+                                absolute_position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
@@ -1737,7 +1737,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         if let Some(window) = state.mouse_focused_window.clone() {
                             let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
                                 position: state.mouse_location.unwrap(),
-                                unscaled_position: state.mouse_location.unwrap(),
+                                absolute_position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Lines(discrete),
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,

@@ -156,7 +156,6 @@ fn paint_line(
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
         let text_system = cx.text_system().clone();
-        let (scale_factor, scale_offset) = window.scale_factor(false);
         let mut glyph_origin = point(
             aligned_origin_x(
                 origin,
@@ -345,10 +344,10 @@ fn paint_line(
                     );
                 }
 
-                let max_glyph_bounds = Bounds {
-                    origin: glyph_origin + scale_offset,
+                let max_glyph_bounds = window.to_absolute_coordinates(Bounds {
+                    origin: glyph_origin,
                     size: max_glyph_size,
-                } * px(scale_factor);
+                });
 
                 let content_mask = window.content_mask();
                 if max_glyph_bounds.intersects(&content_mask.bounds) {

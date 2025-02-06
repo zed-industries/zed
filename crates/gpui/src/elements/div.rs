@@ -1203,11 +1203,18 @@ impl Element for Div {
             self.interactivity
                 .request_layout(global_id, window, cx, |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
-                        child_layout_ids = self
-                            .children
-                            .iter_mut()
-                            .map(|child| child.request_layout(window, cx))
-                            .collect::<SmallVec<_>>();
+                        window.with_coordinate_space(
+                            Point::default(),
+                            style.scale_multiplier,
+                            true,
+                            |window| {
+                                child_layout_ids = self
+                                    .children
+                                    .iter_mut()
+                                    .map(|child| child.request_layout(window, cx))
+                                    .collect::<SmallVec<_>>();
+                            },
+                        );
                         window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
                 });
@@ -1438,10 +1445,7 @@ impl Interactivity {
                 }
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
-                let layout_id =
-                    window.with_scale(style.scale_multiplier, Point::default(), |window| {
-                        f(style, window, cx)
-                    });
+                let layout_id = f(style, window, cx);
                 (layout_id, element_state)
             },
         )
@@ -1468,39 +1472,37 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
                 let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
-                window.with_scale(style.scale_multiplier, bounds.origin, |window| {
-                    if let Some(element_state) = element_state.as_mut() {
-                        if let Some(clicked_state) = element_state.clicked_state.as_ref() {
-                            let clicked_state = clicked_state.borrow();
-                            self.active = Some(clicked_state.element);
-                        }
-                        if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
-                            if self.tooltip_builder.is_some() {
-                                self.tooltip_id = set_tooltip_on_window(active_tooltip, window);
-                            } else {
-                                // If there is no longer a tooltip builder, remove the active tooltip.
-                                element_state.active_tooltip.take();
-                            }
+                if let Some(element_state) = element_state.as_mut() {
+                    if let Some(clicked_state) = element_state.clicked_state.as_ref() {
+                        let clicked_state = clicked_state.borrow();
+                        self.active = Some(clicked_state.element);
+                    }
+                    if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
+                        if self.tooltip_builder.is_some() {
+                            self.tooltip_id = set_tooltip_on_window(active_tooltip, window);
+                        } else {
+                            // If there is no longer a tooltip builder, remove the active tooltip.
+                            element_state.active_tooltip.take();
                         }
                     }
+                }
 
-                    window.with_text_style(style.text_style().cloned(), |window| {
-                        window.with_content_mask(
-                            style.overflow_mask(bounds, window.rem_size()),
-                            |window| {
-                                let hitbox = if self.should_insert_hitbox(&style) {
-                                    Some(window.insert_hitbox(bounds, self.occlude_mouse))
-                                } else {
-                                    None
-                                };
+                window.with_text_style(style.text_style().cloned(), |window| {
+                    window.with_content_mask(
+                        style.overflow_mask(bounds, window.rem_size()),
+                        |window| {
+                            let hitbox = if self.should_insert_hitbox(&style) {
+                                Some(window.insert_hitbox(bounds, self.occlude_mouse))
+                            } else {
+                                None
+                            };
 
-                                let scroll_offset =
-                                    self.clamp_scroll_position(bounds, &style, window, cx);
-                                let result = f(&style, scroll_offset, hitbox, window, cx);
-                                (result, element_state)
-                            },
-                        )
-                    })
+                            let scroll_offset =
+                                self.clamp_scroll_position(bounds, &style, window, cx);
+                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            (result, element_state)
+                        },
+                    )
                 })
             },
         )
@@ -1592,68 +1594,66 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
                 let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
-                window.with_scale(style.scale_multiplier, bounds.origin, |window| {
-                    #[cfg(any(feature = "test-support", test))]
-                    if let Some(debug_selector) = &self.debug_selector {
-                        window
-                            .next_frame
-                            .debug_bounds
-                            .insert(debug_selector.clone(), bounds);
-                    }
+                #[cfg(any(feature = "test-support", test))]
+                if let Some(debug_selector) = &self.debug_selector {
+                    window
+                        .next_frame
+                        .debug_bounds
+                        .insert(debug_selector.clone(), bounds);
+                }
 
-                    self.paint_hover_group_handler(window, cx);
+                self.paint_hover_group_handler(window, cx);
 
-                    if style.visibility == Visibility::Hidden {
-                        return ((), element_state);
-                    }
+                if style.visibility == Visibility::Hidden {
+                    return ((), element_state);
+                }
 
-                    window.with_element_opacity(style.opacity, |window| {
-                        style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
-                            window.with_text_style(style.text_style().cloned(), |window| {
-                                window.with_content_mask(
-                                    style.overflow_mask(bounds, window.rem_size()),
-                                    |window| {
-                                        if let Some(hitbox) = hitbox {
-                                            #[cfg(debug_assertions)]
-                                            self.paint_debug_info(
-                                                global_id, hitbox, &style, window, cx,
-                                            );
+                window.with_element_opacity(style.opacity, |window| {
+                    style.paint(bounds, window, cx, |window: &mut Window, cx: &mut App| {
+                        window.with_text_style(style.text_style().cloned(), |window| {
+                            window.with_content_mask(
+                                style.overflow_mask(bounds, window.rem_size()),
+                                |window| {
+                                    if let Some(hitbox) = hitbox {
+                                        #[cfg(debug_assertions)]
+                                        self.paint_debug_info(
+                                            global_id, hitbox, &style, window, cx,
+                                        );
 
-                                            if !cx.has_active_drag() {
-                                                if let Some(mouse_cursor) = style.mouse_cursor {
-                                                    window.set_cursor_style(mouse_cursor, hitbox);
-                                                }
-                                            }
-
-                                            if let Some(group) = self.group.clone() {
-                                                GroupHitboxes::push(group, hitbox.id, cx);
-                                            }
-
-                                            self.paint_mouse_listeners(
-                                                hitbox,
-                                                element_state.as_mut(),
-                                                window,
-                                                cx,
-                                            );
-                                            self.paint_scroll_listener(hitbox, &style, window, cx);
-                                        }
-
-                                        self.paint_keyboard_listeners(window, cx);
-                                        f(&style, window, cx);
-
-                                        if hitbox.is_some() {
-                                            if let Some(group) = self.group.as_ref() {
-                                                GroupHitboxes::pop(group, cx);
+                                        if !cx.has_active_drag() {
+                                            if let Some(mouse_cursor) = style.mouse_cursor {
+                                                window.set_cursor_style(mouse_cursor, hitbox);
                                             }
                                         }
-                                    },
-                                );
-                            });
+
+                                        if let Some(group) = self.group.clone() {
+                                            GroupHitboxes::push(group, hitbox.id, cx);
+                                        }
+
+                                        self.paint_mouse_listeners(
+                                            hitbox,
+                                            element_state.as_mut(),
+                                            window,
+                                            cx,
+                                        );
+                                        self.paint_scroll_listener(hitbox, &style, window, cx);
+                                    }
+
+                                    self.paint_keyboard_listeners(window, cx);
+                                    f(&style, window, cx);
+
+                                    if hitbox.is_some() {
+                                        if let Some(group) = self.group.as_ref() {
+                                            GroupHitboxes::pop(group, cx);
+                                        }
+                                    }
+                                },
+                            );
                         });
                     });
+                });
 
-                    ((), element_state)
-                })
+                ((), element_state)
             },
         );
     }

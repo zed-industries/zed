@@ -16,8 +16,8 @@ pub trait KeyEvent: InputEvent {}
 
 /// A mouse event from the platform.
 pub trait MouseEvent: InputEvent + Clone {
-    /// Maps the position from window space to the coordinate space of the element when using the `scale` style.
-    fn to_local_scale(self, scale: (f32, Point<Pixels>)) -> Self;
+    /// Maps the position from window space to the coordinate space of the element.
+    fn to_local_scale(self, origin: Point<Pixels>, scale: Pixels) -> Self;
 }
 
 /// The key down event equivalent for the platform.
@@ -95,11 +95,11 @@ pub struct MouseDownEvent {
     /// Which mouse button was pressed.
     pub button: MouseButton,
 
-    /// The position of the mouse on the window, rescaled into the coordinate space used by bounds.
+    /// The position of the mouse relative to the element
     pub position: Point<Pixels>,
 
     /// The position of the mouse on the window.
-    pub unscaled_position: Point<Pixels>,
+    pub absolute_position: Point<Pixels>,
 
     /// The modifiers that were held down when the mouse was pressed.
     pub modifiers: Modifiers,
@@ -118,9 +118,8 @@ impl InputEvent for MouseDownEvent {
     }
 }
 impl MouseEvent for MouseDownEvent {
-    fn to_local_scale(mut self, scale: (f32, Point<Pixels>)) -> Self {
-        let (scale_factor, scale_offset) = scale;
-        self.position = self.position / scale_factor - scale_offset;
+    fn to_local_scale(mut self, origin: Point<Pixels>, scale: Pixels) -> Self {
+        self.position = (self.position - origin) * (1.0 / scale.0);
         self
     }
 }
@@ -131,11 +130,11 @@ pub struct MouseUpEvent {
     /// Which mouse button was released.
     pub button: MouseButton,
 
-    /// The position of the mouse on the window, rescaled into the coordinate space used by bounds.
+    /// The position of the mouse relative to the element
     pub position: Point<Pixels>,
 
     /// The position of the mouse on the window.
-    pub unscaled_position: Point<Pixels>,
+    pub absolute_position: Point<Pixels>,
 
     /// The modifiers that were held down when the mouse was released.
     pub modifiers: Modifiers,
@@ -151,9 +150,8 @@ impl InputEvent for MouseUpEvent {
     }
 }
 impl MouseEvent for MouseUpEvent {
-    fn to_local_scale(mut self, scale: (f32, Point<Pixels>)) -> Self {
-        let (scale_factor, scale_offset) = scale;
-        self.position = self.position / scale_factor - scale_offset;
+    fn to_local_scale(mut self, origin: Point<Pixels>, scale: Pixels) -> Self {
+        self.position = (self.position - origin) * (1.0 / scale.0);
         self
     }
 }
@@ -236,11 +234,11 @@ impl Default for NavigationDirection {
 /// A mouse move event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct MouseMoveEvent {
-    /// The position of the mouse on the window, rescaled into the coordinate space used by bounds.
+    /// The position of the mouse relative to the element
     pub position: Point<Pixels>,
 
     /// The position of the mouse on the window.
-    pub unscaled_position: Point<Pixels>,
+    pub absolute_position: Point<Pixels>,
 
     /// The mouse button that was pressed, if any.
     pub pressed_button: Option<MouseButton>,
@@ -256,9 +254,8 @@ impl InputEvent for MouseMoveEvent {
     }
 }
 impl MouseEvent for MouseMoveEvent {
-    fn to_local_scale(mut self, scale: (f32, Point<Pixels>)) -> Self {
-        let (scale_factor, scale_offset) = scale;
-        self.position = self.position / scale_factor - scale_offset;
+    fn to_local_scale(mut self, origin: Point<Pixels>, scale: Pixels) -> Self {
+        self.position = (self.position - origin) * (1.0 / scale.0);
         self
     }
 }
@@ -273,11 +270,11 @@ impl MouseMoveEvent {
 /// A mouse wheel event from the platform
 #[derive(Clone, Debug, Default)]
 pub struct ScrollWheelEvent {
-    /// The position of the mouse on the window, rescaled into the coordinate space used by bounds.
+    /// The position of the mouse relative to the element
     pub position: Point<Pixels>,
 
     /// The position of the mouse on the window.
-    pub unscaled_position: Point<Pixels>,
+    pub absolute_position: Point<Pixels>,
 
     /// The change in scroll wheel position for this event.
     pub delta: ScrollDelta,
@@ -296,9 +293,8 @@ impl InputEvent for ScrollWheelEvent {
     }
 }
 impl MouseEvent for ScrollWheelEvent {
-    fn to_local_scale(mut self, scale: (f32, Point<Pixels>)) -> Self {
-        let (scale_factor, scale_offset) = scale;
-        self.position = self.position / scale_factor - scale_offset;
+    fn to_local_scale(mut self, origin: Point<Pixels>, scale: Pixels) -> Self {
+        self.position = (self.position - origin) * (1.0 / scale.0);
         self
     }
 }
@@ -404,7 +400,7 @@ impl InputEvent for MouseExitEvent {
     }
 }
 impl MouseEvent for MouseExitEvent {
-    fn to_local_scale(self, _scale: (f32, Point<Pixels>)) -> Self {
+    fn to_local_scale(mut self, _origin: Point<Pixels>, _scale: Pixels) -> Self {
         self
     }
 }
@@ -466,7 +462,7 @@ impl InputEvent for FileDropEvent {
     }
 }
 impl MouseEvent for FileDropEvent {
-    fn to_local_scale(self, _scale: (f32, Point<Pixels>)) -> Self {
+    fn to_local_scale(self, _origin: Point<Pixels>, _scale: Pixels) -> Self {
         self
     }
 }

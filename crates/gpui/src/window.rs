@@ -36,7 +36,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::{Add, DerefMut, Range},
+    ops::{Add, DerefMut, Mul, Range, Sub},
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -629,7 +629,9 @@ pub struct Window {
     mouse_position: Point<Pixels>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
-    scale_factor_stack: SmallVec<[(f32, Point<Pixels>); 1]>,
+    scale_factor: f32,
+    element_coordinate_scale: Pixels,
+    element_coordinate_origin: Point<Pixels>,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -912,7 +914,9 @@ impl Window {
             mouse_position,
             mouse_hit_test: HitTest::default(),
             modifiers,
-            scale_factor_stack: [(scale_factor, point(px(0.0), px(0.0))); 1].into(),
+            scale_factor,
+            element_coordinate_scale: px(1.0),
+            element_coordinate_origin: Point::default(),
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -1330,7 +1334,7 @@ impl Window {
     }
 
     fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor_stack[0].0 = self.platform_window.scale_factor();
+        self.scale_factor = self.platform_window.scale_factor();
         self.viewport_size = self.platform_window.content_size();
         self.display_id = self.platform_window.display().map(|display| display.id());
 
@@ -1458,51 +1462,57 @@ impl Window {
     /// The scale factor of the display associated with the window. For example, it could
     /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
     /// be rendered as two pixels on screen.
-    pub fn window_scale_factor(&self) -> f32 {
-        self.scale_factor_stack[0].0
+    pub fn scale_factor(&self) -> f32 {
+        self.scale_factor
     }
 
-    /// The scale factor the current element and its children. This can be modified with
-    /// `with_scale`, which will multiply its parent's scale by the multiplier provided.
-    pub fn scale_factor(&self, include_window_scale: bool) -> (f32, Point<Pixels>) {
-        let (scale_factor, offset) = self.scale_factor_stack.iter().fold(
-            (1.0, point(px(0.0), px(0.0))),
-            |(acc, adjustment), &(multiplier, origin)| {
-                (
-                    acc * multiplier,
-                    adjustment + (origin - origin * multiplier) / multiplier,
-                )
-            },
-        );
-
-        let scale_factor = if include_window_scale {
-            scale_factor
-        } else {
-            scale_factor / self.window_scale_factor()
-        };
-
-        (scale_factor, offset)
-    }
-
-    pub fn with_scale<F, R>(
+    pub fn with_coordinate_space<F, R>(
         &mut self,
-        multiplier: Option<f32>,
-        scale_origin: Point<Pixels>,
+        origin: Point<Pixels>,
+        scale: Option<f32>,
+        relative: bool,
         f: F,
     ) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.invalidator.debug_assert_paint_or_prepaint();
+        let original_origin = self.element_coordinate_origin;
+        let original_scale = self.element_coordinate_scale;
 
-        if let Some(multiplier) = multiplier {
-            self.scale_factor_stack.push((multiplier, scale_origin));
-            let result = f(self);
-            self.scale_factor_stack.pop();
-            result
+        if relative {
+            self.element_coordinate_origin += origin;
+            self.element_coordinate_scale *= scale.unwrap_or(1.0);
         } else {
-            f(self)
+            self.element_coordinate_origin = origin;
+            self.element_coordinate_scale = px(scale.unwrap_or(1.0));
         }
+
+        let result = f(self);
+
+        self.element_coordinate_origin = original_origin;
+        self.element_coordinate_scale = original_scale;
+
+        result
+    }
+
+    pub fn to_element_coordinates<T: Sub<Point<Pixels>>>(
+        &self,
+        x: T,
+    ) -> <<T as Sub<Point<Pixels>>>::Output as Mul<Pixels>>::Output
+    where
+        <T as Sub<Point<Pixels>>>::Output: Mul<Pixels>,
+    {
+        (x - self.element_coordinate_origin) * px(1.0 / self.element_coordinate_scale.0)
+    }
+
+    pub fn to_absolute_coordinates<T: Mul<Pixels>>(
+        &self,
+        x: T,
+    ) -> <<T as Mul<Pixels>>::Output as Add<Point<Pixels>>>::Output
+    where
+        <T as Mul<Pixels>>::Output: Add<Point<Pixels>>,
+    {
+        x * self.element_coordinate_scale + self.element_coordinate_origin
     }
 
     /// The size of an em for the base font of the application. Adjusting this value allows the
@@ -2018,9 +2028,7 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mut mask) = mask {
-            let (mut scale_factor, offset) = self.scale_factor(false);
-            mask.bounds.origin += offset;
-            mask.bounds *= scale_factor;
+            mask.bounds = self.to_absolute_coordinates(mask.bounds);
 
             let mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
@@ -2342,13 +2350,15 @@ impl Window {
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
+        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
-        let clipped_bounds = (bounds + offset)
-            .scale(scale_factor)
-            .intersect(&content_mask.bounds.scale(self.window_scale_factor()));
+        let clipped_bounds = self
+            .to_absolute_coordinates(bounds)
+            .intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
-            self.next_frame.scene.push_layer(clipped_bounds);
+            self.next_frame
+                .scene
+                .push_layer(clipped_bounds.scale(scale_factor));
         }
 
         let result = f(self);
@@ -2371,17 +2381,20 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
+        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
-            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+            let shadow_bounds =
+                (self.to_absolute_coordinates(bounds) + shadow.offset).dilate(shadow.spread_radius);
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: (shadow_bounds + offset).scale(scale_factor),
-                content_mask: content_mask.scale(self.window_scale_factor()),
-                corner_radii: corner_radii.scale(scale_factor),
+                blur_radius: shadow
+                    .blur_radius
+                    .scale(scale_factor * self.element_coordinate_scale.0),
+                bounds: shadow_bounds.scale(scale_factor),
+                content_mask: content_mask.scale(scale_factor),
+                corner_radii: corner_radii.scale(scale_factor * self.element_coordinate_scale.0),
                 color: shadow.color.opacity(opacity),
             });
         }
@@ -2395,35 +2408,44 @@ impl Window {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
-
+        let scale_factor = self.scale_factor();
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             pad: 0,
-            bounds: (quad.bounds + offset).scale(scale_factor),
-            content_mask: content_mask.scale(self.window_scale_factor()),
+            bounds: self
+                .to_absolute_coordinates(quad.bounds)
+                .scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
-            corner_radii: quad.corner_radii.scale(scale_factor),
-            border_widths: quad.border_widths.scale(scale_factor),
+            corner_radii: quad
+                .corner_radii
+                .scale(scale_factor * self.element_coordinate_scale.0),
+            border_widths: quad
+                .border_widths
+                .scale(scale_factor * self.element_coordinate_scale.0),
         });
     }
 
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, path: Path<Pixels>, color: impl Into<Background>) {
+    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
-        let mut path = path.offset(offset).scale(scale_factor);
-        path.content_mask = self.content_mask().scale(self.window_scale_factor());
+        let scale_factor = self.scale_factor;
+        let content_mask = self.content_mask();
 
         let opacity = self.element_opacity();
+        path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
+
+        let path = path
+            .offset(self.element_coordinate_origin / self.element_coordinate_scale.0)
+            .scale(self.element_coordinate_scale.0 * scale_factor);
 
         self.next_frame.scene.insert_primitive(path);
     }
@@ -2439,26 +2461,28 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
+        let scale_factor = self.scale_factor();
         let height = if style.wavy {
             style.thickness * 3.
         } else {
             style.thickness
         };
-        let bounds = Bounds {
+        let bounds = self.to_absolute_coordinates(Bounds {
             origin,
             size: size(width, height),
-        };
+        });
         let content_mask = self.content_mask();
         let element_opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
-            bounds: (bounds + offset).scale(scale_factor),
-            content_mask: content_mask.scale(self.window_scale_factor()),
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness: style.thickness.scale(scale_factor),
+            thickness: style
+                .thickness
+                .scale(scale_factor * self.element_coordinate_scale.0),
             wavy: style.wavy,
         });
     }
@@ -2474,21 +2498,23 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
+        let scale_factor = self.scale_factor();
         let height = style.thickness;
-        let bounds = Bounds {
+        let bounds = self.to_absolute_coordinates(Bounds {
             origin,
             size: size(width, height),
-        };
+        });
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
-            bounds: (bounds + offset).scale(scale_factor),
-            content_mask: content_mask.scale(self.window_scale_factor()),
-            thickness: style.thickness.scale(scale_factor),
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            thickness: style
+                .thickness
+                .scale(scale_factor * self.element_coordinate_scale.0),
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: false,
         });
@@ -2513,8 +2539,8 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let (scale_factor, offset) = self.scale_factor(true);
-        let glyph_origin = (origin + offset).scale(scale_factor);
+        let scale_factor = self.scale_factor();
+        let glyph_origin = self.to_absolute_coordinates(origin).scale(scale_factor);
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
             y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -2524,7 +2550,7 @@ impl Window {
             glyph_id,
             font_size,
             subpixel_variant,
-            scale_factor,
+            scale_factor: scale_factor * self.element_coordinate_scale.0,
             is_emoji: false,
         };
 
@@ -2541,7 +2567,7 @@ impl Window {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(self.window_scale_factor());
+            let content_mask = self.content_mask().scale(scale_factor);
             self.next_frame.scene.insert_primitive(MonochromeSprite {
                 order: 0,
                 pad: 0,
@@ -2572,15 +2598,15 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
-        let glyph_origin = (origin + offset).scale(scale_factor);
+        let scale_factor = self.scale_factor();
+        let glyph_origin = self.to_absolute_coordinates(origin).scale(scale_factor);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
             font_size,
             // We don't render emojis with subpixel variants.
             subpixel_variant: Default::default(),
-            scale_factor,
+            scale_factor: scale_factor * self.element_coordinate_scale.0,
             is_emoji: true,
         };
 
@@ -2598,7 +2624,7 @@ impl Window {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.content_mask().scale(self.window_scale_factor());
+            let content_mask = self.content_mask().scale(scale_factor);
             let opacity = self.element_opacity();
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
@@ -2629,8 +2655,8 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let (scale_factor, offset) = self.scale_factor(true);
-        let bounds = (bounds + offset).scale(scale_factor);
+        let scale_factor = self.scale_factor();
+        let bounds = self.to_absolute_coordinates(bounds).scale(scale_factor);
         // Render the SVG at twice the size to get a higher quality result.
         let params = RenderSvgParams {
             path,
@@ -2650,7 +2676,7 @@ impl Window {
         else {
             return Ok(());
         };
-        let content_mask = self.content_mask().scale(self.window_scale_factor());
+        let content_mask = self.content_mask().scale(scale_factor);
 
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
@@ -2681,8 +2707,8 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor(true);
-        let bounds = (bounds + offset).scale(scale_factor);
+        let scale_factor = self.scale_factor();
+        let bounds = self.to_absolute_coordinates(bounds).scale(scale_factor);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -2700,8 +2726,8 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
-        let content_mask = self.content_mask().scale(self.window_scale_factor());
-        let corner_radii = corner_radii.scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
+        let corner_radii = corner_radii.scale(scale_factor * self.element_coordinate_scale.0);
         let opacity = self.element_opacity();
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
@@ -2726,9 +2752,9 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
-        let bounds = (bounds + offset).scale(scale_factor);
-        let content_mask = self.content_mask().scale(self.window_scale_factor());
+        let scale_factor = self.scale_factor();
+        let bounds = self.to_absolute_coordinates(bounds).scale(scale_factor);
+        let content_mask = self.content_mask().scale(scale_factor);
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,
@@ -2768,15 +2794,17 @@ impl Window {
         cx.layout_id_buffer.clear();
         cx.layout_id_buffer.extend(children);
 
-        let rem_size = self.rem_size();
-        let scale = self.scale_factor(false).0;
+        self.with_coordinate_space(Point::default(), style.scale_multiplier, true, |window| {
+            let scale = window.element_coordinate_scale.0;
+            let rem_size = window.rem_size();
 
-        self.layout_engine.as_mut().unwrap().request_layout(
-            style,
-            rem_size,
-            scale,
-            &cx.layout_id_buffer,
-        )
+            window.layout_engine.as_mut().unwrap().request_layout(
+                style,
+                scale,
+                rem_size,
+                &cx.layout_id_buffer,
+            )
+        })
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -2797,30 +2825,33 @@ impl Window {
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
 
-        let rem_size = self.rem_size();
-        let scale = self.scale_factor(false).0;
+        self.with_coordinate_space(Point::default(), style.scale_multiplier, true, |window| {
+            let scale = window.element_coordinate_scale.0;
+            let rem_size = window.rem_size();
 
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .request_measured_layout(
-                style,
-                rem_size,
-                scale,
-                move |mut known_size, mut available_space, window, app| {
-                    // Unscale size inputs to measure function
-                    known_size = known_size.map(|size| size.map(|size| size / scale));
-                    available_space = available_space.map(|space| match space {
-                        AvailableSpace::Definite(pixels) => {
-                            AvailableSpace::Definite(pixels / scale)
-                        }
-                        x => x,
-                    });
+            window
+                .layout_engine
+                .as_mut()
+                .unwrap()
+                .request_measured_layout(
+                    style,
+                    scale,
+                    rem_size,
+                    move |mut known_size, mut available_space, window, app| {
+                        // Unscale size inputs to measure function
+                        known_size = known_size.map(|size| size.map(|size| size / scale));
+                        available_space = available_space.map(|space| match space {
+                            AvailableSpace::Definite(pixels) => {
+                                AvailableSpace::Definite(pixels / scale)
+                            }
+                            x => x,
+                        });
 
-                    // Rescale output size
-                    measure(known_size, available_space, window, app).map(|size| size * scale)
-                },
-            )
+                        // Rescale output size
+                        measure(known_size, available_space, window, app).map(|size| size * scale)
+                    },
+                )
+        })
     }
 
     /// Compute the layout for the given id within the given available space.
@@ -2858,6 +2889,11 @@ impl Window {
         bounds
     }
 
+    pub fn layout_scale(&self, layout_id: LayoutId) -> f32 {
+        self.invalidator.debug_assert_prepaint();
+        self.layout_engine.as_ref().unwrap().layout_scale(layout_id)
+    }
+
     /// This method should be called during `prepaint`. You can use
     /// the returned [Hitbox] during `paint` or in an event handler
     /// to determine whether the inserted hitbox was the topmost.
@@ -2866,15 +2902,12 @@ impl Window {
     pub fn insert_hitbox(&mut self, mut bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
-        let (scale_factor, offset) = self.scale_factor(false);
-        bounds = (bounds + offset) * px(scale_factor);
-
         let content_mask = self.content_mask();
         let id = self.next_hitbox_id;
         self.next_hitbox_id.0 += 1;
         let hitbox = Hitbox {
             id,
-            bounds,
+            bounds: self.to_absolute_coordinates(bounds),
             content_mask,
             opaque,
         };
@@ -2953,11 +2986,13 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let scale = self.scale_factor(false);
+        let local_origin = self.element_coordinate_origin;
+        let local_scale = self.element_coordinate_scale;
+
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {
-                    let event = event.clone().to_local_scale(scale);
+                    let event = event.clone().to_local_scale(local_origin, local_scale);
                     handler(&event, phase, window, cx)
                 }
             },
@@ -3166,7 +3201,7 @@ impl Window {
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
-                        unscaled_position: position,
+                        absolute_position: position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
@@ -3175,7 +3210,7 @@ impl Window {
                     self.mouse_position = position;
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
-                        unscaled_position: position,
+                        absolute_position: position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
@@ -3186,7 +3221,7 @@ impl Window {
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
-                        unscaled_position: position,
+                        absolute_position: position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     })
@@ -3643,11 +3678,9 @@ impl Window {
         self.on_next_frame(|window, cx| {
             if let Some(mut input_handler) = window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(window, cx) {
-                    let (scale_factor, offset) = window.scale_factor(false);
-
                     window
                         .platform_window
-                        .update_ime_position((bounds + offset).scale(scale_factor));
+                        .update_ime_position(bounds.scale(window.scale_factor()));
                 }
                 window.platform_window.set_input_handler(input_handler);
             }

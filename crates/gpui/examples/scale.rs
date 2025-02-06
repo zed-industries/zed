@@ -48,6 +48,7 @@ impl RenderOnce for ChildElement {
             .bg(white())
             .items_center()
             .justify_center()
+            .overflow_hidden()
             .child(format!("Scale: {:.2}x", self.scale))
     }
 }

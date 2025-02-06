@@ -95,15 +95,13 @@ impl Element for Svg {
             cx,
             |style, window, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
-                    let (scale_factor, offset) = window.scale_factor(false);
-
                     let transformation = self
                         .transformation
                         .as_ref()
                         .map(|transformation| {
                             transformation.into_matrix(
-                                (bounds.center() + offset) * scale_factor,
-                                window.window_scale_factor(),
+                                window.to_absolute_coordinates(bounds.center()),
+                                window.scale_factor(),
                             )
                         })
                         .unwrap_or_default();

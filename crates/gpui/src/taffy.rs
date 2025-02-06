@@ -46,8 +46,8 @@ impl TaffyLayoutEngine {
     pub fn request_layout(
         &mut self,
         style: Style,
-        rem_size: Pixels,
         scale: f32,
+        rem_size: Pixels,
         children: &[LayoutId],
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale);
@@ -74,8 +74,8 @@ impl TaffyLayoutEngine {
     pub fn request_measured_layout(
         &mut self,
         style: Style,
-        rem_size: Pixels,
         scale: f32,
+        rem_size: Pixels,
         measure: impl FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>
             + 'static,
     ) -> LayoutId {
@@ -211,18 +211,17 @@ impl TaffyLayoutEngine {
             size: layout.size.into(),
         };
 
-        let scale = self.layout_scales.get(&id).unwrap();
-        bounds.size *= 1.0 / *scale;
-
         if let Some(parent_id) = self.taffy.parent(id.0) {
-            bounds.origin *= 1.0 / self.layout_scales.get(&parent_id.into()).unwrap();
-
             let parent_bounds = self.layout_bounds(parent_id.into());
             bounds.origin += parent_bounds.origin;
         }
         self.absolute_layout_bounds.insert(id, bounds);
 
         bounds
+    }
+
+    pub fn layout_scale(&self, id: LayoutId) -> f32 {
+        *self.layout_scales.get(&id).unwrap()
     }
 }
 

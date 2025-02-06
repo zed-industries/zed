@@ -6179,7 +6179,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     cx.simulate_event(MouseDownEvent {
         button: MouseButton::Right,
         position: new_tab_button_bounds.center(),
-        unscaled_position: new_tab_button_bounds.center(),
+        absolute_position: new_tab_button_bounds.center(),
         modifiers: Modifiers::default(),
         click_count: 1,
         first_mouse: false,
@@ -6192,7 +6192,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     cx.simulate_event(MouseDownEvent {
         button: MouseButton::Right,
         position: tab_bounds.center(),
-        unscaled_position: tab_bounds.center(),
+        absolute_position: tab_bounds.center(),
         modifiers: Modifiers::default(),
         click_count: 1,
         first_mouse: false,

@@ -6401,7 +6401,6 @@ pub fn client_side_decorations(
     impl Global for GlobalResizeEdge {}
 
     div()
-        .scale(1.2)
         .id("window-backdrop")
         .bg(transparent_black())
         .map(|div| match decorations {

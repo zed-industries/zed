@@ -284,7 +284,7 @@ fn handle_mouse_move_msg(
         let y = lparam.signed_hiword() as f32;
         let event = MouseMoveEvent {
             position: logical_point(x, y, scale_factor),
-            unscaled_position: logical_point(x, y, scale_factor),
+            absolute_position: logical_point(x, y, scale_factor),
             pressed_button,
             modifiers: current_modifiers(),
         };
@@ -465,7 +465,7 @@ fn handle_mouse_down_msg(
         let event = MouseDownEvent {
             button,
             position: logical_point(x, y, scale_factor),
-            unscaled_position: logical_point(x, y, scale_factor),
+            absolute_position: logical_point(x, y, scale_factor),
             modifiers: current_modifiers(),
             click_count,
             first_mouse: false,
@@ -501,7 +501,7 @@ fn handle_mouse_up_msg(
         let event = MouseUpEvent {
             button,
             position: logical_point(x, y, scale_factor),
-            unscaled_position: logical_point(x, y, scale_factor),
+            absolute_position: logical_point(x, y, scale_factor),
             modifiers: current_modifiers(),
             click_count,
         };
@@ -557,7 +557,7 @@ fn handle_mouse_wheel_msg(
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            unscaled_position: logical_point(
+            absolute_position: logical_point(
                 cursor_point.x as f32,
                 cursor_point.y as f32,
                 scale_factor,
@@ -608,7 +608,7 @@ fn handle_mouse_horizontal_wheel_msg(
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = ScrollWheelEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            unscaled_position: logical_point(
+            absolute_position: logical_point(
                 cursor_point.x as f32,
                 cursor_point.y as f32,
                 scale_factor,
@@ -981,7 +981,7 @@ fn handle_nc_mouse_move_msg(
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
         let event = MouseMoveEvent {
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            unscaled_position: logical_point(
+            absolute_position: logical_point(
                 cursor_point.x as f32,
                 cursor_point.y as f32,
                 scale_factor,
@@ -1027,7 +1027,7 @@ fn handle_nc_mouse_down_msg(
         let event = MouseDownEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            unscaled_position: logical_point(
+            absolute_position: logical_point(
                 cursor_point.x as f32,
                 cursor_point.y as f32,
                 scale_factor,
@@ -1087,7 +1087,7 @@ fn handle_nc_mouse_up_msg(
         let event = MouseUpEvent {
             button,
             position: logical_point(cursor_point.x as f32, cursor_point.y as f32, scale_factor),
-            unscaled_position: logical_point(
+            absolute_position: logical_point(
                 cursor_point.x as f32,
                 cursor_point.y as f32,
                 scale_factor,
