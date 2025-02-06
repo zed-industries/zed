@@ -26,7 +26,10 @@ use language::{
     },
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, LanguageRegistry, Operation,
 };
-use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
+use rpc::{
+    proto::{self, ToProto},
+    AnyProtoClient, ErrorExt as _, TypedEnvelope,
+};
 use serde::Deserialize;
 use smol::channel::Receiver;
 use std::{
@@ -630,13 +633,11 @@ impl RemoteBufferStore {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
         cx.spawn(move |this, mut cx| async move {
-            let path: proto::CrossPlatformPath = path.into();
             let response = client
                 .request(proto::OpenBufferByPath {
                     project_id,
                     worktree_id,
-                    path_deprecated: Some(path.to_db_string()),
-                    path: Some(path),
+                    path: path.to_proto(),
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
