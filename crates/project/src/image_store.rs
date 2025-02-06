@@ -55,7 +55,7 @@ pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub color_type: String,
+    pub color_type: Option<String>,
     pub format: String,
 }
 
@@ -67,7 +67,7 @@ pub struct ImageItem {
     pub image_metadata: Option<ImageMetadata>,
 }
 
-fn image_color_type_description(color_type: ExtendedColorType) -> String {
+fn image_color_type_description(color_type: ExtendedColorType) -> Option<String> {
     let (channels, bits_per_channel) = match color_type {
         ExtendedColorType::L8 => (1, 8),
         ExtendedColorType::L16 => (1, 16),
@@ -81,16 +81,17 @@ fn image_color_type_description(color_type: ExtendedColorType) -> String {
         ExtendedColorType::Bgr8 => (3, 8),
         ExtendedColorType::Bgra8 => (4, 8),
         ExtendedColorType::Cmyk8 => (4, 8),
-
         _ => (0, 0),
     };
 
     if channels == 0 {
-        "unknown color type".to_string()
-    } else {
-        let bits_per_pixel = channels * bits_per_channel;
-        format!("{} channels, {} bits per pixel", channels, bits_per_pixel)
+        return None;
     }
+
+    let bits_per_pixel = channels * bits_per_channel;
+    Some(format!(
+        "{channels} channels, {bits_per_pixel} bits per pixel"
+    ))
 }
 
 impl ImageItem {
@@ -122,10 +123,9 @@ impl ImageItem {
         }
         let fs = project.update(cx, |project, _| project.fs().clone())?;
 
-        let img_bytes = fs.load_bytes(&path).await?;
-        let img_format = image::guess_format(&img_bytes)?;
-
-        let img_format_str = match img_format {
+        let image_bytes = fs.load_bytes(&path).await?;
+        let image_format = image::guess_format(&image_bytes)?;
+        let image_format = match image_format {
             ImageFormat::Png => "PNG",
             ImageFormat::Jpeg => "JPEG",
             ImageFormat::Gif => "GIF",
@@ -134,27 +134,23 @@ impl ImageItem {
             ImageFormat::Bmp => "BMP",
             ImageFormat::Ico => "ICO",
             ImageFormat::Avif => "Avif",
-
             _ => "Unknown",
         };
 
         let path_clone = path.clone();
-        let image_result = smol::unblock(move || ImageReader::open(&path_clone)?.decode()).await?;
+        let image = smol::unblock(move || ImageReader::open(&path_clone)?.decode()).await?;
 
-        let img = image_result;
-        let dimensions_result = smol::unblock(move || {
-            let dimensions = img.dimensions();
-            let img_color_type = image_color_type_description(img.color().into());
+        let (width, height, format, color_type) = smol::unblock(move || {
+            let dimensions = image.dimensions();
+            let img_color_type = image_color_type_description(image.color().into());
             Ok::<_, anyhow::Error>((
                 dimensions.0,
                 dimensions.1,
-                img_format_str.to_string(),
+                image_format.to_string(),
                 img_color_type,
             ))
         })
         .await?;
-
-        let (width, height, format, color_type) = dimensions_result;
 
         let file_metadata = fs
             .metadata(path.as_path())

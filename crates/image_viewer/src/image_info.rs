@@ -65,17 +65,15 @@ impl ImageInfo {
 impl Render for ImageInfo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ImageViewerSettings::get_global(cx);
-        let unit = settings.unit;
-
         let components = [
             self.metadata
                 .as_ref()
                 .map(|metadata| format!("{}x{}", metadata.width, metadata.height)),
-            self.format_file_size(unit),
+            self.format_file_size(settings.unit),
             self.metadata
                 .as_ref()
-                .map(|metadata| metadata.color_type.to_string()),
-            self.metadata.as_ref().map(|meta| meta.format.clone()),
+                .and_then(|metadata| metadata.color_type.clone()),
+            self.metadata.as_ref().map(|metadata| metadata.format.clone()),
         ];
 
         let text = components
