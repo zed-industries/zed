@@ -78,14 +78,7 @@ impl Database {
                     worktree::ActiveModel {
                         id: ActiveValue::set(worktree.id as i64),
                         project_id: ActiveValue::set(project.id),
-                        abs_path: ActiveValue::set(
-                            worktree
-                                .abs_path
-                                .as_ref()
-                                .map(|path| path.to_db_string())
-                                .or_else(|| worktree.abs_path_deprecated.clone())
-                                .unwrap_or_default(),
-                        ),
+                        abs_path: ActiveValue::set(worktree.abs_path.clone()),
                         root_name: ActiveValue::set(worktree.root_name.clone()),
                         visible: ActiveValue::set(worktree.visible),
                         scan_id: ActiveValue::set(0),
@@ -192,23 +185,14 @@ impl Database {
         tx: &DatabaseTransaction,
     ) -> Result<()> {
         if !worktrees.is_empty() {
-            worktree::Entity::insert_many(worktrees.iter().map(|worktree| {
-                worktree::ActiveModel {
-                    id: ActiveValue::set(worktree.id as i64),
-                    project_id: ActiveValue::set(project_id),
-                    abs_path: ActiveValue::set(
-                        worktree
-                            .abs_path
-                            .as_ref()
-                            .map(|path| path.to_db_string())
-                            .or_else(|| worktree.abs_path_deprecated.clone())
-                            .unwrap_or_default(),
-                    ),
-                    root_name: ActiveValue::set(worktree.root_name.clone()),
-                    visible: ActiveValue::set(worktree.visible),
-                    scan_id: ActiveValue::set(0),
-                    completed_scan_id: ActiveValue::set(0),
-                }
+            worktree::Entity::insert_many(worktrees.iter().map(|worktree| worktree::ActiveModel {
+                id: ActiveValue::set(worktree.id as i64),
+                project_id: ActiveValue::set(project_id),
+                abs_path: ActiveValue::set(worktree.abs_path.clone()),
+                root_name: ActiveValue::set(worktree.root_name.clone()),
+                visible: ActiveValue::set(worktree.visible),
+                scan_id: ActiveValue::set(0),
+                completed_scan_id: ActiveValue::set(0),
             }))
             .on_conflict(
                 OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
@@ -271,14 +255,7 @@ impl Database {
                 } else {
                     ActiveValue::default()
                 },
-                abs_path: ActiveValue::set(
-                    update
-                        .abs_path
-                        .as_ref()
-                        .map(|path| path.to_db_string())
-                        .or_else(|| update.abs_path_deprecated.clone())
-                        .unwrap_or_default(),
-                ),
+                abs_path: ActiveValue::set(update.abs_path.clone()),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -292,24 +269,11 @@ impl Database {
                         worktree_id: ActiveValue::set(worktree_id),
                         id: ActiveValue::set(entry.id as i64),
                         is_dir: ActiveValue::set(entry.is_dir),
-                        path: ActiveValue::set(
-                            entry
-                                .path
-                                .as_ref()
-                                .map(|path| path.to_db_string())
-                                .or_else(|| entry.path_deprecated.clone())
-                                .unwrap_or_default(),
-                        ),
+                        path: ActiveValue::set(entry.path.clone()),
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
-                        canonical_path: ActiveValue::set(
-                            entry
-                                .canonical_path
-                                .as_ref()
-                                .map(|path| path.to_db_string())
-                                .or_else(|| entry.canonical_path_deprecated.clone()),
-                        ),
+                        canonical_path: ActiveValue::set(entry.canonical_path.clone()),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         git_status: ActiveValue::set(None),
                         is_external: ActiveValue::set(entry.is_external),
@@ -444,45 +408,22 @@ impl Database {
                     .any(|repository| !repository.removed_statuses.is_empty());
 
                 if has_any_removed_statuses {
-                    let use_deprecated_path =
-                        if let Some(repository) = update.updated_repositories.get(0) {
-                            repository.removed_statuses.is_empty()
-                        } else {
-                            false
-                        };
-                    let update_many = if !use_deprecated_path {
-                        worktree_repository_statuses::Entity::update_many().filter(
+                    worktree_repository_statuses::Entity::update_many()
+                        .filter(
                             worktree_repository_statuses::Column::ProjectId
                                 .eq(project_id)
                                 .and(
                                     worktree_repository_statuses::Column::WorktreeId
                                         .eq(worktree_id),
                                 )
-                                .and(worktree_repository_statuses::Column::RepoPath.is_in(
-                                    update.updated_repositories.iter().flat_map(|repository| {
-                                        repository
-                                            .removed_statuses
-                                            .iter()
-                                            .map(|status_entry| status_entry.to_db_string())
-                                    }),
-                                )),
-                        )
-                    } else {
-                        worktree_repository_statuses::Entity::update_many().filter(
-                            worktree_repository_statuses::Column::ProjectId
-                                .eq(project_id)
                                 .and(
-                                    worktree_repository_statuses::Column::WorktreeId
-                                        .eq(worktree_id),
-                                )
-                                .and(worktree_repository_statuses::Column::RepoPath.is_in(
-                                    update.updated_repositories.iter().flat_map(|repository| {
-                                        repository.removed_statuses_deprecated.iter()
-                                    }),
-                                )),
+                                    worktree_repository_statuses::Column::RepoPath.is_in(
+                                        update.updated_repositories.iter().flat_map(|repository| {
+                                            repository.removed_statuses.iter()
+                                        }),
+                                    ),
+                                ),
                         )
-                    };
-                    update_many
                         .set(worktree_repository_statuses::ActiveModel {
                             is_deleted: ActiveValue::Set(true),
                             scan_id: ActiveValue::Set(update.scan_id as i64),
@@ -546,14 +487,7 @@ impl Database {
             worktree_diagnostic_summary::Entity::insert(worktree_diagnostic_summary::ActiveModel {
                 project_id: ActiveValue::set(project_id),
                 worktree_id: ActiveValue::set(worktree_id),
-                path: ActiveValue::set(
-                    summary
-                        .path
-                        .as_ref()
-                        .map(|path| path.to_db_string())
-                        .or_else(|| summary.path_deprecated.clone())
-                        .context("Missing path")?,
-                ),
+                path: ActiveValue::set(summary.path.clone()),
                 language_server_id: ActiveValue::set(summary.language_server_id as i64),
                 error_count: ActiveValue::set(summary.error_count as i32),
                 warning_count: ActiveValue::set(summary.warning_count as i32),
@@ -652,14 +586,7 @@ impl Database {
                 worktree_settings_file::Entity::insert(worktree_settings_file::ActiveModel {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
-                    path: ActiveValue::Set(
-                        update
-                            .path
-                            .as_ref()
-                            .map(|path| path.to_db_string())
-                            .or_else(|| update.path_deprecated.clone())
-                            .context("Missing path")?,
-                    ),
+                    path: ActiveValue::Set(update.path.clone()),
                     content: ActiveValue::Set(content.clone()),
                     kind: ActiveValue::Set(kind),
                 })
@@ -678,14 +605,7 @@ impl Database {
                 worktree_settings_file::Entity::delete(worktree_settings_file::ActiveModel {
                     project_id: ActiveValue::Set(project_id),
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
-                    path: ActiveValue::Set(
-                        update
-                            .path
-                            .as_ref()
-                            .map(|path| path.to_db_string())
-                            .or_else(|| update.path_deprecated.clone())
-                            .context("Missing path")?,
-                    ),
+                    path: ActiveValue::Set(update.path.clone()),
                     ..Default::default()
                 })
                 .exec(&*tx)
@@ -767,8 +687,7 @@ impl Database {
                     db_worktree.id as u64,
                     Worktree {
                         id: db_worktree.id as u64,
-                        abs_path: proto::CrossPlatformPath::from_db_string(db_worktree.abs_path)
-                            .path,
+                        abs_path: db_worktree.abs_path,
                         root_name: db_worktree.root_name,
                         visible: db_worktree.visible,
                         entries: Default::default(),
@@ -798,17 +717,13 @@ impl Database {
                     worktree.entries.push(proto::Entry {
                         id: db_entry.id as u64,
                         is_dir: db_entry.is_dir,
-                        path_deprecated: Some(db_entry.path.clone()),
-                        path: Some(proto::CrossPlatformPath::from_db_string(db_entry.path)),
+                        path: db_entry.path,
                         inode: db_entry.inode as u64,
                         mtime: Some(proto::Timestamp {
                             seconds: db_entry.mtime_seconds as u64,
                             nanos: db_entry.mtime_nanos as u32,
                         }),
-                        canonical_path_deprecated: db_entry.canonical_path.clone(),
-                        canonical_path: db_entry
-                            .canonical_path
-                            .map(proto::CrossPlatformPath::from_db_string),
+                        canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
                         // This is only used in the summarization backlog, so if it's None,
@@ -870,7 +785,6 @@ impl Database {
                             work_directory_id: db_repository_entry.work_directory_id as u64,
                             branch: db_repository_entry.branch,
                             updated_statuses,
-                            removed_statuses_deprecated: Vec::new(),
                             removed_statuses: Vec::new(),
                             current_merge_conflicts,
                         },
@@ -891,8 +805,7 @@ impl Database {
                     worktree
                         .diagnostic_summaries
                         .push(proto::DiagnosticSummary {
-                            path_deprecated: Some(db_summary.path.clone()),
-                            path: Some(proto::CrossPlatformPath::from_db_string(db_summary.path)),
+                            path: db_summary.path,
                             language_server_id: db_summary.language_server_id as u64,
                             error_count: db_summary.error_count as u32,
                             warning_count: db_summary.warning_count as u32,
@@ -911,7 +824,7 @@ impl Database {
                 let db_settings_file = db_settings_file?;
                 if let Some(worktree) = worktrees.get_mut(&(db_settings_file.worktree_id as u64)) {
                     worktree.settings_files.push(WorktreeSettingsFile {
-                        path: proto::CrossPlatformPath::from_db_string(db_settings_file.path).path,
+                        path: db_settings_file.path,
                         content: db_settings_file.content,
                         kind: db_settings_file.kind,
                     });
