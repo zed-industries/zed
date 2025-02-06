@@ -206,6 +206,17 @@ pub enum InlineCompletionProvider {
     Zed,
 }
 
+impl InlineCompletionProvider {
+    pub fn is_zed(&self) -> bool {
+        match self {
+            InlineCompletionProvider::Zed => true,
+            InlineCompletionProvider::None
+            | InlineCompletionProvider::Copilot
+            | InlineCompletionProvider::Supermaven => false,
+        }
+    }
+}
+
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default)]
