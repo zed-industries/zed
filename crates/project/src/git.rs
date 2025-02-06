@@ -13,6 +13,7 @@ use gpui::{
     App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{Buffer, LanguageRegistry};
+use rpc::proto::ToProto;
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
 use std::path::Path;
@@ -215,19 +216,15 @@ impl GitState {
                         worktree_id,
                         work_directory_id,
                     } => {
-                        let paths: Vec<proto::CrossPlatformPath> = paths
-                            .into_iter()
-                            .map(|repo_path| repo_path.0.into())
-                            .collect();
-                        let paths_deprecated =
-                            paths.iter().map(|path| path.to_db_string()).collect();
                         client
                             .request(proto::Stage {
                                 project_id: project_id.0,
                                 worktree_id: worktree_id.to_proto(),
                                 work_directory_id: work_directory_id.to_proto(),
-                                paths_deprecated,
-                                paths,
+                                paths: paths
+                                    .into_iter()
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
+                                    .collect(),
                             })
                             .await
                             .context("sending stage request")?;
@@ -244,19 +241,15 @@ impl GitState {
                         worktree_id,
                         work_directory_id,
                     } => {
-                        let paths: Vec<proto::CrossPlatformPath> = paths
-                            .into_iter()
-                            .map(|repo_path| repo_path.0.into())
-                            .collect();
-                        let paths_deprecated =
-                            paths.iter().map(|path| path.to_db_string()).collect();
                         client
                             .request(proto::Unstage {
                                 project_id: project_id.0,
                                 worktree_id: worktree_id.to_proto(),
                                 work_directory_id: work_directory_id.to_proto(),
-                                paths_deprecated,
-                                paths,
+                                paths: paths
+                                    .into_iter()
+                                    .map(|repo_path| repo_path.as_ref().to_proto())
+                                    .collect(),
                             })
                             .await
                             .context("sending unstage request")?;
