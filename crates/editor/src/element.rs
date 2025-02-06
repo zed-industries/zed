@@ -3239,7 +3239,6 @@ impl EditorElement {
                             max_width,
                             cursor_point,
                             start_row,
-                            &line_layouts,
                             style,
                             accept_keystroke.as_ref()?,
                             window,

@@ -82,8 +82,8 @@ use gpui::{
     Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
     FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
     MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
-    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -5495,7 +5495,6 @@ impl Editor {
         max_width: Pixels,
         cursor_point: Point,
         start_row: DisplayRow,
-        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
         window: &Window,
@@ -5552,8 +5551,8 @@ impl Editor {
                 completion,
                 cursor_point,
                 start_row,
-                line_layouts,
                 style,
+                window,
                 cx,
             )?,
 
@@ -5562,8 +5561,8 @@ impl Editor {
                     stale_completion,
                     cursor_point,
                     start_row,
-                    line_layouts,
                     style,
+                    window,
                     cx,
                 )?,
 
@@ -5649,8 +5648,8 @@ impl Editor {
         completion: &InlineCompletionState,
         cursor_point: Point,
         start_row: DisplayRow,
-        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
         use text::ToPoint as _;
@@ -5750,18 +5749,46 @@ impl Editor {
                     None,
                     &style.syntax,
                 );
+                let base = h_flex().gap_3().flex_1().child(render_relative_row_jump(
+                    "Jump ",
+                    cursor_point.row,
+                    target.text_anchor.to_point(&snapshot).row,
+                ));
+
+                if highlighted_text.text.is_empty() {
+                    return Some(base);
+                }
+
                 let cursor_color = self.current_user_player_color(cx).cursor;
 
                 let start_point = range_around_target.start.to_point(&snapshot);
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let cursor_relative_position = line_layouts
-                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                let styled_text = highlighted_text.to_styled_text(&style.text);
+                let text_len = highlighted_text.text.len();
+
+                let cursor_relative_position = window
+                    .text_system()
+                    .layout_line(
+                        highlighted_text.text,
+                        style.text.font_size.to_pixels(window.rem_size()),
+                        // We don't need to include highlights
+                        // because we are only using this for the cursor position
+                        &[TextRun {
+                            len: text_len,
+                            font: style.text.font(),
+                            color: style.text.color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                    )
+                    .log_err()
                     .map(|line| {
-                        let start_column_x = line.x_for_index(start_point.column as usize);
-                        let target_column_x = line.x_for_index(target_point.column as usize);
-                        target_column_x - start_column_x
+                        line.x_for_index(
+                            target_point.column.saturating_sub(start_point.column) as usize
+                        )
                     });
 
                 let fade_before = start_point.column > 0;
@@ -5769,56 +5796,40 @@ impl Editor {
 
                 let background = cx.theme().colors().elevated_surface_background;
 
-                Some(
-                    h_flex()
-                        .gap_3()
-                        .flex_1()
-                        .child(render_relative_row_jump(
-                            "Jump ",
-                            cursor_point.row,
-                            target.text_anchor.to_point(&snapshot).row,
+                let preview = h_flex()
+                    .relative()
+                    .child(styled_text)
+                    .when(fade_before, |parent| {
+                        parent.child(div().absolute().top_0().left_0().w_4().h_full().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(background, 0.),
+                                linear_color_stop(background.opacity(0.), 1.),
+                            ),
                         ))
-                        .when(!highlighted_text.text.is_empty(), |parent| {
-                            parent.child(
-                                h_flex()
-                                    .relative()
-                                    .child(highlighted_text.to_styled_text(&style.text))
-                                    .when(fade_before, |parent| {
-                                        parent.child(
-                                            div().absolute().top_0().left_0().w_4().h_full().bg(
-                                                linear_gradient(
-                                                    90.,
-                                                    linear_color_stop(background, 0.),
-                                                    linear_color_stop(background.opacity(0.), 1.),
-                                                ),
-                                            ),
-                                        )
-                                    })
-                                    .when(fade_after, |parent| {
-                                        parent.child(
-                                            div().absolute().top_0().right_0().w_4().h_full().bg(
-                                                linear_gradient(
-                                                    -90.,
-                                                    linear_color_stop(background, 0.),
-                                                    linear_color_stop(background.opacity(0.), 1.),
-                                                ),
-                                            ),
-                                        )
-                                    })
-                                    .when_some(cursor_relative_position, |parent, position| {
-                                        parent.child(
-                                            div()
-                                                .w(px(2.))
-                                                .h_full()
-                                                .bg(cursor_color)
-                                                .absolute()
-                                                .top_0()
-                                                .left(position),
-                                        )
-                                    }),
-                            )
-                        }),
-                )
+                    })
+                    .when(fade_after, |parent| {
+                        parent.child(div().absolute().top_0().right_0().w_4().h_full().bg(
+                            linear_gradient(
+                                -90.,
+                                linear_color_stop(background, 0.),
+                                linear_color_stop(background.opacity(0.), 1.),
+                            ),
+                        ))
+                    })
+                    .when_some(cursor_relative_position, |parent, position| {
+                        parent.child(
+                            div()
+                                .w(px(2.))
+                                .h_full()
+                                .bg(cursor_color)
+                                .absolute()
+                                .top_0()
+                                .left(position),
+                        )
+                    });
+
+                Some(base.child(preview))
             }
         }
     }
