@@ -2087,7 +2087,7 @@ impl Project {
 
             let metadata = ImageItem::image_info(image_item.clone(), project, &mut cx).await?;
             image_item.update(&mut cx, |image_item, cx| {
-                image_item.image_meta = Some(metadata);
+                image_item.image_metadata = Some(metadata);
                 cx.emit(ImageItemEvent::MetadataUpdated);
             })?;
 

@@ -64,7 +64,7 @@ pub struct ImageItem {
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
-    pub image_meta: Option<ImageMetadata>,
+    pub image_metadata: Option<ImageMetadata>,
 }
 
 fn image_color_type_description(color_type: ExtendedColorType) -> String {
@@ -266,7 +266,7 @@ impl ProjectItem for ImageItem {
                     Self::image_info(image_model.clone(), project, &mut cx).await?;
 
                 image_model.update(&mut cx, |image_model, _cx| {
-                    image_model.image_meta = Some(image_metadata);
+                    image_model.image_metadata = Some(image_metadata);
                 })?;
 
                 Ok(image_model)
@@ -516,7 +516,7 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
-                image_meta: None,
+                image_metadata: None,
                 reload_task: None,
             })?;
 

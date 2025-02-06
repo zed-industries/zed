@@ -4,7 +4,7 @@ use settings::Settings;
 use ui::{prelude::*, Button, LabelSize, Window};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
-use crate::{ImageFileSizeUnitType, ImageView, ImageViewerSettings};
+use crate::{ImageFileSizeUnit, ImageView, ImageViewerSettings};
 
 pub struct ImageInfo {
     metadata: Option<ImageMetadata>,
@@ -23,23 +23,23 @@ impl ImageInfo {
 
     fn update_metadata(&mut self, image_view: &Entity<ImageView>, cx: &mut Context<Self>) {
         let image_item = image_view.read(cx).image_item.clone();
-        let current_metadata = image_item.read(cx).image_meta.clone();
+        let current_metadata = image_item.read(cx).image_metadata.clone();
         if current_metadata.is_some() {
             self.metadata = current_metadata;
             cx.notify();
         } else {
             self.observe_image_item = Some(cx.observe(&image_item, |this, item, cx| {
-                this.metadata = item.read(cx).image_meta.clone();
+                this.metadata = item.read(cx).image_metadata.clone();
                 cx.notify();
             }));
         }
     }
 
-    fn format_file_size(&self, image_unit_type: &ImageFileSizeUnitType) -> Option<String> {
-        self.metadata.as_ref().map(|meta| {
-            let size = meta.file_size;
+    fn format_file_size(&self, image_unit_type: ImageFileSizeUnit) -> Option<String> {
+        self.metadata.as_ref().map(|metadata| {
+            let size = metadata.file_size;
             match image_unit_type {
-                ImageFileSizeUnitType::Binary => {
+                ImageFileSizeUnit::Binary => {
                     if size < 1024 {
                         format!("{}B", size)
                     } else if size < 1024 * 1024 {
@@ -48,7 +48,7 @@ impl ImageInfo {
                         format!("{:.1}MB", size as f64 / (1024.0 * 1024.0))
                     }
                 }
-                ImageFileSizeUnitType::Decimal => {
+                ImageFileSizeUnit::Decimal => {
                     if size < 1000 {
                         format!("{}B", size)
                     } else if size < 1000 * 1000 {
@@ -65,16 +65,16 @@ impl ImageInfo {
 impl Render for ImageInfo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ImageViewerSettings::get_global(cx);
-        let unit_type = &settings.unit_type;
+        let unit = settings.unit;
 
         let components = [
             self.metadata
                 .as_ref()
-                .map(|meta| format!("{}x{}", meta.width, meta.height)),
-            self.format_file_size(unit_type),
+                .map(|metadata| format!("{}x{}", metadata.width, metadata.height)),
+            self.format_file_size(unit),
             self.metadata
                 .as_ref()
-                .map(|meta| meta.color_type.to_string()),
+                .map(|metadata| metadata.color_type.to_string()),
             self.metadata.as_ref().map(|meta| meta.format.clone()),
         ];
 

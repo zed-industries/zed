@@ -6,12 +6,12 @@ use settings::{Settings, SettingsSources};
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ImageViewerSettings {
     #[serde(default)]
-    pub unit_type: ImageFileSizeUnitType,
+    pub unit: ImageFileSizeUnit,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ImageFileSizeUnitType {
+pub enum ImageFileSizeUnit {
     #[default]
     Binary,
     Decimal,
