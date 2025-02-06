@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 pub use init::*;
 use inline_completion::DataCollectionState;
 pub use license_detection::is_license_eligible_for_data_collection;
+use license_detection::LICENSE_FILES_TO_CHECK;
 pub use onboarding_banner::*;
 pub use rate_completion_modal::*;
 
@@ -951,8 +952,6 @@ struct LicenseDetectionWatcher {
 impl LicenseDetectionWatcher {
     pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
-
-        const LICENSE_FILES_TO_CHECK: [&'static str; 2] = ["LICENSE", "LICENCE"]; // US and UK English spelling
 
         // Check if worktree is a single file, if so we do not need to check for a LICENSE file
         let task = if worktree.abs_path().is_file() {
