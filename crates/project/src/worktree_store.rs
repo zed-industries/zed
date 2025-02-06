@@ -283,7 +283,7 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_path_buf = PathBuf::from_proto(response.canonical_path.clone());
+            let root_path_buf = PathBuf::from_proto(response.canonicalized_path.clone());
             let root_name = root_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -297,7 +297,7 @@ impl WorktreeStore {
                         id: response.worktree_id,
                         root_name,
                         visible,
-                        abs_path: response.canonical_path,
+                        abs_path: response.canonicalized_path,
                     },
                     client,
                     cx,
