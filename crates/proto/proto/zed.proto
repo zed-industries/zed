@@ -1800,6 +1800,7 @@ message RepositoryEntry {
     optional string branch = 2;
     repeated StatusEntry updated_statuses = 3;
     repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
 }
 
 message StatusEntry {

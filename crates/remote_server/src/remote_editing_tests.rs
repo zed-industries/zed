@@ -27,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use unindent::Unindent as _;
 use util::{path, separator};
 
 #[gpui::test]
@@ -1183,6 +1184,125 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
         assert_eq!(worktree.entry_for_path("README.rst").unwrap().id, entry.id)
     });
 }
+
+#[gpui::test]
+async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let text_2 = "
+        fn one() -> usize {
+            1
+        }
+    "
+    .unindent();
+    let text_1 = "
+        fn one() -> usize {
+            0
+        }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": text_2
+                },
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_1.clone())],
+    );
+    fs.set_head_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_1.clone())],
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let change_set = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    change_set.read_with(cx, |change_set, cx| {
+        assert_eq!(change_set.base_text_string().unwrap(), text_1);
+        assert_eq!(
+            change_set
+                .unstaged_change_set
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .base_text_string()
+                .unwrap(),
+            text_1
+        );
+    });
+
+    // stage the current buffer's contents
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_2.clone())],
+    );
+
+    cx.executor().run_until_parked();
+    change_set.read_with(cx, |change_set, cx| {
+        assert_eq!(change_set.base_text_string().unwrap(), text_1);
+        assert_eq!(
+            change_set
+                .unstaged_change_set
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .base_text_string()
+                .unwrap(),
+            text_2
+        );
+    });
+
+    // commit the current buffer's contents
+    fs.set_head_for_repo(
+        Path::new("/code/project1/.git"),
+        &[("src/lib.rs".into(), text_2.clone())],
+    );
+
+    cx.executor().run_until_parked();
+    change_set.read_with(cx, |change_set, cx| {
+        assert_eq!(change_set.base_text_string().unwrap(), text_2);
+        assert_eq!(
+            change_set
+                .unstaged_change_set
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .base_text_string()
+                .unwrap(),
+            text_2
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());

@@ -124,7 +124,8 @@ pub use multi_buffer::{
     ToOffset, ToPoint,
 };
 use multi_buffer::{
-    ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
+    ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+    ToOffsetUtf16,
 };
 use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
@@ -579,6 +580,15 @@ struct BufferOffset(usize);
 // Addons allow storing per-editor state in other crates (e.g. Vim)
 pub trait Addon: 'static {
     fn extend_key_context(&self, _: &mut KeyContext, _: &App) {}
+
+    fn render_buffer_header_controls(
+        &self,
+        _: &ExcerptInfo,
+        _: &Window,
+        _: &App,
+    ) -> Option<AnyElement> {
+        None
+    }
 
     fn to_any(&self) -> &dyn std::any::Any;
 }
@@ -14486,10 +14496,8 @@ fn get_uncommitted_changes_for_buffer(
         let change_sets = futures::future::join_all(tasks).await;
         buffer
             .update(&mut cx, |buffer, cx| {
-                for change_set in change_sets {
-                    if let Some(change_set) = change_set.log_err() {
-                        buffer.add_change_set(change_set, cx);
-                    }
+                for change_set in change_sets.into_iter().flatten() {
+                    buffer.add_change_set(change_set, cx);
                 }
             })
             .ok();
