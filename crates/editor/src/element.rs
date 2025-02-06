@@ -1549,6 +1549,45 @@ impl EditorElement {
         }
     }
 
+    fn prepaint_expand_toggles(
+        &self,
+        expand_toggles: &mut [Option<(AnyElement, bool)>],
+        rows: &[RowInfo],
+        line_height: Pixels,
+        gutter_dimensions: &GutterDimensions,
+        gutter_settings: crate::editor_settings::Gutter,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        gutter_hitbox: &Hitbox,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for (ix, expand_toggle) in expand_toggles.iter_mut().enumerate() {
+            if let Some((expand_toggle, is_wide)) = expand_toggle {
+                let available_space = size(
+                    AvailableSpace::MinContent,
+                    AvailableSpace::Definite(line_height * 0.55),
+                );
+                let crease_toggle_size = expand_toggle.layout_as_root(available_space, window, cx);
+
+                let position = point(
+                    px(0.0),
+                    ix as f32 * line_height - (scroll_pixel_position.y % line_height),
+                );
+                let x_offset = if *is_wide {
+                    px(0.)
+                } else {
+                    ((gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.)
+                        .max(px(0.))
+                };
+
+                let centering_offset =
+                    point(x_offset, (line_height - crease_toggle_size.height) / 2.);
+                let origin = gutter_hitbox.origin + position + centering_offset;
+                expand_toggle.prepaint_as_root(origin, available_space, window, cx);
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn prepaint_crease_trailers(
         &self,
@@ -2030,6 +2069,89 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_expand_toggles(
+        &self,
+        // gutter_hitbox: &Hitbox,
+        // gutter_dimensions: &GutterDimensions,
+        line_height: Pixels,
+        // scroll_pixel_position: gpui::Point<Pixels>,
+        // range: Range<DisplayRow>,
+        buffer_rows: &[RowInfo],
+        // snapshot: &EditorSnapshot,
+        // window: &mut Window,
+        // editor: &Entity<Editor>,
+        cx: &mut App,
+    ) -> (Vec<ExcerptLine>, Vec<Option<(AnyElement, bool)>>) {
+        let mut lines = Vec::new();
+
+        let mut start_line = None;
+
+        let elements = buffer_rows
+            .into_iter()
+            .enumerate()
+            .map(|(ix, row_info)| {
+                let (excerpt_id, expand_direction) = row_info.expand_direction?;
+
+                let icon_name = match expand_direction {
+                    ExpandExcerptDirection::Up => IconName::ArrowUpFromLine,
+                    ExpandExcerptDirection::Down => IconName::ArrowDownFromLine,
+                    ExpandExcerptDirection::UpAndDown => IconName::Split,
+                };
+
+                match expand_direction {
+                    ExpandExcerptDirection::Up => {
+                        start_line = Some(ix);
+                    }
+                    ExpandExcerptDirection::Down => {
+                        let length = line_height * (ix - start_line.unwrap_or(0));
+                        let origin = gpui::Point::new(px(5.), start_line.unwrap_or(0) *);
+                        lines.push(ExcerptLine {
+                            origin, length
+                        })
+                    }
+                    ExpandExcerptDirection::UpAndDown => {}
+                }
+
+                let editor = self.editor.clone();
+                let max_row = self
+                    .editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .max_excerpt_buffer_row(excerpt_id)?;
+                let is_wide = max_row > 9999;
+
+                Some((
+                    IconButton::new(("expand", ix), icon_name)
+                        .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
+                        .icon_size(IconSize::Small)
+                        .size(ButtonSize::Compact)
+                        .style(ButtonStyle::Transparent)
+                        .on_click(move |_, _, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.expand_excerpt(excerpt_id, expand_direction, cx);
+                            });
+                        })
+                        .into_any_element(),
+                    is_wide,
+                ))
+            })
+            .collect();
+
+        if let Some(start_line) = start_line {
+            let origin = gpui::Point::new(px(5.), start_line);
+            let length = (buffer_rows.len() - start_line) * line_height;
+            lines.push(ExcerptLine{
+                origin,
+                length
+            })
+        }
+
+        (lines, elements)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4678,6 +4800,12 @@ impl EditorElement {
                 }
             });
 
+            window.with_element_namespace("expand_toggles", |window| {
+                for (expand_toggle, _) in layout.expand_toggles.iter_mut().flatten() {
+                    expand_toggle.paint(window, cx);
+                }
+            });
+
             for test_indicator in layout.test_indicators.iter_mut() {
                 test_indicator.paint(window, cx);
             }
@@ -7056,6 +7184,21 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let (excerpt_lines, mut expand_toggles) =
+                        window.with_element_namespace("crease_toggles", |window| {
+                            self.layout_expand_toggles(
+                                // &gutter_hitbox,
+                                // &gutter_dimensions,
+                                line_height,
+                                // // scroll_position,
+                                // start_row..end_row,
+                                &row_infos,
+                                // &snapshot,
+                                // window,
+                                cx,
+                            )
+                        });
+
                     let mut crease_toggles =
                         window.with_element_namespace("crease_toggles", |window| {
                             self.layout_crease_toggles(
@@ -7562,6 +7705,20 @@ impl Element for EditorElement {
                         )
                     });
 
+                    window.with_element_namespace("expand_toggles", |window| {
+                        self.prepaint_expand_toggles(
+                            &mut expand_toggles,
+                            &row_infos,
+                            line_height,
+                            &gutter_dimensions,
+                            gutter_settings,
+                            scroll_pixel_position,
+                            &gutter_hitbox,
+                            window,
+                            cx,
+                        )
+                    });
+
                     let invisible_symbol_font_size = font_size / 2.;
                     let tab_invisible = window
                         .text_system()
@@ -7661,6 +7818,8 @@ impl Element for EditorElement {
                         tab_invisible,
                         space_invisible,
                         sticky_buffer_header,
+                        expand_toggles,
+                        excerpt_lines,
                     }
                 })
             })
@@ -7829,6 +7988,8 @@ pub struct EditorLayout {
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
+    expand_toggles: Vec<Option<(AnyElement, bool)>>,
+    excerpt_lines: Vec<ExcerptLine>,
     diff_hunk_controls: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     inline_completion_popover: Option<AnyElement>,
@@ -8093,6 +8254,12 @@ pub struct IndentGuideLayout {
     depth: u32,
     active: bool,
     settings: IndentGuideSettings,
+}
+
+#[derive(Debug)]
+pub struct ExcerptLine {
+    origin: gpui::Point<Pixels>,
+    length: Pixels,
 }
 
 pub struct CursorLayout {
