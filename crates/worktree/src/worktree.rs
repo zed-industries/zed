@@ -315,7 +315,7 @@ impl RepositoryEntry {
             current_merge_conflicts: self
                 .current_merge_conflicts
                 .iter()
-                .map(RepoPath::to_proto)
+                .map(|path| path.as_ref().to_proto())
                 .collect(),
         }
     }
@@ -6340,37 +6340,6 @@ fn tracked_status_to_proto(code: StatusCode) -> i32 {
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProjectEntryId(usize);
-
-impl ProjectEntryId {
-    pub const MAX: Self = Self(usize::MAX);
-    pub const MIN: Self = Self(usize::MIN);
-
-    pub fn new(counter: &AtomicUsize) -> Self {
-        Self(counter.fetch_add(1, SeqCst))
-    }
-
-    pub fn from_proto(id: u64) -> Self {
-        Self(id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-
-    pub fn to_usize(&self) -> usize {
-        self.0
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl CreatedEntry {
-    pub fn to_included(self) -> Option<Entry> {
-        match self {
-            CreatedEntry::Included(entry) => Some(entry),
-            CreatedEntry::Excluded { .. } => None,
-        }
-    }
-}
 
 impl ProjectEntryId {
     pub const MAX: Self = Self(usize::MAX);
