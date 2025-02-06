@@ -468,7 +468,7 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 pub(crate) enum EditDisplayMode {
-    TabAccept(bool),
+    TabAccept,
     DiffPopover,
     Inline,
 }
@@ -491,15 +491,6 @@ struct InlineCompletionState {
     inlay_ids: Vec<InlayId>,
     completion: InlineCompletion,
     invalidation_range: Range<Anchor>,
-}
-
-impl InlineCompletionState {
-    pub fn is_move(&self) -> bool {
-        match &self.completion {
-            InlineCompletion::Move { .. } => true,
-            _ => false,
-        }
-    }
 }
 
 enum InlineCompletionHighlight {}
@@ -5053,12 +5044,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Moves jump directly without a preview step
-        if self
-            .active_inline_completion
-            .as_ref()
-            .map_or(true, |c| c.is_move())
-        {
+        if self.active_inline_completion.as_ref().is_none() {
             self.previewing_inline_completion = false;
             cx.notify();
             return;
@@ -5198,7 +5184,7 @@ impl Editor {
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept(self.previewing_inline_completion)
+                    EditDisplayMode::TabAccept
                 } else {
                     EditDisplayMode::Inline
                 }
@@ -5494,7 +5480,6 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
-        start_row: DisplayRow,
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
         window: &Window,
@@ -5555,7 +5540,6 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
-                start_row,
                 style,
                 window,
                 cx,
@@ -5565,7 +5549,6 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
-                    start_row,
                     style,
                     window,
                     cx,
@@ -5598,19 +5581,6 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
-        let is_move = self
-            .active_inline_completion
-            .as_ref()
-            .map_or(false, |c| c.is_move());
-
-        let modifier_color = if !has_completion {
-            Color::Muted
-        } else if window.modifiers() == accept_keystroke.modifiers {
-            Color::Accent
-        } else {
-            Color::Default
-        };
-
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5630,18 +5600,15 @@ impl Editor {
                             ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
-                                Some(modifier_color),
-                                !is_move,
+                                Some(if !has_completion {
+                                    Color::Muted
+                                } else {
+                                    Color::Default
+                                }),
+                                true,
                             ),
                         ))
-                        .child(if is_move {
-                            div()
-                                .child(ui::Key::new(&accept_keystroke.key, None))
-                                .font(buffer_font.clone())
-                                .into_any()
-                        } else {
-                            Label::new("Preview").into_any_element()
-                        })
+                        .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
                 .into_any(),
@@ -5652,7 +5619,6 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
-        start_row: DisplayRow,
         style: &EditorStyle,
         window: &Window,
         cx: &mut Context<Editor>,
