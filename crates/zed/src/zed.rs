@@ -1236,7 +1236,14 @@ fn show_keymap_migration_notification_if_needed(
     return true;
 }
 
-fn show_settings_migration_notification_if_needed(notification_id: NotificationId, cx: &mut App) {
+fn show_settings_migration_notification_if_needed(
+    notification_id: NotificationId,
+    settings: serde_json::Value,
+    cx: &mut App,
+) {
+    if !SettingsStore::should_migrate_settings(settings) {
+        return;
+    }
     show_app_notification(notification_id, cx, move |cx| {
         cx.new(move |_cx| {
             let message = "A newer version of Zed has updated some settings. Your existing settings may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
@@ -1247,14 +1254,8 @@ fn show_settings_migration_notification_if_needed(notification_id: NotificationI
             .with_click_message(button_text)
             .on_click(move |_, cx| {
                 let fs = <dyn Fs>::global(cx);
-                cx.spawn(move |weak_notification, mut cx| async move {
-                    // update_settings_file::<EditorSettings>(fs, cx, |settings| {
-                    //     settings.migrate_settings()
-                    // });
-                    weak_notification.update(&mut cx, |_, cx| {
-                        cx.emit(DismissEvent);
-                    }).ok();
-                }).detach();
+                cx.update_global(|store: &mut SettingsStore, _| store.migrate_settings(fs));
+                cx.emit(DismissEvent);
             })
         })
     });
@@ -1332,12 +1333,12 @@ pub fn load_default_keymap(cx: &mut App) {
     }
 }
 
-pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
+pub fn handle_settings_changed(result: Result<serde_json::Value, anyhow::Error>, cx: &mut App) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
-    match error {
-        Some(error) => {
+    match result {
+        Err(error) => {
             if let Some(InvalidSettingsError::LocalSettings { .. }) =
                 error.downcast_ref::<InvalidSettingsError>()
             {
@@ -1356,10 +1357,9 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
                 })
             });
         }
-        None => {
+        Ok(settings) => {
             dismiss_app_notification(&id, cx);
-            // Currently settings only throw json parse errors above. Outdated settings is handled here.
-            show_settings_migration_notification_if_needed(id, cx);
+            show_settings_migration_notification_if_needed(id, settings, cx);
         }
     }
 }

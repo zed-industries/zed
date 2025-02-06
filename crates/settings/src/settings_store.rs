@@ -21,6 +21,7 @@ use util::{merge_non_null_json_value_into, ResultExt as _};
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
+    migration_static::{SETTINGS_NESTED_STRING_REPLACE, SETTINGS_STRING_REPLACE},
     utils::{parse_json_with_comments, update_value_in_json_text},
     SettingsJsonSchemaParams, WorktreeId,
 };
@@ -546,7 +547,11 @@ impl SettingsStore {
     }
 
     /// Sets the user settings via a JSON string.
-    pub fn set_user_settings(&mut self, user_settings_content: &str, cx: &mut App) -> Result<()> {
+    pub fn set_user_settings(
+        &mut self,
+        user_settings_content: &str,
+        cx: &mut App,
+    ) -> Result<serde_json::Value> {
         let settings: serde_json::Value = if user_settings_content.is_empty() {
             parse_json_with_comments("{}")?
         } else {
@@ -554,9 +559,9 @@ impl SettingsStore {
         };
 
         anyhow::ensure!(settings.is_object(), "settings must be an object");
-        self.raw_user_settings = settings;
+        self.raw_user_settings = settings.clone();
         self.recompute_values(None, cx)?;
-        Ok(())
+        Ok(settings)
     }
 
     pub fn set_server_settings(
@@ -989,6 +994,108 @@ impl SettingsStore {
 
         properties.use_fallbacks();
         Some(properties)
+    }
+
+    pub fn should_migrate_settings(settings: serde_json::Value) -> bool {
+        if let Some(obj) = settings.as_object() {
+            for old_key in SETTINGS_STRING_REPLACE.iter().map(|(old, _)| old) {
+                if obj.contains_key(*old_key) {
+                    return true;
+                }
+            }
+            for (parent_key, (old_key, _)) in SETTINGS_NESTED_STRING_REPLACE.iter() {
+                if let Some(parent) = obj.get(*parent_key) {
+                    if let Some(parent_obj) = parent.as_object() {
+                        if parent_obj.contains_key(*old_key) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    pub fn migrate_settings(&self, fs: Arc<dyn Fs>) {
+        self.setting_file_updates_tx
+            .unbounded_send(Box::new(move |cx: AsyncApp| {
+                async move {
+                    let old_text = Self::load_settings(&fs).await?;
+                    let new_text = cx.read_global(|store: &SettingsStore, _| {
+                        store.get_new_text_post_migration(old_text, |content| {
+                            if let Some(content) = content.as_object_mut() {
+                                for (old_key, new_key) in SETTINGS_STRING_REPLACE.iter() {
+                                    if let Some(value) = content.remove(*old_key) {
+                                        content.insert(new_key.to_string(), value);
+                                    }
+                                }
+                                for (parent_key, (old_key, new_key)) in
+                                    SETTINGS_NESTED_STRING_REPLACE.iter()
+                                {
+                                    if let Some(parent_value) = content.get_mut(*parent_key) {
+                                        if let Some(child_value) = parent_value.as_object_mut() {
+                                            if let Some(value) = child_value.remove(*old_key) {
+                                                child_value.insert(new_key.to_string(), value);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                    })?;
+                    let initial_path = paths::settings_file().as_path();
+                    if fs.is_file(initial_path).await {
+                        let resolved_path =
+                            fs.canonicalize(initial_path).await.with_context(|| {
+                                format!("Failed to canonicalize settings path {:?}", initial_path)
+                            })?;
+
+                        fs.atomic_write(resolved_path.clone(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", resolved_path)
+                            })?;
+                    } else {
+                        fs.atomic_write(initial_path.to_path_buf(), new_text)
+                            .await
+                            .with_context(|| {
+                                format!("Failed to write settings to file {:?}", initial_path)
+                            })?;
+                    }
+                    anyhow::Ok(())
+                }
+                .boxed_local()
+            }))
+            .ok();
+    }
+
+    fn get_new_text_post_migration(
+        &self,
+        old_text: String,
+        update: impl FnOnce(&mut serde_json::Value),
+    ) -> String {
+        let old_value =
+            parse_json_with_comments::<serde_json::Value>(&old_text).unwrap_or_default();
+        let mut new_value = old_value.clone();
+        update(&mut new_value);
+        let mut key_path = Vec::new();
+        let mut edits = Vec::new();
+        let tab_size = self.json_tab_size();
+        let mut text = old_text.clone();
+        update_value_in_json_text(
+            &mut text,
+            &mut key_path,
+            tab_size,
+            &old_value,
+            &new_value,
+            &[],
+            &mut edits,
+        );
+        let mut new_text = old_text;
+        for (range, replacement) in edits.into_iter() {
+            new_text.replace_range(range, &replacement);
+        }
+        new_text
     }
 }
 

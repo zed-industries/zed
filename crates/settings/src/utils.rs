@@ -5,6 +5,7 @@ use std::{ops::Range, sync::LazyLock};
 use tree_sitter::Query;
 use util::RangeExt;
 
+// TODO: Handle array updates preserving comments
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
     key_path: &mut Vec<&'a str>,
