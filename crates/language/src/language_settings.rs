@@ -214,6 +214,19 @@ pub struct InlineCompletionSettings {
     pub provider: InlineCompletionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
+    /// When to show edit predictions previews in buffer.
+    pub inline_preview: InlineCompletionPreviewMode,
+}
+
+/// The mode in which edit predictions should be displayed.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InlineCompletionPreviewMode {
+    /// Display inline when there are no language server completions available.
+    #[default]
+    Auto,
+    /// Display inline when holding modifier key (alt by default).
+    WhenHoldingModifier,
 }
 
 /// The settings for all languages.
@@ -406,6 +419,9 @@ pub struct InlineCompletionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
+    /// When to show edit predictions previews in buffer.
+    #[serde(default)]
+    pub inline_preview: InlineCompletionPreviewMode,
 }
 
 /// The settings for enabling/disabling features.
@@ -890,6 +906,11 @@ impl AllLanguageSettings {
         self.language(None, language.map(|l| l.name()).as_ref(), cx)
             .show_inline_completions
     }
+
+    /// Returns the edit predictions preview mode for the given language and path.
+    pub fn inline_completions_preview_mode(&self) -> InlineCompletionPreviewMode {
+        self.inline_completions.inline_preview
+    }
 }
 
 fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
@@ -987,6 +1008,12 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.inline_completion_provider);
+        let mut inline_completions_preview = default_value
+            .inline_completions
+            .as_ref()
+            .map(|inline_completions| inline_completions.inline_preview)
+            .ok_or_else(Self::missing_default)?;
+
         let mut completion_globs: HashSet<&String> = default_value
             .inline_completions
             .as_ref()
@@ -1017,12 +1044,13 @@ impl settings::Settings for AllLanguageSettings {
             {
                 inline_completion_provider = Some(provider);
             }
-            if let Some(globs) = user_settings
-                .inline_completions
-                .as_ref()
-                .and_then(|f| f.disabled_globs.as_ref())
-            {
-                completion_globs.extend(globs.iter());
+
+            if let Some(inline_completions) = user_settings.inline_completions.as_ref() {
+                inline_completions_preview = inline_completions.inline_preview;
+
+                if let Some(disabled_globs) = inline_completions.disabled_globs.as_ref() {
+                    completion_globs.extend(disabled_globs.iter());
+                }
             }
 
             // A user's global settings override the default global settings and
@@ -1075,6 +1103,7 @@ impl settings::Settings for AllLanguageSettings {
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
+                inline_preview: inline_completions_preview,
             },
             defaults,
             languages,

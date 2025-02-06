@@ -1579,6 +1579,107 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
+    let buf1 = cx.new(|cx| {
+        Buffer::local(
+            indoc! {
+            "zero
+            one
+            two
+            two.five
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+            eleven
+            ",
+            },
+            cx,
+        )
+    });
+    let path1: PathKey = PathKey::namespaced("0", Path::new("/"));
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![
+                Point::row_range(1..2),
+                Point::row_range(6..7),
+                Point::row_range(11..12),
+            ],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+            "-----
+            zero
+            one
+            two
+            two.five
+            -----
+            four
+            five
+            six
+            seven
+            -----
+            nine
+            ten
+            eleven
+            "
+        },
+    );
+
+    buf1.update(cx, |buffer, cx| buffer.edit([(0..5, "")], None, cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            path1.clone(),
+            buf1.clone(),
+            vec![
+                Point::row_range(0..2),
+                Point::row_range(5..6),
+                Point::row_range(10..11),
+            ],
+            1,
+            cx,
+        );
+    });
+
+    assert_excerpts_match(
+        &multibuffer,
+        cx,
+        indoc! {
+            "-----
+             one
+             two
+             two.five
+             three
+             -----
+             four
+             five
+             six
+             seven
+             -----
+             nine
+             ten
+             eleven
+            "
+        },
+    );
+}
+
+#[gpui::test]
 fn test_set_excerpts_for_buffer(cx: &mut TestAppContext) {
     let buf1 = cx.new(|cx| {
         Buffer::local(

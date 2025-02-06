@@ -53,8 +53,10 @@ license = "$LICENSE_MODE"
 workspace = true
 
 [lib]
-name = "$CRATE_NAME"
 path = "src/$CRATE_NAME.rs"
+
+[features]
+default = []
 
 [dependencies]
 anyhow.workspace = true
@@ -67,9 +69,6 @@ util.workspace = true
 # client.workspace = true
 # project.workspace = true
 # settings.workspace = true
-
-[features]
-default = []
 EOF
 )
 

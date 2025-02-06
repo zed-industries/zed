@@ -3,6 +3,7 @@ use crate::{
     DefiniteLength, Element, ElementId, GlobalElementId, Hitbox, Image, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
     SharedString, SharedUri, StyleRefinement, Styled, SvgSize, Task, Window,
+    SMOOTH_SVG_SCALE_FACTOR,
 };
 use anyhow::{anyhow, Result};
 
@@ -610,7 +611,7 @@ impl Asset for ImageAssetLoader {
             } else {
                 let pixmap =
                     // TODO: Can we make svgs always rescale?
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(1.0))?;
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(SMOOTH_SVG_SCALE_FACTOR))?;
 
                 let mut buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();

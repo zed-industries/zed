@@ -82,8 +82,8 @@ use gpui::{
     Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
     FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
     MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
-    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -97,8 +97,8 @@ use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions,
+    IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -124,7 +124,8 @@ pub use multi_buffer::{
     ToOffset, ToPoint,
 };
 use multi_buffer::{
-    ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow, ToOffsetUtf16,
+    ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+    ToOffsetUtf16,
 };
 use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
@@ -467,7 +468,7 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 pub(crate) enum EditDisplayMode {
-    TabAccept(bool),
+    TabAccept,
     DiffPopover,
     Inline,
 }
@@ -490,15 +491,6 @@ struct InlineCompletionState {
     inlay_ids: Vec<InlayId>,
     completion: InlineCompletion,
     invalidation_range: Range<Anchor>,
-}
-
-impl InlineCompletionState {
-    pub fn is_move(&self) -> bool {
-        match &self.completion {
-            InlineCompletion::Move { .. } => true,
-            _ => false,
-        }
-    }
 }
 
 enum InlineCompletionHighlight {}
@@ -579,6 +571,15 @@ struct BufferOffset(usize);
 // Addons allow storing per-editor state in other crates (e.g. Vim)
 pub trait Addon: 'static {
     fn extend_key_context(&self, _: &mut KeyContext, _: &App) {}
+
+    fn render_buffer_header_controls(
+        &self,
+        _: &ExcerptInfo,
+        _: &Window,
+        _: &App,
+    ) -> Option<AnyElement> {
+        None
+    }
 
     fn to_any(&self) -> &dyn std::any::Any;
 }
@@ -683,6 +684,7 @@ pub struct Editor {
     show_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
+    previewing_inline_completion: bool,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1374,6 +1376,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
+            previewing_inline_completion: false,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -1487,10 +1490,14 @@ impl Editor {
         if self.pending_rename.is_some() {
             key_context.add("renaming");
         }
+
+        let mut showing_completions = false;
+
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
                 key_context.add("showing_completions");
+                showing_completions = true;
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -1520,6 +1527,10 @@ impl Editor {
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
+
+            if showing_completions || self.inline_completion_requires_modifier(cx) {
+                key_context.add("inline_completion_requires_modifier");
+            }
         }
 
         if self.selection_mark_mode {
@@ -4637,7 +4648,13 @@ impl Editor {
         }
 
         self.update_visible_inline_completion(window, cx);
-        provider.refresh(buffer, cursor_buffer_position, debounce, cx);
+        provider.refresh(
+            self.project.clone(),
+            buffer,
+            cursor_buffer_position,
+            debounce,
+            cx,
+        );
         Some(())
     }
 
@@ -4650,6 +4667,19 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn inline_completion_requires_modifier(&self, cx: &App) -> bool {
+        let cursor = self.selections.newest_anchor().head();
+
+        self.buffer
+            .read(cx)
+            .text_anchor_for_position(cursor, cx)
+            .map(|(buffer, _)| {
+                all_language_settings(buffer.read(cx).file(), cx).inline_completions_preview_mode()
+                    == InlineCompletionPreviewMode::WhenHoldingModifier
+            })
+            .unwrap_or(false)
     }
 
     fn should_show_inline_completions_in_buffer(
@@ -4999,11 +5029,26 @@ impl Editor {
         true
     }
 
-    pub fn is_previewing_inline_completion(&self) -> bool {
-        matches!(
-            self.context_menu.borrow().as_ref(),
-            Some(CodeContextMenu::Completions(menu)) if !menu.is_empty() && menu.previewing_inline_completion
-        )
+    /// Returns true when we're displaying the inline completion popover below the cursor
+    /// like we are not previewing and the LSP autocomplete menu is visible
+    /// or we are in `when_holding_modifier` mode.
+    pub fn inline_completion_visible_in_cursor_popover(
+        &self,
+        has_completion: bool,
+        cx: &App,
+    ) -> bool {
+        if self.previewing_inline_completion
+            || !self.show_inline_completions_in_menu(cx)
+            || !self.should_show_inline_completions(cx)
+        {
+            return false;
+        }
+
+        if self.has_visible_completions_menu() {
+            return true;
+        }
+
+        has_completion && self.inline_completion_requires_modifier(cx)
     }
 
     fn update_inline_completion_preview(
@@ -5012,36 +5057,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Moves jump directly with a preview step
-
-        if self
-            .active_inline_completion
-            .as_ref()
-            .map_or(true, |c| c.is_move())
-        {
-            cx.notify();
-            return;
-        }
-
         if !self.show_inline_completions_in_menu(cx) {
             return;
         }
 
-        let mut menu_borrow = self.context_menu.borrow_mut();
-
-        let Some(CodeContextMenu::Completions(completions_menu)) = menu_borrow.as_mut() else {
-            return;
-        };
-
-        if completions_menu.is_empty()
-            || completions_menu.previewing_inline_completion == modifiers.alt
-        {
-            return;
-        }
-
-        completions_menu.set_previewing_inline_completion(modifiers.alt);
-        drop(menu_borrow);
+        self.previewing_inline_completion = modifiers.alt;
         self.update_visible_inline_completion(window, cx);
+        cx.notify();
     }
 
     fn update_visible_inline_completion(
@@ -5136,7 +5158,7 @@ impl Editor {
                 snapshot,
             }
         } else {
-            if !show_in_menu || !self.has_active_completions_menu() {
+            if !self.inline_completion_visible_in_cursor_popover(true, cx) {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
@@ -5170,7 +5192,7 @@ impl Editor {
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept(self.is_previewing_inline_completion())
+                    EditDisplayMode::TabAccept
                 } else {
                     EditDisplayMode::Inline
                 }
@@ -5433,10 +5455,12 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        self.context_menu
-            .borrow()
-            .as_ref()
-            .map_or(false, |menu| menu.visible())
+        !self.previewing_inline_completion
+            && self
+                .context_menu
+                .borrow()
+                .as_ref()
+                .map_or(false, |menu| menu.visible())
     }
 
     fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
@@ -5447,7 +5471,7 @@ impl Editor {
     }
 
     fn edit_prediction_cursor_popover_height(&self) -> Pixels {
-        px(32.)
+        px(30.)
     }
 
     fn current_user_player_color(&self, cx: &mut App) -> PlayerColor {
@@ -5464,8 +5488,6 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
-        start_row: DisplayRow,
-        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
         window: &Window,
@@ -5501,7 +5523,11 @@ impl Editor {
                             .child(Icon::new(IconName::ZedPredict))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
-                            .child(Icon::new(IconName::ArrowUpRight))
+                            .child(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
                             .into_any_element(),
                     )
                     .into_any(),
@@ -5512,8 +5538,9 @@ impl Editor {
 
         fn pending_completion_container() -> Div {
             h_flex()
+                .h_full()
                 .flex_1()
-                .gap_3()
+                .gap_2()
                 .child(Icon::new(IconName::ZedPredict))
         }
 
@@ -5521,9 +5548,8 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
-                start_row,
-                line_layouts,
                 style,
+                window,
                 cx,
             )?,
 
@@ -5531,9 +5557,8 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
-                    start_row,
-                    line_layouts,
                     style,
+                    window,
                     cx,
                 )?,
 
@@ -5564,11 +5589,6 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
-        let is_move = self
-            .active_inline_completion
-            .as_ref()
-            .map_or(false, |c| c.is_move());
-
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5576,40 +5596,28 @@ impl Editor {
                 .max_w(max_width)
                 .flex_1()
                 .px_2()
-                .gap_3()
                 .elevation_2(cx)
                 .child(completion)
+                .child(ui::Divider::vertical())
                 .child(
                     h_flex()
-                        .border_l_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .h_full()
+                        .gap_1()
                         .pl_2()
-                        .child(
-                            h_flex()
-                                .font(buffer_font.clone())
-                                .p_1()
-                                .rounded_sm()
-                                .children(ui::render_modifiers(
-                                    &accept_keystroke.modifiers,
-                                    PlatformStyle::platform(),
-                                    if window.modifiers() == accept_keystroke.modifiers {
-                                        Some(Color::Accent)
-                                    } else {
-                                        None
-                                    },
-                                    None,
-                                    !is_move,
-                                )),
-                        )
-                        .opacity(if has_completion { 1.0 } else { 0.1 })
-                        .child(if is_move {
-                            div()
-                                .child(ui::Key::new(&accept_keystroke.key, None))
-                                .font(buffer_font.clone())
-                                .into_any()
-                        } else {
-                            Label::new("Preview").color(Color::Muted).into_any_element()
-                        }),
+                        .child(h_flex().font(buffer_font.clone()).gap_1().children(
+                            ui::render_modifiers(
+                                &accept_keystroke.modifiers,
+                                PlatformStyle::platform(),
+                                Some(if !has_completion {
+                                    Color::Muted
+                                } else {
+                                    Color::Default
+                                }),
+                                true,
+                            ),
+                        ))
+                        .child(Label::new("Preview").into_any_element())
+                        .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
                 .into_any(),
         )
@@ -5619,9 +5627,8 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
-        start_row: DisplayRow,
-        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
         use text::ToPoint as _;
@@ -5698,6 +5705,7 @@ impl Editor {
 
                 let preview = h_flex()
                     .gap_1()
+                    .min_w_16()
                     .child(styled_text)
                     .when(len_total > first_line_len, |parent| parent.child("…"));
 
@@ -5708,7 +5716,16 @@ impl Editor {
                     Icon::new(IconName::ZedPredict).into_any_element()
                 };
 
-                Some(h_flex().flex_1().gap_3().child(left).child(preview))
+                Some(
+                    h_flex()
+                        .h_full()
+                        .flex_1()
+                        .gap_2()
+                        .pr_1()
+                        .overflow_x_hidden()
+                        .child(left)
+                        .child(preview),
+                )
             }
 
             InlineCompletion::Move {
@@ -5721,18 +5738,46 @@ impl Editor {
                     None,
                     &style.syntax,
                 );
+                let base = h_flex().gap_3().flex_1().child(render_relative_row_jump(
+                    "Jump ",
+                    cursor_point.row,
+                    target.text_anchor.to_point(&snapshot).row,
+                ));
+
+                if highlighted_text.text.is_empty() {
+                    return Some(base);
+                }
+
                 let cursor_color = self.current_user_player_color(cx).cursor;
 
                 let start_point = range_around_target.start.to_point(&snapshot);
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let cursor_relative_position = line_layouts
-                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                let styled_text = highlighted_text.to_styled_text(&style.text);
+                let text_len = highlighted_text.text.len();
+
+                let cursor_relative_position = window
+                    .text_system()
+                    .layout_line(
+                        highlighted_text.text,
+                        style.text.font_size.to_pixels(window.rem_size()),
+                        // We don't need to include highlights
+                        // because we are only using this for the cursor position
+                        &[TextRun {
+                            len: text_len,
+                            font: style.text.font(),
+                            color: style.text.color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                    )
+                    .log_err()
                     .map(|line| {
-                        let start_column_x = line.x_for_index(start_point.column as usize);
-                        let target_column_x = line.x_for_index(target_point.column as usize);
-                        target_column_x - start_column_x
+                        line.x_for_index(
+                            target_point.column.saturating_sub(start_point.column) as usize
+                        )
                     });
 
                 let fade_before = start_point.column > 0;
@@ -5740,56 +5785,40 @@ impl Editor {
 
                 let background = cx.theme().colors().elevated_surface_background;
 
-                Some(
-                    h_flex()
-                        .gap_3()
-                        .flex_1()
-                        .child(render_relative_row_jump(
-                            "Jump ",
-                            cursor_point.row,
-                            target.text_anchor.to_point(&snapshot).row,
+                let preview = h_flex()
+                    .relative()
+                    .child(styled_text)
+                    .when(fade_before, |parent| {
+                        parent.child(div().absolute().top_0().left_0().w_4().h_full().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(background, 0.),
+                                linear_color_stop(background.opacity(0.), 1.),
+                            ),
                         ))
-                        .when(!highlighted_text.text.is_empty(), |parent| {
-                            parent.child(
-                                h_flex()
-                                    .relative()
-                                    .child(highlighted_text.to_styled_text(&style.text))
-                                    .when(fade_before, |parent| {
-                                        parent.child(
-                                            div().absolute().top_0().left_0().w_4().h_full().bg(
-                                                linear_gradient(
-                                                    90.,
-                                                    linear_color_stop(background, 0.),
-                                                    linear_color_stop(background.opacity(0.), 1.),
-                                                ),
-                                            ),
-                                        )
-                                    })
-                                    .when(fade_after, |parent| {
-                                        parent.child(
-                                            div().absolute().top_0().right_0().w_4().h_full().bg(
-                                                linear_gradient(
-                                                    -90.,
-                                                    linear_color_stop(background, 0.),
-                                                    linear_color_stop(background.opacity(0.), 1.),
-                                                ),
-                                            ),
-                                        )
-                                    })
-                                    .when_some(cursor_relative_position, |parent, position| {
-                                        parent.child(
-                                            div()
-                                                .w(px(2.))
-                                                .h_full()
-                                                .bg(cursor_color)
-                                                .absolute()
-                                                .top_0()
-                                                .left(position),
-                                        )
-                                    }),
-                            )
-                        }),
-                )
+                    })
+                    .when(fade_after, |parent| {
+                        parent.child(div().absolute().top_0().right_0().w_4().h_full().bg(
+                            linear_gradient(
+                                -90.,
+                                linear_color_stop(background, 0.),
+                                linear_color_stop(background.opacity(0.), 1.),
+                            ),
+                        ))
+                    })
+                    .when_some(cursor_relative_position, |parent, position| {
+                        parent.child(
+                            div()
+                                .w(px(2.))
+                                .h_full()
+                                .bg(cursor_color)
+                                .absolute()
+                                .top_0()
+                                .left(position),
+                        )
+                    });
+
+                Some(base.child(preview))
             }
         }
     }
@@ -5839,9 +5868,7 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_inline_completion_in_menu.take();
-        if context_menu.is_some() {
-            self.update_visible_inline_completion(window, cx);
-        }
+        self.update_visible_inline_completion(window, cx);
         context_menu
     }
 
@@ -14429,10 +14456,11 @@ impl Editor {
         Some(gpui::Point::new(source_x, source_y))
     }
 
-    pub fn has_active_completions_menu(&self) -> bool {
-        self.context_menu.borrow().as_ref().map_or(false, |menu| {
-            menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
-        })
+    pub fn has_visible_completions_menu(&self) -> bool {
+        !self.previewing_inline_completion
+            && self.context_menu.borrow().as_ref().map_or(false, |menu| {
+                menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
+            })
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {

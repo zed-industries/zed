@@ -9,7 +9,7 @@ use gpui::{
     actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
@@ -21,7 +21,7 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
-use crate::git_panel::{GitPanel, GitStatusEntry};
+use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -29,6 +29,7 @@ pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
+    git_panel: Entity<GitPanel>,
     git_state: Entity<GitState>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -45,8 +46,9 @@ struct DiffBuffer {
     change_set: Entity<BufferChangeSet>,
 }
 
-const CHANGED_NAMESPACE: &'static str = "0";
-const ADDED_NAMESPACE: &'static str = "1";
+const CONFLICT_NAMESPACE: &'static str = "0";
+const TRACKED_NAMESPACE: &'static str = "1";
+const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
     pub(crate) fn register(
@@ -79,9 +81,16 @@ impl ProjectDiff {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
-            let workspace_handle = cx.entity().downgrade();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let workspace_handle = cx.entity();
+            let project_diff = cx.new(|cx| {
+                Self::new(
+                    workspace.project().clone(),
+                    workspace_handle,
+                    workspace.panel::<GitPanel>(cx).unwrap(),
+                    window,
+                    cx,
+                )
+            });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -100,7 +109,8 @@ impl ProjectDiff {
 
     fn new(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: Entity<Workspace>,
+        git_panel: Entity<GitPanel>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -116,6 +126,9 @@ impl ProjectDiff {
                 cx,
             );
             diff_display_editor.set_expand_all_diff_hunks(cx);
+            diff_display_editor.register_addon(GitPanelAddon {
+                git_panel: git_panel.clone(),
+            });
             diff_display_editor
         });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
@@ -141,7 +154,8 @@ impl ProjectDiff {
         Self {
             project,
             git_state: git_state.clone(),
-            workspace,
+            git_panel: git_panel.clone(),
+            workspace: workspace.downgrade(),
             focus_handle,
             editor,
             multibuffer,
@@ -161,19 +175,25 @@ impl ProjectDiff {
         let Some(git_repo) = self.git_state.read(cx).active_repository() else {
             return;
         };
+        let repo = git_repo.read(cx);
 
-        let Some(path) = git_repo
-            .read(cx)
+        let Some(abs_path) = repo
             .repo_path_to_project_path(&entry.repo_path)
             .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
         else {
             return;
         };
-        let path_key = if entry.status.is_created() {
-            PathKey::namespaced(ADDED_NAMESPACE, &path)
+
+        let namespace = if repo.has_conflict(&entry.repo_path) {
+            CONFLICT_NAMESPACE
+        } else if entry.status.is_created() {
+            NEW_NAMESPACE
         } else {
-            PathKey::namespaced(CHANGED_NAMESPACE, &path)
+            TRACKED_NAMESPACE
         };
+
+        let path_key = PathKey::namespaced(namespace, &abs_path);
+
         self.scroll_to_path(path_key, window, cx)
     }
 
@@ -246,12 +266,14 @@ impl ProjectDiff {
                 let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
                     continue;
                 };
-                // Craft some artificial paths so that created entries will appear last.
-                let path_key = if entry.status.is_created() {
-                    PathKey::namespaced(ADDED_NAMESPACE, &abs_path)
+                let namespace = if repo.has_conflict(&entry.repo_path) {
+                    CONFLICT_NAMESPACE
+                } else if entry.status.is_created() {
+                    NEW_NAMESPACE
                 } else {
-                    PathKey::namespaced(CHANGED_NAMESPACE, &abs_path)
+                    TRACKED_NAMESPACE
                 };
+                let path_key = PathKey::namespaced(namespace, &abs_path);
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -293,11 +315,15 @@ impl ProjectDiff {
         let change_set = diff_buffer.change_set;
 
         let snapshot = buffer.read(cx).snapshot();
-        let diff_hunk_ranges = change_set
-            .read(cx)
-            .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-            .collect::<Vec<_>>();
+        let change_set = change_set.read(cx);
+        let diff_hunk_ranges = if change_set.base_text.is_none() {
+            vec![Point::zero()..snapshot.max_point()]
+        } else {
+            change_set
+                .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                .collect::<Vec<_>>()
+        };
 
         self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
@@ -419,9 +445,16 @@ impl Item for ProjectDiff {
     where
         Self: Sized,
     {
-        Some(
-            cx.new(|cx| ProjectDiff::new(self.project.clone(), self.workspace.clone(), window, cx)),
-        )
+        let workspace = self.workspace.upgrade()?;
+        Some(cx.new(|cx| {
+            ProjectDiff::new(
+                self.project.clone(),
+                workspace,
+                self.git_panel.clone(),
+                window,
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

@@ -28,7 +28,7 @@ use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, Pixels,
     SharedString, StyledText, Task, TaskLabel, TextStyle, Window,
 };
-use lsp::LanguageServerId;
+use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -197,12 +197,12 @@ struct SelectionSet {
 }
 
 /// A diagnostic associated with a certain range of a buffer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,
     /// A machine-readable code that identifies this diagnostic.
-    pub code: Option<String>,
+    pub code: Option<NumberOrString>,
     /// Whether this diagnostic is a hint, warning, or error.
     pub severity: DiagnosticSeverity,
     /// The human-readable message associated with this diagnostic.
@@ -998,6 +998,23 @@ impl Buffer {
                 language,
                 non_text_state_update_count: 0,
             }
+        }
+    }
+
+    pub fn build_empty_snapshot(cx: &mut App) -> BufferSnapshot {
+        let entity_id = cx.reserve_entity::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        let text =
+            TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
+        let syntax = SyntaxMap::new(&text).snapshot();
+        BufferSnapshot {
+            text,
+            syntax,
+            file: None,
+            diagnostics: Default::default(),
+            remote_selections: Default::default(),
+            language: None,
+            non_text_state_update_count: 0,
         }
     }
 

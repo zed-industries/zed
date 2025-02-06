@@ -11,6 +11,7 @@ use db::kvp::KEY_VALUE_STORE;
 pub use init::*;
 use inline_completion::DataCollectionState;
 pub use license_detection::is_license_eligible_for_data_collection;
+use license_detection::LICENSE_FILES_TO_CHECK;
 pub use onboarding_banner::*;
 pub use rate_completion_modal::*;
 
@@ -29,6 +30,7 @@ use language::{
 };
 use language_models::LlmApiToken;
 use postage::watch;
+use project::Project;
 use settings::WorktreeId;
 use std::{
     borrow::Cow,
@@ -362,6 +364,7 @@ impl Zeta {
 
     pub fn request_completion_impl<F, R>(
         &mut self,
+        project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
         can_collect_data: bool,
@@ -373,6 +376,7 @@ impl Zeta {
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
+        let diagnostic_groups = snapshot.diagnostic_groups(None);
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let events = self.events.clone();
@@ -386,10 +390,39 @@ impl Zeta {
         let is_staff = cx.is_staff();
 
         let buffer = buffer.clone();
+
+        let local_lsp_store =
+            project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
+        let diagnostic_groups = if let Some(local_lsp_store) = local_lsp_store {
+            Some(
+                diagnostic_groups
+                    .into_iter()
+                    .filter_map(|(language_server_id, diagnostic_group)| {
+                        let language_server =
+                            local_lsp_store.running_language_server_for_id(language_server_id)?;
+
+                        Some((
+                            language_server.name(),
+                            diagnostic_group.resolve::<usize>(&snapshot),
+                        ))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+
         cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
-            let (input_events, input_excerpt, excerpt_range, input_outline) = cx
+            struct BackgroundValues {
+                input_events: String,
+                input_excerpt: String,
+                excerpt_range: Range<usize>,
+                input_outline: String,
+            }
+
+            let values = cx
                 .background_executor()
                 .spawn({
                     let snapshot = snapshot.clone();
@@ -418,18 +451,36 @@ impl Zeta {
                         // is not counted towards TOTAL_BYTE_LIMIT.
                         let input_outline = prompt_for_outline(&snapshot);
 
-                        anyhow::Ok((input_events, input_excerpt, excerpt_range, input_outline))
+                        anyhow::Ok(BackgroundValues {
+                            input_events,
+                            input_excerpt,
+                            excerpt_range,
+                            input_outline,
+                        })
                     }
                 })
                 .await?;
 
-            log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
+            log::debug!(
+                "Events:\n{}\nExcerpt:\n{}",
+                values.input_events,
+                values.input_excerpt
+            );
 
             let body = PredictEditsBody {
-                input_events: input_events.clone(),
-                input_excerpt: input_excerpt.clone(),
-                outline: Some(input_outline.clone()),
+                input_events: values.input_events.clone(),
+                input_excerpt: values.input_excerpt.clone(),
+                outline: Some(values.input_outline.clone()),
                 can_collect_data,
+                diagnostic_groups: diagnostic_groups.and_then(|diagnostic_groups| {
+                    diagnostic_groups
+                        .into_iter()
+                        .map(|(name, diagnostic_group)| {
+                            Ok((name.to_string(), serde_json::to_value(diagnostic_group)?))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                        .log_err()
+                }),
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
@@ -441,12 +492,12 @@ impl Zeta {
                 output_excerpt,
                 buffer,
                 &snapshot,
-                excerpt_range,
+                values.excerpt_range,
                 cursor_offset,
                 path,
-                input_outline,
-                input_events,
-                input_excerpt,
+                values.input_outline,
+                values.input_events,
+                values.input_excerpt,
                 request_sent_at,
                 &cx,
             )
@@ -465,11 +516,13 @@ impl Zeta {
             and then another
             "#};
 
+        let project = None;
         let buffer = cx.new(|cx| Buffer::local(test_buffer_text, cx));
         let position = buffer.read(cx).anchor_before(Point::new(1, 0));
 
         let completion_tasks = vec![
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -485,6 +538,7 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -500,6 +554,7 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -516,6 +571,7 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -532,6 +588,7 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -547,6 +604,7 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -561,6 +619,7 @@ and then another
                 cx,
             ),
             self.fake_completion(
+                project,
                 &buffer,
                 position,
                 PredictEditsResponse {
@@ -593,6 +652,7 @@ and then another
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_completion(
         &mut self,
+        project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         response: PredictEditsResponse,
@@ -600,19 +660,21 @@ and then another
     ) -> Task<Result<Option<InlineCompletion>>> {
         use std::future::ready;
 
-        self.request_completion_impl(buffer, position, false, cx, |_, _, _, _| {
+        self.request_completion_impl(project, buffer, position, false, cx, |_, _, _, _| {
             ready(Ok(response))
         })
     }
 
     pub fn request_completion(
         &mut self,
+        project: Option<&Entity<Project>>,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
         can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         self.request_completion_impl(
+            project,
             buffer,
             position,
             can_collect_data,
@@ -952,27 +1014,35 @@ impl LicenseDetectionWatcher {
     pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
 
-        const LICENSE_FILES_TO_CHECK: [&'static str; 2] = ["LICENSE", "LICENCE"]; // US and UK English spelling
-
         // Check if worktree is a single file, if so we do not need to check for a LICENSE file
         let task = if worktree.abs_path().is_file() {
             Task::ready(())
         } else {
-            let loaded_files_task = futures::future::join_all(
-                LICENSE_FILES_TO_CHECK
-                    .iter()
-                    .map(|file| worktree.load_file(Path::new(file), cx)),
-            );
+            let loaded_files = LICENSE_FILES_TO_CHECK
+                .iter()
+                .map(Path::new)
+                .map(|file| worktree.load_file(file, cx))
+                .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
 
             cx.background_executor().spawn(async move {
-                for loaded_file in loaded_files_task.await {
-                    if let Some(content) = loaded_file.log_err() {
-                        if is_license_eligible_for_data_collection(&content.text) {
-                            *is_open_source_tx.borrow_mut() = true;
-                            break;
-                        }
+                for loaded_file in loaded_files.into_iter() {
+                    let Ok(loaded_file) = loaded_file.await else {
+                        continue;
+                    };
+
+                    let path = &loaded_file.file.path;
+                    if is_license_eligible_for_data_collection(&loaded_file.text) {
+                        log::info!("detected '{path:?}' as open source license");
+                        *is_open_source_tx.borrow_mut() = true;
+                    } else {
+                        log::info!("didn't detect '{path:?}' as open source license");
                     }
+
+                    // stop on the first license that successfully read
+                    return;
                 }
+
+                log::debug!("didn't find a license file to check, assuming closed source");
             })
         };
 
@@ -1485,6 +1555,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn refresh(
         &mut self,
+        project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         position: language::Anchor,
         _debounce: bool,
@@ -1520,7 +1591,13 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
             let completion_request = this.update(&mut cx, |this, cx| {
                 this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, can_collect_data, cx)
+                    zeta.request_completion(
+                        project.as_ref(),
+                        &buffer,
+                        position,
+                        can_collect_data,
+                        cx,
+                    )
                 })
             });
 
@@ -1849,7 +1926,7 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task = zeta.update(cx, |zeta, cx| {
-            zeta.request_completion(&buffer, cursor, false, cx)
+            zeta.request_completion(None, &buffer, cursor, false, cx)
         });
 
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();

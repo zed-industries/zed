@@ -24,6 +24,7 @@ use std::{
     mem,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use util::{test::TempTree, ResultExt};
 
@@ -1504,6 +1505,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
         &[(Path::new("b/c.txt"), StatusCode::Modified.index())],
     );
     cx.executor().run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(1));
 
     let snapshot = tree.read_with(cx, |tree, _| tree.snapshot());
 
