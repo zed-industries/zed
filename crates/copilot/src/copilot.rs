@@ -16,10 +16,9 @@ use gpui::{
 };
 use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
+use language::language_settings::CopilotSettings;
 use language::{
-    language_settings::{
-        all_language_settings, language_settings, AllLanguageSettings, InlineCompletionProvider,
-    },
+    language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
@@ -371,10 +370,10 @@ impl Copilot {
         let server_id = self.server_id;
         let http = self.http.clone();
         let node_runtime = self.node_runtime.clone();
-        let lang_settings = all_language_settings(None, cx);
-        if lang_settings.inline_completions.provider == InlineCompletionProvider::Copilot {
+        let language_settings = all_language_settings(None, cx);
+        if language_settings.inline_completions.provider == InlineCompletionProvider::Copilot {
             if matches!(self.server, CopilotServer::Disabled) {
-                let env = self.build_env(lang_settings);
+                let env = self.build_env(&language_settings.inline_completions.copilot);
                 let start_task = cx
                     .spawn(move |this, cx| {
                         Self::start_language_server(server_id, http, node_runtime, env, this, cx)
@@ -389,12 +388,9 @@ impl Copilot {
         }
     }
 
-    fn build_env(
-        &self,
-        language_settings: &AllLanguageSettings,
-    ) -> Option<HashMap<String, String>> {
-        let proxy_url = language_settings.inline_completions.proxy.clone()?;
-        let no_verify = language_settings.inline_completions.proxy_no_verify;
+    fn build_env(&self, copilot_settings: &CopilotSettings) -> Option<HashMap<String, String>> {
+        let proxy_url = copilot_settings.proxy.clone()?;
+        let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
             "HTTP_PROXY"
         } else if proxy_url.starts_with("https:") {
@@ -642,8 +638,8 @@ impl Copilot {
     }
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let lang_settings = all_language_settings(None, cx);
-        let env = self.build_env(lang_settings);
+        let language_settings = all_language_settings(None, cx);
+        let env = self.build_env(&language_settings.inline_completions.copilot);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
