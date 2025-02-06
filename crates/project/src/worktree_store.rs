@@ -15,7 +15,7 @@ use futures::{
 use gpui::{App, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, WeakEntity};
 use postage::oneshot;
 use rpc::{
-    proto::{self, SSH_PROJECT_ID},
+    proto::{self, FromProto, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorExt, TypedEnvelope,
 };
 use smol::{
@@ -268,12 +268,11 @@ impl WorktreeStore {
         cx.spawn(|this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
-            let path: proto::CrossPlatformPath = abs_path.clone().into();
+            let path = Path::new(abs_path.as_str());
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
-                    path_deprecated: Some(path.to_db_string()),
-                    path: Some(path),
+                    path: path.to_proto(),
                     visible,
                 })
                 .await?;
@@ -284,27 +283,11 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_name = response
-                .canonicalized_path
-                .clone()
-                .map(PathBuf::from)
-                .or_else(|| {
-                    response
-                        .canonical_path_deprecated
-                        .clone()
-                        .map(PathBuf::from)
-                })
-                .context("Missing path")?
+            let root_path_buf = PathBuf::from_proto(response.canonicalized_path.clone());
+            let root_name = root_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(
-                    response
-                        .canonicalized_path
-                        .clone()
-                        .map(|path| path.to_native_string())
-                        .or_else(|| response.canonical_path_deprecated)
-                        .context("Missing path")?,
-                );
+                .unwrap_or(root_path_buf.to_string_lossy().to_string());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
@@ -314,10 +297,6 @@ impl WorktreeStore {
                         id: response.worktree_id,
                         root_name,
                         visible,
-                        abs_path_deprecated: response
-                            .canonicalized_path
-                            .as_ref()
-                            .map(|path| path.to_db_string()),
                         abs_path: response.canonicalized_path,
                     },
                     client,
@@ -615,13 +594,11 @@ impl WorktreeStore {
         self.worktrees()
             .map(|worktree| {
                 let worktree = worktree.read(cx);
-                let abs_path: proto::CrossPlatformPath = worktree.abs_path().into();
                 proto::WorktreeMetadata {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name().into(),
                     visible: worktree.is_visible(),
-                    abs_path_deprecated: Some(abs_path.to_db_string()),
-                    abs_path: Some(abs_path),
+                    abs_path: worktree.abs_path().to_proto(),
                 }
             })
             .collect()
@@ -944,13 +921,11 @@ impl WorktreeStore {
                 Task::ready(branches)
             }
             Worktree::Remote(remote_worktree) => {
-                let path: proto::CrossPlatformPath = project_path.path.into();
                 let request = remote_worktree.client().request(proto::GitBranches {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: project_path.worktree_id.to_proto(),
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path), // Root path
+                        path: project_path.path.to_proto(), // Root path
                     }),
                 });
 
@@ -1017,13 +992,11 @@ impl WorktreeStore {
                 Task::ready(result)
             }
             Worktree::Remote(remote_worktree) => {
-                let path: proto::CrossPlatformPath = repository.path.into();
                 let request = remote_worktree.client().request(proto::UpdateGitBranch {
                     project_id: remote_worktree.project_id(),
                     repository: Some(proto::ProjectPath {
                         worktree_id: repository.worktree_id.to_proto(),
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path), // Root path
+                        path: repository.path.to_proto(), // Root path
                     }),
                     branch_name: new_branch,
                 });
@@ -1145,15 +1118,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: project_path
-                .path
-                .map(Into::<Arc<Path>>::into)
-                .or_else(|| {
-                    project_path
-                        .path_deprecated
-                        .map(|path| Path::new(&path).into())
-                })
-                .context("Missing path")?,
+            path: Arc::<Path>::from_proto(project_path.path),
         };
 
         let branches = this
@@ -1184,15 +1149,7 @@ impl WorktreeStore {
             .context("Invalid GitBranches call")?;
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_proto(project_path.worktree_id),
-            path: project_path
-                .path
-                .map(Into::<Arc<Path>>::into)
-                .or_else(|| {
-                    project_path
-                        .path_deprecated
-                        .map(|path| Path::new(&path).into())
-                })
-                .context("Missing path")?,
+            path: Arc::<Path>::from_proto(project_path.path),
         };
         let new_branch = update_branch.payload.branch_name;
 
