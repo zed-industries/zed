@@ -374,7 +374,7 @@ impl Copilot {
         let lang_settings = all_language_settings(None, cx);
         if lang_settings.inline_completions.provider == InlineCompletionProvider::Copilot {
             if matches!(self.server, CopilotServer::Disabled) {
-                let env = self.language_server_env(lang_settings);
+                let env = self.build_env(lang_settings);
                 let start_task = cx
                     .spawn(move |this, cx| {
                         Self::start_language_server(server_id, http, node_runtime, env, this, cx)
@@ -389,30 +389,25 @@ impl Copilot {
         }
     }
 
-    fn language_server_env(
-        &mut self,
+    fn build_env(
+        &self,
         language_settings: &AllLanguageSettings,
     ) -> Option<HashMap<String, String>> {
-        let proxy_url = language_settings.inline_completions.proxy.to_owned()?;
-        let no_verify = language_settings
-            .inline_completions
-            .proxy_no_verify
-            .to_owned();
-        let env_name;
-        if proxy_url.starts_with("http:") {
-            env_name = "HTTP_PROXY".to_string();
+        let proxy_url = language_settings.inline_completions.proxy.clone()?;
+        let no_verify = language_settings.inline_completions.proxy_no_verify;
+        let http_or_https_proxy = if proxy_url.starts_with("http:") {
+            "HTTP_PROXY"
         } else if proxy_url.starts_with("https:") {
-            env_name = "HTTPS_proxy".to_string();
+            "HTTPS_PROXY"
         } else {
-            // Only HTTP and HTTPS proxies are currently supported for the language server.
             log::error!(
                 "Unsupported protocol scheme for language server proxy (must be http or https)"
             );
             return None;
-        }
+        };
 
-        let mut env: HashMap<String, String> = HashMap::default();
-        env.insert(env_name, proxy_url);
+        let mut env = HashMap::default();
+        env.insert(http_or_https_proxy.to_string(), proxy_url);
 
         if let Some(true) = no_verify {
             env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
@@ -648,7 +643,7 @@ impl Copilot {
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let lang_settings = all_language_settings(None, cx);
-        let env = self.language_server_env(lang_settings);
+        let env = self.build_env(lang_settings);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
