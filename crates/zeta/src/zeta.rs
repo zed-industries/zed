@@ -467,13 +467,22 @@ impl Zeta {
                 values.input_excerpt
             );
 
-            dbg!(&diagnostic_groups);
-
             let body = PredictEditsBody {
                 input_events: values.input_events.clone(),
                 input_excerpt: values.input_excerpt.clone(),
                 outline: Some(values.input_outline.clone()),
                 can_collect_data,
+                diagnostic_groups: diagnostic_groups.map(|diagnostic_groups| {
+                    diagnostic_groups
+                        .into_iter()
+                        .map(|(name, diagnostic_group)| {
+                            (
+                                name.to_string(),
+                                serde_json::to_value(diagnostic_group).unwrap(),
+                            )
+                        })
+                        .collect()
+                }),
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
