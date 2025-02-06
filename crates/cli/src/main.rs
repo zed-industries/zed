@@ -339,13 +339,17 @@ mod linux {
     impl InstalledApp for App {
         fn zed_version_string(&self) -> String {
             format!(
-                "Zed {}{} – {}",
+                "Zed {}{}{} – {}",
                 if *RELEASE_CHANNEL == "stable" {
                     "".to_string()
                 } else {
                     format!("{} ", *RELEASE_CHANNEL)
                 },
                 option_env!("RELEASE_VERSION").unwrap_or_default(),
+                match option_env!("ZED_COMMIT_SHA") {
+                    Some(commit_sha) => format!(" {commit_sha} "),
+                    None => "".to_string(),
+                },
                 self.0.display(),
             )
         }
