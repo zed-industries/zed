@@ -2509,7 +2509,7 @@ message AddWorktree {
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
-    string canonical_path = 2; // path
+    string canonicalized_path = 2; // path
 }
 
 message GetPathMetadata {

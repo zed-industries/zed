@@ -1,3 +1,4 @@
+use ::proto::{FromProto, ToProto};
 use anyhow::{anyhow, Context as _, Result};
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
@@ -325,17 +326,8 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
-        let path = message
-            .payload
-            .path
-            .as_ref()
-            .map(|path| path.to_native_string())
-            .or_else(|| message.payload.path_deprecated)
-            .context("Missing path")?;
-        let path = shellexpand::tilde(&path).to_string();
-
         let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
-        let path = PathBuf::from(path);
+        let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path));
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
@@ -368,11 +360,9 @@ impl HeadlessProject {
             .await?;
 
         let response = this.update(&mut cx, |_, cx| {
-            let canonicalized_path: proto::CrossPlatformPath = canonicalized.into();
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonical_path_deprecated: Some(canonicalized_path.to_db_string()),
-                canonicalized_path: Some(canonicalized_path),
+                canonicalized_path: canonicalized.to_proto(),
             })
         })?;
 
@@ -427,18 +417,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id,
-                        path: message
-                            .payload
-                            .path
-                            .map(Into::<Arc<Path>>::into)
-                            .or_else(|| {
-                                message
-                                    .payload
-                                    .path_deprecated
-                                    .map(PathBuf::from)
-                                    .map(Into::<Arc<Path>>::into)
-                            })
-                            .unwrap_or(PathBuf::new().into()),
+                        path: Arc::<Path>::from_proto(message.payload.path),
                     },
                     cx,
                 )
@@ -579,18 +558,11 @@ impl HeadlessProject {
         envelope: TypedEnvelope<proto::ListRemoteDirectory>,
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
-        let path = envelope
-            .payload
-            .path
-            .as_ref()
-            .map(|path| path.to_native_string())
-            .or_else(|| envelope.payload.path_deprecated)
-            .context("Missing path")?;
-        let expanded = shellexpand::tilde(&path).to_string();
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
+        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path));
 
         let mut entries = Vec::new();
-        let mut response = fs.read_dir(Path::new(&expanded)).await?;
+        let mut response = fs.read_dir(&expanded).await?;
         while let Some(path) = response.next().await {
             if let Some(file_name) = path?.file_name() {
                 entries.push(file_name.to_string_lossy().to_string());
@@ -605,24 +577,15 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let path = envelope
-            .payload
-            .path
-            .as_ref()
-            .map(|path| path.to_native_string())
-            .or_else(|| envelope.payload.path_deprecated)
-            .context("Missing path")?;
-        let expanded = shellexpand::tilde(&path).to_string();
+        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path));
 
-        let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
+        let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
-        let path: proto::CrossPlatformPath = expanded.into();
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path_deprecated: Some(path.to_db_string()),
-            path: Some(path),
+            path: expanded.to_proto(),
         })
     }
 
