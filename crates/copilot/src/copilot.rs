@@ -374,17 +374,10 @@ impl Copilot {
         let lang_settings = all_language_settings(None, cx);
         if lang_settings.inline_completions.provider == InlineCompletionProvider::Copilot {
             if matches!(self.server, CopilotServer::Disabled) {
-                let server_env = self.calculate_language_server_env(lang_settings);
+                let env = self.language_server_env(lang_settings);
                 let start_task = cx
                     .spawn(move |this, cx| {
-                        Self::start_language_server(
-                            server_id,
-                            http,
-                            node_runtime,
-                            server_env,
-                            this,
-                            cx,
-                        )
+                        Self::start_language_server(server_id, http, node_runtime, env, this, cx)
                     })
                     .shared();
                 self.server = CopilotServer::Starting { task: start_task };
@@ -396,44 +389,36 @@ impl Copilot {
         }
     }
 
-    fn calculate_language_server_env(
+    fn language_server_env(
         &mut self,
-        lang_settings: &AllLanguageSettings,
+        language_settings: &AllLanguageSettings,
     ) -> Option<HashMap<String, String>> {
-        let proxy_url = lang_settings.inline_completions.proxy.to_owned();
-        let no_verify = lang_settings.inline_completions.proxy_no_verify.to_owned();
-        match proxy_url {
-            Some(url) => {
-                let env_name;
-                if url.starts_with("http:") {
-                    env_name = String::from("HTTP_PROXY");
-                } else if url.starts_with("https:") {
-                    env_name = String::from("HTTPS_proxy");
-                } else {
-                    // Only HTTP and HTTPS proxies are currently supported for the language server
-                    log::error!("Unsupported protocol scheme for language server proxy (must be http or https)");
-                    return None;
-                }
-
-                let mut server_env: HashMap<String, String> = HashMap::default();
-                server_env.insert(env_name, url);
-
-                match no_verify {
-                    Some(no_verify_val) => {
-                        if no_verify_val {
-                            server_env.insert(
-                                String::from("NODE_TLS_REJECT_UNAUTHORIZED"),
-                                String::from("0"),
-                            );
-                        }
-                    }
-                    None => {}
-                };
-
-                Some(server_env)
-            }
-            None => None,
+        let proxy_url = language_settings.inline_completions.proxy.to_owned()?;
+        let no_verify = language_settings
+            .inline_completions
+            .proxy_no_verify
+            .to_owned();
+        let env_name;
+        if proxy_url.starts_with("http:") {
+            env_name = "HTTP_PROXY".to_string();
+        } else if proxy_url.starts_with("https:") {
+            env_name = "HTTPS_proxy".to_string();
+        } else {
+            // Only HTTP and HTTPS proxies are currently supported for the language server.
+            log::error!(
+                "Unsupported protocol scheme for language server proxy (must be http or https)"
+            );
+            return None;
         }
+
+        let mut env: HashMap<String, String> = HashMap::default();
+        env.insert(env_name, proxy_url);
+
+        if let Some(true) = no_verify {
+            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+        };
+
+        Some(env)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -473,7 +458,7 @@ impl Copilot {
         new_server_id: LanguageServerId,
         http: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        server_env: Option<HashMap<String, String>>,
+        env: Option<HashMap<String, String>>,
         this: WeakEntity<Self>,
         mut cx: AsyncApp,
     ) {
@@ -485,7 +470,7 @@ impl Copilot {
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
-                env: server_env,
+                env,
             };
 
             let root_path = if cfg!(target_os = "windows") {
@@ -663,7 +648,7 @@ impl Copilot {
 
     pub fn reinstall(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let lang_settings = all_language_settings(None, cx);
-        let server_env = self.calculate_language_server_env(lang_settings);
+        let env = self.language_server_env(lang_settings);
         let start_task = cx
             .spawn({
                 let http = self.http.clone();
@@ -671,8 +656,7 @@ impl Copilot {
                 let server_id = self.server_id;
                 move |this, cx| async move {
                     clear_copilot_dir().await;
-                    Self::start_language_server(server_id, http, node_runtime, server_env, this, cx)
-                        .await
+                    Self::start_language_server(server_id, http, node_runtime, env, this, cx).await
                 }
             })
             .shared();
