@@ -644,7 +644,7 @@ impl ComponentPreview for Switch {
         "A switch toggles between two mutually exclusive states, typically used for enabling or disabling a setting."
     }
 
-    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, cx: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Default",
@@ -683,7 +683,7 @@ impl ComponentPreview for Switch {
                     single_example(
                         "Keybinding",
                         Switch::new("switch_with_label", ToggleState::Selected)
-                            .key_binding(theme_preview_keybinding("cmd-shift-e")),
+                            .key_binding(theme_preview_keybinding("cmd-shift-e", cx)),
                     ),
                 ],
             ),

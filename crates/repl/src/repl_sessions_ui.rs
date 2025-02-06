@@ -249,7 +249,7 @@ impl Render for ReplSessionsPage {
             return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
                 v_flex()
                     .child(Label::new(instructions))
-                    .children(KeyBinding::for_action(&Run, window)),
+                    .children(KeyBinding::for_action(&Run, window, cx)),
             );
         }
 
