@@ -122,47 +122,35 @@ impl ImageItem {
 
         let image_bytes = fs.load_bytes(&path).await?;
         let image_format = image::guess_format(&image_bytes)?;
-        let image_format = match image_format {
-            ImageFormat::Png => "PNG",
-            ImageFormat::Jpeg => "JPEG",
-            ImageFormat::Gif => "GIF",
-            ImageFormat::WebP => "WebP",
-            ImageFormat::Tiff => "TIFF",
-            ImageFormat::Bmp => "BMP",
-            ImageFormat::Ico => "ICO",
-            ImageFormat::Avif => "Avif",
-            _ => "Unknown",
-        };
 
-        let image = smol::unblock({
-            let path = path.clone();
-            move || ImageReader::open(&path)?.decode()
-        })
-        .await?;
+        let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
+        image_reader.set_format(image_format);
+        let image = image_reader.decode()?;
 
-        let (width, height, format, color_type) = smol::unblock(move || {
-            let dimensions = image.dimensions();
-            let img_color_type = image_color_type_description(image.color().into());
-            Ok::<_, anyhow::Error>((
-                dimensions.0,
-                dimensions.1,
-                image_format.to_string(),
-                img_color_type,
-            ))
-        })
-        .await?;
+        let (width, height) = image.dimensions();
+        let color_type = image_color_type_description(image.color().into());
 
         let file_metadata = fs
             .metadata(path.as_path())
             .await?
             .ok_or_else(|| anyhow::anyhow!("No metadata found"))?;
-        let file_size = file_metadata.len;
 
         Ok(ImageMetadata {
             width,
             height,
-            file_size,
-            format,
+            file_size: file_metadata.len,
+            format: match image_format {
+                ImageFormat::Png => "PNG",
+                ImageFormat::Jpeg => "JPEG",
+                ImageFormat::Gif => "GIF",
+                ImageFormat::WebP => "WebP",
+                ImageFormat::Tiff => "TIFF",
+                ImageFormat::Bmp => "BMP",
+                ImageFormat::Ico => "ICO",
+                ImageFormat::Avif => "Avif",
+                _ => "Unknown",
+            }
+            .to_string(),
             color_type,
         })
     }
@@ -255,17 +243,9 @@ impl ProjectItem for ImageItem {
         // Since we do not have a way to toggle to an editor
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
-                let image_model = project
+                project
                     .update(&mut cx, |project, cx| project.open_image(path, cx))?
-                    .await?;
-                let image_metadata =
-                    Self::image_info(image_model.clone(), project, &mut cx).await?;
-
-                image_model.update(&mut cx, |image_model, _cx| {
-                    image_model.image_metadata = Some(image_metadata);
-                })?;
-
-                Ok(image_model)
+                    .await
             }))
         } else {
             None
@@ -783,7 +763,7 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            image_viewer::init(cx);
+            // image_viewer::init(cx);
         });
     }
 

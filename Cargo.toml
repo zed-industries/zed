@@ -414,7 +414,7 @@ html5ever = "0.27.0"
 hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
-image = "0.25.5"
+image = "0.25.1"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 itertools = "0.14.0"
