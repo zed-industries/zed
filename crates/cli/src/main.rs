@@ -80,6 +80,9 @@ struct Args {
     ))]
     #[arg(long)]
     uninstall: bool,
+    /// Bundle Windows binaries
+    #[arg(long)]
+    bundle_windows: bool,
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -161,6 +164,11 @@ fn main() -> Result<()> {
             .context("Failed to execute uninstall script")?;
 
         std::process::exit(status.code().unwrap_or(1));
+    }
+
+    if args.bundle_windows {
+        bundle_windows()?;
+        return Ok(());
     }
 
     let (server, server_name) =
@@ -282,6 +290,11 @@ fn main() -> Result<()> {
     if let Some(exit_status) = exit_status.lock().take() {
         std::process::exit(exit_status);
     }
+    Ok(())
+}
+
+fn bundle_windows() -> Result<()> {
+    // Implement the logic to bundle Windows binaries here
     Ok(())
 }
 
@@ -759,7 +772,7 @@ mod mac_os {
         let app_name = String::from_utf8(app_id_output.stdout)?.trim().to_owned();
         let app_path_prompt = format!("kMDItemCFBundleIdentifier == '{app_name}'");
         let app_path_output = Command::new("mdfind").arg(app_path_prompt).output()?;
-        if !app_path_output.status.success() {
+        if (!app_path_output.status.success()) {
             bail!(
                 "Could not determine app path for {}",
                 channel.display_name()

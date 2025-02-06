@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+
+set -euxo pipefail
+
+# Function for displaying help info
+help_info() {
+  echo "
+Usage: ${0##*/} [options]
+Build a release installer for Windows.
+
+Options:
+  -h    Display this help and exit.
+  "
+}
+
+while getopts 'h' flag
+do
+    case "${flag}" in
+        h)
+           help_info
+           exit 0
+           ;;
+    esac
+done
+
+export ZED_BUNDLE=true
+
+channel=$(<crates/zed/RELEASE_CHANNEL)
+target_dir="${CARGO_TARGET_DIR:-target}"
+
+version="$(script/get-crate-version zed)"
+# Set RELEASE_VERSION so it's compiled into GPUI and it knows about the version.
+export RELEASE_VERSION="${version}"
+
+commit=$(git rev-parse HEAD | cut -c 1-7)
+
+# Generate the licenses first, so they can be baked into the binaries
+script/generate-licenses
+
+# Build binary in release mode
+cargo build --release --target x86_64-pc-windows-msvc --package zed --package cli
+
+# Strip debug symbols and save them for upload to DigitalOcean
+objcopy --only-keep-debug "${target_dir}/x86_64-pc-windows-msvc/release/zed.exe" "${target_dir}/x86_64-pc-windows-msvc/release/zed.dbg"
+objcopy --only-keep-debug "${target_dir}/x86_64-pc-windows-msvc/release/cli.exe" "${target_dir}/x86_64-pc-windows-msvc/release/cli.dbg"
+objcopy --strip-debug "${target_dir}/x86_64-pc-windows-msvc/release/zed.exe"
+objcopy --strip-debug "${target_dir}/x86_64-pc-windows-msvc/release/cli.exe"
+
+gzip -f "${target_dir}/x86_64-pc-windows-msvc/release/zed.dbg"
+gzip -f "${target_dir}/x86_64-pc-windows-msvc/release/cli.dbg"
+
+# Create installer using Inno Setup
+iscc /Q /O"${target_dir}/release" /F"Zed-${version}-${commit}" script/installer.iss

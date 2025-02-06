@@ -473,10 +473,47 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  bundle-windows:
+    timeout-minutes: 120
+    name: Create a Windows bundle
+    runs-on: windows-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+    needs: [windows_tests]
+    env:
+      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Create Windows installer
+        run: script/bundle-windows
+
+      - name: Upload Windows installer to workflow run if main branch or specific label
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
+        with:
+          name: zed-${{ github.event.pull_request.head.sha || github.sha }}-windows-installer.exe
+          path: target/release/Zed-*.exe
+
+      - name: Upload Windows installer to release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: |
+            target/release/Zed-*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   auto-release-preview:
     name: Auto release preview
     if: ${{ startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre') }}
-    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
+    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, bundle-windows]
     runs-on:
       - self-hosted
       - bundle
