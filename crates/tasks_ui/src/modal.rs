@@ -603,6 +603,7 @@ mod tests {
     use project::{ContextProviderWithTasks, FakeFs, Project};
     use serde_json::json;
     use task::TaskTemplates;
+    use util::path;
     use workspace::CloseInactiveTabsAndPanes;
 
     use crate::{modal::Spawn, tests::init_test};
@@ -614,7 +615,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".zed": {
                     "tasks.json": r#"[
@@ -635,7 +636,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
@@ -654,7 +655,7 @@ mod tests {
 
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -778,7 +779,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 ".zed": {
                     "tasks.json": r#"[
@@ -800,7 +801,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -819,7 +820,7 @@ mod tests {
         let _ = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
-                    PathBuf::from("/dir/file_with.odd_extension"),
+                    PathBuf::from(path!("/dir/file_with.odd_extension")),
                     true,
                     window,
                     cx,
@@ -832,8 +833,8 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "hello from /dir/file_with.odd_extension:1:1".to_string(),
-                "opened now: /dir".to_string()
+                concat!("hello from ", path!("/dir/file_with.odd_extension:1:1")).to_string(),
+                concat!("opened now: ", path!("/dir")).to_string(),
             ],
             "Second opened buffer should fill the context, labels should be trimmed if long enough"
         );
@@ -846,7 +847,7 @@ mod tests {
         let second_item = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
-                    PathBuf::from("/dir/file_without_extension"),
+                    PathBuf::from(path!("/dir/file_without_extension")),
                     true,
                     window,
                     cx,
@@ -868,8 +869,8 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "hello from /dir/file_without_extension:2:3".to_string(),
-                "opened now: /dir".to_string()
+                concat!("hello from ", path!("/dir/file_without_extension:2:3")).to_string(),
+                concat!("opened now: ", path!("/dir")).to_string(),
             ],
             "Opened buffer should fill the context, labels should be trimmed if long enough"
         );
@@ -885,7 +886,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a1.ts": "// a1",
                 "a2.ts": "// a2",
@@ -894,7 +895,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             let language_registry = project.languages();
             language_registry.add(Arc::new(
@@ -955,7 +956,7 @@ mod tests {
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a1.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -963,23 +964,28 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "Another task from file /dir/a1.ts",
-                "TypeScript task from file /dir/a1.ts",
+                concat!("Another task from file ", path!("/dir/a1.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
                 "Task without variables",
             ],
             "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
         );
+
         emulate_task_schedule(
             tasks_picker,
             &project,
-            "TypeScript task from file /dir/a1.ts",
+            concat!("TypeScript task from file ", path!("/dir/a1.ts")),
             cx,
         );
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            vec![
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a1.ts")),
+                "Task without variables",
+            ],
             "After spawning the task and getting it into the history, it should be up in the sort as recently used.
             Tasks with the same labels and context are deduplicated."
         );
@@ -991,7 +997,7 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -999,10 +1005,10 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "TypeScript task from file /dir/a1.ts",
-                "Another task from file /dir/a2.ts",
-                "TypeScript task from file /dir/a2.ts",
-                "Task without variables"
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a2.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a2.ts")),
+                "Task without variables",
             ],
             "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
         );
@@ -1029,7 +1035,7 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(path!("/dir/a2.ts")), true, window, cx)
             })
             .await
             .unwrap();
@@ -1037,10 +1043,10 @@ mod tests {
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec![
-                "TypeScript task from file /dir/a1.ts",
-                "Another task from file /dir/a2.ts",
-                "TypeScript task from file /dir/a2.ts",
-                "Task without variables"
+                concat!("TypeScript task from file ", path!("/dir/a1.ts")),
+                concat!("Another task from file ", path!("/dir/a2.ts")),
+                concat!("TypeScript task from file ", path!("/dir/a2.ts")),
+                "Task without variables",
             ],
             "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
             same TS spawn history should be restored"

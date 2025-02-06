@@ -13,7 +13,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["tempfile", "git2", "rand"]
+test-support = ["tempfile", "git2", "rand", "util_macros"]
 
 [dependencies]
 anyhow.workspace = true
@@ -35,6 +35,7 @@ smol.workspace = true
 take-until.workspace = true
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
+util_macros = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
@@ -47,3 +48,4 @@ dunce = "1.0"
 git2.workspace = true
 rand.workspace = true
 tempfile.workspace = true
+util_macros.workspace = true

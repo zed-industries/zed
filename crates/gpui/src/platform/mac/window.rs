@@ -17,8 +17,8 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSPoint, NSRect,
-        NSSize, NSString, NSUInteger,
+        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
+        NSPoint, NSRect, NSSize, NSString, NSUInteger,
     },
 };
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
@@ -225,6 +225,11 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(acceptsFirstMouse:),
             accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
+
+        decl.add_method(
+            sel!(characterIndexForPoint:),
+            character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
         );
 
         decl.register()
@@ -1687,17 +1692,7 @@ extern "C" fn first_rect_for_character_range(
     range: NSRange,
     _: id,
 ) -> NSRect {
-    let frame: NSRect = unsafe {
-        let state = get_window_state(this);
-        let lock = state.lock();
-        let mut frame = NSWindow::frame(lock.native_window);
-        let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
-        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
-        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
-            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
-        }
-        frame
-    };
+    let frame = get_frame(this);
     with_input_handler(this, |input_handler| {
         input_handler.bounds_for_range(range.to_range()?)
     })
@@ -1716,6 +1711,20 @@ extern "C" fn first_rect_for_character_range(
             )
         },
     )
+}
+
+fn get_frame(this: &Object) -> NSRect {
+    unsafe {
+        let state = get_window_state(this);
+        let lock = state.lock();
+        let mut frame = NSWindow::frame(lock.native_window);
+        let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
+        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
+        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        }
+        frame
+    }
 }
 
 extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NSRange) {
@@ -1829,6 +1838,24 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
+}
+
+extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint) -> u64 {
+    let position = screen_point_to_gpui_point(this, position);
+    with_input_handler(this, |input_handler| {
+        input_handler.character_index_for_point(position)
+    })
+    .flatten()
+    .map(|index| index as u64)
+    .unwrap_or(NSNotFound as u64)
+}
+
+fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels> {
+    let frame = get_frame(this);
+    let window_x = position.x - frame.origin.x;
+    let window_y = frame.size.height - (position.y - frame.origin.y);
+    let position = point(px(window_x as f32), px(window_y as f32));
+    position
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {

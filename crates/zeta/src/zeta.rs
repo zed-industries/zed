@@ -3,6 +3,7 @@ mod init;
 mod license_detection;
 mod onboarding_banner;
 mod onboarding_modal;
+mod onboarding_telemetry;
 mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
@@ -24,12 +25,10 @@ use gpui::{
 };
 use http_client::{HttpClient, Method};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
-    OffsetRangeExt, Point, ToOffset, ToPoint,
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, Point, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use postage::watch;
-use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
 use settings::WorktreeId;
 use std::{
     borrow::Cow,
@@ -47,6 +46,7 @@ use telemetry_events::InlineCompletionRating;
 use util::ResultExt;
 use uuid::Uuid;
 use worktree::Worktree;
+use zed_llm_client::{PredictEditsBody, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
 const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
@@ -229,9 +229,9 @@ impl Zeta {
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let model = cx.new(|cx| Self::new(client, user_store, cx));
-            cx.set_global(ZetaGlobal(model.clone()));
-            model
+            let entity = cx.new(|cx| Self::new(client, user_store, cx));
+            cx.set_global(ZetaGlobal(entity.clone()));
+            entity
         });
 
         this.update(cx, move |this, cx| {
@@ -364,12 +364,12 @@ impl Zeta {
         &mut self,
         buffer: &Entity<Buffer>,
         cursor: language::Anchor,
-        data_collection_permission: bool,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
     ) -> Task<Result<Option<InlineCompletion>>>
     where
-        F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsParams) -> R + 'static,
+        F: FnOnce(Arc<Client>, LlmApiToken, bool, PredictEditsBody) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
@@ -425,11 +425,11 @@ impl Zeta {
 
             log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
-            let body = PredictEditsParams {
+            let body = PredictEditsBody {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
                 outline: Some(input_outline.clone()),
-                data_collection_permission,
+                can_collect_data,
             };
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
@@ -609,13 +609,13 @@ and then another
         &mut self,
         buffer: &Entity<Buffer>,
         position: language::Anchor,
-        data_collection_permission: bool,
+        can_collect_data: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<InlineCompletion>>> {
         self.request_completion_impl(
             buffer,
             position,
-            data_collection_permission,
+            can_collect_data,
             cx,
             Self::perform_predict_edits,
         )
@@ -625,7 +625,7 @@ and then another
         client: Arc<Client>,
         llm_token: LlmApiToken,
         _is_staff: bool,
-        body: PredictEditsParams,
+        body: PredictEditsBody,
     ) -> impl Future<Output = Result<PredictEditsResponse>> {
         async move {
             let http_client = client.http_client();
@@ -880,7 +880,7 @@ and then another
     ) {
         self.rated_completions.insert(completion.id);
         telemetry::event!(
-            "Inline Completion Rated",
+            "Edit Prediction Rated",
             rating,
             input_events = completion.input_events,
             input_excerpt = completion.input_excerpt,
@@ -952,21 +952,33 @@ impl LicenseDetectionWatcher {
     pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
 
-        let loaded_file_fut = worktree.load_file(Path::new("LICENSE"), false, cx);
+        const LICENSE_FILES_TO_CHECK: [&'static str; 2] = ["LICENSE", "LICENCE"]; // US and UK English spelling
+
+        // Check if worktree is a single file, if so we do not need to check for a LICENSE file
+        let task = if worktree.abs_path().is_file() {
+            Task::ready(())
+        } else {
+            let loaded_files_task = futures::future::join_all(
+                LICENSE_FILES_TO_CHECK
+                    .iter()
+                    .map(|file| worktree.load_file(Path::new(file), cx)),
+            );
+
+            cx.background_executor().spawn(async move {
+                for loaded_file in loaded_files_task.await {
+                    if let Some(content) = loaded_file.log_err() {
+                        if is_license_eligible_for_data_collection(&content.text) {
+                            *is_open_source_tx.borrow_mut() = true;
+                            break;
+                        }
+                    }
+                }
+            })
+        };
 
         Self {
             is_open_source_rx,
-            _is_open_source_task: cx.spawn(|_, _| async move {
-                // TODO: Don't display error if file not found
-                let Some(loaded_file) = loaded_file_fut.await.log_err() else {
-                    return;
-                };
-
-                let is_loaded_file_open_source_thing: bool =
-                    is_license_eligible_for_data_collection(&loaded_file.text);
-
-                *is_open_source_tx.borrow_mut() = is_loaded_file_open_source_thing;
-            }),
+            _is_open_source_task: task,
         }
     }
 
@@ -1365,7 +1377,7 @@ impl ProviderDataCollection {
             .map_or(false, |choice| choice.read(cx).is_enabled())
     }
 
-    pub fn data_collection_permission(&self, cx: &App) -> bool {
+    pub fn can_collect_data(&self, cx: &App) -> bool {
         self.choice
             .as_ref()
             .is_some_and(|choice| choice.read(cx).is_enabled())
@@ -1400,10 +1412,11 @@ pub struct ZetaInlineCompletionProvider {
     current_completion: Option<CurrentInlineCompletion>,
     /// None if this is entirely disabled for this provider
     provider_data_collection: ProviderDataCollection,
+    last_request_timestamp: Instant,
 }
 
 impl ZetaInlineCompletionProvider {
-    pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(8);
+    pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
     pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
         Self {
@@ -1412,6 +1425,7 @@ impl ZetaInlineCompletionProvider {
             next_pending_completion_id: 0,
             current_completion: None,
             provider_data_collection,
+            last_request_timestamp: Instant::now(),
         }
     }
 }
@@ -1454,15 +1468,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
-        cx: &App,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
+        _cx: &App,
     ) -> bool {
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        true
     }
 
     fn needs_terms_acceptance(&self, cx: &App) -> bool {
@@ -1477,7 +1487,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         &mut self,
         buffer: Entity<Buffer>,
         position: language::Anchor,
-        debounce: bool,
+        _debounce: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.zeta.read(cx).tos_accepted {
@@ -1497,17 +1507,20 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
-        let data_collection_permission =
-            self.provider_data_collection.data_collection_permission(cx);
+        let can_collect_data = self.provider_data_collection.can_collect_data(cx);
+        let last_request_timestamp = self.last_request_timestamp;
 
         let task = cx.spawn(|this, mut cx| async move {
-            if debounce {
-                cx.background_executor().timer(Self::DEBOUNCE_TIMEOUT).await;
+            if let Some(timeout) = (last_request_timestamp + Self::THROTTLE_TIMEOUT)
+                .checked_duration_since(Instant::now())
+            {
+                cx.background_executor().timer(timeout).await;
             }
 
             let completion_request = this.update(&mut cx, |this, cx| {
+                this.last_request_timestamp = Instant::now();
                 this.zeta.update(cx, |zeta, cx| {
-                    zeta.request_completion(&buffer, position, data_collection_permission, cx)
+                    zeta.request_completion(&buffer, position, can_collect_data, cx)
                 })
             });
 

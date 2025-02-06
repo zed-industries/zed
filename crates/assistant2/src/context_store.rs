@@ -79,8 +79,8 @@ impl ContextStore {
                 project.open_buffer(project_path.clone(), cx)
             })?;
 
-            let buffer_model = open_buffer_task.await?;
-            let buffer_id = this.update(&mut cx, |_, cx| buffer_model.read(cx).remote_id())?;
+            let buffer_entity = open_buffer_task.await?;
+            let buffer_id = this.update(&mut cx, |_, cx| buffer_entity.read(cx).remote_id())?;
 
             let already_included = this.update(&mut cx, |this, _cx| {
                 match this.will_include_buffer(buffer_id, &project_path.path) {
@@ -98,10 +98,10 @@ impl ContextStore {
             }
 
             let (buffer_info, text_task) = this.update(&mut cx, |_, cx| {
-                let buffer = buffer_model.read(cx);
+                let buffer = buffer_entity.read(cx);
                 collect_buffer_info_and_text(
                     project_path.path.clone(),
-                    buffer_model,
+                    buffer_entity,
                     buffer,
                     cx.to_async(),
                 )
@@ -119,18 +119,18 @@ impl ContextStore {
 
     pub fn add_file_from_buffer(
         &mut self,
-        buffer_model: Entity<Buffer>,
+        buffer_entity: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         cx.spawn(|this, mut cx| async move {
             let (buffer_info, text_task) = this.update(&mut cx, |_, cx| {
-                let buffer = buffer_model.read(cx);
+                let buffer = buffer_entity.read(cx);
                 let Some(file) = buffer.file() else {
                     return Err(anyhow!("Buffer has no path."));
                 };
                 Ok(collect_buffer_info_and_text(
                     file.path().clone(),
-                    buffer_model,
+                    buffer_entity,
                     buffer,
                     cx.to_async(),
                 ))
@@ -207,11 +207,11 @@ impl ContextStore {
             let mut buffer_infos = Vec::new();
             let mut text_tasks = Vec::new();
             this.update(&mut cx, |_, cx| {
-                for (path, buffer_model) in files.into_iter().zip(buffers) {
-                    let buffer_model = buffer_model?;
-                    let buffer = buffer_model.read(cx);
+                for (path, buffer_entity) in files.into_iter().zip(buffers) {
+                    let buffer_entity = buffer_entity?;
+                    let buffer = buffer_entity.read(cx);
                     let (buffer_info, text_task) =
-                        collect_buffer_info_and_text(path, buffer_model, buffer, cx.to_async());
+                        collect_buffer_info_and_text(path, buffer_entity, buffer, cx.to_async());
                     buffer_infos.push(buffer_info);
                     text_tasks.push(text_task);
                 }
@@ -429,7 +429,7 @@ pub enum FileInclusion {
 
 // ContextBuffer without text.
 struct BufferInfo {
-    buffer_model: Entity<Buffer>,
+    buffer_entity: Entity<Buffer>,
     id: BufferId,
     version: clock::Global,
 }
@@ -437,7 +437,7 @@ struct BufferInfo {
 fn make_context_buffer(info: BufferInfo, text: SharedString) -> ContextBuffer {
     ContextBuffer {
         id: info.id,
-        buffer: info.buffer_model,
+        buffer: info.buffer_entity,
         version: info.version,
         text,
     }
@@ -445,13 +445,13 @@ fn make_context_buffer(info: BufferInfo, text: SharedString) -> ContextBuffer {
 
 fn collect_buffer_info_and_text(
     path: Arc<Path>,
-    buffer_model: Entity<Buffer>,
+    buffer_entity: Entity<Buffer>,
     buffer: &Buffer,
     cx: AsyncApp,
 ) -> (BufferInfo, Task<SharedString>) {
     let buffer_info = BufferInfo {
         id: buffer.remote_id(),
-        buffer_model,
+        buffer_entity,
         version: buffer.version(),
     };
     // Important to collect version at the same time as content so that staleness logic is correct.

@@ -618,6 +618,7 @@ mod tests {
     use project::{project_settings::ProjectSettings, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use workspace::{open_paths, AppState};
 
     use super::*;
@@ -638,7 +639,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/dir",
+                path!("/dir"),
                 json!({
                     "main.ts": "a"
                 }),
@@ -646,7 +647,7 @@ mod tests {
             .await;
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/dir/main.ts")],
+                &[PathBuf::from(path!("/dir/main.ts"))],
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,

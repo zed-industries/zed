@@ -1274,6 +1274,7 @@ pub mod tests {
     use settings::SettingsStore;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use text::Point;
+    use util::path;
 
     use super::*;
 
@@ -1499,7 +1500,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
                 "other.md": "Test md file with some text",
@@ -1507,7 +1508,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let mut rs_fake_servers = None;
@@ -1542,14 +1543,16 @@ pub mod tests {
                                         "Rust" => {
                                             assert_eq!(
                                                 params.text_document.uri,
-                                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                                lsp::Url::from_file_path(path!("/a/main.rs"))
+                                                    .unwrap(),
                                             );
                                             rs_lsp_request_count.fetch_add(1, Ordering::Release) + 1
                                         }
                                         "Markdown" => {
                                             assert_eq!(
                                                 params.text_document.uri,
-                                                lsp::Url::from_file_path("/a/other.md").unwrap(),
+                                                lsp::Url::from_file_path(path!("/a/other.md"))
+                                                    .unwrap(),
                                             );
                                             md_lsp_request_count.fetch_add(1, Ordering::Release) + 1
                                         }
@@ -1585,7 +1588,7 @@ pub mod tests {
 
         let rs_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -1611,7 +1614,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         let md_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/other.md", cx)
+                project.open_local_buffer(path!("/a/other.md"), cx)
             })
             .await
             .unwrap();
@@ -2173,7 +2176,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": format!("fn main() {{\n{}\n}}", "let i = 5;\n".repeat(500)),
                 "other.rs": "// Test file",
@@ -2181,7 +2184,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -2209,7 +2212,7 @@ pub mod tests {
                                 async move {
                                     assert_eq!(
                                         params.text_document.uri,
-                                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                        lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                                     );
 
                                     task_lsp_request_ranges.lock().push(params.range);
@@ -2237,7 +2240,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -2471,7 +2474,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-                "/a",
+                path!("/a"),
                 json!({
                     "main.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|i| format!("let i = {i};\n")).collect::<Vec<_>>().join("")),
                     "other.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|j| format!("let j = {j};\n")).collect::<Vec<_>>().join("")),
@@ -2479,7 +2482,7 @@ pub mod tests {
             )
             .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let language = rust_lang();
@@ -2497,13 +2500,13 @@ pub mod tests {
 
         let (buffer_1, _handle1) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/a/main.rs", cx)
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
         let (buffer_2, _handle2) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/a/other.rs", cx)
+                project.open_local_buffer_with_lsp(path!("/a/other.rs"), cx)
             })
             .await
             .unwrap();
@@ -2585,11 +2588,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
+                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
+                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -2815,7 +2818,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|i| format!("let i = {i};\n")).collect::<Vec<_>>().join("")),
                 "other.rs": format!("fn main() {{\n{}\n}}", (0..501).map(|j| format!("let j = {j};\n")).collect::<Vec<_>>().join("")),
@@ -2823,7 +2826,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -2840,13 +2843,13 @@ pub mod tests {
 
         let (buffer_1, _handle) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/a/main.rs", cx)
+                project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
         let (buffer_2, _handle2) = project
             .update(cx, |project, cx| {
-                project.open_local_buffer_with_lsp("/a/other.rs", cx)
+                project.open_local_buffer_with_lsp(path!("/a/other.rs"), cx)
             })
             .await
             .unwrap();
@@ -2886,11 +2889,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/main.rs").unwrap()
+                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path("/a/other.rs").unwrap()
+                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -3027,7 +3030,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": format!(r#"fn main() {{\n{}\n}}"#, format!("let i = {};\n", "√".repeat(10)).repeat(500)),
                 "other.rs": "// Test file",
@@ -3035,7 +3038,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -3054,7 +3057,7 @@ pub mod tests {
                             async move {
                                 assert_eq!(
                                     params.text_document.uri,
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                                 );
                                 let query_start = params.range.start;
                                 Ok(Some(vec![lsp::InlayHint {
@@ -3077,7 +3080,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -3250,7 +3253,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() {
                     let x = 42;
@@ -3265,7 +3268,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -3281,7 +3284,7 @@ pub mod tests {
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
                             );
                             Ok(Some(
                                 serde_json::from_value(json!([
@@ -3351,7 +3354,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -3408,7 +3411,7 @@ pub mod tests {
     ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            path!("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
                 "other.rs": "// Test file",
@@ -3416,8 +3419,8 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
-        let file_path = "/a/main.rs";
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let file_path = path!("/a/main.rs");
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -3435,7 +3438,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(path!("/a/main.rs"), cx)
             })
             .await
             .unwrap();

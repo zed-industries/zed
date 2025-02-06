@@ -279,9 +279,10 @@ fn show_hover(
                 delay.await;
             }
 
+            let offset = anchor.to_offset(&snapshot.buffer_snapshot);
             let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor)
+                .diagnostics_in_range::<usize>(offset..offset)
                 // Find the entry with the most specific range
                 .min_by_key(|entry| entry.range.len());
 
