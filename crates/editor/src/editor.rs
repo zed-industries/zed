@@ -1490,10 +1490,14 @@ impl Editor {
         if self.pending_rename.is_some() {
             key_context.add("renaming");
         }
+
+        let mut showing_completions = false;
+
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
                 key_context.add("showing_completions");
+                showing_completions = true;
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -1523,6 +1527,10 @@ impl Editor {
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
+
+            if showing_completions || self.inline_completion_requires_modifier(cx) {
+                key_context.add("inline_completion_requires_modifier");
+            }
         }
 
         if self.selection_mark_mode {
@@ -4655,7 +4663,7 @@ impl Editor {
         }
     }
 
-    fn inline_completion_preview_mode(&self, cx: &App) -> language::InlineCompletionPreviewMode {
+    fn inline_completion_requires_modifier(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
 
         self.buffer
@@ -4663,8 +4671,9 @@ impl Editor {
             .text_anchor_for_position(cursor, cx)
             .map(|(buffer, _)| {
                 all_language_settings(buffer.read(cx).file(), cx).inline_completions_preview_mode()
+                    == InlineCompletionPreviewMode::WhenHoldingModifier
             })
-            .unwrap_or_default()
+            .unwrap_or(false)
     }
 
     fn should_show_inline_completions_in_buffer(
@@ -5033,9 +5042,7 @@ impl Editor {
             return true;
         }
 
-        has_completion
-            && self.inline_completion_preview_mode(cx)
-                == InlineCompletionPreviewMode::WhenHoldingModifier
+        has_completion && self.inline_completion_requires_modifier(cx)
     }
 
     fn update_inline_completion_preview(
@@ -5044,18 +5051,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_inline_completion.as_ref().is_none() {
-            self.previewing_inline_completion = false;
-            cx.notify();
-            return;
-        }
-
         if !self.show_inline_completions_in_menu(cx) {
             return;
         }
 
         self.previewing_inline_completion = modifiers.alt;
         self.update_visible_inline_completion(window, cx);
+        cx.notify();
     }
 
     fn update_visible_inline_completion(
