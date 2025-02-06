@@ -23,6 +23,7 @@ use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
+use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -3940,6 +3941,12 @@ impl AnyWindowHandle {
             .context("the type of the window's root view has changed")?;
 
         cx.read_window(&view, read)
+    }
+}
+
+impl HasWindowHandle for Window {
+    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
+        self.platform_window.window_handle()
     }
 }
 
