@@ -264,36 +264,9 @@ impl Render for DataTable {
             .text_sm()
             .size_full()
             .p_4()
+            .gap_2()
             .flex()
             .flex_col()
-            .gap_2()
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, ev: &MouseDownEvent, _, _| {
-                    this.mouse_down_position = ev.position;
-                }),
-            )
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                if ev.dragging() {
-                    let base_handle = this.scroll_handle.0.borrow_mut().base_handle.clone();
-                    let bounds = base_handle.bounds();
-                    let diff = ev.position - this.mouse_down_position - bounds.origin;
-                    let percentage = diff.y / bounds.size.height;
-
-                    let scroll_height = this
-                        .scroll_handle
-                        .0
-                        .borrow()
-                        .last_item_size
-                        .unwrap_or_default()
-                        .contents
-                        .height;
-
-                    let offset_y = (percentage * scroll_height).clamp(px(0.), scroll_height);
-                    base_handle.set_offset(point(px(0.), -offset_y));
-                    cx.notify();
-                }
-            }))
             .child(format!(
                 "Total: {} items (Mouse down to drag scroll)",
                 self.quotes.len()
@@ -301,36 +274,74 @@ impl Render for DataTable {
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .w_full()
-                    .py_0p5()
-                    .border_b_1()
+                    .flex_col()
+                    .flex_1()
+                    .overflow_hidden()
+                    .p_4()
+                    .border_1()
                     .border_color(rgb(0xE0E0E0))
-                    .children(FIELDS.map(|(key, width)| {
-                        div()
-                            .whitespace_nowrap()
-                            .flex_shrink_0()
-                            .truncate()
-                            .w(px(width))
-                            .child(key)
-                    })),
-            )
-            .child(
-                div().flex_1().relative().child(
-                    uniform_list(entity, "items", self.quotes.len(), {
-                        move |this, range, _, _| {
-                            let mut items = Vec::with_capacity(range.end - range.start);
-                            for i in range {
-                                if let Some(quote) = this.quotes.get(i) {
-                                    items.push(Item::new(quote.clone()));
-                                }
-                            }
-                            items
+                    .rounded_md()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, ev: &MouseDownEvent, _, _| {
+                            this.mouse_down_position = ev.position;
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                        if ev.dragging() {
+                            let base_handle = this.scroll_handle.0.borrow_mut().base_handle.clone();
+                            let bounds = base_handle.bounds();
+                            let diff = ev.position - this.mouse_down_position - bounds.origin;
+                            let percentage = diff.y / bounds.size.height;
+
+                            let scroll_height = this
+                                .scroll_handle
+                                .0
+                                .borrow()
+                                .last_item_size
+                                .unwrap_or_default()
+                                .contents
+                                .height;
+
+                            let offset_y =
+                                (percentage * scroll_height).clamp(px(0.), scroll_height);
+                            base_handle.set_offset(point(px(0.), -offset_y));
+                            cx.notify();
                         }
-                    })
-                    .size_full()
-                    .track_scroll(self.scroll_handle.clone()),
-                ),
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .w_full()
+                            .overflow_hidden()
+                            .border_b_1()
+                            .border_color(rgb(0xE0E0E0))
+                            .py_0p5()
+                            .children(FIELDS.map(|(key, width)| {
+                                div()
+                                    .whitespace_nowrap()
+                                    .flex_shrink_0()
+                                    .truncate()
+                                    .w(px(width))
+                                    .child(key)
+                            })),
+                    )
+                    .child(
+                        uniform_list(entity, "items", self.quotes.len(), {
+                            move |this, range, _, _| {
+                                let mut items = Vec::with_capacity(range.end - range.start);
+                                for i in range {
+                                    if let Some(quote) = this.quotes.get(i) {
+                                        items.push(Item::new(quote.clone()));
+                                    }
+                                }
+                                items
+                            }
+                        })
+                        .size_full()
+                        .track_scroll(self.scroll_handle.clone()),
+                    ),
             )
     }
 }
