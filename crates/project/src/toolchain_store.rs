@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::{bail, Context as _, Result};
 
@@ -8,7 +8,10 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{
+    proto::{self, FromProto, ToProto},
+    AnyProtoClient, TypedEnvelope,
+};
 use settings::WorktreeId;
 use util::ResultExt as _;
 
@@ -120,13 +123,9 @@ impl ToolchainStore {
             };
             let toolchain = Toolchain {
                 name: toolchain.name.into(),
-                path: toolchain
-                    .path
-                    // todo(windows)
-                    // to_native_string or to_db_string?
-                    .map(|path| path.to_native_string().into())
-                    .or_else(|| toolchain.path_deprecated.map(Into::into))
-                    .context("Missing path")?,
+                // todo(windows)
+                // Do we need to convert path to native string?
+                path: PathBuf::from(toolchain.path).to_proto(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
@@ -151,11 +150,10 @@ impl ToolchainStore {
 
         Ok(proto::ActiveToolchainResponse {
             toolchain: toolchain.map(|toolchain| {
-                let path: proto::CrossPlatformPath = toolchain.path.to_string().into();
+                let path = PathBuf::from(toolchain.path.to_string());
                 proto::Toolchain {
                     name: toolchain.name.into(),
-                    path_deprecated: Some(path.to_db_string()),
-                    path: Some(toolchain.path.to_string().into()),
+                    path: path.to_proto(),
                     raw_json: toolchain.as_json.to_string(),
                 }
             }),
@@ -194,11 +192,10 @@ impl ToolchainStore {
                 .toolchains
                 .into_iter()
                 .map(|toolchain| {
-                    let path: proto::CrossPlatformPath = toolchain.path.to_string().into();
+                    let path = PathBuf::from(toolchain.path.to_string());
                     proto::Toolchain {
                         name: toolchain.name.to_string(),
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path),
+                        path: path.to_proto(),
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
@@ -368,7 +365,7 @@ impl RemoteToolchainStore {
         let project_id = self.project_id;
         let client = self.client.clone();
         cx.spawn(move |_| async move {
-            let path: proto::CrossPlatformPath = toolchain.path.to_string().into();
+            let path = PathBuf::from(toolchain.path.to_string());
             let _ = client
                 .request(proto::ActivateToolchain {
                     project_id,
@@ -376,8 +373,7 @@ impl RemoteToolchainStore {
                     language_name: toolchain.language_name.into(),
                     toolchain: Some(proto::Toolchain {
                         name: toolchain.name.into(),
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path),
+                        path: path.to_proto(),
                         raw_json: toolchain.as_json.to_string(),
                     }),
                 })
@@ -415,11 +411,10 @@ impl RemoteToolchainStore {
                         language_name: language_name.clone(),
                         name: toolchain.name.into(),
                         // todo(windows)
-                        // to_native_string or to_db_string?
-                        path: toolchain
-                            .path
-                            .map(|path| path.to_native_string().into())
-                            .or_else(|| toolchain.path_deprecated.map(Into::into))?,
+                        // Do we need to convert path to native string?
+                        path: PathBuf::from_proto(toolchain.path)
+                            .to_string_lossy()
+                            .to_string(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })
@@ -461,11 +456,10 @@ impl RemoteToolchainStore {
                     language_name: language_name.clone(),
                     name: toolchain.name.into(),
                     // todo(windows)
-                    // to_native_string or to_db_string?
-                    path: toolchain
-                        .path
-                        .map(|path| path.to_native_string().into())
-                        .or_else(|| toolchain.path_deprecated.map(Into::into))?,
+                    // Do we need to convert path to native string?
+                    path: PathBuf::from_proto(toolchain.path)
+                        .to_string_lossy()
+                        .to_string(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })
