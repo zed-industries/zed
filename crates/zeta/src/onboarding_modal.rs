@@ -160,11 +160,17 @@ impl Focusable for ZedPredictModal {
 impl ModalView for ZedPredictModal {}
 
 impl Render for ZedPredictModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_height = window.viewport_size().height;
+        let max_height = window_height - px(200.);
+
         let base = v_flex()
-            .id("zed predict tos")
+            .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
+            .debug_bg_red()
             .w(px(440.))
+            .max_h(max_height)
+            .h_full()
             .p_4()
             .relative()
             .gap_2()
@@ -290,13 +296,20 @@ impl Render for ZedPredictModal {
             };
 
             fn label_item(label_text: impl Into<SharedString>) -> impl Element {
-                Label::new(label_text).color(Color::Muted).into_element()
+                div()
+                    .w_full()
+                    .child(Label::new(label_text).color(Color::Muted).into_element())
             }
 
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
                 h_flex()
+                    .items_start()
                     .gap_2()
-                    .child(Icon::new(IconName::Check).size(IconSize::XSmall))
+                    .child(
+                        div()
+                            .mt_1p5()
+                            .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
+                    )
                     .child(label_item(label_text))
             }
 
@@ -333,6 +346,7 @@ impl Render for ZedPredictModal {
                     v_flex()
                         .child(
                             h_flex()
+                                .flex_wrap()
                                 .child(
                                     Checkbox::new(
                                         "training-data-checkbox",
@@ -367,12 +381,14 @@ impl Render for ZedPredictModal {
                         .when(self.data_collection_expanded, |element| {
                             element.child(
                                 v_flex()
+                                    .id("training-data-container")
                                     .mt_2()
                                     .p_2()
                                     .rounded_md()
                                     .bg(cx.theme().colors().editor_background.opacity(0.5))
                                     .border_1()
                                     .border_color(cx.theme().colors().border_variant)
+                                    .overflow_scroll()
                                     .child(
                                         div().child(
                                             Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
