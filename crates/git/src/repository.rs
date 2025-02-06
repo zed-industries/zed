@@ -8,6 +8,7 @@ use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
 use std::borrow::Borrow;
+use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
@@ -16,6 +17,7 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use util::command::new_std_command;
+use util::paths::PathExt;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
@@ -326,12 +328,16 @@ impl GitRepository for RealGitRepository {
             args.push(author);
         }
 
-        let cmd = new_std_command(&self.git_binary_path)
+        let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
             .args(args)
-            .status()?;
-        if !cmd.success() {
-            return Err(anyhow!("Failed to commit: {cmd}"));
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to commit:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
         Ok(())
     }

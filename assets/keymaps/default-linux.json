@@ -714,11 +714,10 @@
     }
   },
   {
-    "context": "GitPanel && CommitEditor > Editor",
+    "context": "GitPanel",
     "bindings": {
       "escape": "git_panel::FocusChanges",
-      "ctrl-enter": "git::CommitChanges",
-      "ctrl-shift-enter": "git::CommitAllChanges"
+      "ctrl-enter": "git::Commit"
     }
   },
   {
