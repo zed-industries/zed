@@ -862,7 +862,7 @@ async fn test_remote_resolve_path_in_buffer(
 async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        path!("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -879,7 +879,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_abs_path("/code/project1/README.md", cx)
+            project.resolve_abs_path(path!("/code/project1/README.md"), cx)
         })
         .await
         .unwrap();
@@ -887,12 +887,12 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        "/code/project1/README.md"
+        path!("/code/project1/README.md")
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_abs_path("/code/project1/src", cx)
+            project.resolve_abs_path(path!("/code/project1/src"), cx)
         })
         .await
         .unwrap();
@@ -900,12 +900,12 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
     assert!(path.is_dir());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        "/code/project1/src"
+        path!("/code/project1/src")
     );
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_abs_path("/code/project1/DOESNOTEXIST", cx)
+            project.resolve_abs_path(path!("/code/project1/DOESNOTEXIST"), cx)
         })
         .await;
     assert!(path.is_none());
