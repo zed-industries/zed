@@ -1392,7 +1392,7 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(diff) = self.get_uncommmitted_diff(buffer_id, cx) {
+        if let Some(diff) = self.get_uncommitted_diff(buffer_id, cx) {
             return Task::ready(Ok(diff));
         }
 
@@ -1815,7 +1815,7 @@ impl BufferStore {
         }
     }
 
-    pub fn get_uncommmitted_diff(
+    pub fn get_uncommitted_diff(
         &self,
         buffer_id: BufferId,
         cx: &App,
