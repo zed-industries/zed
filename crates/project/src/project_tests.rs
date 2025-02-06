@@ -1,5 +1,5 @@
 use crate::{Event, *};
-use ::git::diff::assert_hunks;
+use diff::assert_hunks;
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};
@@ -5639,7 +5639,7 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let staged_contents = r#"
@@ -5681,20 +5681,20 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let unstaged_changes = project
+    let unstaged_diff = project
         .update(cx, |project, cx| {
-            project.open_unstaged_changes(buffer.clone(), cx)
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().text(),
+            &unstaged_diff.base_text_string().unwrap(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5719,19 +5719,19 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     cx.run_until_parked();
-    unstaged_changes.update(cx, |unstaged_changes, cx| {
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().text(),
+            &unstaged_diff.snapshot.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });
 }
 
 #[gpui::test]
-async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let committed_contents = r#"
@@ -5783,20 +5783,20 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let uncommitted_changes = project
+    let uncommitted_diff = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_changes(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.snapshot.base_text.as_ref().unwrap().text(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5821,12 +5821,12 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     cx.run_until_parked();
-    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.snapshot.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });
@@ -5874,20 +5874,20 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let uncommitted_changes = project
+    let uncommitted_diff = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_changes(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
     cx.run_until_parked();
-    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.snapshot.base_text.as_ref().unwrap().text(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",

@@ -5386,7 +5386,7 @@ fn send_status_update_inner(
 
     let new_snapshot = state.snapshot.clone();
     let old_snapshot = mem::replace(&mut state.prev_snapshot, new_snapshot.snapshot.clone());
-    let changes = build_change_set(phase, &old_snapshot, &new_snapshot, &state.changed_paths);
+    let changes = build_diff(phase, &old_snapshot, &new_snapshot, &state.changed_paths);
     state.changed_paths.clear();
 
     status_updates_tx
@@ -5399,7 +5399,7 @@ fn send_status_update_inner(
         .is_ok()
 }
 
-fn build_change_set(
+fn build_diff(
     phase: BackgroundScannerPhase,
     old_snapshot: &Snapshot,
     new_snapshot: &Snapshot,

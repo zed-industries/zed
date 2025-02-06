@@ -47,7 +47,6 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use ::git::diff::DiffHunkStatus;
 pub(crate) use actions::*;
 pub use actions::{OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
@@ -74,6 +73,7 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
+use diff::DiffHunkStatus;
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
@@ -1287,7 +1287,7 @@ impl Editor {
 
         let mut code_action_providers = Vec::new();
         if let Some(project) = project.clone() {
-            get_uncommitted_changes_for_buffer(
+            get_uncommitted_diff_for_buffer(
                 &project,
                 buffer.read(cx).all_buffers(),
                 buffer.clone(),
@@ -6773,11 +6773,12 @@ impl Editor {
         cx: &mut App,
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
-        let change_set = buffer.change_set_for(hunk.buffer_id)?;
+        let diff = buffer.diff_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let original_text = change_set
+        let original_text = diff
             .read(cx)
+            .snapshot
             .base_text
             .as_ref()?
             .as_rope()
@@ -13731,9 +13732,9 @@ impl Editor {
             } => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 let buffer_id = buffer.read(cx).remote_id();
-                if self.buffer.read(cx).change_set_for(buffer_id).is_none() {
+                if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
-                        get_uncommitted_changes_for_buffer(
+                        get_uncommitted_diff_for_buffer(
                             project,
                             [buffer.clone()],
                             self.buffer.clone(),
@@ -14492,7 +14493,7 @@ impl Editor {
     }
 }
 
-fn get_uncommitted_changes_for_buffer(
+fn get_uncommitted_diff_for_buffer(
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
@@ -14501,15 +14502,15 @@ fn get_uncommitted_changes_for_buffer(
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
         for buffer in buffers {
-            tasks.push(project.open_uncommitted_changes(buffer.clone(), cx))
+            tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
         }
     });
     cx.spawn(|mut cx| async move {
-        let change_sets = futures::future::join_all(tasks).await;
+        let diffs = futures::future::join_all(tasks).await;
         buffer
             .update(&mut cx, |buffer, cx| {
-                for change_set in change_sets.into_iter().flatten() {
-                    buffer.add_change_set(change_set, cx);
+                for diff in diffs.into_iter().flatten() {
+                    buffer.add_diff(diff, cx);
                 }
             })
             .ok();

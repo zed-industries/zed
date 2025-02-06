@@ -304,8 +304,8 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        OpenUnstagedChanges open_unstaged_changes = 288;
-        OpenUnstagedChangesResponse open_unstaged_changes_response = 289;
+        OpenUnstagedDiff open_unstaged_diff = 288;
+        OpenUnstagedDiffResponse open_unstaged_diff_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
 
@@ -314,8 +314,8 @@ message Envelope {
         Commit commit = 295;
         OpenCommitMessageBuffer open_commit_message_buffer = 296;
 
-        OpenUncommittedChanges open_uncommitted_changes = 297;
-        OpenUncommittedChangesResponse open_uncommitted_changes_response = 298; // current max
+        OpenUncommittedDiff open_uncommitted_diff = 297;
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298; // current max
     }
 
     reserved 87 to 88;
@@ -2062,21 +2062,21 @@ message UpdateDiffBases {
     Mode mode = 5;
 }
 
-message OpenUnstagedChanges {
+message OpenUnstagedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message OpenUnstagedChangesResponse {
+message OpenUnstagedDiffResponse {
     optional string staged_text = 1;
 }
 
-message OpenUncommittedChanges {
+message OpenUncommittedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message OpenUncommittedChangesResponse {
+message OpenUncommittedDiffResponse {
     enum Mode {
         INDEX_MATCHES_HEAD = 0;
         INDEX_AND_HEAD = 1;

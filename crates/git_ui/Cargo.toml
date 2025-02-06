@@ -16,6 +16,7 @@ path = "src/git_ui.rs"
 anyhow.workspace = true
 collections.workspace = true
 db.workspace = true
+diff.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true

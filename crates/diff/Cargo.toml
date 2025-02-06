@@ -1,0 +1,32 @@
+[package]
+name = "diff"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/diff.rs"
+
+[dependencies]
+futures.workspace = true
+git2.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+rope.workspace = true
+sum_tree.workspace = true
+text.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+unindent.workspace = true
+serde_json.workspace = true
+pretty_assertions.workspace = true
+text = {workspace = true, features = ["test-support"]}
+
+[features]
+test-support = []

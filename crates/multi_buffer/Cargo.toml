@@ -14,9 +14,10 @@ doctest = false
 
 [features]
 test-support = [
-    "text/test-support",
-    "language/test-support",
+    "diff/test-support",
     "gpui/test-support",
+    "language/test-support",
+    "text/test-support",
     "util/test-support",
 ]
 
@@ -25,15 +26,14 @@ anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
 ctor.workspace = true
+diff.workspace = true
 env_logger.workspace = true
 futures.workspace = true
-git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true
 parking_lot.workspace = true
-project.workspace = true
 rand.workspace = true
 rope.workspace = true
 smol.workspace = true
@@ -47,12 +47,13 @@ tree-sitter.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+diff = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-pretty_assertions.workspace = true
-indoc.workspace = true
