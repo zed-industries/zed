@@ -472,16 +472,14 @@ impl Zeta {
                 input_excerpt: values.input_excerpt.clone(),
                 outline: Some(values.input_outline.clone()),
                 can_collect_data,
-                diagnostic_groups: diagnostic_groups.map(|diagnostic_groups| {
+                diagnostic_groups: diagnostic_groups.and_then(|diagnostic_groups| {
                     diagnostic_groups
                         .into_iter()
                         .map(|(name, diagnostic_group)| {
-                            (
-                                name.to_string(),
-                                serde_json::to_value(diagnostic_group).unwrap(),
-                            )
+                            Ok((name.to_string(), serde_json::to_value(diagnostic_group)?))
                         })
-                        .collect()
+                        .collect::<Result<Vec<_>>>()
+                        .log_err()
                 }),
             };
 
