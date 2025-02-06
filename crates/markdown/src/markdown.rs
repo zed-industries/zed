@@ -528,12 +528,7 @@ impl MarkdownElement {
         let text_style = self.style.base_text_style.clone();
         let font_id = window.text_system().resolve_font(&text_style.font());
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let em_width = window
-            .text_system()
-            .typographic_bounds(font_id, font_size, 'm')
-            .unwrap()
-            .size
-            .width;
+        let em_width = window.text_system().em_width(font_id, font_size).unwrap();
         window.request_autoscroll(Bounds::from_corners(
             point(position.x - 3. * em_width, position.y - 3. * line_height),
             point(position.x + 3. * em_width, position.y + 3. * line_height),
@@ -826,13 +821,13 @@ impl Element for MarkdownElement {
         let mut context = KeyContext::default();
         context.add("Markdown");
         window.set_key_context(context);
-        let model = self.markdown.clone();
+        let entity = self.markdown.clone();
         window.on_action(std::any::TypeId::of::<crate::Copy>(), {
             let text = rendered_markdown.text.clone();
             move |_, phase, window, cx| {
                 let text = text.clone();
                 if phase == DispatchPhase::Bubble {
-                    model.update(cx, move |this, cx| this.copy(&text, window, cx))
+                    entity.update(cx, move |this, cx| this.copy(&text, window, cx))
                 }
             }
         });

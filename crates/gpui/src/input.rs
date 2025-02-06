@@ -4,7 +4,7 @@ use std::ops::Range;
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
 ///
 /// Once your view implements this trait, you can use it to construct an [`ElementInputHandler<V>`].
-/// This input handler can then be assigned during paint by calling [`WindowContext::handle_input`].
+/// This input handler can then be assigned during paint by calling [`Window::handle_input`].
 ///
 /// See [`InputHandler`] for details on how to implement each method.
 pub trait EntityInputHandler: 'static + Sized {
@@ -62,9 +62,17 @@ pub trait EntityInputHandler: 'static + Sized {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>>;
+
+    /// See [`InputHandler::character_index_for_point`] for details
+    fn character_index_for_point(
+        &mut self,
+        point: crate::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize>;
 }
 
-/// The canonical implementation of [`PlatformInputHandler`]. Call [`WindowContext::handle_input`]
+/// The canonical implementation of [`PlatformInputHandler`]. Call [`Window::handle_input`]
 /// with an instance during your element's paint.
 pub struct ElementInputHandler<V> {
     view: Entity<V>,
@@ -72,8 +80,7 @@ pub struct ElementInputHandler<V> {
 }
 
 impl<V: 'static> ElementInputHandler<V> {
-    /// Used in [`Element::paint`][element_paint] with the element's bounds and a view context for its
-    /// containing view.
+    /// Used in [`Element::paint`][element_paint] with the element's bounds, a `Window`, and a `App` context.
     ///
     /// [element_paint]: crate::Element::paint
     pub fn new(element_bounds: Bounds<Pixels>, view: Entity<V>) -> Self {
@@ -157,6 +164,17 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     ) -> Option<Bounds<Pixels>> {
         self.view.update(cx, |view, cx| {
             view.bounds_for_range(range_utf16, self.element_bounds, window, cx)
+        })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: crate::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<usize> {
+        self.view.update(cx, |view, cx| {
+            view.character_index_for_point(point, window, cx)
         })
     }
 }

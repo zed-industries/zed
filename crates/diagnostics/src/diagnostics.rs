@@ -750,7 +750,7 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
-        Some("project diagnostics")
+        Some("Project Diagnostics Opened")
     }
 
     fn for_each_project_item(
@@ -933,7 +933,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                             .when_some(diagnostic.code.as_ref(), |stack, code| {
                                 stack.child(
                                     div()
-                                        .child(SharedString::from(format!("({code})")))
+                                        .child(SharedString::from(format!("({code:?})")))
                                         .text_color(color.text_muted),
                                 )
                             }),

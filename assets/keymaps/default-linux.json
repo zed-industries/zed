@@ -136,7 +136,7 @@
       "ctrl-k z": "editor::ToggleSoftWrap",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
-      "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
+      "ctrl-h": "buffer_search::DeployReplace",
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
@@ -203,8 +203,8 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPrevMatch",
       "alt-enter": "search::SelectAllMatches",
-      "ctrl-f": "search::FocusSearch",
       "find": "search::FocusSearch",
+      "ctrl-f": "search::FocusSearch",
       "ctrl-h": "search::ToggleReplace",
       "ctrl-l": "search::ToggleSelection"
     }
@@ -290,15 +290,15 @@
       "f3": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPrevMatch",
       "shift-f3": "search::SelectPrevMatch",
-      "ctrl-shift-f": "project_search::ToggleFocus",
       "shift-find": "project_search::ToggleFocus",
+      "ctrl-shift-f": "project_search::ToggleFocus",
       "ctrl-alt-shift-h": "search::ToggleReplace",
       "ctrl-alt-shift-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
-      "alt-ctrl-f": "project_search::ToggleFilters",
       "alt-find": "project_search::ToggleFilters",
+      "alt-ctrl-f": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
@@ -503,7 +503,14 @@
     }
   },
   {
-    "context": "Editor && inline_completion && !showing_completions",
+    "context": "Editor && inline_completion",
+    "bindings": {
+      // Changing the modifier currently breaks accepting while you also an LSP completions menu open
+      "alt-enter": "editor::AcceptInlineCompletion"
+    }
+  },
+  {
+    "context": "Editor && inline_completion && !inline_completion_requires_modifier",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"
@@ -680,8 +687,8 @@
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-find": "project_panel::NewSearchInDirectory",
+      "ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "escape": "menu::Cancel"
@@ -822,6 +829,13 @@
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode"
+    }
+  },
+  {
+    "context": "ZedPredictModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   }
 ]

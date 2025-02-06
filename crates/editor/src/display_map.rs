@@ -508,7 +508,7 @@ impl DisplayMap {
 
     pub(crate) fn splice_inlays(
         &mut self,
-        to_remove: Vec<InlayId>,
+        to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
         cx: &mut Context<Self>,
     ) {
@@ -1068,13 +1068,15 @@ impl DisplaySnapshot {
         DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
     }
 
-    pub fn clip_at_line_end(&self, point: DisplayPoint) -> DisplayPoint {
-        let mut point = point.0;
-        if point.column == self.line_len(DisplayRow(point.row)) {
-            point.column = point.column.saturating_sub(1);
-            point = self.block_snapshot.clip_point(point, Bias::Left);
+    pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
+        let mut point = self.display_point_to_point(display_point, Bias::Left);
+
+        if point.column != self.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+            return display_point;
         }
-        DisplayPoint(point)
+        point.column = point.column.saturating_sub(1);
+        point = self.buffer_snapshot.clip_point(point, Bias::Left);
+        self.point_to_display_point(point, Bias::Left)
     }
 
     pub fn folds_in_range<T>(&self, range: Range<T>) -> impl Iterator<Item = &Fold>
@@ -1140,12 +1142,7 @@ impl DisplaySnapshot {
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
-        let (buffer, range) = self
-            .buffer_snapshot
-            .buffer_line_for_row(buffer_row)
-            .unwrap();
-
-        buffer.line_indent_for_row(range.start.row)
+        self.buffer_snapshot.line_indent_for_row(buffer_row)
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {
@@ -1436,7 +1433,10 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{movement, test::marked_display_snapshot};
+    use crate::{
+        movement,
+        test::{marked_display_snapshot, test_font},
+    };
     use block_map::BlockPlacement;
     use gpui::{
         div, font, observe, px, App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba,
@@ -1495,10 +1495,11 @@ pub mod tests {
             }
         });
 
+        let font = test_font();
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer.clone(),
-                font("Helvetica"),
+                font,
                 font_size,
                 wrap_width,
                 true,

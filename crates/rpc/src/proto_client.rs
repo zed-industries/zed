@@ -53,7 +53,7 @@ pub struct ProtoMessageHandlerSet {
     pub entity_types_by_message_type: HashMap<TypeId, TypeId>,
     pub entities_by_type_and_remote_id: HashMap<(TypeId, u64), EntityMessageSubscriber>,
     pub entity_id_extractors: HashMap<TypeId, fn(&dyn AnyTypedEnvelope) -> u64>,
-    pub models_by_message_type: HashMap<TypeId, AnyWeakEntity>,
+    pub entities_by_message_type: HashMap<TypeId, AnyWeakEntity>,
     pub message_handlers: HashMap<TypeId, ProtoMessageHandler>,
 }
 
@@ -71,7 +71,7 @@ pub type ProtoMessageHandler = Arc<
 impl ProtoMessageHandlerSet {
     pub fn clear(&mut self) {
         self.message_handlers.clear();
-        self.models_by_message_type.clear();
+        self.entities_by_message_type.clear();
         self.entities_by_type_and_remote_id.clear();
         self.entity_id_extractors.clear();
     }
@@ -79,10 +79,11 @@ impl ProtoMessageHandlerSet {
     fn add_message_handler(
         &mut self,
         message_type_id: TypeId,
-        model: gpui::AnyWeakEntity,
+        entity: gpui::AnyWeakEntity,
         handler: ProtoMessageHandler,
     ) {
-        self.models_by_message_type.insert(message_type_id, model);
+        self.entities_by_message_type
+            .insert(message_type_id, entity);
         let prev_handler = self.message_handlers.insert(message_type_id, handler);
         if prev_handler.is_some() {
             panic!("registered handler for the same message twice");
@@ -92,7 +93,7 @@ impl ProtoMessageHandlerSet {
     fn add_entity_message_handler(
         &mut self,
         message_type_id: TypeId,
-        model_type_id: TypeId,
+        entity_type_id: TypeId,
         entity_id_extractor: fn(&dyn AnyTypedEnvelope) -> u64,
         handler: ProtoMessageHandler,
     ) {
@@ -100,7 +101,7 @@ impl ProtoMessageHandlerSet {
             .entry(message_type_id)
             .or_insert(entity_id_extractor);
         self.entity_types_by_message_type
-            .insert(message_type_id, model_type_id);
+            .insert(message_type_id, entity_type_id);
         let prev_handler = self.message_handlers.insert(message_type_id, handler);
         if prev_handler.is_some() {
             panic!("registered handler for the same message twice");
@@ -116,7 +117,7 @@ impl ProtoMessageHandlerSet {
         let payload_type_id = message.payload_type_id();
         let mut this = this.lock();
         let handler = this.message_handlers.get(&payload_type_id)?.clone();
-        let entity = if let Some(entity) = this.models_by_message_type.get(&payload_type_id) {
+        let entity = if let Some(entity) = this.entities_by_message_type.get(&payload_type_id) {
             entity.upgrade()?
         } else {
             let extract_entity_id = *this.entity_id_extractors.get(&payload_type_id)?;
@@ -207,7 +208,7 @@ impl AnyProtoClient {
         self.0.send(envelope, T::NAME)
     }
 
-    pub fn add_request_handler<M, E, H, F>(&self, model: gpui::WeakEntity<E>, handler: H)
+    pub fn add_request_handler<M, E, H, F>(&self, entity: gpui::WeakEntity<E>, handler: H)
     where
         M: RequestMessage,
         E: 'static,
@@ -216,12 +217,12 @@ impl AnyProtoClient {
     {
         self.0.message_handler_set().lock().add_message_handler(
             TypeId::of::<M>(),
-            model.into(),
-            Arc::new(move |model, envelope, client, cx| {
-                let model = model.downcast::<E>().unwrap();
+            entity.into(),
+            Arc::new(move |entity, envelope, client, cx| {
+                let entity = entity.downcast::<E>().unwrap();
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let request_id = envelope.message_id();
-                handler(model, *envelope, cx)
+                handler(entity, *envelope, cx)
                     .then(move |result| async move {
                         match result {
                             Ok(response) => {
@@ -239,7 +240,7 @@ impl AnyProtoClient {
         )
     }
 
-    pub fn add_model_request_handler<M, E, H, F>(&self, handler: H)
+    pub fn add_entity_request_handler<M, E, H, F>(&self, handler: H)
     where
         M: EnvelopedMessage + RequestMessage + EntityMessage,
         E: 'static,
@@ -247,7 +248,7 @@ impl AnyProtoClient {
         F: 'static + Future<Output = anyhow::Result<M::Response>>,
     {
         let message_type_id = TypeId::of::<M>();
-        let model_type_id = TypeId::of::<E>();
+        let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
             envelope
                 .as_any()
@@ -261,13 +262,13 @@ impl AnyProtoClient {
             .lock()
             .add_entity_message_handler(
                 message_type_id,
-                model_type_id,
+                entity_type_id,
                 entity_id_extractor,
-                Arc::new(move |model, envelope, client, cx| {
-                    let model = model.downcast::<E>().unwrap();
+                Arc::new(move |entity, envelope, client, cx| {
+                    let entity = entity.downcast::<E>().unwrap();
                     let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                     let request_id = envelope.message_id();
-                    handler(model, *envelope, cx)
+                    handler(entity, *envelope, cx)
                         .then(move |result| async move {
                             match result {
                                 Ok(response) => {
@@ -285,7 +286,7 @@ impl AnyProtoClient {
             );
     }
 
-    pub fn add_model_message_handler<M, E, H, F>(&self, handler: H)
+    pub fn add_entity_message_handler<M, E, H, F>(&self, handler: H)
     where
         M: EnvelopedMessage + EntityMessage,
         E: 'static,
@@ -293,7 +294,7 @@ impl AnyProtoClient {
         F: 'static + Future<Output = anyhow::Result<()>>,
     {
         let message_type_id = TypeId::of::<M>();
-        let model_type_id = TypeId::of::<E>();
+        let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
             envelope
                 .as_any()
@@ -307,12 +308,12 @@ impl AnyProtoClient {
             .lock()
             .add_entity_message_handler(
                 message_type_id,
-                model_type_id,
+                entity_type_id,
                 entity_id_extractor,
-                Arc::new(move |model, envelope, _, cx| {
-                    let model = model.downcast::<E>().unwrap();
+                Arc::new(move |entity, envelope, _, cx| {
+                    let entity = entity.downcast::<E>().unwrap();
                     let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                    handler(model, *envelope, cx).boxed_local()
+                    handler(entity, *envelope, cx).boxed_local()
                 }),
             );
     }

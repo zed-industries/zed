@@ -111,11 +111,7 @@ impl ProposedChangesEditor {
                                         .read(cx)
                                         .change_set_for(buffer.remote_id())?;
                                     Some(change_set.update(cx, |change_set, cx| {
-                                        change_set.set_base_text(
-                                            base_buffer.read(cx).text(),
-                                            buffer,
-                                            cx,
-                                        )
+                                        change_set.set_base_text(base_buffer.clone(), buffer, cx)
                                     }))
                                 })
                                 .collect::<Vec<_>>()
@@ -192,7 +188,7 @@ impl ProposedChangesEditor {
                 new_change_sets.push(cx.new(|cx| {
                     let mut change_set = BufferChangeSet::new(&branch_buffer, cx);
                     let _ = change_set.set_base_text(
-                        location.buffer.read(cx).text(),
+                        location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
                         cx,
                     );
@@ -472,7 +468,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.resolve_inlay_hint(hint, buffer, server_id, cx)
     }
 
-    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
+    fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
         if let Some(buffer) = self.to_base(&buffer, &[], cx) {
             self.0.supports_inlay_hints(&buffer, cx)
         } else {

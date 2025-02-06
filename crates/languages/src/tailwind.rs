@@ -47,6 +47,22 @@ impl LspAdapter for TailwindLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec!["--stdio".into()],
+        })
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,

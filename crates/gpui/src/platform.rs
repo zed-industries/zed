@@ -432,6 +432,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
+    fn map_window(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn window_controls(&self) -> WindowControls {
         WindowControls::default()
     }
@@ -789,6 +792,14 @@ impl PlatformInputHandler {
             cx,
         )
     }
+
+    #[allow(unused)]
+    pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
+        self.cx
+            .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
+            .ok()
+            .flatten()
+    }
 }
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
@@ -878,6 +889,16 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Get the character offset for the given point in terms of UTF16 characters
+    ///
+    /// Corresponds to [characterIndexForPoint:](https://developer.apple.com/documentation/appkit/nstextinputclient/characterindex(for:))
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<usize>;
 
     /// Allows a given input context to opt into getting raw key repeats instead of
     /// sending these to the platform.

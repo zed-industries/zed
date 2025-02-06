@@ -368,8 +368,8 @@ pub struct EditorSettingsContent {
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
 
-    /// Whether to show the inline completions next to the completions provided by a language server.
-    /// Only has an effect if inline completion provider supports it.
+    /// Whether to show the edit predictions next to the completions provided by a language server.
+    /// Only has an effect if edit prediction provider supports it.
     ///
     /// Default: true
     pub show_inline_completions_in_menu: Option<bool>,

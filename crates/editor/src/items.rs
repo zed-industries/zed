@@ -38,8 +38,11 @@ use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, IconDecorationKind, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
-use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
+use workspace::{
+    item::{BreadcrumbText, FollowEvent},
+    searchable::SearchOptions,
+};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -1040,10 +1043,10 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, |mut cx| {
                 let project = project.clone();
                 async move {
-                    let language = if let Some(language_name) = language {
-                        let language_registry =
-                            project.update(&mut cx, |project, _| project.languages().clone())?;
+                    let language_registry =
+                        project.update(&mut cx, |project, _| project.languages().clone())?;
 
+                    let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
                         // than fail to restore the buffer.
                         language_registry
@@ -1061,6 +1064,7 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_language_registry(language_registry);
                         if let Some(language) = language {
                             buffer.set_language(Some(language), cx);
                         }
@@ -1320,6 +1324,28 @@ impl SearchableItem for Editor {
             self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
             self.set_search_within_ranges(&previous_search_ranges, cx)
+        }
+    }
+
+    fn supported_options(&self) -> SearchOptions {
+        if self.in_project_search {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: false,
+                selection: false,
+                find_in_results: true,
+            }
+        } else {
+            SearchOptions {
+                case: true,
+                word: true,
+                regex: true,
+                replacement: true,
+                selection: true,
+                find_in_results: false,
+            }
         }
     }
 
@@ -1691,6 +1717,7 @@ mod tests {
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::path::{Path, PathBuf};
+    use util::path;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {
@@ -1745,24 +1772,24 @@ mod tests {
         init_test(cx, |_| {});
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_file("/file.rs", Default::default()).await;
+        fs.insert_file(path!("/file.rs"), Default::default()).await;
 
         // Test case 1: Deserialize with path and contents
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
-                .metadata(Path::new("/file.rs"))
+                .metadata(Path::new(path!("/file.rs")))
                 .await
                 .unwrap()
                 .unwrap()
                 .mtime;
 
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
@@ -1786,7 +1813,7 @@ mod tests {
 
         // Test case 2: Deserialize with only path
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -1794,7 +1821,7 @@ mod tests {
 
             let item_id = 5678 as ItemId;
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: None,
                 language: None,
                 mtime: None,
@@ -1819,7 +1846,7 @@ mod tests {
 
         // Test case 3: Deserialize with no path (untitled buffer, with content and language)
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
             project.update(cx, |project, _| project.languages().add(rust_language()));
 
@@ -1858,7 +1885,7 @@ mod tests {
 
         // Test case 4: Deserialize with path, content, and old mtime
         {
-            let project = Project::test(fs.clone(), ["/file.rs".as_ref()], cx).await;
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -1867,7 +1894,7 @@ mod tests {
             let item_id = 9345 as ItemId;
             let old_mtime = MTime::from_seconds_and_nanos(0, 50);
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),

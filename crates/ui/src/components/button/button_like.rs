@@ -45,6 +45,13 @@ pub enum IconPosition {
     End,
 }
 
+#[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum KeybindingPosition {
+    Start,
+    #[default]
+    End,
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum TintColor {
     #[default]
@@ -383,6 +390,11 @@ impl ButtonLike {
 
     pub fn new_rounded_right(id: impl Into<ElementId>) -> Self {
         Self::new(id).rounding(ButtonLikeRounding::Right)
+    }
+
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.base = self.base.opacity(opacity);
+        self
     }
 
     pub(crate) fn height(mut self, height: DefiniteLength) -> Self {

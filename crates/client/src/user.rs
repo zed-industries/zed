@@ -121,9 +121,7 @@ pub enum Event {
     },
     ShowContacts,
     ParticipantIndicesChanged,
-    TermsStatusUpdated {
-        accepted: bool,
-    },
+    PrivateUserInfoUpdated,
 }
 
 #[derive(Clone, Copy)]
@@ -203,9 +201,8 @@ impl UserStore {
 
                                 cx.update(|cx| {
                                     if let Some(info) = info {
-                                        let disable_staff = std::env::var("ZED_DISABLE_STAFF")
-                                            .map_or(false, |v| !v.is_empty() && v != "0");
-                                        let staff = info.staff && !disable_staff;
+                                        let staff =
+                                            info.staff && !*feature_flags::ZED_DISABLE_STAFF;
                                         cx.update_flags(staff, info.flags);
                                         client.telemetry.set_authenticated_user_info(
                                             Some(info.metrics_id.clone()),
@@ -227,9 +224,7 @@ impl UserStore {
                                             };
 
                                             this.set_current_user_accepted_tos_at(accepted_tos_at);
-                                            cx.emit(Event::TermsStatusUpdated {
-                                                accepted: accepted_tos_at.is_some(),
-                                            });
+                                            cx.emit(Event::PrivateUserInfoUpdated);
                                         })
                                     } else {
                                         anyhow::Ok(())
@@ -244,6 +239,8 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(&mut cx, |this, cx| {
+                                this.accepted_tos_at = None;
+                                cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
                                 this.clear_contacts()
                             })?
@@ -714,7 +711,7 @@ impl UserStore {
 
                 this.update(&mut cx, |this, cx| {
                     this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
-                    cx.emit(Event::TermsStatusUpdated { accepted: true });
+                    cx.emit(Event::PrivateUserInfoUpdated);
                 })
             } else {
                 Err(anyhow!("client not found"))

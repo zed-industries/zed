@@ -3,6 +3,7 @@ use indoc::indoc;
 use inline_completion::InlineCompletionProvider;
 use language::{Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use project::Project;
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
@@ -304,8 +305,8 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let InlineCompletion::Move(anchor) = &completion_state.completion {
-            assert(editor.buffer().read(cx).snapshot(cx), *anchor);
+        if let InlineCompletion::Move { target, .. } = &completion_state.completion {
+            assert(editor.buffer().read(cx).snapshot(cx), *target);
         } else {
             panic!("expected move completion");
         }
@@ -333,6 +334,7 @@ fn propose_edits<T: ToOffset>(
         provider.update(cx, |provider, _| {
             provider.set_inline_completion(Some(inline_completion::InlineCompletion {
                 edits: edits.collect(),
+                edit_preview: None,
             }))
         })
     });
@@ -393,6 +395,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,

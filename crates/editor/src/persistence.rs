@@ -87,8 +87,8 @@ define_connection!(
     //   mtime_seconds: Option<i64>,
     //   mtime_nanos: Option<i32>,
     // )
-    pub static ref DB: EditorDb<WorkspaceDb> =
-        &[sql! (
+    pub static ref DB: EditorDb<WorkspaceDb> = &[
+        sql! (
             CREATE TABLE editors(
                 item_id INTEGER NOT NULL,
                 workspace_id INTEGER NOT NULL,
@@ -134,7 +134,7 @@ define_connection!(
             ALTER TABLE editors ADD COLUMN mtime_seconds INTEGER DEFAULT NULL;
             ALTER TABLE editors ADD COLUMN mtime_nanos INTEGER DEFAULT NULL;
         ),
-        ];
+    ];
 );
 
 impl EditorDb {

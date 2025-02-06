@@ -53,11 +53,6 @@ pub struct AppVersion;
 
 impl AppVersion {
     /// Initializes the global [`AppVersion`].
-    ///
-    /// Attempts to read the version number from the following locations, in order:
-    /// 1. the `ZED_APP_VERSION` environment variable,
-    /// 2. the [`AppContext::app_metadata`],
-    /// 3. the passed in `pkg_version`.
     pub fn init(pkg_version: &str) -> SemanticVersion {
         if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")

@@ -1,15 +1,15 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
-
 use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity, Window};
+use gpui::{AnyWindowHandle, App, AppContext, Context, Entity, WeakEntity};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
-use zed_predict_tos::ZedPredictTos;
+use ui::Window;
+use zeta::ProviderDataCollection;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -37,6 +37,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 }
             })
             .detach();
+
             editors
                 .borrow_mut()
                 .insert(editor_handle, window.window_handle());
@@ -93,7 +94,20 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
+
             if new_provider != provider {
+                let tos_accepted = user_store
+                    .read(cx)
+                    .current_user_has_accepted_terms()
+                    .unwrap_or(false);
+
+                telemetry::event!(
+                    "Edit Prediction Provider Changed",
+                    from = provider,
+                    to = new_provider,
+                    zed_ai_tos_accepted = tos_accepted,
+                );
+
                 provider = new_provider;
                 assign_inline_completion_providers(
                     &editors,
@@ -103,30 +117,17 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
 
-                if !user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false)
-                {
+                if !tos_accepted {
                     match provider {
                         InlineCompletionProvider::Zed => {
                             let Some(window) = cx.active_window() else {
                                 return;
                             };
 
-                            let Some(Some(workspace)) = window
-                                .update(cx, |_, window, _| window.root().flatten())
-                                .ok()
-                            else {
-                                return;
-                            };
-
                             window
                                 .update(cx, |_, window, cx| {
-                                    ZedPredictTos::toggle(
-                                        workspace,
-                                        user_store.clone(),
-                                        window,
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::OpenZedPredictOnboarding),
                                         cx,
                                     );
                                 })
@@ -214,17 +215,20 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
 
 fn assign_inline_completion_provider(
     editor: &mut Editor,
-    provider: language::language_settings::InlineCompletionProvider,
+    provider: InlineCompletionProvider,
     client: &Arc<Client>,
     user_store: Entity<UserStore>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
+    // TODO: Do we really want to collect data only for singleton buffers?
+    let singleton_buffer = editor.buffer().read(cx).as_singleton();
+
     match provider {
-        language::language_settings::InlineCompletionProvider::None => {}
-        language::language_settings::InlineCompletionProvider::Copilot => {
+        InlineCompletionProvider::None => {}
+        InlineCompletionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
-                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                if let Some(buffer) = singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         copilot.update(cx, |copilot, cx| {
                             copilot.register_buffer(&buffer, cx);
@@ -235,26 +239,47 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-        language::language_settings::InlineCompletionProvider::Supermaven => {
+        InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
-
-        language::language_settings::InlineCompletionProvider::Zed => {
+        InlineCompletionProvider::Zed => {
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
-                let zeta = zeta::Zeta::register(client.clone(), user_store, cx);
-                if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
+                let mut worktree = None;
+
+                if let Some(buffer) = &singleton_buffer {
+                    if let Some(file) = buffer.read(cx).file() {
+                        let id = file.worktree_id(cx);
+                        if let Some(inner_worktree) = editor
+                            .project
+                            .as_ref()
+                            .and_then(|project| project.read(cx).worktree_for_id(id, cx))
+                        {
+                            worktree = Some(inner_worktree);
+                        }
+                    }
+                }
+
+                let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+
+                if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {
                             zeta.register_buffer(&buffer, cx);
                         });
                     }
                 }
-                let provider = cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
+
+                let data_collection =
+                    ProviderDataCollection::new(zeta.clone(), singleton_buffer, cx);
+
+                let provider =
+                    cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta, data_collection));
+
                 editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }

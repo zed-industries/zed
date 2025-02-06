@@ -21,7 +21,8 @@ use client::{
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
-use dock::{Dock, DockPosition, Panel, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+pub use dock::Panel;
+use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use futures::{
     channel::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
@@ -58,7 +59,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
+use project::{
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -2200,6 +2203,18 @@ impl Workspace {
         }
     }
 
+    pub fn absolute_path_of_worktree(
+        &self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) -> Option<PathBuf> {
+        self.project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            // TODO: use `abs_path` or `root_dir`
+            .map(|wt| wt.read(cx).abs_path().as_ref().to_path_buf())
+    }
+
     fn add_folder_to_project(
         &mut self,
         _: &AddFolderToProject,
@@ -2693,9 +2708,7 @@ impl Workspace {
         cx: &mut App,
     ) {
         if let Some(text) = item.telemetry_event_text(cx) {
-            self.client()
-                .telemetry()
-                .report_app_event(format!("{}: open", text));
+            telemetry::event!(text);
         }
 
         pane.update(cx, |pane, cx| {
@@ -3223,9 +3236,31 @@ impl Workspace {
         }
     }
 
-    pub fn resize_pane(&mut self, axis: gpui::Axis, amount: Pixels, cx: &mut Context<Self>) {
-        self.center
-            .resize(&self.active_pane, axis, amount, &self.bounds);
+    pub fn resize_pane(
+        &mut self,
+        axis: gpui::Axis,
+        amount: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let docks = self.all_docks();
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+
+        if let Some(dock) = active_dock {
+            let Some(panel_size) = dock.read(cx).active_panel_size(window, cx) else {
+                return;
+            };
+            match dock.read(cx).position() {
+                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
+                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
+                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+            }
+        } else {
+            self.center
+                .resize(&self.active_pane, axis, amount, &self.bounds);
+        }
         cx.notify();
     }
 
@@ -5173,8 +5208,9 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
                     |cx| {
                         cx.new(|_| {
                             MessageNotification::new("Failed to load the database file.")
-                                .with_click_message("File an issue")
-                                .on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
+                                .primary_message("File an Issue")
+                                .primary_icon(IconName::Plus)
+                                .primary_on_click(|_window, cx| cx.open_url(REPORT_ISSUE_URL))
                         })
                     },
                 );
@@ -6129,14 +6165,10 @@ pub fn open_ssh_project(
 
         cx.update_window(window.into(), |_, window, cx| {
             window.replace_root(cx, |window, cx| {
+                telemetry::event!("SSH Project Opened");
+
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
-
-                workspace
-                    .client()
-                    .telemetry()
-                    .report_app_event("open ssh project".to_string());
-
                 workspace.set_serialized_ssh_project(serialized_ssh_project);
                 workspace
             });

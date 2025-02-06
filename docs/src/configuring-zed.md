@@ -375,25 +375,30 @@ There are two options to choose from:
 1. `shell_hook`: Use the shell hook to load direnv. This relies on direnv to activate upon entering the directory. Supports POSIX shells and fish.
 2. `direct`: Use `direnv export json` to load direnv. This will load direnv directly without relying on the shell hook and might cause some inconsistencies. This allows direnv to work with any shell.
 
-## Inline Completions
+## Edit Predictions
 
-- Description: Settings for inline completions.
+- Description: Settings for edit predictions.
 - Setting: `inline_completions`
 - Default:
 
 ```json
-"inline_completions": {
-  "disabled_globs": [
-    ".env"
-  ]
-}
+  "inline_completions": {
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/secrets.yml"
+    ]
+  }
 ```
 
 **Options**
 
 ### Disabled Globs
 
-- Description: A list of globs representing files that inline completions should be disabled for.
+- Description: A list of globs representing files that edit predictions should be disabled for.
 - Setting: `disabled_globs`
 - Default: `[".env"]`
 
@@ -401,9 +406,9 @@ There are two options to choose from:
 
 List of `string` values
 
-## Inline Completions Disabled in
+## Edit Predictions Disabled in
 
-- Description: A list of language scopes in which inline completions should be disabled.
+- Description: A list of language scopes in which edit predictions should be disabled.
 - Setting: `inline_completions_disabled_in`
 - Default: `[]`
 
@@ -411,19 +416,19 @@ List of `string` values
 
 List of `string` values
 
-1. Don't show inline completions in comments:
+1. Don't show edit predictions in comments:
 
 ```json
 "disabled_in": ["comment"]
 ```
 
-2. Don't show inline completions in strings and comments:
+2. Don't show edit predictions in strings and comments:
 
 ```json
 "disabled_in": ["comment", "string"]
 ```
 
-3. Only in Go, don't show inline completions in strings and comments:
+3. Only in Go, don't show edit predictions in strings and comments:
 
 ```json
 {
@@ -514,12 +519,6 @@ List of `string` values
 ```json
 "cursor_shape": "hollow"
 ```
-
-**Options**
-
-1. Position the dock attached to the bottom of the workspace: `bottom`
-2. Position the dock to the right of the workspace like a side panel: `right`
-3. Position the dock full screen over the entire workspace: `expanded`
 
 ## Editor Scrollbar
 
@@ -1653,9 +1652,9 @@ Or to set a `socks5` proxy:
 
 `boolean` values
 
-## Show Inline Completions
+## Show Edit Predictions
 
-- Description: Whether to show inline completions as you type or manually by triggering `editor::ShowInlineCompletion`.
+- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowInlineCompletion`.
 - Setting: `show_inline_completions`
 - Default: `true`
 

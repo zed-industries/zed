@@ -134,7 +134,6 @@ impl AssistantPanel {
                         project,
                         prompt_builder.clone(),
                         slash_commands,
-                        tools.clone(),
                         cx,
                     )
                 })?
@@ -443,7 +442,7 @@ impl AssistantPanel {
 
     fn handle_assistant_configuration_event(
         &mut self,
-        _model: &Entity<AssistantConfiguration>,
+        _entity: &Entity<AssistantConfiguration>,
         event: &AssistantConfigurationEvent,
         window: &mut Window,
         cx: &mut Context<Self>,

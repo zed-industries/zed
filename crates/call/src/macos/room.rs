@@ -588,6 +588,10 @@ impl Room {
         &self.local_participant
     }
 
+    pub fn local_participant_user(&self, cx: &App) -> Option<Arc<User>> {
+        self.user_store.read(cx).current_user()
+    }
+
     pub fn remote_participants(&self) -> &BTreeMap<u64, RemoteParticipant> {
         &self.remote_participants
     }

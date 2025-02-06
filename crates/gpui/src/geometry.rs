@@ -217,6 +217,19 @@ impl Point<Pixels> {
     }
 }
 
+impl<T> Point<T>
+where
+    T: Sub<T, Output = T> + Debug + Clone + Default,
+{
+    /// Get the position of this point, relative to the given origin
+    pub fn relative_to(&self, origin: &Point<T>) -> Point<T> {
+        point(
+            self.x.clone() - origin.x.clone(),
+            self.y.clone() - origin.y.clone(),
+        )
+    }
+}
+
 impl<T, Rhs> Mul<Rhs> for Point<T>
 where
     T: Mul<Rhs, Output = T> + Clone + Default + Debug,
@@ -374,6 +387,13 @@ pub struct Size<T: Clone + Default + Debug> {
     pub width: T,
     /// The height component of the size.
     pub height: T,
+}
+
+impl<T: Clone + Default + Debug> Size<T> {
+    /// Create a new Size, a synonym for [`size`]
+    pub fn new(width: T, height: T) -> Self {
+        size(width, height)
+    }
 }
 
 /// Constructs a new `Size<T>` with the provided width and height.
@@ -1453,6 +1473,17 @@ where
             origin: self.origin,
             size: self.size.map(f),
         }
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Add<T, Output = T> + PartialOrd + Clone + Default + Debug + Sub<T, Output = T>,
+{
+    /// Convert a point to the coordinate space defined by this Bounds
+    pub fn localize(&self, point: &Point<T>) -> Option<Point<T>> {
+        self.contains(point)
+            .then(|| point.relative_to(&self.origin))
     }
 }
 
@@ -2846,7 +2877,7 @@ impl From<ScaledPixels> for u32 {
     }
 }
 
-/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`WindowContext::set_rem_size`][set_rem_size].
+/// Represents a length in rems, a unit based on the font-size of the window, which can be assigned with [`Window::set_rem_size`][set_rem_size].
 ///
 /// Rems are used for defining lengths that are scalable and consistent across different UI elements.
 /// The value of `1rem` is typically equal to the font-size of the root element (often the `<html>` element in browsers),
@@ -2855,7 +2886,7 @@ impl From<ScaledPixels> for u32 {
 ///
 /// For example, if the root element's font-size is `16px`, then `1rem` equals `16px`. A length of `2rems` would then be `32px`.
 ///
-/// [set_rem_size]: crate::WindowContext::set_rem_size
+/// [set_rem_size]: crate::Window::set_rem_size
 #[derive(Clone, Copy, Default, Add, Sub, Mul, Div, Neg, PartialEq)]
 pub struct Rems(pub f32);
 

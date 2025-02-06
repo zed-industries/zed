@@ -735,8 +735,7 @@ impl LspLogView {
 
 * Binary: {BINARY:#?}
 
-* Registered workspace folders:
-{WORKSPACE_FOLDERS}
+* Running in project: {PATH:?}
 
 * Capabilities: {CAPABILITIES}
 
@@ -744,15 +743,7 @@ impl LspLogView {
                 NAME = server.name(),
                 ID = server.server_id(),
                 BINARY = server.binary(),
-                WORKSPACE_FOLDERS = server
-                    .workspace_folders()
-                    .iter()
-                    .filter_map(|path| path
-                        .to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
+                PATH = server.root_path(),
                 CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
                     .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
                 CONFIGURATION = serde_json::to_string_pretty(server.configuration())
@@ -1157,11 +1148,12 @@ impl SearchableItem for LspLogView {
     ) {
         // Since LSP Log is read-only, it doesn't make sense to support replace operation.
     }
-    fn supported_options() -> workspace::searchable::SearchOptions {
+    fn supported_options(&self) -> workspace::searchable::SearchOptions {
         workspace::searchable::SearchOptions {
             case: true,
             word: true,
             regex: true,
+            find_in_results: false,
             // LSP log is read-only.
             replacement: false,
             selection: false,

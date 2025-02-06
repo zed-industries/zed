@@ -333,6 +333,9 @@ impl Database {
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         branch: ActiveValue::set(repository.branch.clone()),
                         is_deleted: ActiveValue::set(false),
+                        current_merge_conflicts: ActiveValue::Set(Some(
+                            serde_json::to_string(&repository.current_merge_conflicts).unwrap(),
+                        )),
                     },
                 ))
                 .on_conflict(
@@ -769,6 +772,13 @@ impl Database {
                         updated_statuses.push(db_status_to_proto(status_entry)?);
                     }
 
+                    let current_merge_conflicts = db_repository_entry
+                        .current_merge_conflicts
+                        .as_ref()
+                        .map(|conflicts| serde_json::from_str(&conflicts))
+                        .transpose()?
+                        .unwrap_or_default();
+
                     worktree.repository_entries.insert(
                         db_repository_entry.work_directory_id as u64,
                         proto::RepositoryEntry {
@@ -776,6 +786,7 @@ impl Database {
                             branch: db_repository_entry.branch,
                             updated_statuses,
                             removed_statuses: Vec::new(),
+                            current_merge_conflicts,
                         },
                     );
                 }

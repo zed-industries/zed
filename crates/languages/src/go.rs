@@ -587,6 +587,23 @@ impl ContextProvider for GoContextProvider {
                 ..TaskTemplate::default()
             },
             TaskTemplate {
+                label: format!(
+                    "go test {} -fuzz=Fuzz -run {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    "-fuzz=Fuzz".into(),
+                    "-run".into(),
+                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                ],
+                tags: vec!["go-fuzz".to_owned()],
+                cwd: package_cwd.clone(),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
                 label: format!("go run {}", GO_PACKAGE_TASK_VARIABLE.template_value(),),
                 command: "go".into(),
                 args: vec!["run".into(), ".".into()],

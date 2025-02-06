@@ -1,3 +1,5 @@
+mod icon_theme_selector;
+
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -11,22 +13,26 @@ use theme::{Appearance, Theme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{prelude::*, v_flex, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ui::HighlightedLabel, ModalView, Workspace};
-use zed_actions::theme_selector::Toggle;
+use zed_actions::Extensions;
+
+use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
 
 actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-            workspace.register_action(toggle);
+            workspace
+                .register_action(toggle_theme_selector)
+                .register_action(toggle_icon_theme_selector);
         },
     )
     .detach();
 }
 
-pub fn toggle(
+fn toggle_theme_selector(
     workspace: &mut Workspace,
-    toggle: &Toggle,
+    toggle: &zed_actions::theme_selector::Toggle,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -42,9 +48,27 @@ pub fn toggle(
     });
 }
 
+fn toggle_icon_theme_selector(
+    workspace: &mut Workspace,
+    toggle: &zed_actions::icon_theme_selector::Toggle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let fs = workspace.app_state().fs.clone();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        let delegate = IconThemeSelectorDelegate::new(
+            cx.entity().downgrade(),
+            fs,
+            toggle.themes_filter.as_ref(),
+            cx,
+        );
+        IconThemeSelector::new(delegate, window, cx)
+    });
+}
+
 impl ModalView for ThemeSelector {}
 
-pub struct ThemeSelector {
+struct ThemeSelector {
     picker: Entity<Picker<ThemeSelectorDelegate>>,
 }
 
@@ -73,7 +97,7 @@ impl ThemeSelector {
     }
 }
 
-pub struct ThemeSelectorDelegate {
+struct ThemeSelectorDelegate {
     fs: Arc<dyn Fs>,
     themes: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
@@ -296,6 +320,35 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     theme_match.string.clone(),
                     theme_match.positions.clone(),
                 )),
+        )
+    }
+
+    fn render_footer(
+        &self,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<gpui::AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_2()
+                .gap_2()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("docs", "Theme Docs").on_click(cx.listener(|_, _, _, cx| {
+                        cx.open_url("https://zed.dev/docs/themes");
+                    })),
+                )
+                .child(div().flex_grow())
+                .child(
+                    Button::new("more-themes", "Install Themes").on_click(cx.listener({
+                        move |_, _, window, cx| {
+                            window.dispatch_action(Box::new(Extensions), cx);
+                        }
+                    })),
+                )
+                .into_any_element(),
         )
     }
 }

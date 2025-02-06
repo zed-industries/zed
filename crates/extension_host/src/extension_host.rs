@@ -8,8 +8,9 @@ mod extension_store_test;
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use client::ExtensionProvides;
 use client::{proto, telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{btree_map, BTreeMap, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 pub use extension::ExtensionManifest;
 use extension::{
@@ -444,15 +445,44 @@ impl ExtensionStore {
             .filter_map(|(name, theme)| theme.extension.as_ref().eq(extension_id).then_some(name))
     }
 
+    /// Returns the names of icon themes provided by extensions.
+    pub fn extension_icon_themes<'a>(
+        &'a self,
+        extension_id: &'a str,
+    ) -> impl Iterator<Item = &'a Arc<str>> {
+        self.extension_index
+            .icon_themes
+            .iter()
+            .filter_map(|(name, icon_theme)| {
+                icon_theme
+                    .extension
+                    .as_ref()
+                    .eq(extension_id)
+                    .then_some(name)
+            })
+    }
+
     pub fn fetch_extensions(
         &self,
         search: Option<&str>,
+        provides_filter: Option<&BTreeSet<ExtensionProvides>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<ExtensionMetadata>>> {
         let version = CURRENT_SCHEMA_VERSION.to_string();
         let mut query = vec![("max_schema_version", version.as_str())];
         if let Some(search) = search {
             query.push(("filter", search));
+        }
+
+        let provides_filter = provides_filter.map(|provides_filter| {
+            provides_filter
+                .iter()
+                .map(|provides| provides.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
+        if let Some(provides_filter) = provides_filter.as_deref() {
+            query.push(("provides", provides_filter));
         }
 
         self.fetch_extensions_from_api("/extensions", &query, cx)

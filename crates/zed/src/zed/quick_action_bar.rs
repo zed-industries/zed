@@ -16,8 +16,8 @@ use gpui::{
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize,
-    PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*, ButtonStyle, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, IconName,
+    IconSize, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -94,18 +94,30 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
-            inline_completions_enabled,
-        ) = editor.update(cx, |editor, cx| {
+            show_inline_completions,
+            inline_completion_enabled,
+        ) = {
+            let editor = editor.read(cx);
+            let selection_menu_enabled = editor.selection_menu_enabled(cx);
+            let inlay_hints_enabled = editor.inlay_hints_enabled();
+            let supports_inlay_hints = editor.supports_inlay_hints(cx);
+            let git_blame_inline_enabled = editor.git_blame_inline_enabled();
+            let show_git_blame_gutter = editor.show_git_blame_gutter();
+            let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
+            let show_inline_completions = editor.should_show_inline_completions(cx);
+            let inline_completion_enabled = editor.inline_completions_enabled(cx);
+
             (
-                editor.selection_menu_enabled(cx),
-                editor.inlay_hints_enabled(),
-                editor.supports_inlay_hints(cx),
-                editor.git_blame_inline_enabled(),
-                editor.show_git_blame_gutter(),
-                editor.auto_signature_help_enabled(cx),
-                editor.inline_completions_enabled(cx),
+                selection_menu_enabled,
+                inlay_hints_enabled,
+                supports_inlay_hints,
+                git_blame_inline_enabled,
+                show_git_blame_gutter,
+                auto_signature_help_enabled,
+                show_inline_completions,
+                inline_completion_enabled,
             )
-        });
+        };
 
         let focus_handle = editor.read(cx).focus_handle(cx);
 
@@ -285,12 +297,12 @@ impl Render for QuickActionBar {
                             },
                         );
 
-                        menu = menu.toggleable_entry(
-                            "Inline Completions",
-                            inline_completions_enabled,
-                            IconPosition::Start,
-                            Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
-                            {
+                        let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
+                            .toggleable(IconPosition::Start, inline_completion_enabled && show_inline_completions)
+                            .disabled(!inline_completion_enabled)
+                            .action(Some(
+                                editor::actions::ToggleInlineCompletions.boxed_clone(),
+                            )).handler({
                                 let editor = editor.clone();
                                 move |window, cx| {
                                     editor
@@ -303,8 +315,14 @@ impl Render for QuickActionBar {
                                         })
                                         .ok();
                                 }
-                            },
-                        );
+                            });
+                        if !inline_completion_enabled {
+                            inline_completion_entry = inline_completion_entry.documentation_aside(|_| {
+                                Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
+                            });
+                        }
+
+                        menu = menu.item(inline_completion_entry);
 
                         menu = menu.separator();
 
@@ -453,19 +471,16 @@ impl ToolbarItemView for QuickActionBar {
 
             if let Some(editor) = active_item.downcast::<Editor>() {
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                let mut supports_inlay_hints =
-                    editor.update(cx, |this, cx| this.supports_inlay_hints(cx));
+                let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let mut should_notify = false;
-                        editor.update(cx, |editor, cx| {
-                            let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                            let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
-                            should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                                || supports_inlay_hints != new_supports_inlay_hints;
-                            inlay_hints_enabled = new_inlay_hints_enabled;
-                            supports_inlay_hints = new_supports_inlay_hints;
-                        });
+                        let editor = editor.read(cx);
+                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
+                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                        let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
+                            || supports_inlay_hints != new_supports_inlay_hints;
+                        inlay_hints_enabled = new_inlay_hints_enabled;
+                        supports_inlay_hints = new_supports_inlay_hints;
                         if should_notify {
                             cx.notify()
                         }
