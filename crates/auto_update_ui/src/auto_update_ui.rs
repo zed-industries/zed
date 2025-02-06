@@ -17,6 +17,7 @@ use crate::update_notification::UpdateNotification;
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut App) {
+    notify_if_app_was_updated(cx);
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
@@ -124,10 +125,12 @@ fn view_release_notes_locally(
         .detach();
 }
 
-/// Shows a notification across all app workspaces if a new update was installed since the
-/// last time this function was called.
-pub fn notify_of_any_new_update(cx: &mut App) -> Option<()> {
-    let updater = AutoUpdater::get(cx)?;
+/// Shows a notification across all workspaces if an update was previously automatically installed
+/// and this notification had not yet been shown.
+pub fn notify_if_app_was_updated(cx: &mut App) {
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
     let version = updater.read(cx).current_version();
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
 
@@ -153,6 +156,4 @@ pub fn notify_of_any_new_update(cx: &mut App) -> Option<()> {
         anyhow::Ok(())
     })
     .detach();
-
-    None
 }

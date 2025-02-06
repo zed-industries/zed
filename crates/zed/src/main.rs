@@ -865,8 +865,6 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
         .await?;
     }
 
-    cx.update(auto_update_ui::notify_of_any_new_update)?;
-
     Ok(())
 }
 
