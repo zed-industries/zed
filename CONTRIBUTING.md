@@ -52,3 +52,9 @@ Zed is made up of several smaller crates - let's go over those you're most likel
 - [`rpc`](/crates/rpc) defines messages to be exchanged with collaboration server.
 - [`theme`](/crates/theme) defines the theme system and provides a default theme.
 - [`ui`](/crates/ui) is a collection of UI components and common patterns used throughout Zed.
+- [`cli`](/crates/cli) is the CLI crate which invokes the Zed binary.
+- [`zed`](/crates/zed) is where all things come together, and the `main` entry point for Zed.
+
+## Packaging Zed
+
+Check our [notes for packaging Zed](https://zed.dev/docs/development/linux#notes-for-packaging-zed).
