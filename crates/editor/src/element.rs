@@ -3160,7 +3160,10 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor.has_active_completions_menu() && editor.show_inline_completions_in_menu(cx) {
+            if editor.inline_completion_visible_in_cursor_popover(
+                editor.has_active_inline_completion(),
+                cx,
+            ) {
                 height_above_menu +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
                 edit_prediction_popover_visible = true;
@@ -3664,7 +3667,12 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
-        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
+        let editor = self.editor.read(cx);
+        let active_inline_completion = editor.active_inline_completion.as_ref()?;
+
+        if editor.inline_completion_visible_in_cursor_popover(true, cx) {
+            return None;
+        }
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
@@ -3731,7 +3739,7 @@ impl EditorElement {
                 display_mode,
                 snapshot,
             } => {
-                if self.editor.read(cx).has_active_completions_menu() {
+                if self.editor.read(cx).has_visible_completions_menu() {
                     return None;
                 }
 
