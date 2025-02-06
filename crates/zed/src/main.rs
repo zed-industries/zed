@@ -989,14 +989,18 @@ fn stdout_is_a_pty() -> bool {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "zed", disable_version_flag = true)]
+#[command(
+    name = "zed",
+    disable_version_flag = true,
+    after_help = "For a better CLI experience, use the Zed CLI binary instead."
+)]
 struct Args {
-    /// A sequence of space-separated paths or urls that you want to open.
+    /// A sequence of URLs to open.
     ///
-    /// Use `path:line:row` syntax to open a file at a specific location.
-    /// Non-existing paths and directories will ignore `:line:row` suffix.
+    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev/>,
+    /// so you can open local and remote files.
     ///
-    /// URLs can either be `file://` or `zed://` scheme, or relative to <https://zed.dev>.
+    /// Use the `URL:line:row` syntax to open a file at a specific location.
     paths_or_urls: Vec<String>,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
