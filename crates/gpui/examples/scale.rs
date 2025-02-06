@@ -16,15 +16,15 @@ impl Render for MainView {
             .font_family("Sans")
             .items_center()
             .justify_between()
-            .child(ChildElement { zoom: 1.0 })
-            .child(ChildElement { zoom: 0.75 })
-            .child(ChildElement { zoom: 0.5 })
+            .child(ChildElement { scale: 1.0 })
+            .child(ChildElement { scale: 0.75 })
+            .child(ChildElement { scale: 0.5 })
             .with_animation(
                 "animation",
-                Animation::new(Duration::from_millis(2000)).repeat(),
+                Animation::new(Duration::from_millis(5000)).repeat(),
                 |el, delta| {
                     el.child(ChildElement {
-                        zoom: (2.0 * delta * PI).sin() * 0.5 + 1.0,
+                        scale: (2.0 * delta * PI).sin() * 0.5 + 1.0,
                     })
                 },
             )
@@ -33,7 +33,7 @@ impl Render for MainView {
 
 #[derive(IntoElement)]
 struct ChildElement {
-    pub zoom: f32,
+    pub scale: f32,
 }
 
 impl RenderOnce for ChildElement {
@@ -44,11 +44,11 @@ impl RenderOnce for ChildElement {
             .min_w(px(120.0))
             .max_h(px(120.0))
             .max_w(px(120.0))
-            .scale(self.zoom)
+            .scale(self.scale)
             .bg(white())
             .items_center()
             .justify_center()
-            .child(format!("Zoom: {:.2}x", self.zoom))
+            .child(format!("Scale: {:.2}x", self.scale))
     }
 }
 
