@@ -5699,6 +5699,7 @@ impl Editor {
 
                 let preview = h_flex()
                     .gap_1()
+                    .min_w_16()
                     .child(styled_text)
                     .when(len_total > first_line_len, |parent| parent.child("…"));
 
