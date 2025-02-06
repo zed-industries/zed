@@ -631,7 +631,7 @@ dependencies = [
  "smol",
  "terminal_view",
  "text",
- "toml 0.8.19",
+ "toml 0.8.20",
  "ui",
  "util",
  "workspace",
@@ -2311,7 +2311,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5fbd1fe9db3ebf71b89060adaf7b0504c2d6a425cf061313099547e382c2e472"
 dependencies = [
  "serde",
- "toml 0.8.19",
+ "toml 0.8.20",
 ]
 
 [[package]]
@@ -2345,7 +2345,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.90",
  "tempfile",
- "toml 0.8.19",
+ "toml 0.8.20",
 ]
 
 [[package]]
@@ -2363,7 +2363,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.90",
  "tempfile",
- "toml 0.8.19",
+ "toml 0.8.20",
 ]
 
 [[package]]
@@ -2817,7 +2817,7 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "tokio",
- "toml 0.8.19",
+ "toml 0.8.20",
  "tower",
  "tower-http 0.4.4",
  "tracing",
@@ -4112,7 +4112,7 @@ dependencies = [
  "cc",
  "memchr",
  "rustc_version",
- "toml 0.8.19",
+ "toml 0.8.20",
  "vswhom",
  "winreg 0.52.0",
 ]
@@ -4403,7 +4403,7 @@ dependencies = [
  "semantic_version",
  "serde",
  "serde_json",
- "toml 0.8.19",
+ "toml 0.8.20",
  "util",
  "wasm-encoder 0.215.0",
  "wasmparser 0.215.0",
@@ -4427,7 +4427,7 @@ dependencies = [
  "serde_json",
  "theme",
  "tokio",
- "toml 0.8.19",
+ "toml 0.8.20",
  "tree-sitter",
  "wasmtime",
 ]
@@ -4472,7 +4472,7 @@ dependencies = [
  "tempfile",
  "theme",
  "theme_extension",
- "toml 0.8.19",
+ "toml 0.8.20",
  "url",
  "util",
  "wasmparser 0.215.0",
@@ -7058,7 +7058,7 @@ dependencies = [
  "task",
  "text",
  "theme",
- "toml 0.8.19",
+ "toml 0.8.20",
  "tree-sitter",
  "tree-sitter-bash",
  "tree-sitter-c",
@@ -9376,7 +9376,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "toml 0.8.19",
+ "toml 0.8.20",
 ]
 
 [[package]]
@@ -9986,7 +9986,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "text",
- "toml 0.8.19",
+ "toml 0.8.20",
  "unindent",
  "url",
  "util",
@@ -10768,7 +10768,7 @@ dependencies = [
  "smol",
  "sysinfo",
  "telemetry_events",
- "toml 0.8.19",
+ "toml 0.8.20",
  "unindent",
  "util",
  "worktree",
@@ -12958,7 +12958,7 @@ dependencies = [
  "cfg-expr",
  "heck 0.5.0",
  "pkg-config",
- "toml 0.8.19",
+ "toml 0.8.20",
  "version-compare",
 ]
 
@@ -13682,9 +13682,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.8.19"
+version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1ed1f98e3fdc28d6d910e6737ae6ab1a93bf1985935a1193e68f93eeb68d24e"
+checksum = "cd87a5cdd6ffab733b2f74bc4fd7ee5fff6634124999ac278c35fc78c6120148"
 dependencies = [
  "serde",
  "serde_spanned",
@@ -13703,15 +13703,15 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.22.22"
+version = "0.22.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae48d6208a266e853d946088ed816055e556cc6028c5e8e2b84d9fa5dd7c7f5"
+checksum = "02a8b472d1a3d7c18e2d61a489aee3453fd9031c33e4f55bd533f4a7adca1bee"
 dependencies = [
  "indexmap",
  "serde",
  "serde_spanned",
  "toml_datetime",
- "winnow",
+ "winnow 0.7.1",
 ]
 
 [[package]]
@@ -15821,6 +15821,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winnow"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86e376c75f4f43f44db463cf729e0d3acbf954d13e22c51e26e4c264b4ab545f"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "winreg"
 version = "0.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15846,7 +15855,7 @@ version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7276691b353ad4547af8c3268488d1311f4be791ffdc0c65b8cfa8f41eed693b"
 dependencies = [
- "toml 0.8.19",
+ "toml 0.8.20",
  "version_check",
 ]
 
@@ -16365,7 +16374,7 @@ dependencies = [
  "tracing",
  "uds_windows",
  "windows-sys 0.59.0",
- "winnow",
+ "winnow 0.6.20",
  "xdg-home",
  "zbus_macros 5.1.1",
  "zbus_names 4.1.0",
@@ -16419,7 +16428,7 @@ checksum = "856b7a38811f71846fd47856ceee8bccaec8399ff53fb370247e66081ace647b"
 dependencies = [
  "serde",
  "static_assertions",
- "winnow",
+ "winnow 0.6.20",
  "zvariant 5.1.0",
 ]
 
@@ -16996,7 +17005,7 @@ dependencies = [
  "serde",
  "static_assertions",
  "url",
- "winnow",
+ "winnow 0.6.20",
  "zvariant_derive 5.1.0",
  "zvariant_utils 3.0.2",
 ]
@@ -17049,5 +17058,5 @@ dependencies = [
  "serde",
  "static_assertions",
  "syn 2.0.90",
- "winnow",
+ "winnow 0.6.20",
 ]
