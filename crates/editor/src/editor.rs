@@ -5613,6 +5613,7 @@ impl Editor {
                                 } else {
                                     Color::Default
                                 }),
+                                None,
                                 true,
                             ),
                         ))
