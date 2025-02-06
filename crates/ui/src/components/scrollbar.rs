@@ -114,7 +114,7 @@ impl ScrollbarState {
     }
 
     /// Set a parent model which should be notified whenever this Scrollbar gets a scroll event.
-    pub fn parent_model<V: 'static>(mut self, v: &Entity<V>) -> Self {
+    pub fn parent_entity<V: 'static>(mut self, v: &Entity<V>) -> Self {
         self.parent_id = Some(v.entity_id());
         self
     }

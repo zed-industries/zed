@@ -57,12 +57,19 @@ impl<M> Default for PopoverMenuHandle<M> {
 struct PopoverMenuHandleState<M> {
     menu_builder: Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>>>,
     menu: Rc<RefCell<Option<Entity<M>>>>,
+    on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
 }
 
 impl<M: ManagedView> PopoverMenuHandle<M> {
     pub fn show(&self, window: &mut Window, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref() {
-            show_menu(&state.menu_builder, &state.menu, window, cx);
+            show_menu(
+                &state.menu_builder,
+                &state.menu,
+                state.on_open.clone(),
+                window,
+                cx,
+            );
         }
     }
 
@@ -118,6 +125,7 @@ pub struct PopoverMenu<M: ManagedView> {
     attach: Option<Corner>,
     offset: Option<Point<Pixels>>,
     trigger_handle: Option<PopoverMenuHandle<M>>,
+    on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     full_width: bool,
 }
 
@@ -132,6 +140,7 @@ impl<M: ManagedView> PopoverMenu<M> {
             attach: None,
             offset: None,
             trigger_handle: None,
+            on_open: None,
             full_width: false,
         }
     }
@@ -155,11 +164,14 @@ impl<M: ManagedView> PopoverMenu<M> {
     }
 
     pub fn trigger<T: PopoverTrigger>(mut self, t: T) -> Self {
-        self.child_builder = Some(Box::new(|menu, builder| {
+        let on_open = self.on_open.clone();
+        self.child_builder = Some(Box::new(move |menu, builder| {
             let open = menu.borrow().is_some();
             t.toggle_state(open)
                 .when_some(builder, |el, builder| {
-                    el.on_click(move |_event, window, cx| show_menu(&builder, &menu, window, cx))
+                    el.on_click(move |_event, window, cx| {
+                        show_menu(&builder, &menu, on_open.clone(), window, cx)
+                    })
                 })
                 .into_any_element()
         }));
@@ -182,6 +194,12 @@ impl<M: ManagedView> PopoverMenu<M> {
     /// offset offsets the position of the content by that many pixels.
     pub fn offset(mut self, offset: Point<Pixels>) -> Self {
         self.offset = Some(offset);
+        self
+    }
+
+    /// attach something upon opening the menu
+    pub fn on_open(mut self, on_open: Rc<dyn Fn(&mut Window, &mut App)>) -> Self {
+        self.on_open = Some(on_open);
         self
     }
 
@@ -209,6 +227,7 @@ impl<M: ManagedView> PopoverMenu<M> {
 fn show_menu<M: ManagedView>(
     builder: &Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>>>,
     menu: &Rc<RefCell<Option<Entity<M>>>>,
+    on_open: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -232,6 +251,10 @@ fn show_menu<M: ManagedView>(
     window.focus(&new_menu.focus_handle(cx));
     *menu.borrow_mut() = Some(new_menu);
     window.refresh();
+
+    if let Some(on_open) = on_open {
+        on_open(window, cx);
+    }
 }
 
 pub struct PopoverMenuElementState<M> {
@@ -311,6 +334,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         *trigger_handle.0.borrow_mut() = Some(PopoverMenuHandleState {
                             menu_builder,
                             menu: element_state.menu.clone(),
+                            on_open: self.on_open.clone(),
                         });
                     }
                 }

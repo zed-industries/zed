@@ -34,7 +34,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
-use zed_predict_onboarding::ZedPredictBanner;
+use zeta::ZedPredictBanner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -162,6 +162,7 @@ impl Render for TitleBar {
                     .id("titlebar-content")
                     .flex()
                     .flex_row()
+                    .items_center()
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
@@ -268,7 +269,6 @@ impl TitleBar {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
-        let fs = workspace.app_state().fs.clone();
         let active_call = ActiveCall::global(cx);
 
         let platform_style = PlatformStyle::platform();
@@ -296,15 +296,7 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        let zed_predict_banner = cx.new(|cx| {
-            ZedPredictBanner::new(
-                workspace.weak_handle(),
-                user_store.clone(),
-                client.clone(),
-                fs.clone(),
-                cx,
-            )
-        });
+        let zed_predict_banner = cx.new(ZedPredictBanner::new);
 
         Self {
             platform_style,

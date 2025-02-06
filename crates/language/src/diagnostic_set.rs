@@ -56,17 +56,11 @@ impl DiagnosticEntry<PointUtf16> {
     /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
-        let code = self
-            .diagnostic
-            .code
-            .clone()
-            .map(lsp::NumberOrString::String);
-
         let range = range_to_lsp(self.range.clone())?;
 
         Ok(lsp::Diagnostic {
-            code,
             range,
+            code: self.diagnostic.code.clone(),
             severity: Some(self.diagnostic.severity),
             source: self.diagnostic.source.clone(),
             message: self.diagnostic.message.clone(),

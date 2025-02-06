@@ -21,6 +21,7 @@ mod toolchain;
 pub mod buffer_tests;
 pub mod markdown;
 
+pub use crate::language_settings::InlineCompletionPreviewMode;
 use crate::language_settings::SoftWrap;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
