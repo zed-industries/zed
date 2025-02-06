@@ -6428,6 +6428,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "language",
+ "project",
 ]
 
 [[package]]
@@ -7160,7 +7161,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -10215,7 +10216,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.0",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap 0.10.0",
@@ -15484,7 +15485,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16729,11 +16730,12 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ab9496dc5c80b2c5fb9654a76d7208d31b53130fb282085fcdde07653831843"
+checksum = "9ea4d8ead1e1158e5ebdd6735df25973781da70de5c8008e3a13595865ca4f31"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -16956,6 +16958,7 @@ dependencies = [
  "log",
  "menu",
  "postage",
+ "project",
  "regex",
  "reqwest_client",
  "rpc",

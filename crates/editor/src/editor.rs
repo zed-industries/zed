@@ -4648,7 +4648,13 @@ impl Editor {
         }
 
         self.update_visible_inline_completion(window, cx);
-        provider.refresh(buffer, cursor_buffer_position, debounce, cx);
+        provider.refresh(
+            self.project.clone(),
+            buffer,
+            cursor_buffer_position,
+            debounce,
+            cx,
+        );
         Some(())
     }
 
