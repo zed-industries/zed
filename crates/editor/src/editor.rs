@@ -82,8 +82,8 @@ use gpui::{
     Entity, EntityInputHandler, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
     FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Modifiers, MouseButton,
     MouseDownEvent, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled,
-    StyledText, Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
+    StyledText, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -466,7 +466,7 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 pub(crate) enum EditDisplayMode {
-    TabAccept(bool),
+    TabAccept,
     DiffPopover,
     Inline,
 }
@@ -489,15 +489,6 @@ struct InlineCompletionState {
     inlay_ids: Vec<InlayId>,
     completion: InlineCompletion,
     invalidation_range: Range<Anchor>,
-}
-
-impl InlineCompletionState {
-    pub fn is_move(&self) -> bool {
-        match &self.completion {
-            InlineCompletion::Move { .. } => true,
-            _ => false,
-        }
-    }
 }
 
 enum InlineCompletionHighlight {}
@@ -1488,10 +1479,14 @@ impl Editor {
         if self.pending_rename.is_some() {
             key_context.add("renaming");
         }
+
+        let mut showing_completions = false;
+
         match self.context_menu.borrow().as_ref() {
             Some(CodeContextMenu::Completions(_)) => {
                 key_context.add("menu");
                 key_context.add("showing_completions");
+                showing_completions = true;
             }
             Some(CodeContextMenu::CodeActions(_)) => {
                 key_context.add("menu");
@@ -1521,6 +1516,10 @@ impl Editor {
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
             key_context.add("inline_completion");
+
+            if showing_completions || self.inline_completion_requires_modifier(cx) {
+                key_context.add("inline_completion_requires_modifier");
+            }
         }
 
         if self.selection_mark_mode {
@@ -4653,7 +4652,7 @@ impl Editor {
         }
     }
 
-    fn inline_completion_preview_mode(&self, cx: &App) -> language::InlineCompletionPreviewMode {
+    fn inline_completion_requires_modifier(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
 
         self.buffer
@@ -4661,8 +4660,9 @@ impl Editor {
             .text_anchor_for_position(cursor, cx)
             .map(|(buffer, _)| {
                 all_language_settings(buffer.read(cx).file(), cx).inline_completions_preview_mode()
+                    == InlineCompletionPreviewMode::WhenHoldingModifier
             })
-            .unwrap_or_default()
+            .unwrap_or(false)
     }
 
     fn should_show_inline_completions_in_buffer(
@@ -5031,9 +5031,7 @@ impl Editor {
             return true;
         }
 
-        has_completion
-            && self.inline_completion_preview_mode(cx)
-                == InlineCompletionPreviewMode::WhenHoldingModifier
+        has_completion && self.inline_completion_requires_modifier(cx)
     }
 
     fn update_inline_completion_preview(
@@ -5042,23 +5040,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Moves jump directly without a preview step
-        if self
-            .active_inline_completion
-            .as_ref()
-            .map_or(true, |c| c.is_move())
-        {
-            self.previewing_inline_completion = false;
-            cx.notify();
-            return;
-        }
-
         if !self.show_inline_completions_in_menu(cx) {
             return;
         }
 
         self.previewing_inline_completion = modifiers.alt;
         self.update_visible_inline_completion(window, cx);
+        cx.notify();
     }
 
     fn update_visible_inline_completion(
@@ -5187,7 +5175,7 @@ impl Editor {
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept(self.previewing_inline_completion)
+                    EditDisplayMode::TabAccept
                 } else {
                     EditDisplayMode::Inline
                 }
@@ -5483,8 +5471,6 @@ impl Editor {
         min_width: Pixels,
         max_width: Pixels,
         cursor_point: Point,
-        start_row: DisplayRow,
-        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
         window: &Window,
@@ -5545,9 +5531,8 @@ impl Editor {
             Some(completion) => self.render_edit_prediction_cursor_popover_preview(
                 completion,
                 cursor_point,
-                start_row,
-                line_layouts,
                 style,
+                window,
                 cx,
             )?,
 
@@ -5555,9 +5540,8 @@ impl Editor {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
-                    start_row,
-                    line_layouts,
                     style,
+                    window,
                     cx,
                 )?,
 
@@ -5588,19 +5572,6 @@ impl Editor {
 
         let has_completion = self.active_inline_completion.is_some();
 
-        let is_move = self
-            .active_inline_completion
-            .as_ref()
-            .map_or(false, |c| c.is_move());
-
-        let modifier_color = if !has_completion {
-            Color::Muted
-        } else if window.modifiers() == accept_keystroke.modifiers {
-            Color::Accent
-        } else {
-            Color::Default
-        };
-
         Some(
             h_flex()
                 .h(self.edit_prediction_cursor_popover_height())
@@ -5620,18 +5591,15 @@ impl Editor {
                             ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
-                                Some(modifier_color),
-                                !is_move,
+                                Some(if !has_completion {
+                                    Color::Muted
+                                } else {
+                                    Color::Default
+                                }),
+                                true,
                             ),
                         ))
-                        .child(if is_move {
-                            div()
-                                .child(ui::Key::new(&accept_keystroke.key, None))
-                                .font(buffer_font.clone())
-                                .into_any()
-                        } else {
-                            Label::new("Preview").into_any_element()
-                        })
+                        .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
                 .into_any(),
@@ -5642,9 +5610,8 @@ impl Editor {
         &self,
         completion: &InlineCompletionState,
         cursor_point: Point,
-        start_row: DisplayRow,
-        line_layouts: &[LineWithInvisibles],
         style: &EditorStyle,
+        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
         use text::ToPoint as _;
@@ -5721,6 +5688,7 @@ impl Editor {
 
                 let preview = h_flex()
                     .gap_1()
+                    .min_w_16()
                     .child(styled_text)
                     .when(len_total > first_line_len, |parent| parent.child("…"));
 
@@ -5753,18 +5721,46 @@ impl Editor {
                     None,
                     &style.syntax,
                 );
+                let base = h_flex().gap_3().flex_1().child(render_relative_row_jump(
+                    "Jump ",
+                    cursor_point.row,
+                    target.text_anchor.to_point(&snapshot).row,
+                ));
+
+                if highlighted_text.text.is_empty() {
+                    return Some(base);
+                }
+
                 let cursor_color = self.current_user_player_color(cx).cursor;
 
                 let start_point = range_around_target.start.to_point(&snapshot);
                 let end_point = range_around_target.end.to_point(&snapshot);
                 let target_point = target.text_anchor.to_point(&snapshot);
 
-                let cursor_relative_position = line_layouts
-                    .get(start_point.row.saturating_sub(start_row.0) as usize)
+                let styled_text = highlighted_text.to_styled_text(&style.text);
+                let text_len = highlighted_text.text.len();
+
+                let cursor_relative_position = window
+                    .text_system()
+                    .layout_line(
+                        highlighted_text.text,
+                        style.text.font_size.to_pixels(window.rem_size()),
+                        // We don't need to include highlights
+                        // because we are only using this for the cursor position
+                        &[TextRun {
+                            len: text_len,
+                            font: style.text.font(),
+                            color: style.text.color,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                    )
+                    .log_err()
                     .map(|line| {
-                        let start_column_x = line.x_for_index(start_point.column as usize);
-                        let target_column_x = line.x_for_index(target_point.column as usize);
-                        target_column_x - start_column_x
+                        line.x_for_index(
+                            target_point.column.saturating_sub(start_point.column) as usize
+                        )
                     });
 
                 let fade_before = start_point.column > 0;
@@ -5772,56 +5768,40 @@ impl Editor {
 
                 let background = cx.theme().colors().elevated_surface_background;
 
-                Some(
-                    h_flex()
-                        .gap_3()
-                        .flex_1()
-                        .child(render_relative_row_jump(
-                            "Jump ",
-                            cursor_point.row,
-                            target.text_anchor.to_point(&snapshot).row,
+                let preview = h_flex()
+                    .relative()
+                    .child(styled_text)
+                    .when(fade_before, |parent| {
+                        parent.child(div().absolute().top_0().left_0().w_4().h_full().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(background, 0.),
+                                linear_color_stop(background.opacity(0.), 1.),
+                            ),
                         ))
-                        .when(!highlighted_text.text.is_empty(), |parent| {
-                            parent.child(
-                                h_flex()
-                                    .relative()
-                                    .child(highlighted_text.to_styled_text(&style.text))
-                                    .when(fade_before, |parent| {
-                                        parent.child(
-                                            div().absolute().top_0().left_0().w_4().h_full().bg(
-                                                linear_gradient(
-                                                    90.,
-                                                    linear_color_stop(background, 0.),
-                                                    linear_color_stop(background.opacity(0.), 1.),
-                                                ),
-                                            ),
-                                        )
-                                    })
-                                    .when(fade_after, |parent| {
-                                        parent.child(
-                                            div().absolute().top_0().right_0().w_4().h_full().bg(
-                                                linear_gradient(
-                                                    -90.,
-                                                    linear_color_stop(background, 0.),
-                                                    linear_color_stop(background.opacity(0.), 1.),
-                                                ),
-                                            ),
-                                        )
-                                    })
-                                    .when_some(cursor_relative_position, |parent, position| {
-                                        parent.child(
-                                            div()
-                                                .w(px(2.))
-                                                .h_full()
-                                                .bg(cursor_color)
-                                                .absolute()
-                                                .top_0()
-                                                .left(position),
-                                        )
-                                    }),
-                            )
-                        }),
-                )
+                    })
+                    .when(fade_after, |parent| {
+                        parent.child(div().absolute().top_0().right_0().w_4().h_full().bg(
+                            linear_gradient(
+                                -90.,
+                                linear_color_stop(background, 0.),
+                                linear_color_stop(background.opacity(0.), 1.),
+                            ),
+                        ))
+                    })
+                    .when_some(cursor_relative_position, |parent, position| {
+                        parent.child(
+                            div()
+                                .w(px(2.))
+                                .h_full()
+                                .bg(cursor_color)
+                                .absolute()
+                                .top_0()
+                                .left(position),
+                        )
+                    });
+
+                Some(base.child(preview))
             }
         }
     }
