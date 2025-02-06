@@ -7,7 +7,7 @@ use std::sync::Arc;
 use editor::actions::FoldAt;
 use editor::display_map::{Crease, FoldId};
 use editor::scroll::Autoscroll;
-use editor::{Anchor, AnchorRangeExt, Editor, FoldPlaceholder, MultiBuffer, ToOffset, ToPoint};
+use editor::{Anchor, AnchorRangeExt, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
@@ -292,7 +292,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                     render: render_fold_icon_button(
                         IconName::File,
                         file_name.into(),
-                        editor.buffer().clone(),
                         editor_entity.downgrade(),
                     ),
                     ..Default::default()
@@ -466,7 +465,6 @@ pub fn render_file_context_entry(
 fn render_fold_icon_button(
     icon: IconName,
     label: SharedString,
-    multi_buffer: Entity<MultiBuffer>,
     editor: WeakEntity<Editor>,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new(move |fold_id, fold_range, cx| {

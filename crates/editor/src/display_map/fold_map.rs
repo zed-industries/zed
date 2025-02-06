@@ -45,7 +45,7 @@ impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
-            render: Arc::new(|_id, _range, _window, _cx| gpui::Empty.into_any_element()),
+            render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
