@@ -197,7 +197,7 @@ struct SelectionSet {
 }
 
 /// A diagnostic associated with a certain range of a buffer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     /// The name of the service that produced this diagnostic.
     pub source: Option<String>,

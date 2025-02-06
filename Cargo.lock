@@ -6428,6 +6428,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "language",
+ "project",
 ]
 
 [[package]]
@@ -16956,6 +16957,7 @@ dependencies = [
  "log",
  "menu",
  "postage",
+ "project",
  "regex",
  "reqwest_client",
  "rpc",
