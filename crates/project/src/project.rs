@@ -72,7 +72,7 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
-    proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
+    proto::{FromProto, LanguageServerPromptResponse, ToProto, SSH_PROJECT_ID},
     AnyProtoClient, ErrorCode,
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
@@ -296,24 +296,14 @@ impl ProjectPath {
     pub fn from_proto(p: proto::ProjectPath) -> Self {
         Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: p
-                .path
-                .map(Into::<Arc<Path>>::into)
-                .or_else(|| {
-                    p.path_deprecated
-                        .map(PathBuf::from)
-                        .map(Into::<Arc<Path>>::into)
-                })
-                .unwrap_or(PathBuf::new().into()),
+            path: Arc::<Path>::from_proto(p.path),
         }
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
-        let path: proto::CrossPlatformPath = self.path.clone().into();
         proto::ProjectPath {
             worktree_id: self.worktree_id.to_proto(),
-            path_deprecated: Some(path.to_db_string()),
-            path: Some(path),
+            path: self.path.as_ref().to_proto(),
         }
     }
 
@@ -3342,23 +3332,19 @@ impl Project {
                 })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-            let request_path: proto::CrossPlatformPath = path.into();
+            let request_path = Path::new(path);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
                 .request(proto::GetPathMetadata {
                     project_id: SSH_PROJECT_ID,
-                    path_deprecated: Some(request_path.to_db_string()),
-                    path: Some(request_path),
+                    path: request_path.to_proto(),
                 });
             cx.background_executor().spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: response
-                            .path
-                            .map(Into::into)
-                            .or_else(|| response.path_deprecated.map(Into::into))?,
+                        path: PathBuf::from_proto(response.path),
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -3428,11 +3414,10 @@ impl Project {
         if self.is_local() {
             DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.ssh_client.as_ref() {
-            let path: proto::CrossPlatformPath = query.into();
+            let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {
                 dev_server_id: SSH_PROJECT_ID,
-                path_deprecated: Some(path.to_db_string()),
-                path: Some(path),
+                path: path_buf.to_proto(),
             };
 
             let response = session.read(cx).proto_client().request(request);
@@ -3983,18 +3968,7 @@ impl Project {
             this.open_buffer(
                 ProjectPath {
                     worktree_id,
-                    path: envelope
-                        .payload
-                        .path
-                        .map(Into::<Arc<Path>>::into)
-                        .or_else(|| {
-                            envelope
-                                .payload
-                                .path_deprecated
-                                .map(PathBuf::from)
-                                .map(Into::into)
-                        })
-                        .unwrap_or(PathBuf::new().into()),
+                    path: Arc::<Path>::from_proto(envelope.payload.path),
                 },
                 cx,
             )
