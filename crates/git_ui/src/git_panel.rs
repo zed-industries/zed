@@ -14,8 +14,9 @@ use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{CommitAllChanges, CommitChanges, ToggleStaged};
 use gpui::*;
-use language::Buffer;
+use language::{Buffer, File};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use multi_buffer::ExcerptInfo;
 use panel::PanelHeader;
 use project::git::{GitEvent, Repository};
 use project::{Fs, Project, ProjectPath};
@@ -1007,19 +1008,19 @@ impl GitPanel {
             };
             if status_entry.status.is_created() {
                 self.new_count += 1;
-                if self.entry_appears_staged(status_entry) != Some(false) {
+                if self.entry_is_staged(status_entry) != Some(false) {
                     self.new_staged_count += 1;
                 }
             } else {
                 self.tracked_count += 1;
-                if self.entry_appears_staged(status_entry) != Some(false) {
+                if self.entry_is_staged(status_entry) != Some(false) {
                     self.tracked_staged_count += 1;
                 }
             }
         }
     }
 
-    fn entry_appears_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
+    fn entry_is_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
         for pending in self.pending.iter().rev() {
             if pending.repo_paths.contains(&entry.repo_path) {
                 return Some(pending.will_become_staged);
@@ -1301,6 +1302,49 @@ impl GitPanel {
         )
     }
 
+    pub fn render_buffer_header_controls(
+        &self,
+        entity: &Entity<Self>,
+        file: &Arc<dyn File>,
+        _: &Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let repo = self.active_repository.as_ref()?.read(cx);
+        let repo_path = repo.worktree_id_path_to_repo_path(file.worktree_id(cx), file.path())?;
+        let ix = self.entries_by_path.get(&repo_path)?;
+        let entry = self.entries.get(*ix)?;
+
+        let is_staged = self.entry_is_staged(entry.status_entry()?);
+
+        let checkbox = Checkbox::new("stage-file", is_staged.into())
+            .disabled(!self.has_write_access(cx))
+            .fill()
+            .elevation(ElevationIndex::Surface)
+            .on_click({
+                let entry = entry.clone();
+                let git_panel = entity.downgrade();
+                move |_, window, cx| {
+                    git_panel
+                        .update(cx, |this, cx| {
+                            this.toggle_staged_for_entry(&entry, window, cx);
+                            cx.stop_propagation();
+                        })
+                        .ok();
+                }
+            });
+        Some(
+            h_flex()
+                .id("start-slot")
+                .child(checkbox)
+                .child(git_status_icon(entry.status_entry()?.status, cx))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    // prevent the list item active state triggering when toggling checkbox
+                    cx.stop_propagation();
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_entries(
         &self,
         has_write_access: bool,
@@ -1473,14 +1517,6 @@ impl GitPanel {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| entry.repo_path.to_string_lossy().into_owned());
 
-        let pending = self.pending.iter().rev().find_map(|pending| {
-            if pending.repo_paths.contains(&entry.repo_path) {
-                Some(pending.will_become_staged)
-            } else {
-                None
-            }
-        });
-
         let repo_path = entry.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -1512,10 +1548,7 @@ impl GitPanel {
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
 
-        let mut is_staged = pending
-            .or_else(|| entry.is_staged)
-            .map(ToggleState::from)
-            .unwrap_or(ToggleState::Indeterminate);
+        let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
 
         if !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
@@ -1596,6 +1629,16 @@ impl GitPanel {
                     ),
             )
             .into_any_element()
+    }
+
+    fn has_write_access(&self, cx: &App) -> bool {
+        let room = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
+
+        room.as_ref()
+            .map_or(true, |room| room.read(cx).local_participant().can_write())
     }
 }
 
@@ -1733,6 +1776,28 @@ impl Focusable for GitPanel {
 impl EventEmitter<Event> for GitPanel {}
 
 impl EventEmitter<PanelEvent> for GitPanel {}
+
+pub(crate) struct GitPanelAddon {
+    pub(crate) git_panel: Entity<GitPanel>,
+}
+
+impl editor::Addon for GitPanelAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn render_buffer_header_controls(
+        &self,
+        excerpt_info: &ExcerptInfo,
+        window: &Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let file = excerpt_info.buffer.file()?;
+        let git_panel = self.git_panel.read(cx);
+
+        git_panel.render_buffer_header_controls(&self.git_panel, &file, window, cx)
+    }
+}
 
 impl Panel for GitPanel {
     fn persistent_name() -> &'static str {

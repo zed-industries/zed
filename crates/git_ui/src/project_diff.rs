@@ -21,7 +21,7 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
-use crate::git_panel::{GitPanel, GitStatusEntry};
+use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -29,6 +29,7 @@ pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
+    git_panel: Entity<GitPanel>,
     git_state: Entity<GitState>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -79,9 +80,16 @@ impl ProjectDiff {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
-            let workspace_handle = cx.entity().downgrade();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let workspace_handle = cx.entity();
+            let project_diff = cx.new(|cx| {
+                Self::new(
+                    workspace.project().clone(),
+                    workspace_handle,
+                    workspace.panel::<GitPanel>(cx).unwrap(),
+                    window,
+                    cx,
+                )
+            });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -100,7 +108,8 @@ impl ProjectDiff {
 
     fn new(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: Entity<Workspace>,
+        git_panel: Entity<GitPanel>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -116,6 +125,9 @@ impl ProjectDiff {
                 cx,
             );
             diff_display_editor.set_expand_all_diff_hunks(cx);
+            diff_display_editor.register_addon(GitPanelAddon {
+                git_panel: git_panel.clone(),
+            });
             diff_display_editor
         });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
@@ -141,7 +153,8 @@ impl ProjectDiff {
         Self {
             project,
             git_state: git_state.clone(),
-            workspace,
+            git_panel: git_panel.clone(),
+            workspace: workspace.downgrade(),
             focus_handle,
             editor,
             multibuffer,
@@ -423,9 +436,16 @@ impl Item for ProjectDiff {
     where
         Self: Sized,
     {
-        Some(
-            cx.new(|cx| ProjectDiff::new(self.project.clone(), self.workspace.clone(), window, cx)),
-        )
+        let workspace = self.workspace.upgrade()?;
+        Some(cx.new(|cx| {
+            ProjectDiff::new(
+                self.project.clone(),
+                workspace,
+                self.git_panel.clone(),
+                window,
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
