@@ -7,7 +7,10 @@ use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
     local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{
+    proto::{self, FromProto, ToProto},
+    AnyProtoClient, TypedEnvelope,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -288,13 +291,11 @@ impl SettingsObserver {
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
             for (path, content) in store.local_settings(worktree.read(cx).id()) {
-                let path: proto::CrossPlatformPath = path.into();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path),
+                        path: path.to_proto(),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
@@ -303,13 +304,11 @@ impl SettingsObserver {
                     .log_err();
             }
             for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
-                let path: proto::CrossPlatformPath = path.into();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path),
+                        path: path.to_proto(),
                         content: Some(content),
                         kind: Some(
                             local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
@@ -347,19 +346,7 @@ impl SettingsObserver {
             this.update_settings(
                 worktree,
                 [(
-                    envelope
-                        .payload
-                        .path
-                        .clone()
-                        .map(Into::<Arc<Path>>::into)
-                        .or_else(|| {
-                            envelope
-                                .payload
-                                .path_deprecated
-                                .map(PathBuf::from)
-                                .map(Into::into)
-                        })
-                        .unwrap_or(PathBuf::new().into()),
+                    Arc::<Path>::from_proto(envelope.payload.path.clone()),
                     local_settings_kind_from_proto(kind),
                     envelope.payload.content,
                 )],
@@ -563,13 +550,11 @@ impl SettingsObserver {
             };
 
             if let Some(downstream_client) = &self.downstream_client {
-                let path: proto::CrossPlatformPath = directory.into();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id: self.project_id,
                         worktree_id: remote_worktree_id.to_proto(),
-                        path_deprecated: Some(path.to_db_string()),
-                        path: Some(path),
+                        path: directory.to_proto(),
                         content: file_content,
                         kind: Some(local_settings_kind_to_proto(kind).into()),
                     })
