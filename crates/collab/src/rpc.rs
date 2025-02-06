@@ -1467,7 +1467,7 @@ fn notify_rejoined_projects(
             }
 
             for settings_file in worktree.settings_files {
-                lsession.peer.send(
+                session.peer.send(
                     session.connection_id,
                     proto::UpdateWorktreeSettings {
                         project_id: project.id.to_proto(),
