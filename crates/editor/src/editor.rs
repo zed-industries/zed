@@ -5511,7 +5511,11 @@ impl Editor {
                             .child(Icon::new(IconName::ZedPredict))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
-                            .child(Icon::new(IconName::ArrowUpRight))
+                            .child(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .color(Color::Muted)
+                                    .size(IconSize::Small),
+                            )
                             .into_any_element(),
                     )
                     .into_any(),
@@ -5585,7 +5589,7 @@ impl Editor {
         } else if window.modifiers() == accept_keystroke.modifiers {
             Color::Accent
         } else {
-            Color::Muted
+            Color::Default
         };
 
         Some(
@@ -5723,6 +5727,8 @@ impl Editor {
                         .h_full()
                         .flex_1()
                         .gap_2()
+                        .pr_1()
+                        .overflow_x_hidden()
                         .child(left)
                         .child(preview),
                 )
