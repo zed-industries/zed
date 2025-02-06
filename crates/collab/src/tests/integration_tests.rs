@@ -2614,7 +2614,7 @@ async fn test_git_diff_base_change(
             Some(staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(1..2, "", "two\n")],
@@ -2642,7 +2642,7 @@ async fn test_git_diff_base_change(
             Some(staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(1..2, "", "two\n")],
@@ -2664,7 +2664,7 @@ async fn test_git_diff_base_change(
             Some(committed_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(1..2, "TWO\n", "two\n")],
@@ -2690,7 +2690,7 @@ async fn test_git_diff_base_change(
             Some(new_staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(2..3, "", "three\n")],
@@ -2704,7 +2704,7 @@ async fn test_git_diff_base_change(
             Some(new_staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(2..3, "", "three\n")],
@@ -2718,7 +2718,7 @@ async fn test_git_diff_base_change(
             Some(new_committed_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(1..2, "TWO_HUNDRED\n", "two\n")],
@@ -2764,7 +2764,7 @@ async fn test_git_diff_base_change(
             Some(staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
             &[(1..2, "", "two\n")],
@@ -2791,7 +2791,7 @@ async fn test_git_diff_base_change(
             Some(staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &staged_text,
             &[(1..2, "", "two\n")],
@@ -2813,7 +2813,7 @@ async fn test_git_diff_base_change(
             Some(new_staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &new_staged_text,
             &[(2..3, "", "three\n")],
@@ -2827,7 +2827,7 @@ async fn test_git_diff_base_change(
             Some(new_staged_text.as_str())
         );
         diff::assert_hunks(
-            change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
+            change_set.snapshot.hunks_in_row_range(0..4, buffer),
             buffer,
             &new_staged_text,
             &[(2..3, "", "three\n")],

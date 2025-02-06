@@ -5694,7 +5694,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().text(),
+            &unstaged_changes.base_text_string().unwrap(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5724,7 +5724,7 @@ async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &unstaged_changes.base_text.as_ref().unwrap().text(),
+            &unstaged_changes.snapshot.base_text.as_ref().unwrap().text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });
@@ -5796,7 +5796,12 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_changes
+                .snapshot
+                .base_text
+                .as_ref()
+                .unwrap()
+                .text(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
@@ -5826,7 +5831,12 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_changes
+                .snapshot
+                .base_text
+                .as_ref()
+                .unwrap()
+                .text(),
             &[(2..3, "", "    println!(\"goodbye world\");\n")],
         );
     });
@@ -5887,7 +5897,12 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
         assert_hunks(
             uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &uncommitted_changes
+                .snapshot
+                .base_text
+                .as_ref()
+                .unwrap()
+                .text(),
             &[(
                 1..2,
                 "    println!(\"hello from HEAD\");\n",

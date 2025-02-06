@@ -216,7 +216,7 @@ struct BufferState {
 }
 
 struct ChangeSetState {
-    change_set: Entity<BufferDiff>,
+    diff: Entity<BufferDiff>,
     _subscription: gpui::Subscription,
 }
 
@@ -231,7 +231,7 @@ impl ChangeSetState {
                     this.buffer_diff_language_changed(change_set, cx)
                 }
             }),
-            change_set,
+            diff: change_set,
         }
     }
 }
@@ -268,6 +268,7 @@ pub enum DiffTransform {
     },
 }
 
+// FIXME get rid of this
 #[derive(Clone)]
 struct DiffSnapshot {
     diff: diff::BufferDiffSnapshot,
@@ -576,7 +577,7 @@ impl MultiBuffer {
         for (buffer_id, change_set_state) in self.diff_bases.iter() {
             diff_bases.insert(
                 *buffer_id,
-                ChangeSetState::new(change_set_state.change_set.clone(), new_cx),
+                ChangeSetState::new(change_set_state.diff.clone(), new_cx),
             );
         }
         Self {
@@ -2152,17 +2153,13 @@ impl MultiBuffer {
         });
     }
 
-    fn buffer_diff_language_changed(
-        &mut self,
-        change_set: Entity<BufferDiff>,
-        cx: &mut Context<Self>,
-    ) {
+    fn buffer_diff_language_changed(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
-        let change_set = change_set.read(cx);
-        let buffer_id = change_set.buffer_id;
-        let base_text = change_set.base_text.clone();
-        let diff = change_set.diff_to_buffer.clone();
+        let diff = diff.read(cx);
+        let buffer_id = diff.buffer_id;
+        let base_text = diff.snapshot.base_text.clone();
+        let diff = diff.snapshot.clone();
         if let Some(base_text) = base_text {
             snapshot.diffs.insert(
                 buffer_id,
@@ -2178,21 +2175,21 @@ impl MultiBuffer {
 
     fn buffer_diff_changed(
         &mut self,
-        change_set: Entity<BufferDiff>,
+        diff: Entity<BufferDiff>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
-        let change_set = change_set.read(cx);
-        let buffer_id = change_set.buffer_id;
-        let diff = change_set.diff_to_buffer.clone();
-        let base_text = change_set.base_text.clone();
+        let diff = diff.read(cx);
+        let buffer_id = diff.buffer_id;
+        let diff = diff.snapshot.clone();
+        let base_text = diff.base_text.clone();
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let base_text_changed = snapshot
             .diffs
             .get(&buffer_id)
             .map_or(true, |diff_snapshot| {
-                change_set.base_text.as_ref().map_or(true, |base_text| {
+                diff.base_text.as_ref().map_or(true, |base_text| {
                     base_text.remote_id() != diff_snapshot.base_text.remote_id()
                 })
             });
@@ -2206,12 +2203,12 @@ impl MultiBuffer {
                 },
             );
         } else if self.all_diff_hunks_expanded {
-            let base_text = Buffer::build_empty_snapshot(cx);
+            let diff = BufferDiffSnapshot::new_with_single_insertion(cx);
             snapshot.diffs.insert(
                 buffer_id,
                 DiffSnapshot {
-                    diff: BufferDiffSnapshot::new_with_single_insertion(&base_text),
-                    base_text,
+                    base_text: diff.base_text.clone().unwrap(),
+                    diff,
                 },
             );
         } else {
@@ -2359,10 +2356,10 @@ impl MultiBuffer {
             .insert(buffer_id, ChangeSetState::new(change_set, cx));
     }
 
-    pub fn change_set_for(&self, buffer_id: BufferId) -> Option<Entity<BufferDiff>> {
+    pub fn diff_for(&self, buffer_id: BufferId) -> Option<Entity<BufferDiff>> {
         self.diff_bases
             .get(&buffer_id)
-            .map(|state| state.change_set.clone())
+            .map(|state| state.diff.clone())
     }
 
     pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {

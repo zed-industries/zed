@@ -317,7 +317,7 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let change_set = change_set.read(cx);
-        let diff_hunk_ranges = if change_set.base_text.is_none() {
+        let diff_hunk_ranges = if change_set.snapshot.base_text.is_none() {
             vec![Point::zero()..snapshot.max_point()]
         } else {
             change_set

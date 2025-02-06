@@ -6772,11 +6772,12 @@ impl Editor {
         cx: &mut App,
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
-        let change_set = buffer.change_set_for(hunk.buffer_id)?;
+        let diff = buffer.diff_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
-        let original_text = change_set
+        let original_text = diff
             .read(cx)
+            .snapshot
             .base_text
             .as_ref()?
             .as_rope()
@@ -13730,7 +13731,7 @@ impl Editor {
             } => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
                 let buffer_id = buffer.read(cx).remote_id();
-                if self.buffer.read(cx).change_set_for(buffer_id).is_none() {
+                if self.buffer.read(cx).diff_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
                         get_uncommitted_changes_for_buffer(
                             project,

@@ -107,10 +107,8 @@ impl ProposedChangesEditor {
                                     let buffer = buffer.read(cx);
                                     let base_buffer = buffer.base_buffer()?;
                                     let buffer = buffer.text_snapshot();
-                                    let change_set = this
-                                        .multibuffer
-                                        .read(cx)
-                                        .change_set_for(buffer.remote_id())?;
+                                    let change_set =
+                                        this.multibuffer.read(cx).diff_for(buffer.remote_id())?;
                                     Some(change_set.update(cx, |change_set, cx| {
                                         change_set.set_base_text(base_buffer.clone(), buffer, cx)
                                     }))

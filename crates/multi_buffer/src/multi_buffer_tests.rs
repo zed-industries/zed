@@ -2002,10 +2002,10 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
     let base_id_1 = change_set_1.read_with(cx, |change_set, _| {
-        change_set.base_text.as_ref().unwrap().remote_id()
+        change_set.snapshot.base_text.as_ref().unwrap().remote_id()
     });
     let base_id_2 = change_set_2.read_with(cx, |change_set, _| {
-        change_set.base_text.as_ref().unwrap().remote_id()
+        change_set.snapshot.base_text.as_ref().unwrap().remote_id()
     });
 
     let buffer_lines = (0..=snapshot.max_row().0)
@@ -2101,7 +2101,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 #[derive(Default)]
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
-    change_sets: HashMap<BufferId, Entity<BufferDiff>>,
+    diffs: HashMap<BufferId, Entity<BufferDiff>>,
 }
 
 #[derive(Debug)]
@@ -2190,10 +2190,10 @@ impl ReferenceMultibuffer {
             .unwrap();
         let buffer = excerpt.buffer.read(cx).snapshot();
         let buffer_id = buffer.remote_id();
-        let Some(change_set) = self.change_sets.get(&buffer_id) else {
+        let Some(change_set) = self.diffs.get(&buffer_id) else {
             return;
         };
-        let diff = change_set.read(cx).diff_to_buffer.clone();
+        let diff = change_set.read(cx).snapshot.clone();
         let excerpt_range = excerpt.range.to_offset(&buffer);
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
@@ -2227,9 +2227,9 @@ impl ReferenceMultibuffer {
             excerpt_boundary_rows.insert(MultiBufferRow(text.matches('\n').count() as u32));
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
-            let change_set = self.change_sets.get(&buffer.remote_id()).unwrap().read(cx);
-            let diff = change_set.diff_to_buffer.clone();
-            let base_buffer = change_set.base_text.as_ref().unwrap();
+            let change_set = self.diffs.get(&buffer.remote_id()).unwrap().read(cx);
+            let diff = change_set.snapshot.clone();
+            let base_buffer = change_set.snapshot.base_text.as_ref().unwrap();
 
             let mut offset = buffer_range.start;
             let mut hunks = diff
@@ -2367,12 +2367,7 @@ impl ReferenceMultibuffer {
             let buffer = excerpt.buffer.read(cx).snapshot();
             let excerpt_range = excerpt.range.to_offset(&buffer);
             let buffer_id = buffer.remote_id();
-            let diff = &self
-                .change_sets
-                .get(&buffer_id)
-                .unwrap()
-                .read(cx)
-                .diff_to_buffer;
+            let diff = &self.diffs.get(&buffer_id).unwrap().read(cx).snapshot;
             let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
             excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
                 if !hunk_anchor.is_valid(&buffer) {
@@ -2398,7 +2393,7 @@ impl ReferenceMultibuffer {
 
     fn add_change_set(&mut self, change_set: Entity<BufferDiff>, cx: &mut App) {
         let buffer_id = change_set.read(cx).buffer_id;
-        self.change_sets.insert(buffer_id, change_set);
+        self.diffs.insert(buffer_id, change_set);
     }
 }
 
@@ -2528,16 +2523,16 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 multibuffer.update(cx, |multibuffer, cx| {
                     for buffer in multibuffer.all_buffers() {
                         let snapshot = buffer.read(cx).snapshot();
-                        let _ = multibuffer
-                            .change_set_for(snapshot.remote_id())
-                            .unwrap()
-                            .update(cx, |change_set, cx| {
+                        let _ = multibuffer.diff_for(snapshot.remote_id()).unwrap().update(
+                            cx,
+                            |change_set, cx| {
                                 log::info!(
                                     "recalculating diff for buffer {:?}",
                                     snapshot.remote_id(),
                                 );
                                 change_set.recalculate_diff_sync(snapshot.text, cx);
-                            });
+                            },
+                        );
                     }
                     reference.diffs_updated(cx);
                     needs_diff_calculation = false;
