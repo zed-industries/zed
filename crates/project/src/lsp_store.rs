@@ -55,7 +55,10 @@ use parking_lot::Mutex;
 use postage::watch;
 use rand::prelude::*;
 
-use rpc::AnyProtoClient;
+use rpc::{
+    proto::{FromProto, ToProto},
+    AnyProtoClient,
+};
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -5461,14 +5464,12 @@ impl LspStore {
 
         if !old_summary.is_empty() || !new_summary.is_empty() {
             if let Some((downstream_client, project_id)) = &self.downstream_client {
-                let path: proto::CrossPlatformPath = worktree_path.clone().into();
                 downstream_client
                     .send(proto::UpdateDiagnosticSummary {
                         project_id: *project_id,
                         worktree_id: worktree_id.to_proto(),
                         summary: Some(proto::DiagnosticSummary {
-                            path_deprecated: Some(path.to_db_string()),
-                            path: Some(path),
+                            path: worktree_path.to_proto(),
                             language_server_id: server_id.0 as u64,
                             error_count: new_summary.error_count as u32,
                             warning_count: new_summary.warning_count as u32,
@@ -5956,13 +5957,7 @@ impl LspStore {
             .ok_or_else(|| anyhow!("worktree not found"))?;
         let (old_abs_path, new_abs_path) = {
             let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-            let new_path: PathBuf = envelope
-                .payload
-                .new_path
-                .clone()
-                .map(Into::into)
-                .or_else(|| envelope.payload.new_path_deprecated.clone().map(Into::into))
-                .context("Missing new path")?;
+            let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
             (root_path.join(&old_path), root_path.join(&new_path))
         };
 
@@ -5993,13 +5988,7 @@ impl LspStore {
             if let Some(message) = envelope.payload.summary {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: message
-                        .path
-                        .as_ref()
-                        .map(PathBuf::from)
-                        .or_else(|| message.path_deprecated.clone().map(PathBuf::from))
-                        .map(Into::into)
-                        .context("Missing path")?,
+                    path: PathBuf::from_proto(message.path),
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message.language_server_id as usize);
@@ -6028,14 +6017,12 @@ impl LspStore {
                         .insert(server_id, summary);
                 }
                 if let Some((downstream_client, project_id)) = &this.downstream_client {
-                    let path: proto::CrossPlatformPath = project_path.path.clone().into();
                     downstream_client
                         .send(proto::UpdateDiagnosticSummary {
                             project_id: *project_id,
                             worktree_id: worktree_id.to_proto(),
                             summary: Some(proto::DiagnosticSummary {
-                                path_deprecated: Some(path.to_db_string()),
-                                path: Some(path),
+                                path: project_path.path.as_ref().to_proto(),
                                 language_server_id: server_id.0 as u64,
                                 error_count: summary.error_count as u32,
                                 warning_count: summary.warning_count as u32,
@@ -7220,14 +7207,12 @@ impl LspStore {
             summaries.retain(|path, summaries_by_server_id| {
                 if summaries_by_server_id.remove(&server_id).is_some() {
                     if let Some((client, project_id)) = self.downstream_client.clone() {
-                        let path: proto::CrossPlatformPath = path.into();
                         client
                             .send(proto::UpdateDiagnosticSummary {
                                 project_id,
                                 worktree_id: worktree_id.to_proto(),
                                 summary: Some(proto::DiagnosticSummary {
-                                    path_deprecated: Some(path.to_db_string()),
-                                    path: Some(path),
+                                    path: path.as_ref().to_proto(),
                                     language_server_id: server_id.0 as u64,
                                     error_count: 0,
                                     warning_count: 0,
@@ -7877,13 +7862,11 @@ impl LspStore {
     }
 
     fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
-        let path: proto::CrossPlatformPath = symbol.path.path.clone().into();
         proto::Symbol {
             language_server_name: symbol.language_server_name.0.to_string(),
             source_worktree_id: symbol.source_worktree_id.to_proto(),
             worktree_id: symbol.path.worktree_id.to_proto(),
-            path_deprecated: Some(path.to_db_string()),
-            path: Some(path),
+            path: symbol.path.path.as_ref().to_proto(),
             name: symbol.name.clone(),
             kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
             start: Some(proto::PointUtf16 {
@@ -7904,16 +7887,7 @@ impl LspStore {
         let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
         let path = ProjectPath {
             worktree_id,
-            path: serialized_symbol
-                .path
-                .map(Into::<Arc<Path>>::into)
-                .or_else(|| {
-                    serialized_symbol
-                        .path_deprecated
-                        .map(PathBuf::from)
-                        .map(Into::into)
-                })
-                .context("Missing path")?,
+            path: Arc::<Path>::from_proto(serialized_symbol.path),
         };
 
         let start = serialized_symbol
@@ -8386,10 +8360,8 @@ impl DiagnosticSummary {
         language_server_id: LanguageServerId,
         path: &Path,
     ) -> proto::DiagnosticSummary {
-        let path: proto::CrossPlatformPath = path.into();
         proto::DiagnosticSummary {
-            path_deprecated: Some(path.to_db_string()),
-            path: Some(path),
+            path: path.to_proto(),
             language_server_id: language_server_id.0 as u64,
             error_count: self.error_count as u32,
             warning_count: self.warning_count as u32,
