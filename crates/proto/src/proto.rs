@@ -15,8 +15,7 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
-    path::{Path, PathBuf},
-    sync::Arc,
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -136,6 +135,38 @@ impl std::hash::Hash for PeerId {
 impl fmt::Display for PeerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}/{}", self.owner_id, self.id)
+    }
+}
+
+pub trait FromProto {
+    fn from_proto(proto: String) -> Self;
+}
+
+pub trait ToProto {
+    fn to_proto(self) -> String;
+}
+
+impl FromProto for PathBuf {
+    fn from_proto(proto: String) -> Self {
+        proto.split('/').collect()
+    }
+}
+
+impl ToProto for PathBuf {
+    #[cfg(target_os = "windows")]
+    fn to_proto(self) -> String {
+        self.components()
+            .filter_map(|comp| match comp {
+                std::path::Component::RootDir => None,
+                _ => Some(comp.as_os_str().to_string_lossy().to_string()),
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        self.to_string_lossy().to_string()
     }
 }
 
@@ -658,66 +689,6 @@ impl From<Nonce> for u128 {
     }
 }
 
-impl<T: AsRef<Path>> From<T> for CrossPlatformPath {
-    fn from(path: T) -> Self {
-        let path = path.as_ref();
-        Self {
-            path: path
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into())
-                .collect(),
-        }
-    }
-}
-
-impl From<CrossPlatformPath> for PathBuf {
-    fn from(path: CrossPlatformPath) -> Self {
-        path.path.iter().collect()
-    }
-}
-
-impl From<&CrossPlatformPath> for PathBuf {
-    fn from(path: &CrossPlatformPath) -> Self {
-        path.path.iter().collect()
-    }
-}
-
-impl From<CrossPlatformPath> for Arc<Path> {
-    fn from(path: CrossPlatformPath) -> Self {
-        PathBuf::from(path).into()
-    }
-}
-
-impl CrossPlatformPath {
-    pub fn from_db_string(path: String) -> Self {
-        let path = PathBuf::from(path);
-        Self {
-            path: path
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().into())
-                .collect(),
-        }
-    }
-
-    pub fn to_db_string(&self) -> String {
-        #[cfg(target_os = "windows")]
-        {
-            let path: PathBuf = self.into();
-            path.to_string_lossy().replace("\\", "/")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let path: PathBuf = self.into();
-            path.to_string_lossy().into()
-        }
-    }
-
-    pub fn to_native_string(&self) -> String {
-        let path: PathBuf = self.into();
-        path.to_string_lossy().into()
-    }
-}
-
 #[cfg(any(test, feature = "test-support"))]
 pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
 #[cfg(not(any(test, feature = "test-support")))]
@@ -781,7 +752,6 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             project_id: message.project_id,
             worktree_id: message.worktree_id,
             root_name: message.root_name.clone(),
-            abs_path_deprecated: message.abs_path_deprecated.clone(),
             abs_path: message.abs_path.clone(),
             updated_entries,
             removed_entries,
