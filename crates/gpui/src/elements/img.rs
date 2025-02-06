@@ -610,7 +610,8 @@ impl Asset for ImageAssetLoader {
             } else {
                 let pixmap =
                     // TODO: Can we make svgs always rescale?
-                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(1.0))?;
+                    // Render the SVG at twice the size to get a higher quality result.
+                    svg_renderer.render_pixmap(&bytes, SvgSize::ScaleFactor(2.0))?;
 
                 let mut buffer =
                     ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take()).unwrap();
