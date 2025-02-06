@@ -2,7 +2,8 @@
 use gpui::{AnyView, DefiniteLength};
 
 use crate::{
-    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
+    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
+    KeybindingPosition, TintColor,
 };
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
@@ -92,6 +93,7 @@ pub struct Button {
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
     key_binding: Option<KeyBinding>,
+    keybinding_position: KeybindingPosition,
     alpha: Option<f32>,
 }
 
@@ -117,6 +119,7 @@ impl Button {
             selected_icon: None,
             selected_icon_color: None,
             key_binding: None,
+            keybinding_position: KeybindingPosition::default(),
             alpha: None,
         }
     }
@@ -184,6 +187,15 @@ impl Button {
     /// Display the keybinding that triggers the button action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
+        self
+    }
+
+    /// Sets the position of the keybinding relative to the button label.
+    ///
+    /// This method allows you to specify where the keybinding should be displayed
+    /// in relation to the button's label.
+    pub fn key_binding_position(mut self, position: KeybindingPosition) -> Self {
+        self.keybinding_position = position;
         self
     }
 
@@ -412,6 +424,10 @@ impl RenderOnce for Button {
                 })
                 .child(
                     h_flex()
+                        .when(
+                            self.keybinding_position == KeybindingPosition::Start,
+                            |this| this.flex_row_reverse(),
+                        )
                         .gap(DynamicSpacing::Base06.rems(cx))
                         .justify_between()
                         .child(
