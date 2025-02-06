@@ -14,7 +14,7 @@ pub mod repository_selector;
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
     cx.observe_new(ProjectDiff::register).detach();
-    quick_commit::init(cx);
+    // quick_commit::init(cx);
 }
 
 // TODO: Add updated status colors to theme

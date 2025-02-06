@@ -988,7 +988,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn toggle_auto_coauthors(&mut self, cx: &mut App) {
+    fn toggle_auto_coauthors(&mut self, _cx: &mut App) {
         self.enable_auto_coauthors = !self.enable_auto_coauthors;
     }
 

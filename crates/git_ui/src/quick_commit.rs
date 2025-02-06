@@ -1,3 +1,5 @@
+#![allow(unused, dead_code)]
+
 use crate::repository_selector::RepositorySelector;
 use anyhow::Result;
 use git::{CommitAllChanges, CommitChanges};
@@ -12,7 +14,10 @@ use project::{Fs, Project};
 use std::sync::Arc;
 use workspace::{ModalView, Workspace};
 
-actions!(git, [QuickCommit]);
+actions!(
+    git,
+    [QuickCommitWithMessage, QuickCommitStaged, QuickCommitAll]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
@@ -76,7 +81,7 @@ impl ModalView for QuickCommitModal {}
 
 impl QuickCommitModal {
     pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut Context<Workspace>) {
-        workspace.register_action(|workspace, _: &QuickCommit, window, cx| {
+        workspace.register_action(|workspace, _: &QuickCommitWithMessage, window, cx| {
             let project = workspace.project().clone();
             let fs = workspace.app_state().fs.clone();
 
@@ -276,7 +281,6 @@ impl QuickCommitModal {
 impl Render for QuickCommitModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         v_flex()
-            .debug_below()
             .id("quick-commit-modal")
             .key_context("QuickCommit")
             .on_action(cx.listener(Self::dismiss))
