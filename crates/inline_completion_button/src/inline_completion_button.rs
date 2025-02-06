@@ -387,7 +387,7 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
-        menu = menu.header("Show Predict Edits For");
+        menu = menu.header("Show Edit Predictions For");
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
