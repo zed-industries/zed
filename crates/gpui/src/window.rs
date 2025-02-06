@@ -1464,9 +1464,8 @@ impl Window {
 
     /// The scale factor the current element and its children. This can be modified with
     /// `with_scale`, which will multiply its parent's scale by the multiplier provided.
-    /// This value at the root will be the same as given by `window_scale_factor`.
-    pub fn scale_factor(&self) -> (f32, Point<Pixels>) {
-        self.scale_factor_stack.iter().fold(
+    pub fn scale_factor(&self, include_window_scale: bool) -> (f32, Point<Pixels>) {
+        let (scale_factor, offset) = self.scale_factor_stack.iter().fold(
             (1.0, point(px(0.0), px(0.0))),
             |(acc, adjustment), &(multiplier, origin)| {
                 (
@@ -1474,7 +1473,15 @@ impl Window {
                     adjustment + (origin - origin * multiplier) / multiplier,
                 )
             },
-        )
+        );
+
+        let scale_factor = if include_window_scale {
+            scale_factor
+        } else {
+            scale_factor / self.window_scale_factor()
+        };
+
+        (scale_factor, offset)
     }
 
     pub fn with_scale<F, R>(
@@ -2011,9 +2018,9 @@ impl Window {
     ) -> R {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(mut mask) = mask {
-            let (mut scale_factor, offset) = self.scale_factor();
-            mask.bounds.origin += offset; // offset doesn't need scaling based on window_scale_factor because offsets are only dependent on element scaling
-            mask.bounds *= scale_factor / self.window_scale_factor();
+            let (mut scale_factor, offset) = self.scale_factor(false);
+            mask.bounds.origin += offset;
+            mask.bounds *= scale_factor;
 
             let mask = mask.intersect(&self.content_mask());
             self.content_mask_stack.push(mask);
@@ -2335,7 +2342,7 @@ impl Window {
     pub fn paint_layer<R>(&mut self, bounds: Bounds<Pixels>, f: impl FnOnce(&mut Self) -> R) -> R {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let content_mask = self.content_mask();
         let clipped_bounds = (bounds + offset)
             .scale(scale_factor)
@@ -2364,7 +2371,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
@@ -2388,7 +2395,7 @@ impl Window {
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
 
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
@@ -2410,7 +2417,7 @@ impl Window {
     pub fn paint_path(&mut self, path: Path<Pixels>, color: impl Into<Background>) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let mut path = path.offset(offset).scale(scale_factor);
         path.content_mask = self.content_mask().scale(self.window_scale_factor());
 
@@ -2432,7 +2439,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let height = if style.wavy {
             style.thickness * 3.
         } else {
@@ -2467,7 +2474,7 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let height = style.thickness;
         let bounds = Bounds {
             origin,
@@ -2506,7 +2513,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let glyph_origin = (origin + offset).scale(scale_factor);
         let subpixel_variant = Point {
             x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
@@ -2565,7 +2572,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let glyph_origin = (origin + offset).scale(scale_factor);
         let params = RenderGlyphParams {
             font_id,
@@ -2622,7 +2629,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let bounds = (bounds + offset).scale(scale_factor);
         // Render the SVG at twice the size to get a higher quality result.
         let params = RenderSvgParams {
@@ -2674,7 +2681,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let (scale_factor, offset) = self.scale_factor();
+        let (scale_factor, offset) = self.scale_factor(true);
         let bounds = (bounds + offset).scale(scale_factor);
         let params = RenderImageParams {
             image_id: data.id,
@@ -2762,7 +2769,7 @@ impl Window {
         cx.layout_id_buffer.extend(children);
 
         let rem_size = self.rem_size();
-        let scale = self.scale_factor().0 / self.window_scale_factor();
+        let scale = self.scale_factor(false).0;
 
         self.layout_engine.as_mut().unwrap().request_layout(
             style,
@@ -2791,7 +2798,7 @@ impl Window {
         self.invalidator.debug_assert_prepaint();
 
         let rem_size = self.rem_size();
-        let scale = self.scale_factor().0 / self.window_scale_factor();
+        let scale = self.scale_factor(false).0;
 
         self.layout_engine
             .as_mut()
@@ -2859,8 +2866,8 @@ impl Window {
     pub fn insert_hitbox(&mut self, mut bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
-        let (scale_factor, offset) = self.scale_factor();
-        bounds = (bounds + offset) * px(scale_factor / self.window_scale_factor());
+        let (scale_factor, offset) = self.scale_factor(false);
+        bounds = (bounds + offset) * px(scale_factor);
 
         let content_mask = self.content_mask();
         let id = self.next_hitbox_id;
@@ -2940,16 +2947,18 @@ impl Window {
     /// the listener will be cleared.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn on_mouse_event<Event: MouseEvent>(
+    pub fn on_mouse_event<Event: MouseEvent + Clone>(
         &mut self,
         mut handler: impl FnMut(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
     ) {
         self.invalidator.debug_assert_paint();
 
+        let scale = self.scale_factor(false);
         self.next_frame.mouse_listeners.push(Some(Box::new(
             move |event: &dyn Any, phase: DispatchPhase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref() {
-                    handler(event, phase, window, cx)
+                if let Some(event) = event.downcast_ref::<Event>() {
+                    let event = event.clone().to_local_scale(scale);
+                    handler(&event, phase, window, cx)
                 }
             },
         )));
@@ -3157,6 +3166,7 @@ impl Window {
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
+                        unscaled_position: position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
@@ -3165,6 +3175,7 @@ impl Window {
                     self.mouse_position = position;
                     PlatformInput::MouseMove(MouseMoveEvent {
                         position,
+                        unscaled_position: position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
                     })
@@ -3175,6 +3186,7 @@ impl Window {
                     PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position,
+                        unscaled_position: position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     })
@@ -3631,7 +3643,7 @@ impl Window {
         self.on_next_frame(|window, cx| {
             if let Some(mut input_handler) = window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(window, cx) {
-                    let (scale_factor, offset) = window.scale_factor();
+                    let (scale_factor, offset) = window.scale_factor(false);
 
                     window
                         .platform_window

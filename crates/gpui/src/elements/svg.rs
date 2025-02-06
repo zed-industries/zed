@@ -95,8 +95,7 @@ impl Element for Svg {
             cx,
             |style, window, cx| {
                 if let Some((path, color)) = self.path.as_ref().zip(style.text.color) {
-                    let (scale_factor, offset) = window.scale_factor();
-                    let scale_factor = scale_factor / window.window_scale_factor();
+                    let (scale_factor, offset) = window.scale_factor(false);
 
                     let transformation = self
                         .transformation
