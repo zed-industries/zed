@@ -22,7 +22,6 @@ use language::{
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
-use log;
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -457,7 +456,6 @@ impl Copilot {
             let server_path = get_copilot_lsp(http).await?;
             let node_path = node_runtime.binary_path().await?;
             let arguments: Vec<OsString> = vec![server_path.into(), "--stdio".into()];
-
             let binary = LanguageServerBinary {
                 path: node_path,
                 arguments,
