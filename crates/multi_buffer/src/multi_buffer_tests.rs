@@ -1,5 +1,5 @@
 use super::*;
-use git::diff::DiffHunkStatus;
+use diff::DiffHunkStatus;
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
@@ -361,7 +361,7 @@ fn test_diff_boundary_anchors(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\n";
     let text = "one\nthree\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+    let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.add_change_set(change_set, cx)
@@ -405,7 +405,7 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+    let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
         (multibuffer.snapshot(cx), multibuffer.subscribe())
@@ -498,7 +498,7 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
     let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(&base_text, &buffer, cx));
+    let change_set = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
@@ -979,7 +979,7 @@ fn test_empty_diff_excerpt(cx: &mut TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local("", cx));
     let base_text = "a\nb\nc";
 
-    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+    let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.set_all_diff_hunks_expanded(cx);
         multibuffer.add_change_set(change_set.clone(), cx);
@@ -1273,7 +1273,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+    let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -1516,7 +1516,7 @@ fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
-    let change_set = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text, &buffer, cx));
+    let change_set = cx.new(|cx| BufferDiff::new_with_base_text(base_text, &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -1918,8 +1918,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let buffer_1 = cx.new(|cx| Buffer::local(text_1, cx));
     let buffer_2 = cx.new(|cx| Buffer::local(text_2, cx));
-    let change_set_1 = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_1, &buffer_1, cx));
-    let change_set_2 = cx.new(|cx| BufferChangeSet::new_with_base_text(base_text_2, &buffer_2, cx));
+    let change_set_1 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_1, &buffer_1, cx));
+    let change_set_2 = cx.new(|cx| BufferDiff::new_with_base_text(base_text_2, &buffer_2, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new(|cx| {
@@ -2101,7 +2101,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 #[derive(Default)]
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
-    change_sets: HashMap<BufferId, Entity<BufferChangeSet>>,
+    change_sets: HashMap<BufferId, Entity<BufferDiff>>,
 }
 
 #[derive(Debug)]
@@ -2396,7 +2396,7 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn add_change_set(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut App) {
+    fn add_change_set(&mut self, change_set: Entity<BufferDiff>, cx: &mut App) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.change_sets.insert(buffer_id, change_set);
     }
@@ -2551,7 +2551,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
 
                     let buffer = cx.new(|cx| Buffer::local(base_text.clone(), cx));
                     let change_set =
-                        cx.new(|cx| BufferChangeSet::new_with_base_text(&base_text, &buffer, cx));
+                        cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
 
                     multibuffer.update(cx, |multibuffer, cx| {
                         reference.add_change_set(change_set.clone(), cx);

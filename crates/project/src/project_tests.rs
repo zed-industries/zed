@@ -1,5 +1,5 @@
 use crate::{Event, *};
-use ::git::diff::assert_hunks;
+use diff::assert_hunks;
 use fs::FakeFs;
 use futures::{future, StreamExt};
 use gpui::{App, SemanticVersion, UpdateGlobal};

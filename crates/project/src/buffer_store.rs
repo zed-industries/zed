@@ -8,13 +8,14 @@ use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegist
 use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
+use diff::{BufferDiff, BufferDiffEvent, BufferDiffSnapshot};
 use fs::Fs;
 use futures::{
     channel::oneshot,
     future::{OptionFuture, Shared},
     Future, FutureExt as _, StreamExt,
 };
-use git::{blame::Blame, diff::BufferDiff, repository::RepoPath};
+use git::{blame::Blame, repository::RepoPath};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -56,7 +57,7 @@ pub struct BufferStore {
     #[allow(clippy::type_complexity)]
     loading_change_sets: HashMap<
         (BufferId, ChangeSetKind),
-        Shared<Task<Result<Entity<BufferChangeSet>, Arc<anyhow::Error>>>>,
+        Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>,
     >,
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
@@ -67,14 +68,14 @@ pub struct BufferStore {
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct SharedBuffer {
     buffer: Entity<Buffer>,
-    change_set: Option<Entity<BufferChangeSet>>,
+    change_set: Option<Entity<BufferDiff>>,
     lsp_handle: Option<OpenLspBufferHandle>,
 }
 
 #[derive(Default)]
 struct BufferChangeSetState {
-    unstaged_changes: Option<WeakEntity<BufferChangeSet>>,
-    uncommitted_changes: Option<WeakEntity<BufferChangeSet>>,
+    unstaged_changes: Option<WeakEntity<BufferDiff>>,
+    uncommitted_changes: Option<WeakEntity<BufferDiff>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
     language_registry: Option<Arc<LanguageRegistry>>,
@@ -106,11 +107,11 @@ impl BufferChangeSetState {
         let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
     }
 
-    fn unstaged_changes(&self) -> Option<Entity<BufferChangeSet>> {
+    fn unstaged_changes(&self) -> Option<Entity<BufferDiff>> {
         self.unstaged_changes.as_ref().and_then(|set| set.upgrade())
     }
 
-    fn uncommitted_changes(&self) -> Option<Entity<BufferChangeSet>> {
+    fn uncommitted_changes(&self) -> Option<Entity<BufferDiff>> {
         self.uncommitted_changes
             .as_ref()
             .and_then(|set| set.upgrade())
@@ -233,20 +234,22 @@ impl BufferChangeSetState {
                     )
                 };
 
-                let diff =
-                    cx.background_executor().spawn({
-                        let buffer = buffer.clone();
-                        async move {
-                            BufferDiff::build(index.as_ref().map(|index| index.as_str()), &buffer)
-                        }
-                    });
+                let diff = cx.background_executor().spawn({
+                    let buffer = buffer.clone();
+                    async move {
+                        BufferDiffSnapshot::build(
+                            index.as_ref().map(|index| index.as_str()),
+                            &buffer,
+                        )
+                    }
+                });
 
                 let (staged_snapshot, diff) = futures::join!(staged_snapshot, diff);
 
                 unstaged_changes.update(&mut cx, |unstaged_changes, cx| {
                     unstaged_changes.set_state(staged_snapshot.clone(), diff, &buffer, cx);
                     if language_changed {
-                        cx.emit(BufferChangeSetEvent::LanguageChanged);
+                        cx.emit(BufferDiffEvent::LanguageChanged);
                     }
                 })?;
             }
@@ -286,7 +289,10 @@ impl BufferChangeSetState {
                         let buffer = buffer.clone();
                         let head = head.clone();
                         async move {
-                            BufferDiff::build(head.as_ref().map(|head| head.as_str()), &buffer)
+                            BufferDiffSnapshot::build(
+                                head.as_ref().map(|head| head.as_str()),
+                                &buffer,
+                            )
                         }
                     });
                     futures::join!(committed_snapshot, diff)
@@ -295,7 +301,7 @@ impl BufferChangeSetState {
                 uncommitted_changes.update(&mut cx, |change_set, cx| {
                     change_set.set_state(snapshot, diff, &buffer, cx);
                     if language_changed {
-                        cx.emit(BufferChangeSetEvent::LanguageChanged);
+                        cx.emit(BufferDiffEvent::LanguageChanged);
                     }
                 })?;
             }
@@ -1383,7 +1389,7 @@ impl BufferStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
         if let Some(change_set) = self.get_unstaged_changes(buffer_id, cx) {
             return Task::ready(Ok(change_set));
@@ -1427,7 +1433,7 @@ impl BufferStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
         if let Some(change_set) = self.get_uncommitted_changes(buffer_id, cx) {
             return Task::ready(Ok(change_set));
@@ -1484,11 +1490,7 @@ impl BufferStore {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_unstaged_change_set(
-        &mut self,
-        buffer_id: BufferId,
-        change_set: Entity<BufferChangeSet>,
-    ) {
+    pub fn set_unstaged_change_set(&mut self, buffer_id: BufferId, change_set: Entity<BufferDiff>) {
         self.loading_change_sets.insert(
             (buffer_id, ChangeSetKind::Unstaged),
             Task::ready(Ok(change_set)).shared(),
@@ -1501,7 +1503,7 @@ impl BufferStore {
         texts: Result<DiffBasesChange>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
-    ) -> Result<Entity<BufferChangeSet>> {
+    ) -> Result<Entity<BufferDiff>> {
         let diff_bases_change = match texts {
             Err(e) => {
                 this.update(&mut cx, |this, cx| {
@@ -1532,10 +1534,10 @@ impl BufferStore {
                         })
                     });
 
-                    let change_set = cx.new(|cx| BufferChangeSet {
+                    let change_set = cx.new(|cx| BufferDiff {
                         buffer_id,
                         base_text: None,
-                        diff_to_buffer: BufferDiff::new(&buffer.read(cx).text_snapshot()),
+                        diff_to_buffer: BufferDiffSnapshot::new(&buffer.read(cx).text_snapshot()),
                         unstaged_change_set: None,
                     });
                     match kind {
@@ -1547,10 +1549,10 @@ impl BufferStore {
                                 if let Some(change_set) = change_set_state.unstaged_changes() {
                                     change_set
                                 } else {
-                                    let unstaged_change_set = cx.new(|cx| BufferChangeSet {
+                                    let unstaged_change_set = cx.new(|cx| BufferDiff {
                                         buffer_id,
                                         base_text: None,
-                                        diff_to_buffer: BufferDiff::new(
+                                        diff_to_buffer: BufferDiffSnapshot::new(
                                             &buffer.read(cx).text_snapshot(),
                                         ),
                                         unstaged_change_set: None,
@@ -1870,7 +1872,7 @@ impl BufferStore {
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Option<Entity<BufferChangeSet>> {
+    ) -> Option<Entity<BufferDiff>> {
         if let OpenBuffer::Complete {
             change_set_state, ..
         } = self.opened_buffers.get(&buffer_id)?
@@ -1889,7 +1891,7 @@ impl BufferStore {
         &self,
         buffer_id: BufferId,
         cx: &App,
-    ) -> Option<Entity<BufferChangeSet>> {
+    ) -> Option<Entity<BufferDiff>> {
         if let OpenBuffer::Complete {
             change_set_state, ..
         } = self.opened_buffers.get(&buffer_id)?

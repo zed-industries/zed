@@ -47,7 +47,6 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use ::git::diff::DiffHunkStatus;
 pub(crate) use actions::*;
 pub use actions::{OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
@@ -74,6 +73,7 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
+use diff::DiffHunkStatus;
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,

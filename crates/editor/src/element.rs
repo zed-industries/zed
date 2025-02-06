@@ -26,8 +26,9 @@ use crate::{
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use diff::DiffHunkStatus;
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
+use git::{blame::BlameEntry, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,

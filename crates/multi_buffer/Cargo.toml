@@ -14,9 +14,10 @@ doctest = false
 
 [features]
 test-support = [
-    "text/test-support",
-    "language/test-support",
+    "diff/test-support",
     "gpui/test-support",
+    "language/test-support",
+    "text/test-support",
     "util/test-support",
 ]
 
@@ -25,6 +26,7 @@ anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
 ctor.workspace = true
+diff.workspace = true
 env_logger.workspace = true
 futures.workspace = true
 git.workspace = true

@@ -21,6 +21,7 @@ mod project_tests;
 
 mod direnv;
 mod environment;
+use diff::BufferDiff;
 pub use environment::EnvironmentErrorMessage;
 use git::Repository;
 pub mod search_history;
@@ -28,7 +29,7 @@ mod yarn;
 
 use crate::git::GitState;
 use anyhow::{anyhow, Context as _, Result};
-use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
+use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
 };
@@ -1959,7 +1960,7 @@ impl Project {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
@@ -1973,7 +1974,7 @@ impl Project {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }

@@ -9,8 +9,8 @@ pub use position::{TypedOffset, TypedPoint, TypedRow};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
+use diff::{BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkStatus};
 use futures::{channel::mpsc, SinkExt};
-use git::diff::DiffHunkStatus;
 use gpui::{App, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
@@ -21,7 +21,7 @@ use language::{
     TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
     Unclipped,
 };
-use project::buffer_store::{BufferChangeSet, BufferChangeSetEvent};
+
 use rope::DimensionPair;
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -216,18 +216,18 @@ struct BufferState {
 }
 
 struct ChangeSetState {
-    change_set: Entity<BufferChangeSet>,
+    change_set: Entity<BufferDiff>,
     _subscription: gpui::Subscription,
 }
 
 impl ChangeSetState {
-    fn new(change_set: Entity<BufferChangeSet>, cx: &mut Context<MultiBuffer>) -> Self {
+    fn new(change_set: Entity<BufferDiff>, cx: &mut Context<MultiBuffer>) -> Self {
         ChangeSetState {
             _subscription: cx.subscribe(&change_set, |this, change_set, event, cx| match event {
-                BufferChangeSetEvent::DiffChanged { changed_range } => {
+                BufferDiffEvent::DiffChanged { changed_range } => {
                     this.buffer_diff_changed(change_set, changed_range.clone(), cx)
                 }
-                BufferChangeSetEvent::LanguageChanged => {
+                BufferDiffEvent::LanguageChanged => {
                     this.buffer_diff_language_changed(change_set, cx)
                 }
             }),
@@ -270,7 +270,7 @@ pub enum DiffTransform {
 
 #[derive(Clone)]
 struct DiffSnapshot {
-    diff: git::diff::BufferDiff,
+    diff: diff::BufferDiffSnapshot,
     base_text: language::BufferSnapshot,
 }
 
@@ -318,7 +318,7 @@ pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
-    pub diff_status: Option<git::diff::DiffHunkStatus>,
+    pub diff_status: Option<diff::DiffHunkStatus>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -2154,7 +2154,7 @@ impl MultiBuffer {
 
     fn buffer_diff_language_changed(
         &mut self,
-        change_set: Entity<BufferChangeSet>,
+        change_set: Entity<BufferDiff>,
         cx: &mut Context<Self>,
     ) {
         self.sync(cx);
@@ -2178,7 +2178,7 @@ impl MultiBuffer {
 
     fn buffer_diff_changed(
         &mut self,
-        change_set: Entity<BufferChangeSet>,
+        change_set: Entity<BufferDiff>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
     ) {
@@ -2210,7 +2210,7 @@ impl MultiBuffer {
             snapshot.diffs.insert(
                 buffer_id,
                 DiffSnapshot {
-                    diff: git::diff::BufferDiff::new_with_single_insertion(&base_text),
+                    diff: BufferDiffSnapshot::new_with_single_insertion(&base_text),
                     base_text,
                 },
             );
@@ -2352,14 +2352,14 @@ impl MultiBuffer {
         self.as_singleton().unwrap().read(cx).is_parsing()
     }
 
-    pub fn add_change_set(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut Context<Self>) {
+    pub fn add_change_set(&mut self, change_set: Entity<BufferDiff>, cx: &mut Context<Self>) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.buffer_diff_changed(change_set.clone(), text::Anchor::MIN..text::Anchor::MAX, cx);
         self.diff_bases
             .insert(buffer_id, ChangeSetState::new(change_set, cx));
     }
 
-    pub fn change_set_for(&self, buffer_id: BufferId) -> Option<Entity<BufferChangeSet>> {
+    pub fn change_set_for(&self, buffer_id: BufferId) -> Option<Entity<BufferDiff>> {
         self.diff_bases
             .get(&buffer_id)
             .map(|state| state.change_set.clone())

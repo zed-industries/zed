@@ -1,10 +1,11 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
+use diff::BufferDiff;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::{buffer_store::BufferChangeSet, Project};
+use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -186,7 +187,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_change_sets.push(cx.new(|cx| {
-                    let mut change_set = BufferChangeSet::new(&branch_buffer, cx);
+                    let mut change_set = BufferDiff::new(&branch_buffer, cx);
                     let _ = change_set.set_base_text(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),

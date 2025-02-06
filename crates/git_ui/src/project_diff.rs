@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 
 use anyhow::Result;
 use collections::HashSet;
+use diff::BufferDiff;
 use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
@@ -11,7 +12,7 @@ use gpui::{
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
-use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
+use project::{git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -43,7 +44,7 @@ pub(crate) struct ProjectDiff {
 struct DiffBuffer {
     path_key: PathKey,
     buffer: Entity<Buffer>,
-    change_set: Entity<BufferChangeSet>,
+    change_set: Entity<BufferDiff>,
 }
 
 const CONFLICT_NAMESPACE: &'static str = "0";

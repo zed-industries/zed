@@ -2613,7 +2613,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2641,7 +2641,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2663,7 +2663,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(committed_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2689,7 +2689,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2703,7 +2703,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2717,7 +2717,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(new_committed_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2763,7 +2763,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &change_set.base_text_string().unwrap(),
@@ -2790,7 +2790,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &staged_text,
@@ -2812,7 +2812,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &new_staged_text,
@@ -2826,7 +2826,7 @@ async fn test_git_diff_base_change(
             change_set.base_text_string().as_deref(),
             Some(new_staged_text.as_str())
         );
-        git::diff::assert_hunks(
+        diff::assert_hunks(
             change_set.diff_to_buffer.hunks_in_row_range(0..4, buffer),
             buffer,
             &new_staged_text,
