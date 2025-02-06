@@ -11,6 +11,7 @@ use gpui::{
     Corner, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render, Subscription,
     WeakEntity,
 };
+use indoc::indoc;
 use language::{
     language_settings::{
         self, all_language_settings, AllLanguageSettings, InlineCompletionProvider,
@@ -429,7 +430,10 @@ impl InlineCompletionButton {
                     ContextMenuEntry::new("Share Training Data")
                         .toggleable(IconPosition::End, data_collection.is_enabled())
                         .documentation_aside(|_| {
-                            Label::new("Zed automatically detects if your project is open-source. This setting is only applicable in such cases.").into_any_element()
+                            Label::new(indoc!{"
+                                Help us improve our open model by sharing data from open source repositories. \
+                                Zed must detect a license file in your repo for this setting to take effect.\
+                            "}).into_any_element()
                         })
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
@@ -453,7 +457,8 @@ impl InlineCompletionButton {
         menu = menu.item(
             ContextMenuEntry::new("Configure Excluded Files")
                 .documentation_aside(|_| {
-                    Label::new("This item takes you to the settings where you can specify files that will never be captured by any edit prediction model. List both specific file extensions and individual file names.").into_any_element()
+                    Label::new(indoc!{"
+                        Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })
                 .handler(move |window, cx| {
                     if let Some(workspace) = window.root().flatten() {

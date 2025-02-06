@@ -21,6 +21,7 @@ feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
 inline_completion.workspace = true
+indoc.workspace = true
 language.workspace = true
 paths.workspace = true
 regex.workspace = true
