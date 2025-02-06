@@ -32,6 +32,7 @@ members = [
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
+    "crates/diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
