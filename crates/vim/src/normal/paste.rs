@@ -811,7 +811,7 @@ mod test {
         cx.set_state(
             indoc! {"
                    ˇfish one
-                    "},
+                   "},
             Mode::Normal,
         );
         cx.simulate_keystrokes("y i w");
@@ -820,7 +820,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 fish fisˇh
-                    "},
+                "},
             Mode::Normal,
         );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();
