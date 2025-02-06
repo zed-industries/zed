@@ -1,9 +1,131 @@
-use std::sync::LazyLock;
-
+use anyhow::Result;
 use collections::HashMap;
+use std::{cmp::Reverse, ops::Range, sync::LazyLock};
+use tree_sitter::{Query, QueryMatch};
+
+pub struct KeymapMigration {}
+
+fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
+    let syntax_tree = parser.parse(&text, None).unwrap();
+
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let matches = cursor.matches(query, syntax_tree.root_node(), text.as_bytes());
+    let mut edits = vec![];
+    for mat in matches {
+        if let Some((_, callback)) = patterns.get(mat.pattern_index) {
+            edits.extend(callback(&text, &mat, query));
+        }
+    }
+    edits.sort_by_key(|(range, _)| (range.start, Reverse(range.end)));
+    edits.dedup_by(|(range_b, _), (range_a, _)| {
+        range_a.contains(&range_b.start) || range_a.contains(&range_b.end)
+    });
+
+    if edits.is_empty() {
+        None
+    } else {
+        let mut text = text.to_string();
+        for (range, replacement) in edits.into_iter().rev() {
+            text.replace_range(range, &replacement);
+        }
+        Some(text)
+    }
+}
+pub fn migrate_keymap(text: &str) -> Option<String> {
+    migrate(&text, KEYMAP_MIGRATION_PATTERNS, &KEYMAP_MIGRATION_QUERY)
+}
+
+pub fn migrate_settings(text: &str) -> Option<String> {
+    migrate(
+        &text,
+        SETTINGS_MIGRATION_PATTERNS,
+        &SETTINGS_MIGRATION_QUERY,
+    )
+}
+
+impl KeymapMigration {}
+
+type MigrationPatterns = &'static [(
+    &'static str,
+    fn(&str, &QueryMatch, &Query) -> Option<(Range<usize>, String)>,
+)];
+
+static KEYMAP_MIGRATION_PATTERNS: MigrationPatterns = &[
+    (ACTION_ARRAY_PATTERN, replace_array_with_single_string),
+    (
+        ACTION_ARGUMENT_OBJECT_PATTERN,
+        replace_action_argument_object_with_single_value,
+    ),
+    (ACTION_STRING_PATTERN, rename_string_action),
+    (CONTEXT_PREDICATE_PATTERN, rename_context_key),
+];
+
+static KEYMAP_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &tree_sitter_json::LANGUAGE.into(),
+        &KEYMAP_MIGRATION_PATTERNS
+            .iter()
+            .map(|pattern| pattern.0)
+            .collect::<String>(),
+    )
+    .unwrap()
+});
+
+const ACTION_ARRAY_PATTERN: &str = r#"(document
+    (array
+   	    (object
+            (pair
+                key: (string (string_content) @name)
+                value: (
+                    (object
+                        (pair
+                            key: (string (string_content))
+                            value: ((array
+                                . (string (string_content) @action_name)
+                                . (string (string_content) @argument)
+                                .)) @array
+                        )
+                    )
+                )
+            )
+        )
+    )
+    (#eq? @name "bindings")
+)"#;
+
+fn replace_array_with_single_string(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let array_ix = query.capture_index_for_name("array").unwrap();
+    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
+    let argument_ix = query.capture_index_for_name("argument").unwrap();
+
+    let action_name = contents.get(
+        mat.nodes_for_capture_index(action_name_ix)
+            .next()?
+            .byte_range(),
+    )?;
+    let argument = contents.get(
+        mat.nodes_for_capture_index(argument_ix)
+            .next()?
+            .byte_range(),
+    )?;
+
+    let replacement = TRANSFORM_ARRAY.get(&(action_name, argument))?;
+    let replacement_as_string = format!("\"{replacement}\"");
+    let range_to_replace = mat.nodes_for_capture_index(array_ix).next()?.byte_range();
+
+    Some((range_to_replace, replacement_as_string))
+}
 
 #[rustfmt::skip]
-pub static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(|| {
+static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(|| {
     HashMap::from_iter([
         // activate
         (("workspace::ActivatePaneInDirection", "Up"), "workspace::ActivatePaneUp"),
@@ -54,15 +176,75 @@ pub static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::ne
     ])
 });
 
-pub static UNWRAP_OBJECTS: LazyLock<HashMap<&str, Vec<(&str, &str)>>> = LazyLock::new(|| {
+const ACTION_ARGUMENT_OBJECT_PATTERN: &str = r#"(document
+    (array
+        (object
+            (pair
+                key: (string (string_content) @name)
+                value: (
+                    (object
+                        (pair
+                            key: (string (string_content))
+                            value: ((array
+                                 (string (string_content) @action_name)
+                                 (object
+                                    (pair
+                                    key: (string (string_content) @action_key)
+                                    value: (_)  @argument))
+                                ) @object
+                                ))
+                        )
+                    )
+                )
+            )
+        )
+        (#eq? @name "bindings")
+)"#;
+
+/// [ "editor::FoldAtLevel", { "level": 1 } ] -> [ "editor::FoldAtLevel", 1 ]
+fn replace_action_argument_object_with_single_value(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let array_ix = query.capture_index_for_name("array").unwrap();
+    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
+    let action_key_ix = query.capture_index_for_name("action_key").unwrap();
+    let argument_ix = query.capture_index_for_name("argument").unwrap();
+
+    let action_name = contents.get(
+        mat.nodes_for_capture_index(action_name_ix)
+            .next()?
+            .byte_range(),
+    )?;
+    let action_key = contents.get(
+        mat.nodes_for_capture_index(action_key_ix)
+            .next()?
+            .byte_range(),
+    )?;
+    let argument = contents.get(
+        mat.nodes_for_capture_index(argument_ix)
+            .next()?
+            .byte_range(),
+    )?;
+
+    let new_action_name = UNWRAP_OBJECTS.get(&action_name)?.get(&action_key)?;
+
+    let range_to_replace = mat.nodes_for_capture_index(array_ix).next()?.byte_range();
+    let replacement = format!("\"[\"{}\", {}]\"", new_action_name, argument);
+    Some((range_to_replace, replacement))
+}
+
+// "ctrl-k ctrl-1": [ "editor::PushOperator", { "Object": {} } ] -> [ "editor::vim::PushObject", {} ]
+static UNWRAP_OBJECTS: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::new(|| {
     HashMap::from_iter([
         (
             "editor::FoldAtLevel",
-            vec![("level", "editor::FoldAtLevel")],
+            HashMap::from_iter([("level", "editor::FoldAtLevel")]),
         ),
         (
             "vim::PushOperator",
-            vec![
+            HashMap::from_iter([
                 ("Object", "vim::PushObject"),
                 ("FindForward", "vim::PushFindForward"),
                 ("FindBackward", "vim::PushFindBackward"),
@@ -72,13 +254,48 @@ pub static UNWRAP_OBJECTS: LazyLock<HashMap<&str, Vec<(&str, &str)>>> = LazyLock
                 ("Jump", "vim::PushJump"),
                 ("Digraph", "vim::PushDigraph"),
                 ("Literal", "vim::PushLiteral"),
-            ],
+            ]),
         ),
     ])
 });
 
+const ACTION_STRING_PATTERN: &str = r#"
+(array
+    (object
+        (pair
+            key: (string (string_content) @name)
+            value: (
+                (object
+                    (pair
+                        key: (string (string_content))
+                        value: (string (string_content) @action_name)
+                    )
+                )
+            )
+        )
+    )
+)
+(#eq? @name "bindings")
+"#;
+
+fn rename_string_action(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
+    let action_name_range = mat
+        .nodes_for_capture_index(action_name_ix)
+        .next()?
+        .byte_range();
+    let action_name = contents.get(action_name_range.clone())?;
+    let new_action_name = STRING_REPLACE.get(&action_name)?;
+    Some((action_name_range, new_action_name.to_string()))
+}
+
+// "ctrl-k ctrl-1": "inline_completion::ToggleMenu" -> "edit_prediction::ToggleMenu"
 #[rustfmt::skip]
-pub static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
+static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     HashMap::from_iter([
         ("inline_completion::ToggleMenu", "edit_prediction::ToggleMenu"),
         ("editor::NextInlineCompletion", "editor::NextEditPrediction"),
@@ -90,8 +307,88 @@ pub static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
     ])
 });
 
+const CONTEXT_PREDICATE_PATTERN: &str = r#"
+(array
+    (object
+        (pair
+            key: (string (string_content) @name)
+            value: (string (string_content) @context_predicate)
+        )
+    )
+)
+(#eq? @name "context")
+"#;
+
+fn rename_context_key(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let context_predicate_ix = query.capture_index_for_name("context_predicate").unwrap();
+    let context_predicate_range = mat
+        .nodes_for_capture_index(context_predicate_ix)
+        .next()?
+        .byte_range();
+    let old_predicate = contents.get(context_predicate_range.clone())?.to_string();
+    let mut new_predicate = old_predicate.to_string();
+    for (old_key, new_key) in CONTEXT_REPLACE.iter() {
+        new_predicate = new_predicate.replace(old_key, new_key);
+    }
+    if new_predicate != old_predicate {
+        Some((context_predicate_range, new_predicate.to_string()))
+    } else {
+        None
+    }
+}
+
+// "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
 pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> =
     LazyLock::new(|| HashMap::from_iter([("inline_completion", "edit_prediction")]));
+
+static SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
+    (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
+    (SETTINGS_REPLACE_NESTED_KEY, replace_setting_nested_key),
+    (
+        SETTINGS_REPLACE_IN_LANGUAGES_QUERY,
+        replace_setting_in_languages,
+    ),
+];
+
+static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &tree_sitter_json::LANGUAGE.into(),
+        &SETTINGS_MIGRATION_PATTERNS
+            .iter()
+            .map(|pattern| pattern.0)
+            .collect::<String>(),
+    )
+    .unwrap()
+});
+
+static SETTINGS_STRING_REPLACE_QUERY: &str = r#"
+(object
+  (pair
+    key: (string (string_content) @name)
+    value: (_)
+  )
+)
+"#;
+
+fn replace_setting_name(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let setting_capture_ix = query.capture_index_for_name("name").unwrap();
+    let setting_name_range = mat
+        .nodes_for_capture_index(setting_capture_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_name_range.clone())?;
+    let new_setting_name = SETTINGS_STRING_REPLACE.get(&setting_name)?;
+
+    Some((setting_name_range, new_setting_name.to_string()))
+}
 
 #[rustfmt::skip]
 pub static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
@@ -103,9 +400,277 @@ pub static SETTINGS_STRING_REPLACE: LazyLock<HashMap<&'static str, &'static str>
     ])
 });
 
+static SETTINGS_REPLACE_NESTED_KEY: &str = r#"
+(object
+  (pair
+    key: (string (string_content) @parent_key)
+    value: (object
+        (pair
+            key: (string (string_content) @setting_name)
+            value: (_) @value
+        )
+    )
+  )
+)
+"#;
+
+fn replace_setting_nested_key(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let parent_object_capture_ix = query.capture_index_for_name("parent_key").unwrap();
+    let parent_object_range = mat
+        .nodes_for_capture_index(parent_object_capture_ix)
+        .next()?
+        .byte_range();
+    let parent_object_name = contents.get(parent_object_range.clone())?;
+
+    let setting_name_ix = query.capture_index_for_name("setting_name").unwrap();
+    let setting_range = mat
+        .nodes_for_capture_index(setting_name_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_range.clone())?;
+
+    let new_setting_name = SETTINGS_NESTED_STRING_REPLACE
+        .get(&parent_object_name)?
+        .get(setting_name)?;
+
+    Some((setting_range, new_setting_name.to_string()))
+}
+
+// "features": {
+//   "inline_completion_provider": "copilot"
+// },
+pub static SETTINGS_NESTED_STRING_REPLACE: LazyLock<
+    HashMap<&'static str, HashMap<&'static str, &'static str>>,
+> = LazyLock::new(|| {
+    HashMap::from_iter([(
+        "features",
+        HashMap::from_iter([("inline_completion_provider", "edit_prediction_provider")]),
+    )])
+});
+
+static SETTINGS_REPLACE_IN_LANGUAGES_QUERY: &str = r#"
+(object
+  (pair
+    key: (string (string_content) @languages)
+    value: (object
+    (pair
+        key: (string)
+        value: (object
+            (pair
+                key: (string (string_content) @setting_name)
+                value: (_) @value
+            )
+        )
+    ))
+  )
+)
+(#eq? @languages "languages")
+"#;
+
+fn replace_setting_in_languages(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let setting_capture_ix = query.capture_index_for_name("setting_name").unwrap();
+    let setting_name_range = mat
+        .nodes_for_capture_index(setting_capture_ix)
+        .next()?
+        .byte_range();
+    let setting_name = contents.get(setting_name_range.clone())?;
+    let new_setting_name = LANGUAGE_SETTINGS_REPLACE.get(&setting_name)?;
+
+    Some((setting_name_range, new_setting_name.to_string()))
+}
+
 #[rustfmt::skip]
-pub static SETTINGS_NESTED_STRING_REPLACE: LazyLock<HashMap<&'static str, (&'static str, &'static str)>> = LazyLock::new(|| {
+pub static LANGUAGE_SETTINGS_REPLACE: LazyLock<
+    HashMap<&'static str, &'static str>,
+> = LazyLock::new(|| {
     HashMap::from_iter([
-        ("features", ("inline_completion_provider", "edit_prediction_provider"))
+        ("show_inline_completions", "show_edit_predictions"),
+        ("inline_completions_disabled_in", "edit_predictions_disabled_in"),
     ])
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_migrate(input: &str, output: Option<&str>) {
+        let migrated = migrate_keymap(&input);
+        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+    }
+
+    #[test]
+    fn test_replace_array_with_single_string() {
+        assert_migrate(
+            r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["workspace::ActivatePaneInDirection", "Up"],
+                    }
+                }
+            ]
+            "#,
+            Some(
+                r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": "workspace::ActivatePaneUp",
+                    }
+                }
+            ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_action_argument_object_with_single_value() {
+        assert_migrate(
+            r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["editor::FoldAtLevel", { "level": 1 }],
+                    }
+                }
+            ]
+            "#,
+            Some(
+                r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["editor::FoldAtLevel", 1]
+                    }
+                }
+            ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_action_argument_object_with_single_value_2() {
+        assert_migrate(
+            r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["vim::PushOperator", { "Object": { "some" : "value" } }],
+                    }
+                }
+            ]
+            "#,
+            Some(
+                r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["vim::PushObject", { "some" : "value" }]
+                    }
+                }
+            ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_rename_string_action() {
+        assert_migrate(
+            r#"
+                [
+                    {
+                        "bindings": {
+                            "cmd-1": "inline_completion::ToggleMenu",
+                        }
+                    }
+                ]
+            "#,
+            Some(
+                r#"
+                [
+                    {
+                        "bindings": {
+                            "cmd-1": "edit_prediction::ToggleMenu"
+                        }
+                    }
+                ]
+                "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_rename_context_key() {
+        assert_migrate(
+            r#"
+                [
+                    {
+                        "context": "Editor && inline_completion && !showing_completions"
+                    }
+                ]
+            "#,
+            Some(
+                r#"
+                [
+                    {
+                        "context": "Editor && edit_prediction && !showing_completions"
+                    }
+                ]
+                "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_setting_name() {
+        assert_migrate(
+            r#"
+                {
+                    "show_inline_completions_in_menu": true,
+                    "show_inline_completions": true,
+                    "inline_completions_disabled_in": ["vim"],
+                    "inline_completions": ["vim"]
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "show_edit_predictions_in_menu": true,
+                    "show_edit_predictions": true,
+                    "edit_predictions_disabled_in": ["vim"],
+                    "edit_predictions": ["vim"]
+                }
+                "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_nested_string_replace_for_settings() {
+        assert_migrate(
+            r#"
+                {
+
+                }
+            "#,
+            Some(
+                r#"
+                {
+
+                }
+                "#,
+            ),
+        )
+    }
+}

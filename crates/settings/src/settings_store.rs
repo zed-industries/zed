@@ -21,7 +21,6 @@ use util::{merge_non_null_json_value_into, ResultExt as _};
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    migration_static::{SETTINGS_NESTED_STRING_REPLACE, SETTINGS_STRING_REPLACE},
     utils::{parse_json_with_comments, update_value_in_json_text},
     SettingsJsonSchemaParams, WorktreeId,
 };
@@ -997,22 +996,6 @@ impl SettingsStore {
     }
 
     pub fn should_migrate_settings(settings: serde_json::Value) -> bool {
-        if let Some(obj) = settings.as_object() {
-            for old_key in SETTINGS_STRING_REPLACE.iter().map(|(old, _)| old) {
-                if obj.contains_key(*old_key) {
-                    return true;
-                }
-            }
-            for (parent_key, (old_key, _)) in SETTINGS_NESTED_STRING_REPLACE.iter() {
-                if let Some(parent) = obj.get(*parent_key) {
-                    if let Some(parent_obj) = parent.as_object() {
-                        if parent_obj.contains_key(*old_key) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
         false
     }
     pub fn migrate_settings(&self, fs: Arc<dyn Fs>) {
@@ -1022,24 +1005,7 @@ impl SettingsStore {
                     let old_text = Self::load_settings(&fs).await?;
                     let new_text = cx.read_global(|store: &SettingsStore, _| {
                         store.get_new_text_post_migration(old_text.clone(), |content| {
-                            if let Some(content) = content.as_object_mut() {
-                                for (old_key, new_key) in SETTINGS_STRING_REPLACE.iter() {
-                                    if let Some(value) = content.remove(*old_key) {
-                                        content.insert(new_key.to_string(), value);
-                                    }
-                                }
-                                for (parent_key, (old_key, new_key)) in
-                                    SETTINGS_NESTED_STRING_REPLACE.iter()
-                                {
-                                    if let Some(parent_value) = content.get_mut(*parent_key) {
-                                        if let Some(child_value) = parent_value.as_object_mut() {
-                                            if let Some(value) = child_value.remove(*old_key) {
-                                                child_value.insert(new_key.to_string(), value);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            if let Some(content) = content.as_object_mut() {}
                         })
                     })?;
                     let initial_path = paths::settings_file().as_path();
