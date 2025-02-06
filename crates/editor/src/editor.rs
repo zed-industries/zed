@@ -97,8 +97,8 @@ use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CompletionDocumentation, CursorShape, Diagnostic, EditPreview, HighlightedText, IndentKind,
-    IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal, TextObject,
-    TransactionId, TreeSitterOptions,
+    IndentSize, InlineCompletionPreviewMode, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -693,6 +693,7 @@ pub struct Editor {
     show_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
+    previewing_inline_completion: bool,
     inlay_hint_cache: InlayHintCache,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
@@ -1384,6 +1385,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
+            previewing_inline_completion: false,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
 
             gutter_hovered: false,
@@ -4662,6 +4664,18 @@ impl Editor {
         }
     }
 
+    fn inline_completion_preview_mode(&self, cx: &App) -> language::InlineCompletionPreviewMode {
+        let cursor = self.selections.newest_anchor().head();
+
+        self.buffer
+            .read(cx)
+            .text_anchor_for_position(cursor, cx)
+            .map(|(buffer, _)| {
+                all_language_settings(buffer.read(cx).file(), cx).inline_completions_preview_mode()
+            })
+            .unwrap_or_default()
+    }
+
     fn should_show_inline_completions_in_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -5009,11 +5023,28 @@ impl Editor {
         true
     }
 
-    pub fn is_previewing_inline_completion(&self) -> bool {
-        matches!(
-            self.context_menu.borrow().as_ref(),
-            Some(CodeContextMenu::Completions(menu)) if !menu.is_empty() && menu.previewing_inline_completion
-        )
+    /// Returns true when we're displaying the inline completion popover below the cursor
+    /// like we are not previewing and the LSP autocomplete menu is visible
+    /// or we are in `when_holding_modifier` mode.
+    pub fn inline_completion_visible_in_cursor_popover(
+        &self,
+        has_completion: bool,
+        cx: &App,
+    ) -> bool {
+        if self.previewing_inline_completion
+            || !self.show_inline_completions_in_menu(cx)
+            || !self.should_show_inline_completions(cx)
+        {
+            return false;
+        }
+
+        if self.has_visible_completions_menu() {
+            return true;
+        }
+
+        has_completion
+            && self.inline_completion_preview_mode(cx)
+                == InlineCompletionPreviewMode::WhenHoldingModifier
     }
 
     fn update_inline_completion_preview(
@@ -5022,13 +5053,13 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Moves jump directly with a preview step
-
+        // Moves jump directly without a preview step
         if self
             .active_inline_completion
             .as_ref()
             .map_or(true, |c| c.is_move())
         {
+            self.previewing_inline_completion = false;
             cx.notify();
             return;
         }
@@ -5037,20 +5068,7 @@ impl Editor {
             return;
         }
 
-        let mut menu_borrow = self.context_menu.borrow_mut();
-
-        let Some(CodeContextMenu::Completions(completions_menu)) = menu_borrow.as_mut() else {
-            return;
-        };
-
-        if completions_menu.is_empty()
-            || completions_menu.previewing_inline_completion == modifiers.alt
-        {
-            return;
-        }
-
-        completions_menu.set_previewing_inline_completion(modifiers.alt);
-        drop(menu_borrow);
+        self.previewing_inline_completion = modifiers.alt;
         self.update_visible_inline_completion(window, cx);
     }
 
@@ -5146,7 +5164,7 @@ impl Editor {
                 snapshot,
             }
         } else {
-            if !show_in_menu || !self.has_active_completions_menu() {
+            if !self.inline_completion_visible_in_cursor_popover(true, cx) {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
@@ -5180,7 +5198,7 @@ impl Editor {
 
             let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept(self.is_previewing_inline_completion())
+                    EditDisplayMode::TabAccept(self.previewing_inline_completion)
                 } else {
                     EditDisplayMode::Inline
                 }
@@ -5443,10 +5461,12 @@ impl Editor {
     }
 
     pub fn context_menu_visible(&self) -> bool {
-        self.context_menu
-            .borrow()
-            .as_ref()
-            .map_or(false, |menu| menu.visible())
+        !self.previewing_inline_completion
+            && self
+                .context_menu
+                .borrow()
+                .as_ref()
+                .map_or(false, |menu| menu.visible())
     }
 
     fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
@@ -5848,9 +5868,7 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_inline_completion_in_menu.take();
-        if context_menu.is_some() {
-            self.update_visible_inline_completion(window, cx);
-        }
+        self.update_visible_inline_completion(window, cx);
         context_menu
     }
 
@@ -14438,10 +14456,11 @@ impl Editor {
         Some(gpui::Point::new(source_x, source_y))
     }
 
-    pub fn has_active_completions_menu(&self) -> bool {
-        self.context_menu.borrow().as_ref().map_or(false, |menu| {
-            menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
-        })
+    pub fn has_visible_completions_menu(&self) -> bool {
+        !self.previewing_inline_completion
+            && self.context_menu.borrow().as_ref().map_or(false, |menu| {
+                menu.visible() && matches!(menu, CodeContextMenu::Completions(_))
+            })
     }
 
     pub fn register_addon<T: Addon>(&mut self, instance: T) {

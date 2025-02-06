@@ -169,7 +169,6 @@ pub struct CompletionsMenu {
     resolve_completions: bool,
     show_completion_documentation: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
-    pub previewing_inline_completion: bool,
 }
 
 impl CompletionsMenu {
@@ -200,7 +199,6 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
-            previewing_inline_completion: false,
         }
     }
 
@@ -257,7 +255,6 @@ impl CompletionsMenu {
             resolve_completions: false,
             show_completion_documentation: false,
             last_rendered_range: RefCell::new(None).into(),
-            previewing_inline_completion: false,
         }
     }
 
@@ -410,12 +407,8 @@ impl CompletionsMenu {
         .detach();
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.entries.borrow().is_empty()
-    }
-
     pub fn visible(&self) -> bool {
-        !self.is_empty() && !self.previewing_inline_completion
+        !self.entries.borrow().is_empty()
     }
 
     fn origin(&self) -> ContextMenuOrigin {
@@ -708,10 +701,6 @@ impl CompletionsMenu {
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
-    }
-
-    pub fn set_previewing_inline_completion(&mut self, value: bool) {
-        self.previewing_inline_completion = value;
     }
 }
 
