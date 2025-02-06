@@ -1209,7 +1209,7 @@ fn show_keymap_migration_notification_if_needed(
     notification_id: NotificationId,
     cx: &mut App,
 ) -> bool {
-    if !keymap_file.should_migrate_keymap() {
+    if !KeymapFile::should_migrate_keymap(keymap_file) {
         return false;
     }
     show_app_notification(notification_id, cx, move |cx| {
@@ -1239,7 +1239,7 @@ fn show_settings_migration_notification_if_needed(
     settings: serde_json::Value,
     cx: &mut App,
 ) {
-    if !SettingsStore::should_migrate_settings(settings) {
+    if !SettingsStore::should_migrate_settings(&settings) {
         return;
     }
     show_app_notification(notification_id, cx, move |cx| {

@@ -321,19 +321,15 @@ fn rename_context_key(
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
     let context_predicate_ix = query.capture_index_for_name("context_predicate").unwrap();
-    println!("looking for range now");
     let context_predicate_range = mat
         .nodes_for_capture_index(context_predicate_ix)
         .next()?
         .byte_range();
-    println!("context_predicate_range: {:?}", context_predicate_range);
     let old_predicate = contents.get(context_predicate_range.clone())?.to_string();
-    println!("should call this");
     let mut new_predicate = old_predicate.to_string();
     for (old_key, new_key) in CONTEXT_REPLACE.iter() {
         new_predicate = new_predicate.replace(old_key, new_key);
     }
-    println!("new predicate {:?}", new_predicate);
     if new_predicate != old_predicate {
         Some((context_predicate_range, new_predicate.to_string()))
     } else {

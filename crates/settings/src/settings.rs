@@ -2,11 +2,9 @@ mod editable_setting_control;
 mod json_schema;
 mod key_equivalents;
 mod keymap_file;
-mod migration_static;
-mod migration_utils;
+mod migrator;
 mod settings_file;
 mod settings_store;
-mod utils;
 
 use gpui::App;
 use rust_embed::RustEmbed;
@@ -19,10 +17,9 @@ pub use key_equivalents::*;
 pub use keymap_file::{KeymapFile, KeymapFileLoadResult};
 pub use settings_file::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore,
+    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsSources, SettingsStore,
 };
-pub use utils::parse_json_with_comments;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);

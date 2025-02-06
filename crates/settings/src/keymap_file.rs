@@ -12,15 +12,11 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::rc::Rc;
 use std::{fmt::Write, sync::Arc};
-use std::{ops::Range, rc::Rc};
 use util::{asset_str, markdown::MarkdownString};
 
-use crate::{
-    migration_utils::{get_migrated_action, get_migrated_context},
-    utils::{parse_json_with_comments, update_value_in_json_text},
-    SettingsAssets,
-};
+use crate::{migrator::migrate_keymap, settings_store::parse_json_with_comments, SettingsAssets};
 
 // Note that the doc comments on these are shown by json-language-server when editing the keymap, so
 // they should be considered user-facing documentation. Documentation is not handled well with
@@ -565,12 +561,6 @@ impl KeymapFile {
         self.0.iter()
     }
 
-    fn json_tab_size() -> usize {
-        const DEFAULT_JSON_TAB_SIZE: usize = 2;
-        // todo: use from settings
-        DEFAULT_JSON_TAB_SIZE
-    }
-
     async fn load_keymap_file(fs: &Arc<dyn Fs>) -> Result<String> {
         match fs.load(paths::keymap_file()).await {
             result @ Ok(_) => result,
@@ -585,81 +575,18 @@ impl KeymapFile {
         }
     }
 
-    /// Updates the value of a keymap in a JSON file, returning the new text
-    /// for that JSON file.
-    pub fn new_text_for_update(old_text: String, update: impl FnOnce(&mut Self)) -> String {
-        let edits = Self::edits_for_update(&old_text, update);
-        let mut new_text = old_text;
-        for (range, replacement) in edits.into_iter() {
-            new_text.replace_range(range, &replacement);
-        }
-        new_text
-    }
-
-    /// Updates the value of a keymap in a JSON file, returning a list
-    /// of edits to apply to the JSON file.
-    pub fn edits_for_update(
-        text: &str,
-        update: impl FnOnce(&mut Self),
-    ) -> Vec<(Range<usize>, String)> {
-        let old_keymap_file = match Self::parse(text) {
-            Ok(keymap) => keymap,
-            Err(_) => return Vec::new(),
+    pub fn should_migrate_keymap(keymap_file: Self) -> bool {
+        let Ok(old_text) = serde_json::to_string(&keymap_file) else {
+            return false;
         };
-        let mut new_keymap_file = old_keymap_file.clone();
-        update(&mut new_keymap_file);
-
-        let old_value = serde_json::to_value(&old_keymap_file).unwrap();
-        let new_value = serde_json::to_value(new_keymap_file).unwrap();
-
-        let mut key_path = Vec::new();
-        let mut edits = Vec::new();
-        let tab_size = Self::json_tab_size();
-        let mut text = text.to_string();
-        update_value_in_json_text(
-            &mut text,
-            &mut key_path,
-            tab_size,
-            &old_value,
-            &new_value,
-            &[],
-            &mut edits,
-        );
-        edits
-    }
-
-    pub fn should_migrate_keymap(&self) -> bool {
-        for section in self.0.iter() {
-            if get_migrated_context(&section.context).is_some() {
-                return true;
-            }
-            if let Some(bindings) = &section.bindings {
-                for (_, action) in bindings.iter() {
-                    if get_migrated_action(&action).is_some() {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
+        migrate_keymap(&old_text).is_some()
     }
 
     pub async fn migrate_keymap(fs: Arc<dyn Fs>) -> Result<()> {
         let old_text = Self::load_keymap_file(&fs).await?;
-        let new_text = Self::new_text_for_update(old_text.clone(), |content| {
-            for section in content.0.iter_mut() {
-                if let Some(migrated_context) = get_migrated_context(&section.context) {
-                    section.context = migrated_context;
-                }
-                if let Some(bindings) = &mut section.bindings {
-                    for (_, action) in bindings.iter_mut() {
-                        if let Some(new_action) = get_migrated_action(&action) {
-                            action.0 = new_action.0;
-                        }
-                    }
-                }
-            }
-        });
+        let Some(new_text) = migrate_keymap(&old_text) else {
+            return Ok(());
+        };
         let initial_path = paths::keymap_file().as_path();
         if fs.is_file(initial_path).await {
             let backup_path = paths::home_dir().join(".zed_keymap_backup");
@@ -668,7 +595,6 @@ impl KeymapFile {
                 .with_context(|| {
                     "Failed to create settings backup in home directory".to_string()
                 })?;
-
             let resolved_path = fs.canonicalize(initial_path).await.with_context(|| {
                 format!("Failed to canonicalize keymap path {:?}", initial_path)
             })?;
