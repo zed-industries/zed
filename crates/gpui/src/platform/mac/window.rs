@@ -528,6 +528,12 @@ impl MacWindow {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
                 }
+                WindowKind::Child(_) => {
+                    // TODO: implement child windows on macOS
+                    //
+                    // fallback to WindowKind::Normal implementation
+                    msg_send![WINDOW_CLASS, alloc]
+                }
             };
 
             let display = display_id
@@ -671,6 +677,13 @@ impl MacWindow {
 
             match kind {
                 WindowKind::Normal => {
+                    native_window.setLevel_(NSNormalWindowLevel);
+                    native_window.setAcceptsMouseMovedEvents_(YES);
+                }
+                WindowKind::Child(_) => {
+                    // TODO: implement child windows on macOS
+                    //
+                    // fallback to WindowKind::Normal implementation
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
                 }

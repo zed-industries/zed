@@ -592,7 +592,7 @@ impl App {
     /// functionality.
     pub fn open_window<V: 'static + Render>(
         &mut self,
-        options: crate::WindowOptions,
+        options: crate::WindowOptions<'_>,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> anyhow::Result<WindowHandle<V>> {
         self.update(|cx| {

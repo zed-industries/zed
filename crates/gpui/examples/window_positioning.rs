@@ -47,7 +47,7 @@ impl Render for WindowContent {
     }
 }
 
-fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> WindowOptions {
+fn build_window_options(display_id: DisplayId, bounds: Bounds<Pixels>) -> WindowOptions<'static> {
     WindowOptions {
         // Set the bounds of the window in screen coordinates
         window_bounds: Some(WindowBounds::Windowed(bounds)),

@@ -157,7 +157,7 @@ impl AsyncApp {
     /// Open a window with the given options based on the root view returned by the given function.
     pub fn open_window<V>(
         &self,
-        options: crate::WindowOptions,
+        options: crate::WindowOptions<'_>,
         build_root_view: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
     ) -> Result<WindowHandle<V>>
     where

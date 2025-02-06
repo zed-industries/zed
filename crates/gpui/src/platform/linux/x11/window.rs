@@ -503,6 +503,9 @@ impl X11WindowState {
                     ),
                 )?;
             }
+            if let WindowKind::Child(_) = params.kind {
+                // TODO: implement Child windows on x11
+            }
 
             check_reply(
                 || "X11 ChangeProperty32 setting protocols failed.",

@@ -912,7 +912,7 @@ pub trait InputHandler: 'static {
 
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
-pub struct WindowOptions {
+pub struct WindowOptions<'a> {
     /// Specifies the state and bounds of the window in screen coordinates.
     /// - `None`: Inherit the bounds.
     /// - `Some(WindowBounds)`: Open a window with corresponding state and its restore size.
@@ -928,7 +928,7 @@ pub struct WindowOptions {
     pub show: bool,
 
     /// The kind of window to create
-    pub kind: WindowKind,
+    pub kind: WindowKind<'a>,
 
     /// Whether the window should be movable by the user
     pub is_movable: bool,
@@ -960,7 +960,7 @@ pub struct WindowOptions {
     ),
     allow(dead_code)
 )]
-pub(crate) struct WindowParams {
+pub(crate) struct WindowParams<'a> {
     pub bounds: Bounds<Pixels>,
 
     /// The titlebar configuration of the window
@@ -969,7 +969,7 @@ pub(crate) struct WindowParams {
 
     /// The kind of window to create
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
-    pub kind: WindowKind,
+    pub kind: WindowKind<'a>,
 
     /// Whether the window should be movable by the user
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
@@ -1017,7 +1017,7 @@ impl WindowBounds {
     }
 }
 
-impl Default for WindowOptions {
+impl Default for WindowOptions<'_> {
     fn default() -> Self {
         Self {
             window_bounds: None,
@@ -1055,13 +1055,18 @@ pub struct TitlebarOptions {
 
 /// The kind of window to create
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum WindowKind {
+pub enum WindowKind<'a> {
     /// A normal application window
     Normal,
 
     /// A window that appears above all other windows, usually used for alerts or popups
     /// use sparingly!
     PopUp,
+
+    /// A window that appears within another parent.
+    ///
+    /// X11, Wayland, macOS: Not implemented.
+    Child(raw_window_handle::WindowHandle<'a>),
 }
 
 /// The appearance of the window, as defined by the operating system.

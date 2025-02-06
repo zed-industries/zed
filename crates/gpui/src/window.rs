@@ -701,7 +701,7 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> Bounds<Pixels>
 impl Window {
     pub(crate) fn new(
         handle: AnyWindowHandle,
-        options: WindowOptions,
+        options: WindowOptions<'_>,
         cx: &mut App,
     ) -> Result<Self> {
         let WindowOptions {

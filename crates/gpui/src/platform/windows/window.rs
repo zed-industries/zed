@@ -15,7 +15,7 @@ use anyhow::{Context as _, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use raw_window_handle as rwh;
+use raw_window_handle::{self as rwh, RawWindowHandle};
 use smallvec::SmallVec;
 use windows::{
     core::*,
@@ -31,6 +31,21 @@ use crate::platform::blade::{BladeContext, BladeRenderer};
 use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
+
+impl WindowKind<'_> {
+    fn window_style(&self) -> (WINDOW_EX_STYLE, WINDOW_STYLE) {
+        if *self == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+        } else if let WindowKind::Child(_) = self {
+            (WINDOW_EX_STYLE(0x0), WS_CHILD)
+        } else {
+            (
+                WS_EX_APPWINDOW,
+                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
+            )
+        }
+    }
+}
 
 pub struct WindowsWindowState {
     pub origin: Point<Pixels>,
@@ -390,14 +405,7 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
-        } else {
-            (
-                WS_EX_APPWINDOW,
-                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
-            )
-        };
+        let (dwexstyle, mut dwstyle) = params.kind.window_style();
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -422,6 +430,17 @@ impl WindowsWindow {
             main_thread_id_win32,
         };
         let lpparam = Some(&context as *const _ as *const _);
+
+        let parent = if let WindowKind::Child(parent) = params.kind {
+            let handle = parent.as_raw();
+            let RawWindowHandle::Win32(handle) = handle else {
+                anyhow::bail!("Provided parent on Windows platform must be RawWindowHandle::Win32")
+            };
+            HWND(handle.hwnd.get() as _)
+        } else {
+            HWND::default()
+        };
+
         let creation_result = unsafe {
             CreateWindowExW(
                 dwexstyle,
@@ -432,7 +451,7 @@ impl WindowsWindow {
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
-                None,
+                parent,
                 None,
                 hinstance,
                 lpparam,
