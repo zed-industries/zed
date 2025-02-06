@@ -60,10 +60,10 @@ impl FileIcons {
                 return maybe_path;
             }
         }
-        if let Some(suffix) = path.icon_stem_or_suffix() {
 
         // primary case: check if the files extension or the hidden file name
         // matches some icon path
+        if let Some(suffix) = path.extension_or_hidden_file_name() {
             let maybe_path = get_icon_from_suffix(suffix);
             if maybe_path.is_some() {
                 return maybe_path;

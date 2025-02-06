@@ -21,7 +21,6 @@ pub fn home_dir() -> &'static PathBuf {
 
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
-    fn icon_stem_or_suffix(&self) -> Option<&str>;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
     fn to_sanitized_string(&self) -> String;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
@@ -74,8 +73,8 @@ impl<T: AsRef<Path>> PathExt for T {
         }
     }
 
-    /// Returns either the suffix if available, or the file stem otherwise to determine which file icon to use
-    fn icon_stem_or_suffix(&self) -> Option<&str> {
+    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
+    fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
         if file_name.starts_with('.') {
@@ -85,15 +84,6 @@ impl<T: AsRef<Path>> PathExt for T {
         path.extension()
             .and_then(|e| e.to_str())
             .or_else(|| path.file_stem()?.to_str())
-    }
-
-    /// Returns a file's extension or, if the file is hidden, its name without the leading dot
-    fn extension_or_hidden_file_name(&self) -> Option<&str> {
-        if let Some(extension) = self.as_ref().extension() {
-            return extension.to_str();
-        }
-
-        self.as_ref().file_name()?.to_str()?.split('.').last()
     }
 
     /// Returns a sanitized string representation of the path.
@@ -812,33 +802,6 @@ mod tests {
     }
 
     #[test]
-    fn test_icon_stem_or_suffix() {
-        // No dots in name
-        let path = Path::new("/a/b/c/file_name.rs");
-        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
-
-        // Single dot in name
-        let path = Path::new("/a/b/c/file.name.rs");
-        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
-
-        // No suffix
-        let path = Path::new("/a/b/c/file");
-        assert_eq!(path.icon_stem_or_suffix(), Some("file"));
-
-        // Multiple dots in name
-        let path = Path::new("/a/b/c/long.file.name.rs");
-        assert_eq!(path.icon_stem_or_suffix(), Some("rs"));
-
-        // Hidden file, no extension
-        let path = Path::new("/a/b/c/.gitignore");
-        assert_eq!(path.icon_stem_or_suffix(), Some("gitignore"));
-
-        // Hidden file, with extension
-        let path = Path::new("/a/b/c/.eslintrc.js");
-        assert_eq!(path.icon_stem_or_suffix(), Some("eslintrc.js"));
-    }
-
-    #[test]
     fn test_extension_or_hidden_file_name() {
         // No dots in name
         let path = Path::new("/a/b/c/file_name.rs");
@@ -858,7 +821,7 @@ mod tests {
 
         // Hidden file, with extension
         let path = Path::new("/a/b/c/.eslintrc.js");
-        assert_eq!(path.extension_or_hidden_file_name(), Some("js"));
+        assert_eq!(path.extension_or_hidden_file_name(), Some("eslintrc.js"));
     }
 
     #[test]
