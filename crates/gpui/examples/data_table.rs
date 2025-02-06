@@ -1,6 +1,6 @@
 use gpui::{
-    div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context, Render,
-    SharedString, Window, WindowBounds, WindowOptions,
+    div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context, Pixels,
+    Render, SharedString, Window, WindowBounds, WindowOptions,
 };
 use std::rc::Rc;
 
@@ -137,107 +137,96 @@ impl Item {
         Item { quote }
     }
 
-    fn render_cell(&self, key: &str, color: gpui::Hsla) -> impl IntoElement {
-        div().whitespace_nowrap().truncate().child(match key {
-            "symbol" => div().w_16().child(self.quote.symbol.clone()),
-            "name" => div().w(px(240.)).child(self.quote.name.clone()),
-            "last_done" => div()
-                .w_20()
-                .text_color(color)
-                .child(format!("{:.3}", self.quote.last_done)),
-            "prev_close" => div()
-                .w_20()
-                .text_color(color)
-                .child(format!("{:.3}", self.quote.prev_close)),
-            "change" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{:.2}%", self.quote.change())),
-            "timestamp" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{}", self.quote.timestamp)),
-            "open" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{:.2}", self.quote.open)),
-            "low" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{:.2}", self.quote.low)),
-            "high" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{:.2}", self.quote.high)),
-            "ttm" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{:.2}", self.quote.ttm)),
-            "eps" => div()
-                .w_24()
-                .text_color(color)
-                .child(format!("{:.2}", self.quote.eps)),
-            "market_cap" => div().w_24().child(format!("{:.2}", self.quote.market_cap)),
-            "float_cap" => div().w_24().child(format!("{:.2}", self.quote.float_cap)),
-            "turnover" => div().w_24().child(format!("{:.2}", self.quote.turnover)),
-            "volume" => div().w_24().child(format!("{:.2}", self.quote.volume)),
-            "turnover_ratio" => div()
-                .w_24()
-                .child(format!("{:.2}%", self.quote.turnover_ratio())),
-            "pe" => div().w_24().child(format!("{:.2}", self.quote.pe)),
-            "pb" => div().w_24().child(format!("{:.2}", self.quote.pb)),
-            "shares" => div().w_24().child(format!("{:.2}", self.quote.shares)),
-            "dividend" => div().w_24().child(format!("{:.2}", self.quote.dividend)),
-            "yield" => div()
-                .w_24()
-                .child(format!("{:.2}%", self.quote.dividend_yield)),
-            "dividend_per_share" => div()
-                .w_24()
-                .child(format!("{:.2}", self.quote.dividend_per_share)),
-            "dividend_date" => div().w_24().child(format!("{}", self.quote.dividend_date)),
-            "dividend_payment" => div()
-                .w_24()
-                .child(format!("{:.2}", self.quote.dividend_payment)),
-            _ => div().w_10().child("--"),
-        })
+    fn render_cell(&self, key: &str, width: Pixels, color: gpui::Hsla) -> impl IntoElement {
+        div()
+            .whitespace_nowrap()
+            .truncate()
+            .w(width)
+            .child(match key {
+                "symbol" => div().child(self.quote.symbol.clone()),
+                "name" => div().child(self.quote.name.clone()),
+                "last_done" => div()
+                    .text_color(color)
+                    .child(format!("{:.3}", self.quote.last_done)),
+                "prev_close" => div()
+                    .text_color(color)
+                    .child(format!("{:.3}", self.quote.prev_close)),
+                "change" => div()
+                    .text_color(color)
+                    .child(format!("{:.2}%", self.quote.change())),
+                "timestamp" => div()
+                    .text_color(color)
+                    .child(format!("{}", self.quote.timestamp)),
+                "open" => div()
+                    .text_color(color)
+                    .child(format!("{:.2}", self.quote.open)),
+                "low" => div()
+                    .text_color(color)
+                    .child(format!("{:.2}", self.quote.low)),
+                "high" => div()
+                    .text_color(color)
+                    .child(format!("{:.2}", self.quote.high)),
+                "ttm" => div()
+                    .text_color(color)
+                    .child(format!("{:.2}", self.quote.ttm)),
+                "eps" => div()
+                    .text_color(color)
+                    .child(format!("{:.2}", self.quote.eps)),
+                "market_cap" => div().child(format!("{:.2}", self.quote.market_cap)),
+                "float_cap" => div().child(format!("{:.2}", self.quote.float_cap)),
+                "turnover" => div().child(format!("{:.2}", self.quote.turnover)),
+                "volume" => div().child(format!("{:.2}", self.quote.volume)),
+                "turnover_ratio" => div().child(format!("{:.2}%", self.quote.turnover_ratio())),
+                "pe" => div().child(format!("{:.2}", self.quote.pe)),
+                "pb" => div().child(format!("{:.2}", self.quote.pb)),
+                "shares" => div().child(format!("{:.2}", self.quote.shares)),
+                "dividend" => div().child(format!("{:.2}", self.quote.dividend)),
+                "yield" => div().child(format!("{:.2}%", self.quote.dividend_yield)),
+                "dividend_per_share" => {
+                    div().child(format!("{:.2}", self.quote.dividend_per_share))
+                }
+                "dividend_date" => div().child(format!("{}", self.quote.dividend_date)),
+                "dividend_payment" => div().child(format!("{:.2}", self.quote.dividend_payment)),
+                _ => div().child("--"),
+            })
     }
 }
 
+const FIELDS: [(&str, f32); 23] = [
+    ("symbol", 64.),
+    ("name", 220.),
+    ("last_done", 80.),
+    ("prev_close", 80.),
+    ("open", 80.),
+    ("low", 80.),
+    ("high", 80.),
+    ("ttm", 50.),
+    ("market_cap", 96.),
+    ("float_cap", 96.),
+    ("turnover", 96.),
+    ("volume", 96.),
+    ("turnover_ratio", 96.),
+    ("pe", 64.),
+    ("pb", 64.),
+    ("eps", 64.),
+    ("shares", 96.),
+    ("dividend", 64.),
+    ("yield", 64.),
+    ("dividend_per_share", 64.),
+    ("dividend_date", 96.),
+    ("dividend_payment", 64.),
+    ("timestamp", 120.),
+];
 impl RenderOnce for Item {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        const FIELDS: [&str; 22] = [
-            "symbol",
-            "name",
-            "last_done",
-            "pre_close",
-            "open",
-            "low",
-            "high",
-            "ttm",
-            "market_cap",
-            "float_cap",
-            "turnover",
-            "volume",
-            "turnover_ratio",
-            "pe",
-            "pb",
-            "eps",
-            "shares",
-            "dividend",
-            "yield",
-            "dividend_per_share",
-            "dividend_date",
-            "dividend_payment",
-        ];
         let color = self.quote.change_color();
         div()
             .flex()
             .flex_row()
-            .gap_1()
             .border_b_1()
             .border_color(rgb(0xE0E0E0))
             .py_0p5()
-            .children(FIELDS.map(|key| self.render_cell(key, color)))
+            .children(FIELDS.map(|(key, width)| self.render_cell(key, px(width), color)))
     }
 }
 
@@ -272,24 +261,33 @@ impl Render for DataTable {
             .child(
                 div()
                     .flex()
-                    .size_full()
-                    .p_2()
-                    .border_1()
+                    .flex_row()
+                    .w_full()
+                    .py_0p5()
+                    .border_b_1()
                     .border_color(rgb(0xE0E0E0))
-                    .child(
-                        uniform_list(entity, "items", self.quotes.len(), {
-                            move |this, range, _, _| {
-                                let mut items = Vec::with_capacity(range.end - range.start);
-                                for i in range {
-                                    if let Some(quote) = this.quotes.get(i) {
-                                        items.push(Item::new(quote.clone()));
-                                    }
-                                }
-                                items
+                    .children(FIELDS.map(|(key, width)| {
+                        div()
+                            .whitespace_nowrap()
+                            .flex_shrink_0()
+                            .truncate()
+                            .w(px(width))
+                            .child(key)
+                    })),
+            )
+            .child(
+                uniform_list(entity, "items", self.quotes.len(), {
+                    move |this, range, _, _| {
+                        let mut items = Vec::with_capacity(range.end - range.start);
+                        for i in range {
+                            if let Some(quote) = this.quotes.get(i) {
+                                items.push(Item::new(quote.clone()));
                             }
-                        })
-                        .size_full(),
-                    ),
+                        }
+                        items
+                    }
+                })
+                .size_full(),
             )
     }
 }
