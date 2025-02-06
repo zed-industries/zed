@@ -1,6 +1,6 @@
 mod models;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use futures::{stream, Stream};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -8,7 +8,7 @@ use std::pin::Pin;
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
 pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
-use aws_sdk_bedrockruntime::types::{ContentBlockDelta};
+use aws_sdk_bedrockruntime::types::{ContentBlockDelta, ContentBlockStopEvent};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;
 pub use bedrock::types::ConversationRole as BedrockRole;
@@ -41,50 +41,28 @@ pub async fn complete(
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
-) -> Result<BoxStream<'static, Result<String, BedrockError>>> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
+) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, Error> {
+    let response = bedrock::Client::converse_stream(&client)
+        .model_id(request.model.clone())
+        .set_messages(request.messages.into())
+        .send()
+        .await;
 
-    rt.block_on(async move {
-        let response = bedrock::Client::converse_stream(&client)
-            .model_id(request.model.clone())
-            .set_messages(request.messages.into())
-            .send()
-            .await;
-
-        match response {
-            Ok(output) => {
-                let stream: Pin<
-                    Box<dyn Stream<Item = Result<String, BedrockError>> + Send>,
-                > = Box::pin(stream::unfold(output.stream, |mut stream| async move {
-                    match stream.recv().await {
-                        Ok(Some(output)) => {
-                            let mapped_event = map_stream_output(output);
-                            if let Some(event) = mapped_event {
-                                Some((event, stream))
-                            } else {
-                                Some((Err(BedrockError::Other(anyhow!("Received untranslatable event"))), stream))
-                            }
-                        }
-                        Ok(None) => None,
-                        Err(e) => Some((
-                            Err(BedrockError::Other(anyhow!(
-                                "{:?}",
-                                aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
-                            ))),
-                            stream,
-                        )),
+    match response {
+        Ok(output) => {
+            let stream: Pin<Box<dyn Stream<Item=Result<BedrockStreamingResponse, BedrockError>> + Send>> = Box::pin(stream::unfold(output.stream, |mut stream| async move {
+                match stream.recv().await {
+                    Ok(Some(output)) => Some((Ok(output), stream)),
+                    Ok(None) => Some((Ok(BedrockStreamingResponse::ContentBlockStop(ContentBlockStopEvent::builder().build().unwrap())), stream)),
+                    Err(e) => {
+                        Some((Err(BedrockError::Other(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e)))), stream))
                     }
-                }));
-                Ok(stream)
-            }
-            Err(e) => Err(anyhow!(
-                "{:?}",
-                aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
-            )),
+                }
+            }));
+            Ok(stream)
         }
-    })
+        Err(e) => Err(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e))),
+    }
 }
 
 

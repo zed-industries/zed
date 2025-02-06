@@ -48,6 +48,7 @@ telemetry_events.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
+tokio.workspace = true
 ui.workspace = true
 util.workspace = true
 

@@ -1,3 +1,4 @@
+use std::future::Future;
 use crate::AllLanguageModelSettings;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::Region;
@@ -11,13 +12,18 @@ use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
 use collections::BTreeMap;
 use gpui_tokio::Tokio;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::Stream;
+use futures::{Stream, TryFutureExt};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
 use http_client::HttpClient;
-use language_model::{LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role, StopReason};
+use language_model::{
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter,
+    Role, StopReason
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -300,12 +306,12 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String, BedrockError>>>> {
+    ) -> Result<BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>>> {
         let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
             let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
             (state.aa_id.clone(), state.sk.clone(), state.region.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return Err(anyhow!("App state dropped"));
         };
 
         println!("aa_id: {:?}, sk: {:?}, region: {:?}", aa_id, sk, region);
@@ -327,11 +333,10 @@ impl BedrockModel {
                 .build(),
         );
 
-        // this will most likely have a compile time error fix when you get back online
-        handler.spawn(async move {
+        Ok(self.handler.spawn(async move {
             let request = bedrock::stream_completion(runtime_client, request);
-            request.await.context("Failed to stream completion")
-        }).boxed()
+            request.await.context("Failed to perform stream completion")
+        }).boxed())
     }
 }
 
@@ -385,8 +390,6 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            // Here, we're going to have something like a Box<JoinHandle> or something like that
-            // Figure out how to consume from it unless await just resolves that 
             let response = request.await.map_err(|e| anyhow!(e))?;
             Ok(map_to_language_model_completion_events(response))
         });
@@ -468,25 +471,65 @@ pub fn get_bedrock_tokens(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<String, BedrockError>>>>,
-    // cx: &AsyncApp,
+    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
 ) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<String, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
     }
+
     futures::stream::unfold(
         State {
             events
         },
         |mut state: State| async move {
-            let event = state.events.next().await;
-            match event {
-                Some(Ok(event)) => Some((Ok(LanguageModelCompletionEvent::Text(event)), state)),
-                Some(Err(e)) => Some((Err(anyhow!(e)), state)),
-                None => None,
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
+                            if let Some(ContentBlockDelta::Text(text_out)) = cb_delta.delta {
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
+                                    state,
+                                ));
+                            } else if let Some(ContentBlockDelta::ToolUse(_)) = cb_delta.delta {
+                                return Some((
+                                    Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
+                                    state,
+                                ));
+                            } else if cb_delta.delta.is_none() {
+                                return Some((None, state));
+                            }
+                        }
+                        ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                            if let Some(start) = cb_start.start {
+                                match start {
+                                    ContentBlockStart::ToolUse(_) => {
+                                        return Some((
+                                            Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
+                                            state,
+                                        ))
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        ConverseStreamOutput::ContentBlockStop(_) => {
+                            return Some((
+                                Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet, this event will only be received on tool use"))),
+                                state,
+                            ))
+                        }
+                        ConverseStreamOutput::MessageStart(_) |
+                        ConverseStreamOutput::MessageStop(_) |
+                        ConverseStreamOutput::Metadata(_) => {}
+                        _ => {}
+                    },
+                    Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                }
             }
-        }
-    )
+            None
+        },
+    ).filter_map(|event| async move { event })
 }
 
 struct ConfigurationView {
@@ -595,6 +638,7 @@ impl ConfigurationView {
             strikethrough: None,
             white_space: WhiteSpace::Normal,
             text_overflow: None,
+            text_align: Default::default(),
             line_clamp: None,
         }
     }
