@@ -178,7 +178,7 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RepositoryEntry {
     /// The git status entries for this repository.
     /// Note that the paths on this repository are relative to the git work directory.
@@ -203,7 +203,6 @@ pub struct RepositoryEntry {
     work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
-    pub current_merge_conflicts: TreeSet<RepoPath>,
 }
 
 impl Deref for RepositoryEntry {
@@ -257,11 +256,6 @@ impl RepositoryEntry {
                 .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
-            current_merge_conflicts: self
-                .current_merge_conflicts
-                .iter()
-                .map(|repo_path| repo_path.to_proto())
-                .collect(),
         }
     }
 
@@ -312,11 +306,6 @@ impl RepositoryEntry {
             branch: self.branch.as_ref().map(|branch| branch.to_string()),
             updated_statuses,
             removed_statuses,
-            current_merge_conflicts: self
-                .current_merge_conflicts
-                .iter()
-                .map(RepoPath::to_proto)
-                .collect(),
         }
     }
 }
@@ -467,7 +456,6 @@ struct BackgroundScannerState {
 
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
-    pub(crate) work_directory_id: ProjectEntryId,
     pub(crate) work_directory: WorkDirectory,
     pub(crate) git_dir_scan_id: usize,
     pub(crate) status_scan_id: usize,
@@ -477,7 +465,6 @@ pub struct LocalRepositoryEntry {
     pub(crate) dot_git_dir_abs_path: Arc<Path>,
     /// Absolute path to the .git file, if we're in a git worktree.
     pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
-    pub current_merge_head_shas: Vec<String>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -2533,13 +2520,6 @@ impl Snapshot {
         for repository in update.updated_repositories {
             let work_directory_id = ProjectEntryId::from_proto(repository.work_directory_id);
             if let Some(work_dir_entry) = self.entry_for_id(work_directory_id) {
-                let conflicted_paths = TreeSet::from_ordered_entries(
-                    repository
-                        .current_merge_conflicts
-                        .into_iter()
-                        .map(|path| RepoPath(Path::new(&path).into())),
-                );
-
                 if self
                     .repositories
                     .contains(&PathKey(work_dir_entry.path.clone()), &())
@@ -2559,7 +2539,6 @@ impl Snapshot {
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
                             repo.branch = repository.branch.map(Into::into);
                             repo.statuses_by_path.edit(edits, &());
-                            repo.current_merge_conflicts = conflicted_paths
                         });
                 } else {
                     let statuses = SumTree::from_iter(
@@ -2582,7 +2561,6 @@ impl Snapshot {
                             },
                             branch: repository.branch.map(Into::into),
                             statuses_by_path: statuses,
-                            current_merge_conflicts: conflicted_paths,
                         },
                         &(),
                     );
@@ -3385,20 +3363,17 @@ impl BackgroundScannerState {
                 work_directory: work_directory.clone(),
                 branch: repository.branch_name().map(Into::into),
                 statuses_by_path: Default::default(),
-                current_merge_conflicts: Default::default(),
             },
             &(),
         );
 
         let local_repository = LocalRepositoryEntry {
-            work_directory_id: work_dir_id,
             work_directory: work_directory.clone(),
             git_dir_scan_id: 0,
             status_scan_id: 0,
             repo_ptr: repository.clone(),
             dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
             dot_git_worktree_abs_path,
-            current_merge_head_shas: Default::default(),
         };
 
         self.snapshot
@@ -5152,11 +5127,11 @@ impl BackgroundScanner {
                         .snapshot
                         .git_repositories
                         .iter()
-                        .find_map(|(_, repo)| {
+                        .find_map(|(entry_id, repo)| {
                             if repo.dot_git_dir_abs_path.as_ref() == &dot_git_dir
                                 || repo.dot_git_worktree_abs_path.as_deref() == Some(&dot_git_dir)
                             {
-                                Some(repo.clone())
+                                Some((*entry_id, repo.clone()))
                             } else {
                                 None
                             }
@@ -5173,13 +5148,13 @@ impl BackgroundScanner {
                             None => continue,
                         }
                     }
-                    Some(local_repository) => {
+                    Some((entry_id, local_repository)) => {
                         if local_repository.git_dir_scan_id == scan_id {
                             continue;
                         }
                         let Some(work_dir) = state
                             .snapshot
-                            .entry_for_id(local_repository.work_directory_id)
+                            .entry_for_id(entry_id)
                             .map(|entry| entry.path.clone())
                         else {
                             continue;
@@ -5188,13 +5163,10 @@ impl BackgroundScanner {
                         let branch = local_repository.repo_ptr.branch_name();
                         local_repository.repo_ptr.reload_index();
 
-                        state.snapshot.git_repositories.update(
-                            &local_repository.work_directory_id,
-                            |entry| {
-                                entry.git_dir_scan_id = scan_id;
-                                entry.status_scan_id = scan_id;
-                            },
-                        );
+                        state.snapshot.git_repositories.update(&entry_id, |entry| {
+                            entry.git_dir_scan_id = scan_id;
+                            entry.status_scan_id = scan_id;
+                        });
                         state.snapshot.snapshot.repositories.update(
                             &PathKey(work_dir.clone()),
                             &(),
@@ -5288,11 +5260,6 @@ impl BackgroundScanner {
                     return;
                 };
 
-                let merge_head_shas = local_repository.repo().merge_head_shas();
-                if merge_head_shas != local_repository.current_merge_head_shas {
-                    mem::take(&mut repository.current_merge_conflicts);
-                }
-
                 let mut new_entries_by_path = SumTree::new(&());
                 for (repo_path, status) in statuses.entries.iter() {
                     let project_path = repository.work_directory.unrelativize(repo_path);
@@ -5316,12 +5283,6 @@ impl BackgroundScanner {
                     .snapshot
                     .repositories
                     .insert_or_replace(repository, &());
-                state.snapshot.git_repositories.update(
-                    &local_repository.work_directory_id,
-                    |entry| {
-                        entry.current_merge_head_shas = merge_head_shas;
-                    },
-                );
 
                 util::extend_sorted(
                     &mut state.changed_paths,

@@ -46,8 +46,6 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    fn merge_head_shas(&self) -> Vec<String>;
-
     /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
@@ -162,18 +160,6 @@ impl GitRepository for RealGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
-    }
-
-    fn merge_head_shas(&self) -> Vec<String> {
-        let mut shas = Vec::default();
-        self.repository
-            .lock()
-            .mergehead_foreach(|oid| {
-                shas.push(oid.to_string());
-                true
-            })
-            .ok();
-        shas
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -399,10 +385,6 @@ impl GitRepository for FakeGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         None
-    }
-
-    fn merge_head_shas(&self) -> Vec<String> {
-        vec![]
     }
 
     fn dot_git_dir(&self) -> PathBuf {
