@@ -28,7 +28,7 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServer
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::TypeId,
