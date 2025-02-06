@@ -220,6 +220,22 @@ struct ChangeSetState {
     _subscription: gpui::Subscription,
 }
 
+impl ChangeSetState {
+    fn new(change_set: Entity<BufferChangeSet>, cx: &mut Context<MultiBuffer>) -> Self {
+        ChangeSetState {
+            _subscription: cx.subscribe(&change_set, |this, change_set, event, cx| match event {
+                BufferChangeSetEvent::DiffChanged { changed_range } => {
+                    this.buffer_diff_changed(change_set, changed_range.clone(), cx)
+                }
+                BufferChangeSetEvent::LanguageChanged => {
+                    this.buffer_diff_language_changed(change_set, cx)
+                }
+            }),
+            change_set,
+        }
+    }
+}
+
 /// The contents of a [`MultiBuffer`] at a single point in time.
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
@@ -560,17 +576,7 @@ impl MultiBuffer {
         for (buffer_id, change_set_state) in self.diff_bases.iter() {
             diff_bases.insert(
                 *buffer_id,
-                ChangeSetState {
-                    _subscription: new_cx.subscribe(
-                        &change_set_state.change_set,
-                        |this, change_set, event, cx| match event {
-                            BufferChangeSetEvent::DiffChanged { changed_range } => {
-                                this.buffer_diff_changed(change_set, changed_range.clone(), cx)
-                            }
-                        },
-                    ),
-                    change_set: change_set_state.change_set.clone(),
-                },
+                ChangeSetState::new(change_set_state.change_set.clone(), new_cx),
             );
         }
         Self {
@@ -1424,24 +1430,19 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) {
         let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-        let (mut insert_after, excerpt_ids) =
-            if let Some(existing) = self.buffers_by_path.get(&path) {
-                (*existing.last().unwrap(), existing.clone())
-            } else {
-                (
-                    self.buffers_by_path
-                        .range(..path.clone())
-                        .next_back()
-                        .map(|(_, value)| *value.last().unwrap())
-                        .unwrap_or(ExcerptId::min()),
-                    Vec::default(),
-                )
-            };
+
+        let mut insert_after = self
+            .buffers_by_path
+            .range(..path.clone())
+            .next_back()
+            .map(|(_, value)| *value.last().unwrap())
+            .unwrap_or(ExcerptId::min());
+        let existing = self.buffers_by_path.get(&path).cloned().unwrap_or_default();
 
         let (new, _) = build_excerpt_ranges(&buffer_snapshot, &ranges, context_line_count);
 
         let mut new_iter = new.into_iter().peekable();
-        let mut existing_iter = excerpt_ids.into_iter().peekable();
+        let mut existing_iter = existing.into_iter().peekable();
 
         let mut new_excerpt_ids = Vec::new();
         let mut to_remove = Vec::new();
@@ -1495,7 +1496,6 @@ impl MultiBuffer {
             // maybe merge overlapping excerpts?
             // it's hard to distinguish between a manually expanded excerpt, and one that
             // got smaller because of a missing diff.
-            //
             if existing_start == new.context.start && existing_end == new.context.end {
                 new_excerpt_ids.append(&mut self.insert_excerpts_after(
                     insert_after,
@@ -2152,6 +2152,30 @@ impl MultiBuffer {
         });
     }
 
+    fn buffer_diff_language_changed(
+        &mut self,
+        change_set: Entity<BufferChangeSet>,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync(cx);
+        let mut snapshot = self.snapshot.borrow_mut();
+        let change_set = change_set.read(cx);
+        let buffer_id = change_set.buffer_id;
+        let base_text = change_set.base_text.clone();
+        let diff = change_set.diff_to_buffer.clone();
+        if let Some(base_text) = base_text {
+            snapshot.diffs.insert(
+                buffer_id,
+                DiffSnapshot {
+                    diff: diff.clone(),
+                    base_text,
+                },
+            );
+        } else {
+            snapshot.diffs.remove(&buffer_id);
+        }
+    }
+
     fn buffer_diff_changed(
         &mut self,
         change_set: Entity<BufferChangeSet>,
@@ -2178,6 +2202,15 @@ impl MultiBuffer {
                 buffer_id,
                 DiffSnapshot {
                     diff: diff.clone(),
+                    base_text,
+                },
+            );
+        } else if self.all_diff_hunks_expanded {
+            let base_text = Buffer::build_empty_snapshot(cx);
+            snapshot.diffs.insert(
+                buffer_id,
+                DiffSnapshot {
+                    diff: git::diff::BufferDiff::new_with_single_insertion(&base_text),
                     base_text,
                 },
             );
@@ -2322,20 +2355,8 @@ impl MultiBuffer {
     pub fn add_change_set(&mut self, change_set: Entity<BufferChangeSet>, cx: &mut Context<Self>) {
         let buffer_id = change_set.read(cx).buffer_id;
         self.buffer_diff_changed(change_set.clone(), text::Anchor::MIN..text::Anchor::MAX, cx);
-        self.diff_bases.insert(
-            buffer_id,
-            ChangeSetState {
-                _subscription: cx.subscribe(
-                    &change_set,
-                    |this, change_set, event, cx| match event {
-                        BufferChangeSetEvent::DiffChanged { changed_range } => {
-                            this.buffer_diff_changed(change_set, changed_range.clone(), cx);
-                        }
-                    },
-                ),
-                change_set,
-            },
-        );
+        self.diff_bases
+            .insert(buffer_id, ChangeSetState::new(change_set, cx));
     }
 
     pub fn change_set_for(&self, buffer_id: BufferId) -> Option<Entity<BufferChangeSet>> {

@@ -933,7 +933,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                             .when_some(diagnostic.code.as_ref(), |stack, code| {
                                 stack.child(
                                     div()
-                                        .child(SharedString::from(format!("({code})")))
+                                        .child(SharedString::from(format!("({code:?})")))
                                         .text_color(color.text_muted),
                                 )
                             }),

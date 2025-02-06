@@ -2403,35 +2403,18 @@ impl EditorElement {
                 height,
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
-                let icon_offset = gutter_dimensions.width
-                    - (gutter_dimensions.left_padding + gutter_dimensions.margin);
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
-                        result =
-                            result.child(
-                                h_flex()
-                                    .id("expand_down_hit_area")
-                                    .w(icon_offset)
-                                    .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32
-                                        * window.line_height())
-                                    .flex_none()
-                                    .justify_end()
-                                    .child(self.render_expand_excerpt_button(
-                                        IconName::ArrowDownFromLine,
-                                        None,
-                                        cx,
-                                    ))
-                                    .on_click(window.listener_for(&self.editor, {
-                                        let excerpt_id = prev_excerpt.id;
-                                        let direction = ExpandExcerptDirection::Down;
-                                        move |editor, _, _, cx| {
-                                            editor.expand_excerpt(excerpt_id, direction, cx);
-                                            cx.stop_propagation();
-                                        }
-                                    })),
-                            );
+                        result = result.child(self.render_expand_excerpt_control(
+                            block_id,
+                            ExpandExcerptDirection::Down,
+                            prev_excerpt.id,
+                            gutter_dimensions,
+                            window,
+                            cx,
+                        ));
                     }
                 }
 
@@ -2455,65 +2438,19 @@ impl EditorElement {
                 height,
                 starts_new_buffer,
             } => {
-                let icon_offset = gutter_dimensions.width
-                    - (gutter_dimensions.left_padding + gutter_dimensions.margin);
-                let header_height =
-                    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * window.line_height();
                 let color = cx.theme().colors().clone();
-                let hover_color = color.border_variant.opacity(0.5);
-                let focus_handle = self.editor.focus_handle(cx).clone();
-
                 let mut result = v_flex().id(block_id).w_full();
-                let expand_area = |id: SharedString| {
-                    h_flex()
-                        .id(id)
-                        .w_full()
-                        .cursor_pointer()
-                        .block_mouse_down()
-                        .on_mouse_move(|_, _, cx| cx.stop_propagation())
-                        .hover(|style| style.bg(hover_color))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Expand Excerpt",
-                                    &ExpandExcerpts { lines: 0 },
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        })
-                };
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
-                        let group_name = "expand-down";
-
-                        result = result.child(
-                            expand_area(format!("block-{}-down", block_id).into())
-                                .group(group_name)
-                                .child(
-                                    h_flex()
-                                        .w(icon_offset)
-                                        .h(header_height)
-                                        .flex_none()
-                                        .justify_end()
-                                        .child(self.render_expand_excerpt_button(
-                                            IconName::ArrowDownFromLine,
-                                            Some(group_name.to_string()),
-                                            cx,
-                                        )),
-                                )
-                                .on_click(window.listener_for(&self.editor, {
-                                    let excerpt_id = prev_excerpt.id;
-                                    let direction = ExpandExcerptDirection::Down;
-                                    move |editor, _, _, cx| {
-                                        editor.expand_excerpt(excerpt_id, direction, cx);
-                                        cx.stop_propagation();
-                                    }
-                                })),
-                        );
+                        result = result.child(self.render_expand_excerpt_control(
+                            block_id,
+                            ExpandExcerptDirection::Down,
+                            prev_excerpt.id,
+                            gutter_dimensions,
+                            window,
+                            cx,
+                        ));
                     }
                 }
 
@@ -2539,43 +2476,20 @@ impl EditorElement {
                         }
 
                         if *show_excerpt_controls {
-                            let group_name = "expand-up-first";
-
-                            result = result.child(
-                                h_flex().group(group_name).child(
-                                    expand_area(format!("block-{}-up-first", block_id).into())
-                                        .h(header_height)
-                                        .child(
-                                            h_flex()
-                                                .w(icon_offset)
-                                                .h(header_height)
-                                                .flex_none()
-                                                .justify_end()
-                                                .child(self.render_expand_excerpt_button(
-                                                    IconName::ArrowUpFromLine,
-                                                    Some(group_name.to_string()),
-                                                    cx,
-                                                )),
-                                        )
-                                        .on_click(window.listener_for(&self.editor, {
-                                            let excerpt_id = next_excerpt.id;
-                                            let direction = ExpandExcerptDirection::Up;
-                                            move |editor, _, _, cx| {
-                                                editor.expand_excerpt(excerpt_id, direction, cx);
-                                                cx.stop_propagation();
-                                            }
-                                        })),
-                                ),
-                            );
+                            result = result.child(self.render_expand_excerpt_control(
+                                block_id,
+                                ExpandExcerptDirection::Up,
+                                next_excerpt.id,
+                                gutter_dimensions,
+                                window,
+                                cx,
+                            ));
                         }
                     } else {
-                        let group_name = "expand-up-subsequent";
-
                         if *show_excerpt_controls {
                             result = result.child(
                                 h_flex()
                                     .relative()
-                                    .group(group_name)
                                     .child(
                                         div()
                                             .top(px(0.))
@@ -2584,55 +2498,14 @@ impl EditorElement {
                                             .h_px()
                                             .bg(color.border_variant),
                                     )
-                                    .child(
-                                        expand_area(format!("block-{}-up", block_id).into())
-                                            .h(header_height)
-                                            .child(
-                                                h_flex()
-                                                    .w(icon_offset)
-                                                    .h(header_height)
-                                                    .flex_none()
-                                                    .justify_end()
-                                                    .child(if *show_excerpt_controls {
-                                                        self.render_expand_excerpt_button(
-                                                            IconName::ArrowUpFromLine,
-                                                            Some(group_name.to_string()),
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        ButtonLike::new("jump-icon")
-                                                            .style(ButtonStyle::Transparent)
-                                                            .child(
-                                                                svg()
-                                                                    .path(
-                                                                        IconName::ArrowUpRight
-                                                                            .path(),
-                                                                    )
-                                                                    .size(IconSize::XSmall.rems())
-                                                                    .text_color(
-                                                                        color.border_variant,
-                                                                    )
-                                                                    .group_hover(
-                                                                        group_name,
-                                                                        |style| {
-                                                                            style.text_color(
-                                                                                color.border,
-                                                                            )
-                                                                        },
-                                                                    ),
-                                                            )
-                                                    }),
-                                            )
-                                            .on_click(window.listener_for(&self.editor, {
-                                                let excerpt_id = next_excerpt.id;
-                                                let direction = ExpandExcerptDirection::Up;
-                                                move |editor, _, _, cx| {
-                                                    editor
-                                                        .expand_excerpt(excerpt_id, direction, cx);
-                                                    cx.stop_propagation();
-                                                }
-                                            })),
-                                    ),
+                                    .child(self.render_expand_excerpt_control(
+                                        block_id,
+                                        ExpandExcerptDirection::Up,
+                                        next_excerpt.id,
+                                        gutter_dimensions,
+                                        window,
+                                        cx,
+                                    )),
                             );
                         }
                     };
@@ -2760,6 +2633,16 @@ impl EditorElement {
                                 ),
                         )
                     })
+                    .children(
+                        self.editor
+                            .read(cx)
+                            .addons
+                            .values()
+                            .filter_map(|addon| {
+                                addon.render_buffer_header_controls(for_excerpt, window, cx)
+                            })
+                            .take(1),
+                    )
                     .child(
                         h_flex()
                             .cursor_pointer()
@@ -2809,26 +2692,93 @@ impl EditorElement {
             )
     }
 
-    fn render_expand_excerpt_button(
+    fn render_expand_excerpt_control(
         &self,
-        icon: IconName,
-        group_name: impl Into<Option<String>>,
+        block_id: BlockId,
+        direction: ExpandExcerptDirection,
+        excerpt_id: ExcerptId,
+        gutter_dimensions: &GutterDimensions,
+        window: &Window,
         cx: &mut App,
-    ) -> ButtonLike {
-        let group_name = group_name.into();
-        ButtonLike::new("expand-icon")
-            .style(ButtonStyle::Transparent)
-            .child(
-                svg()
-                    .path(icon.path())
-                    .size(IconSize::XSmall.rems())
-                    .text_color(cx.theme().colors().editor_line_number)
-                    .when_some(group_name, |svg, group_name| {
-                        svg.group_hover(group_name, |style| {
-                            style.text_color(cx.theme().colors().editor_active_line_number)
-                        })
-                    }),
+    ) -> impl IntoElement {
+        let color = cx.theme().colors().clone();
+        let hover_color = color.border_variant.opacity(0.5);
+        let focus_handle = self.editor.focus_handle(cx).clone();
+
+        let icon_offset =
+            gutter_dimensions.width - (gutter_dimensions.left_padding + gutter_dimensions.margin);
+        let header_height = MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * window.line_height();
+        let group_name = if direction == ExpandExcerptDirection::Down {
+            "expand-down"
+        } else {
+            "expand-up"
+        };
+
+        let expand_area = |id: SharedString| {
+            h_flex()
+                .id(id)
+                .w_full()
+                .cursor_pointer()
+                .block_mouse_down()
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
+                .hover(|style| style.bg(hover_color))
+                .tooltip({
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Expand Excerpt",
+                            &ExpandExcerpts { lines: 0 },
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+        };
+
+        expand_area(
+            format!(
+                "block-{}-{}",
+                block_id,
+                if direction == ExpandExcerptDirection::Down {
+                    "down"
+                } else {
+                    "up"
+                }
             )
+            .into(),
+        )
+        .group(group_name)
+        .child(
+            h_flex()
+                .w(icon_offset)
+                .h(header_height)
+                .flex_none()
+                .justify_end()
+                .child(
+                    ButtonLike::new("expand-icon")
+                        .style(ButtonStyle::Transparent)
+                        .child(
+                            svg()
+                                .path(if direction == ExpandExcerptDirection::Down {
+                                    IconName::ArrowDownFromLine.path()
+                                } else {
+                                    IconName::ArrowUpFromLine.path()
+                                })
+                                .size(IconSize::XSmall.rems())
+                                .text_color(cx.theme().colors().editor_line_number)
+                                .group_hover(group_name, |style| {
+                                    style.text_color(cx.theme().colors().editor_active_line_number)
+                                }),
+                        ),
+                ),
+        )
+        .on_click(window.listener_for(&self.editor, {
+            move |editor, _, _, cx| {
+                editor.expand_excerpt(excerpt_id, direction, cx);
+                cx.stop_propagation();
+            }
+        }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3220,7 +3170,7 @@ impl EditorElement {
                     };
                     let mut element = self
                         .render_context_menu(line_height, menu_height, y_flipped, window, cx)
-                        .unwrap();
+                        .expect("Visible context menu should always render.");
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     Some((CursorPopoverType::CodeContextMenu, element, size))
                 } else {
@@ -3378,8 +3328,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let editor = self.editor.read(cx);
+        if !editor.context_menu_visible() {
+            return;
+        }
         let Some(crate::ContextMenuOrigin::GutterIndicator(gutter_row)) =
-            self.editor.read(cx).context_menu_origin()
+            editor.context_menu_origin()
         else {
             return;
         };
@@ -3407,11 +3361,9 @@ impl EditorElement {
             window,
             cx,
             move |height, _max_width_for_stable_x, y_flipped, window, cx| {
-                let Some(mut element) =
-                    self.render_context_menu(line_height, height, y_flipped, window, cx)
-                else {
-                    return vec![];
-                };
+                let mut element = self
+                    .render_context_menu(line_height, height, y_flipped, window, cx)
+                    .expect("Visible context menu should always render.");
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 vec![(CursorPopoverType::CodeContextMenu, element, size)]
             },
@@ -8198,6 +8150,7 @@ impl HighlightedRange {
 
         let top_curve_width = curve_width(first_line.start_x, first_line.end_x);
         let mut builder = gpui::PathBuilder::fill();
+        builder.move_to(first_top_right - top_curve_width);
         builder.curve_to(first_top_right + curve_height, first_top_right);
 
         let mut iter = lines.iter().enumerate().peekable();

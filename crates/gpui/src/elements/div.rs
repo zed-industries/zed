@@ -2008,18 +2008,27 @@ impl Interactivity {
                 let build_tooltip = Rc::new(move |window: &mut Window, cx: &mut App| {
                     Some(((tooltip_builder.build)(window, cx), tooltip_is_hoverable))
                 });
-                // Use bounds instead of testing hitbox since check_is_hovered is also called
-                // during prepaint.
-                let source_bounds = hitbox.bounds;
-                let check_is_hovered = Rc::new(move |window: &Window| {
-                    pending_mouse_down.borrow().is_none()
-                        && source_bounds.contains(&window.mouse_position())
+                // Use bounds instead of testing hitbox since this is called during prepaint.
+                let check_is_hovered_during_prepaint = Rc::new({
+                    let pending_mouse_down = pending_mouse_down.clone();
+                    let source_bounds = hitbox.bounds;
+                    move |window: &Window| {
+                        pending_mouse_down.borrow().is_none()
+                            && source_bounds.contains(&window.mouse_position())
+                    }
+                });
+                let check_is_hovered = Rc::new({
+                    let hitbox = hitbox.clone();
+                    move |window: &Window| {
+                        pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window)
+                    }
                 });
                 register_tooltip_mouse_handlers(
                     &active_tooltip,
                     self.tooltip_id,
                     build_tooltip,
                     check_is_hovered,
+                    check_is_hovered_during_prepaint,
                     window,
                 );
             }
@@ -2361,6 +2370,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
     tooltip_id: Option<TooltipId>,
     build_tooltip: Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: Rc<dyn Fn(&Window) -> bool>,
+    check_is_hovered_during_prepaint: Rc<dyn Fn(&Window) -> bool>,
     window: &mut Window,
 ) {
     window.on_mouse_event({
@@ -2372,6 +2382,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
                 &active_tooltip,
                 &build_tooltip,
                 &check_is_hovered,
+                &check_is_hovered_during_prepaint,
                 phase,
                 window,
                 cx,
@@ -2398,10 +2409,22 @@ pub(crate) fn register_tooltip_mouse_handlers(
     });
 }
 
+/// Handles displaying tooltips when an element is hovered.
+///
+/// The mouse hovering logic also relies on being called from window prepaint in order to handle the
+/// case where the element the tooltip is on is not rendered - in that case its mouse listeners are
+/// also not registered. During window prepaint, the hitbox information is not available, so
+/// `check_is_hovered_during_prepaint` is used which bases the check off of the absolute bounds of
+/// the element.
+///
+/// TODO: There's a minor bug due to the use of absolute bounds while checking during prepaint - it
+/// does not know if the hitbox is occluded. In the case where a tooltip gets displayed and then
+/// gets occluded after display, it will stick around until the mouse exits the hover bounds.
 fn handle_tooltip_mouse_move(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered: &Rc<dyn Fn(&Window) -> bool>,
+    check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
     phase: DispatchPhase,
     window: &mut Window,
     cx: &mut App,
@@ -2447,7 +2470,7 @@ fn handle_tooltip_mouse_move(
             let delayed_show_task = window.spawn(cx, {
                 let active_tooltip = active_tooltip.clone();
                 let build_tooltip = build_tooltip.clone();
-                let check_is_hovered = check_is_hovered.clone();
+                let check_is_hovered_during_prepaint = check_is_hovered_during_prepaint.clone();
                 move |mut cx| async move {
                     cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
                     cx.update(|window, cx| {
@@ -2463,7 +2486,7 @@ fn handle_tooltip_mouse_move(
                                                 handle_tooltip_check_visible_and_update(
                                                     &active_tooltip,
                                                     tooltip_is_hoverable,
-                                                    &check_is_hovered,
+                                                    &check_is_hovered_during_prepaint,
                                                     tooltip_bounds,
                                                     window,
                                                     cx,

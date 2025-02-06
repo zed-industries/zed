@@ -213,8 +213,6 @@ pub fn initialize_workspace(
             status_bar.add_right_item(cursor_position, window, cx);
         });
 
-        auto_update_ui::notify_of_any_new_update(window, cx);
-
         let handle = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             handle
