@@ -46,8 +46,9 @@ struct DiffBuffer {
     change_set: Entity<BufferChangeSet>,
 }
 
-const CHANGED_NAMESPACE: &'static str = "0";
-const ADDED_NAMESPACE: &'static str = "1";
+const CONFLICT_NAMESPACE: &'static str = "0";
+const TRACKED_NAMESPACE: &'static str = "1";
+const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
     pub(crate) fn register(
@@ -174,19 +175,25 @@ impl ProjectDiff {
         let Some(git_repo) = self.git_state.read(cx).active_repository() else {
             return;
         };
+        let repo = git_repo.read(cx);
 
-        let Some(path) = git_repo
-            .read(cx)
+        let Some(abs_path) = repo
             .repo_path_to_project_path(&entry.repo_path)
             .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
         else {
             return;
         };
-        let path_key = if entry.status.is_created() {
-            PathKey::namespaced(ADDED_NAMESPACE, &path)
+
+        let namespace = if repo.has_conflict(&entry.repo_path) {
+            CONFLICT_NAMESPACE
+        } else if entry.status.is_created() {
+            NEW_NAMESPACE
         } else {
-            PathKey::namespaced(CHANGED_NAMESPACE, &path)
+            TRACKED_NAMESPACE
         };
+
+        let path_key = PathKey::namespaced(namespace, &abs_path);
+
         self.scroll_to_path(path_key, window, cx)
     }
 
@@ -259,12 +266,14 @@ impl ProjectDiff {
                 let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
                     continue;
                 };
-                // Craft some artificial paths so that created entries will appear last.
-                let path_key = if entry.status.is_created() {
-                    PathKey::namespaced(ADDED_NAMESPACE, &abs_path)
+                let namespace = if repo.has_conflict(&entry.repo_path) {
+                    CONFLICT_NAMESPACE
+                } else if entry.status.is_created() {
+                    NEW_NAMESPACE
                 } else {
-                    PathKey::namespaced(CHANGED_NAMESPACE, &abs_path)
+                    TRACKED_NAMESPACE
                 };
+                let path_key = PathKey::namespaced(namespace, &abs_path);
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self

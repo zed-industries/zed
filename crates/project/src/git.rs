@@ -336,6 +336,12 @@ impl Repository {
         self.repository_entry.status()
     }
 
+    pub fn has_conflict(&self, path: &RepoPath) -> bool {
+        self.repository_entry
+            .current_merge_conflicts
+            .contains(&path)
+    }
+
     pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
         let path = self.repository_entry.unrelativize(path)?;
         Some((self.worktree_id, path).into())
