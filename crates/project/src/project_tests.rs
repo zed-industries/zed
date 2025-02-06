@@ -5832,6 +5832,71 @@ async fn test_uncommitted_changes_for_buffer(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = r#"
+            fn main() {
+                println!("hello from HEAD");
+            }
+        "#
+    .unindent();
+    let file_contents = r#"
+            fn main() {
+                println!("hello from the working copy");
+            }
+        "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs".into(), committed_contents)],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir/src/main.rs".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let uncommitted_changes = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    uncommitted_changes.update(cx, |uncommitted_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            uncommitted_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &uncommitted_changes.base_text.as_ref().unwrap().text(),
+            &[(
+                1..2,
+                "    println!(\"hello from HEAD\");\n",
+                "    println!(\"hello from the working copy\");\n",
+            )],
+        );
+    });
+}
+
 async fn search(
     project: &Entity<Project>,
     query: SearchQuery,
