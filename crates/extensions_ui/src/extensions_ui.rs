@@ -10,6 +10,7 @@ use client::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use feature_flags::FeatureFlagAppExt as _;
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, uniform_list, Action, App, ClipboardItem, Context, Entity, EventEmitter, Flatten,
@@ -210,6 +211,7 @@ pub struct ExtensionsPage {
     filtered_remote_extension_indices: Vec<usize>,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
+    provides_filter: Option<ExtensionProvides>,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
@@ -261,12 +263,13 @@ impl ExtensionsPage {
                 filtered_remote_extension_indices: Vec::new(),
                 remote_extension_entries: Vec::new(),
                 query_contains_error: false,
+                provides_filter: None,
                 extension_fetch_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
             };
-            this.fetch_extensions(None, cx);
+            this.fetch_extensions(None, None, cx);
             this
         })
     }
@@ -363,7 +366,12 @@ impl ExtensionsPage {
         cx.notify();
     }
 
-    fn fetch_extensions(&mut self, search: Option<String>, cx: &mut Context<Self>) {
+    fn fetch_extensions(
+        &mut self,
+        search: Option<String>,
+        provides_filter: Option<BTreeSet<ExtensionProvides>>,
+        cx: &mut Context<Self>,
+    ) {
         self.is_fetching_extensions = true;
         cx.notify();
 
@@ -374,7 +382,7 @@ impl ExtensionsPage {
         });
 
         let remote_extensions = extension_store.update(cx, |store, cx| {
-            store.fetch_extensions(search.as_deref(), cx)
+            store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
         });
 
         cx.spawn(move |this, mut cx| async move {
@@ -953,9 +961,13 @@ impl ExtensionsPage {
     ) {
         if let editor::EditorEvent::Edited { .. } = event {
             self.query_contains_error = false;
-            self.fetch_extensions_debounced(cx);
-            self.refresh_feature_upsells(cx);
+            self.refresh_search(cx);
         }
+    }
+
+    fn refresh_search(&mut self, cx: &mut Context<Self>) {
+        self.fetch_extensions_debounced(cx);
+        self.refresh_feature_upsells(cx);
     }
 
     fn fetch_extensions_debounced(&mut self, cx: &mut Context<ExtensionsPage>) {
@@ -978,7 +990,7 @@ impl ExtensionsPage {
             };
 
             this.update(&mut cx, |this, cx| {
-                this.fetch_extensions(search, cx);
+                this.fetch_extensions(search, Some(BTreeSet::from_iter(this.provides_filter)), cx);
             })
             .ok();
         }));
@@ -1162,7 +1174,41 @@ impl Render for ExtensionsPage {
                             .w_full()
                             .gap_2()
                             .justify_between()
-                            .child(h_flex().child(self.render_search(cx)))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(self.render_search(cx))
+                                    .map(|parent| {
+                                        // Note: Staff-only until this gets design input.
+                                        if !cx.is_staff() {
+                                            return parent;
+                                        }
+
+                                        parent.child(CheckboxWithLabel::new(
+                                            "icon-themes-filter",
+                                            Label::new("Icon themes"),
+                                            match self.provides_filter {
+                                                Some(ExtensionProvides::IconThemes) => {
+                                                    ToggleState::Selected
+                                                }
+                                                _ => ToggleState::Unselected,
+                                            },
+                                            cx.listener(|this, checked, _window, cx| {
+                                                match checked {
+                                                    ToggleState::Unselected
+                                                    | ToggleState::Indeterminate => {
+                                                        this.provides_filter = None
+                                                    }
+                                                    ToggleState::Selected => {
+                                                        this.provides_filter =
+                                                            Some(ExtensionProvides::IconThemes)
+                                                    }
+                                                };
+                                                this.refresh_search(cx);
+                                            }),
+                                        ))
+                                    }),
+                            )
                             .child(
                                 h_flex()
                                     .child(
