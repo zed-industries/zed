@@ -169,7 +169,7 @@ impl RenderOnce for KeybindingHint {
 
         let size = self
             .size
-            .unwrap_or(TextSize::XSmall.rems(cx).to_pixels(window.rem_size()));
+            .unwrap_or(TextSize::Small.rems(cx).to_pixels(window.rem_size()));
         let kb_size = size - px(2.0);
         let kb_bg = if let Some(elevation) = self.elevation {
             elevation.on_elevation_bg(cx)
