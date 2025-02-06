@@ -171,50 +171,107 @@ rm ~/.local/zed.app/lib/libcrypto.so.1.1
 
 This will force zed to fallback to the system `libssl` and `libcrypto` libraries.
 
+
+
 ### NVIDIA Optimus Rendering Issues
 
-If you are using a system with NVIDIA Optimus (a hybrid graphics setup common in laptops with both integrated and discrete NVIDIA GPUs), Zed may fail to render properly or show a corrupted screen. This occurs because Zed defaults to using the integrated GPU instead of the discrete NVIDIA GPU.
+If you're using a system with NVIDIA Optimus (hybrid graphics with Intel integrated and NVIDIA discrete GPUs), you'll encounter different behaviors depending on your system's graphics mode:
 
-If the workarounds don't work, you encounter further issues or have suggestions for improving Zed's compatibility with NVIDIA Optimus setups, please contribute to the discussion in [#22900](https://github.com/zed-industries/zed/issues/22900).
+#### Behavior by Mode
 
-#### Workarounds
+1. **Intel Mode** (`prime-select intel`)
+   - ✔️ Works reliably with Intel GPU
+   - ✔️ Stable suspend/resume with Intel GPU
+   - ❌ Using NVIDIA GPU causes xdg-desktop-portal-gtk crashes and rendering artifacts after suspend
 
-1. **Using GNOME's Integrated Menu**  
-   GNOME provides a built-in option to launch applications using the dedicated GPU. This is the simplest and most user-friendly method for most users.
+2. **NVIDIA Mode** (`prime-select nvidia`)
+   - ✔️ Works with NVIDIA GPU
+   - ❌ Intel GPU is completely disabled
+   - ❌ Crashes on suspend/resume with "GPU hung" errors
 
-   - Right-click on the Zed application icon (e.g., in the applications menu or dock).
-   - Select **Launch using Dedicated Graphics Card**.
-   - Zed will now use the NVIDIA GPU for rendering.
+3. **On-Demand Mode** (`prime-select on-demand`)
+   - ✔️ Works reliably with Intel GPU
+   - ❌ Using NVIDIA GPU leads to crashes, especially on suspend/resume
+   - ❌ Most unstable mode when forcing NVIDIA graphics
 
-   This method is equivalent to running Zed with the `__NV_PRIME_RENDER_OFFLOAD=1` environment variable but is more intuitive and integrated into the desktop environment.
+#### Recommended Configuration
 
-2. **Using `__NV_PRIME_RENDER_OFFLOAD` (Manual Method)**  
-   If you prefer to launch Zed from the terminal or a script, you can force it to use the NVIDIA GPU with the following command:
+1. **On-Demand Mode** (Best Balance)
+   ```sh
+   sudo prime-select on-demand
+   # Restart your system
+   ```
+   - Uses Intel GPU by default (stable)
+   - Allows per-application GPU selection
+   - Avoid forcing NVIDIA graphics until issues are resolved
 
+2. **Intel Mode** (Most Stable)
+   ```sh
+   sudo prime-select intel
+   # Restart your system
+   ```
+
+3. **NVIDIA Mode** (Performance with Caveats)
+   ```sh
+   sudo prime-select nvidia
+   # Restart your system
+   ```
+   - Requires additional configuration to work (see below)
+   - Be prepared for suspend/resume issues
+
+#### Required NVIDIA Configuration
+
+When using NVIDIA mode (`prime-select nvidia`), you must force the NVIDIA GPU using one of these methods:
+
+1. **PRIME Render Offload** (Recommended)
    ```sh
    __NV_PRIME_RENDER_OFFLOAD=1 zed
    ```
+   
+   Or with full debugging options:
+   ```sh
+   __NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only zed
+   ```
 
-   This ensures that Zed uses the NVIDIA GPU for rendering, resolving the issue.
+2. **Vulkan ICD Loader**
+   ```sh
+   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json zed
+   ```
 
-#### Additional Context
+Without one of these configurations, Zed may fail to start or render properly in NVIDIA mode.
 
-Zed leverages the Vulkan API for GPU-accelerated rendering, which requires a compatible GPU. On systems with NVIDIA Optimus, the Vulkan API may not automatically select the discrete GPU, leading to rendering issues. The workarounds above explicitly direct Zed to use the NVIDIA GPU.
+#### Alternative GPU Selection Methods
 
-#### High-Level Context: Managing Dual-GPU Setups on Linux
+1. **Using GNOME's GUI** (Easiest)
+   - Right-click Zed in Applications menu
+   - Select "Launch using Discrete Graphics Card"
 
-Managing dual-GPU laptops with NVIDIA Optimus on Linux has evolved significantly over the years. Here’s a brief overview of the key developments:
+2. **Using Vulkan ICD Loaders in Other Modes**
+   ```sh
+   # Force Intel GPU
+   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/intel_icd.x86_64.json zed
+   
+   # Force NVIDIA GPU
+   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json zed
+   ```
 
-- **Bumblebee**: An early project that allowed manual GPU switching using commands like `optirun` or `primusrun`. It required user intervention and did not support automatic switching.
-- **vga_switcheroo**: Introduced in Linux kernel 2.6.34 (2010), this subsystem allowed GPU switching but typically required restarting the X server, making it inconvenient for dynamic use.
-- **NVIDIA PRIME and PRIME Render Offload**: Introduced in 2013 and enhanced in 2019, PRIME Render Offload allows offloading rendering to the discrete GPU for specific applications. This is the technology behind the `__NV_PRIME_RENDER_OFFLOAD=1` workaround.
-- **GNOME Integrated Menu**: GNOME provides a user-friendly option to launch applications with the dedicated GPU, simplifying the process for end users.
-
-As of now, **automatic GPU switching** (where the system seamlessly transitions between GPUs based on workload) is not fully supported on Linux. Users must manually select the appropriate GPU for their tasks. Tools like GNOME's integrated menu simplify this process but still require user input.
-
-#### Suggestions for Improvement
-
-- **Automatic GPU Detection**: Implement automatic feature detection and selection of the appropriate GPU
-- **User Feedback**: Provide clear feedback to users if their GPU setup is unsupported, along with guidance on how to resolve the issue (this section of readme).
+   Note: Exact paths may vary by distribution. Check your `/usr/share/vulkan/icd.d/` directory.
 
 
+#### Technical Background
+
+The core issues stem from:
+- Vulkan device loss during suspend/resume operations
+- Lack of runtime re-initialization support in Zed's graphics stack
+- Different behavior patterns across PRIME modes
+
+We're tracking these issues in [#22900](https://github.com/zed-industries/zed/issues/22900) and working on implementing proper device loss recovery ([#23288](https://github.com/zed-industries/zed/issues/23288)).
+
+#### Known Limitations
+
+- Suspend/resume operations are likely to cause issues when using NVIDIA GPU
+- Forcing NVIDIA graphics may lead to system instability
+- No current workaround for automatic GPU switching
+- Recovery from GPU device loss requires restarting Zed
+
+This is a known limitation of the current graphics stack and we're working on improvements.
