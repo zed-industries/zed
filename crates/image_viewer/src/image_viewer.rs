@@ -1,6 +1,8 @@
 mod image_info;
 mod image_viewer_settings;
 
+use std::path::PathBuf;
+
 use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
 use file_icons::FileIcons;
@@ -12,7 +14,6 @@ use gpui::{
 use persistence::IMAGE_VIEWER;
 use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
 use settings::Settings;
-use std::path::PathBuf;
 use theme::Theme;
 use ui::prelude::*;
 use util::paths::PathExt;
@@ -54,7 +55,6 @@ impl ImageView {
             ImageItemEvent::MetadataUpdated
             | ImageItemEvent::FileHandleChanged
             | ImageItemEvent::Reloaded => {
-                println!("Received event: {:?}", event);
                 cx.emit(ImageViewEvent::TitleChanged);
                 cx.notify();
             }

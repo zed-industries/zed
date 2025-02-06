@@ -137,8 +137,11 @@ impl ImageItem {
             _ => "Unknown",
         };
 
-        let path_clone = path.clone();
-        let image = smol::unblock(move || ImageReader::open(&path_clone)?.decode()).await?;
+        let image = smol::unblock({
+            let path = path.clone();
+            move || ImageReader::open(&path)?.decode()
+        })
+        .await?;
 
         let (width, height, format, color_type) = smol::unblock(move || {
             let dimensions = image.dimensions();
