@@ -217,6 +217,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
     slash_command_registry.register_command(assistant_slash_commands::TerminalSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::DiffSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
     slash_command_registry
         .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
