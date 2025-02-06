@@ -54,7 +54,7 @@ impl FileIcons {
 
         // check if file name is in suffixes
         // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
-        if let Some(typ) = path.to_str().and_then(|typ| this.suffixes.get(typ)) {
+        if let Some(typ) = path.file_name().and_then(|typ| typ.to_str()) {
             let maybe_path = get_icon_from_suffix(typ);
             if maybe_path.is_some() {
                 return maybe_path;
