@@ -73,7 +73,9 @@ impl Render for ImageInfo {
             self.metadata
                 .as_ref()
                 .and_then(|metadata| metadata.color_type.clone()),
-            self.metadata.as_ref().map(|metadata| metadata.format.clone()),
+            self.metadata
+                .as_ref()
+                .map(|metadata| metadata.format.clone()),
         ];
 
         let text = components
