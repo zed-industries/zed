@@ -7,7 +7,7 @@ use gpui::{App, AssetSource, Global, SharedString};
 use serde_derive::Deserialize;
 use settings::Settings;
 use theme::{IconTheme, ThemeRegistry, ThemeSettings};
-use util::{maybe, paths::PathExt};
+use util::paths::PathExt;
 
 #[derive(Deserialize, Debug)]
 pub struct FileIcons {
@@ -43,20 +43,45 @@ impl FileIcons {
     pub fn get_icon(path: &Path, cx: &App) -> Option<SharedString> {
         let this = cx.try_global::<Self>()?;
 
+        let get_icon_from_suffix = |suffix: &str| -> Option<SharedString> {
+            this.stems
+                .get(suffix)
+                .or_else(|| this.suffixes.get(suffix))
+                .and_then(|typ| this.get_icon_for_type(typ, cx))
+        };
         // TODO: Associate a type with the languages and have the file's language
         //       override these associations
-        maybe!({
-            let suffix = path.icon_stem_or_suffix()?;
 
-            if let Some(type_str) = this.stems.get(suffix) {
-                return this.get_icon_for_type(type_str, cx);
+        // check if file name is in suffixes
+        // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
+        if let Some(typ) = path.to_str().and_then(|typ| this.suffixes.get(typ)) {
+            let maybe_path = get_icon_from_suffix(typ);
+            if maybe_path.is_some() {
+                return maybe_path;
             }
+        }
 
-            this.suffixes
-                .get(suffix)
-                .and_then(|type_str| this.get_icon_for_type(type_str, cx))
-        })
-        .or_else(|| this.get_icon_for_type("default", cx))
+        // primary case: check if the files extension or the hidden file name
+        // matches some icon path
+        if let Some(suffix) = path.extension_or_hidden_file_name() {
+            let maybe_path = get_icon_from_suffix(suffix);
+            if maybe_path.is_some() {
+                return maybe_path;
+            }
+        }
+
+        // this _should_ only happen when the file is hidden (has leading '.')
+        // and is not a "special" file we have an icon (e.g. not `.eslint.config.js`)
+        // that should be caught above. In the remaining cases, we want to check
+        // for a normal supported extension e.g. `.data.json` -> `json`
+        let extension = path.extension().and_then(|ext| ext.to_str());
+        if let Some(extension) = extension {
+            let maybe_path = get_icon_from_suffix(extension);
+            if maybe_path.is_some() {
+                return maybe_path;
+            }
+        }
+        return this.get_icon_for_type("default", cx);
     }
 
     fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {
