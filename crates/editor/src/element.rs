@@ -5784,6 +5784,7 @@ fn inline_completion_accept_indicator(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
                 Some(Color::Default),
+                None,
                 false,
             ))
         })
