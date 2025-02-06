@@ -40,7 +40,7 @@ use postage::{
     watch,
 };
 use rpc::{
-    proto::{self, split_worktree_update},
+    proto::{self, split_worktree_update, FromProto, ToProto},
     AnyProtoClient,
 };
 pub use settings::WorktreeId;
@@ -267,7 +267,7 @@ impl RepositoryEntry {
 
     pub fn build_update(&self, old: &Self) -> proto::RepositoryEntry {
         let mut updated_statuses: Vec<proto::StatusEntry> = Vec::new();
-        let mut removed_statuses: Vec<proto::CrossPlatformPath> = Vec::new();
+        let mut removed_statuses: Vec<String> = Vec::new();
 
         let mut new_statuses = self.statuses_by_path.iter().peekable();
         let mut old_statuses = old.statuses_by_path.iter().peekable();
@@ -290,13 +290,13 @@ impl RepositoryEntry {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Greater => {
-                            removed_statuses.push(old_entry.repo_path.clone().into());
+                            removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
                             current_old_entry = old_statuses.next();
                         }
                     }
                 }
                 (None, Some(old_entry)) => {
-                    removed_statuses.push(old_entry.repo_path.clone().into());
+                    removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
                     current_old_entry = old_statuses.next();
                 }
                 (Some(new_entry), None) => {
@@ -661,16 +661,7 @@ impl Worktree {
             let snapshot = Snapshot::new(
                 worktree.id,
                 worktree.root_name,
-                worktree
-                    .abs_path
-                    .map(Into::<Arc<Path>>::into)
-                    .or_else(|| {
-                        worktree
-                            .abs_path_deprecated
-                            .map(PathBuf::from)
-                            .map(Into::into)
-                    })
-                    .unwrap_or(PathBuf::new().into()),
+                worktree.abs_path.map(FromProto::from_proto),
             );
 
             let background_snapshot = Arc::new(Mutex::new((snapshot.clone(), Vec::new())));
@@ -819,7 +810,7 @@ impl Worktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_string(),
             visible: self.is_visible(),
-            abs_path: Some(self.abs_path().into()),
+            abs_path: self.abs_path().to_proto(),
         }
     }
 
@@ -977,7 +968,7 @@ impl Worktree {
         is_directory: bool,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
-        let path = path.into();
+        let path: Arc<Path> = path.into();
         let worktree_id = self.id();
         match self {
             Worktree::Local(this) => this.create_entry(path, is_directory, cx),
@@ -986,7 +977,7 @@ impl Worktree {
                 let request = this.client.request(proto::CreateProjectEntry {
                     worktree_id: worktree_id.to_proto(),
                     project_id,
-                    path: Some(path.clone().into()),
+                    path: path.as_ref().to_proto(),
                     is_directory,
                 });
                 cx.spawn(move |this, mut cx| async move {
@@ -1071,19 +1062,19 @@ impl Worktree {
         new_path: impl Into<Arc<Path>>,
         cx: &Context<Self>,
     ) -> Task<Result<Option<Entry>>> {
-        let new_path = new_path.into();
+        let new_path: Arc<Path> = new_path.into();
         match self {
             Worktree::Local(this) => {
                 this.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
             }
             Worktree::Remote(this) => {
                 let relative_worktree_source_path = relative_worktree_source_path
-                    .map(|relative_worktree_source_path| relative_worktree_source_path.into());
+                    .map(|relative_worktree_source_path| relative_worktree_source_path.to_proto());
                 let response = this.client.request(proto::CopyProjectEntry {
                     project_id: this.project_id,
                     entry_id: entry_id.to_proto(),
                     relative_worktree_source_path,
-                    new_path: Some(new_path.into()),
+                    new_path: new_path.to_proto(),
                 });
                 cx.spawn(move |this, mut cx| async move {
                     let response = response.await?;
@@ -1183,11 +1174,7 @@ impl Worktree {
             (
                 this.scan_id(),
                 this.create_entry(
-                    request
-                        .path
-                        .map(Into::<PathBuf>::into)
-                        .or_else(|| request.path_deprecated.map(PathBuf::from))
-                        .unwrap_or(PathBuf::new()),
+                    request.path.map(FromProto::<Arc<Path>>::from_proto),
                     request.is_directory,
                     cx,
                 ),
@@ -1264,11 +1251,7 @@ impl Worktree {
                 this.scan_id(),
                 this.rename_entry(
                     ProjectEntryId::from_proto(request.entry_id),
-                    request
-                        .new_path
-                        .map(Into::<PathBuf>::into)
-                        .or_else(|| request.new_path_deprecated.map(PathBuf::from))
-                        .unwrap_or(PathBuf::new()),
+                    request.new_path.map(FromProto::<PathBuf>::from_proto),
                     cx,
                 ),
             )
@@ -2321,11 +2304,11 @@ impl RemoteWorktree {
         new_path: impl Into<Arc<Path>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
-        let new_path = new_path.into();
+        let new_path: Arc<Path> = new_path.into();
         let response = self.client.request(proto::RenameProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
-            new_path: Some(new_path.clone().into()),
+            new_path: new_path.as_ref().to_proto(),
         });
         cx.spawn(move |this, mut cx| async move {
             let response = response.await?;
@@ -2407,7 +2390,7 @@ impl Snapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: Some(self.abs_path().into()),
+            abs_path: self.abs_path().to_proto(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries: Vec::new(),
@@ -2508,13 +2491,7 @@ impl Snapshot {
             update.removed_entries.len()
         );
         self.update_abs_path(
-            SanitizedPath::from(
-                update
-                    .abs_path
-                    .map(Into::<PathBuf>::into)
-                    .or_else(|| update.abs_path_deprecated.map(Into::into))
-                    .context("Missing abs_path")?,
-            ),
+            SanitizedPath::from(update.abs_path.map(FromProto::<PathBuf>::from_proto)),
             update.root_name,
         );
 
@@ -2573,29 +2550,16 @@ impl Snapshot {
                     .repositories
                     .contains(&PathKey(work_dir_entry.path.clone()), &())
                 {
-                    let edits = if !repository.removed_statuses.is_empty() {
-                        repository
-                            .removed_statuses
-                            .into_iter()
-                            .map(|path| Edit::Remove(PathKey(path.into())))
-                            .chain(repository.updated_statuses.into_iter().filter_map(
-                                |updated_status| {
-                                    Some(Edit::Insert(updated_status.try_into().log_err()?))
-                                },
-                            ))
-                            .collect::<Vec<_>>()
-                    } else {
-                        repository
-                            .removed_statuses_deprecated
-                            .into_iter()
-                            .map(|path| Edit::Remove(PathKey(PathBuf::from(path).into())))
-                            .chain(repository.updated_statuses.into_iter().filter_map(
-                                |updated_status| {
-                                    Some(Edit::Insert(updated_status.try_into().log_err()?))
-                                },
-                            ))
-                            .collect::<Vec<_>>()
-                    };
+                    let edits = repository
+                        .removed_statuses
+                        .into_iter()
+                        .map(|path| Edit::Remove(PathKey(FromProto::from_proto(path))))
+                        .chain(repository.updated_statuses.into_iter().filter_map(
+                            |updated_status| {
+                                Some(Edit::Insert(updated_status.try_into().log_err()?))
+                            },
+                        ))
+                        .collect::<Vec<_>>();
 
                     self.repositories
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
@@ -2933,7 +2897,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: Some(self.abs_path().into()),
+            abs_path: self.abs_path().to_proto(),
             root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries,
@@ -3618,7 +3582,7 @@ impl language::File for File {
         rpc::proto::File {
             worktree_id: self.worktree.read(cx).id().to_proto(),
             entry_id: self.entry_id.map(|id| id.to_proto()),
-            path: Some(self.path.clone().into()),
+            path: self.path.as_ref().to_proto(),
             mtime: self.disk_state.mtime().map(|time| time.into()),
             is_deleted: self.disk_state == DiskState::Deleted,
         }
@@ -3699,11 +3663,7 @@ impl File {
 
         Ok(Self {
             worktree,
-            path: proto
-                .path
-                .map(Into::<Arc<Path>>::into)
-                .or_else(|| proto.path_deprecated.map(|path| Path::new(&path).into()))
-                .context("Missing path")?,
+            path: proto.path.map(FromProto::from_proto),
             disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
@@ -3822,8 +3782,9 @@ impl StatusEntry {
                 index_status
             }),
         };
+
         proto::StatusEntry {
-            repo_path: Some(self.repo_path.0.clone().into()),
+            repo_path: self.repo_path.as_ref().to_proto(),
             simple_status,
             status: Some(status_to_proto(self.status)),
         }
@@ -3834,17 +3795,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        let repo_path = RepoPath(
-            value
-                .repo_path
-                .map(Into::into)
-                .or_else(|| {
-                    value
-                        .repo_path_deprecated
-                        .map(|path| Path::new(&path).into())
-                })
-                .context("Missing repo path")?,
-        );
+        let repo_path = RepoPath(value.repo_path.map(FromProto::from_proto));
         let status = status_from_proto(value.simple_status, value.status)?;
         Ok(Self { repo_path, status })
     }
@@ -6208,14 +6159,17 @@ impl<'a> From<&'a Entry> for proto::Entry {
         Self {
             id: entry.id.to_proto(),
             is_dir: entry.is_dir(),
-            path: Some(entry.path.clone().into()),
+            path: entry.path.as_ref().to_proto(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             is_fifo: entry.is_fifo,
             size: Some(entry.size),
-            canonical_path: entry.canonical_path.as_ref().map(|path| path.into()),
+            canonical_path: entry
+                .canonical_path
+                .as_ref()
+                .map(|path| path.as_ref().to_proto()),
         }
     }
 }
@@ -6232,11 +6186,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             EntryKind::File
         };
 
-        let path: Arc<Path> = entry
-            .path
-            .map(Into::into)
-            .or_else(|| entry.path_deprecated.map(|path| Path::new(&path).into()))
-            .context("Missing path")?;
+        let path = entry.path.map(FromProto::from_proto);
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         let is_always_included = always_included.is_match(path.as_ref());
         Ok(Entry {
@@ -6248,12 +6198,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Box::from(PathBuf::from(path_string)))
-                .or_else(|| {
-                    entry
-                        .canonical_path_deprecated
-                        .map(|path| Box::from(Path::new(&path)))
-                }),
+                .map(|path_string| Box::from(FromProto::<PathBuf>::from_proto(path_string))),
             is_ignored: entry.is_ignored,
             is_always_included,
             is_external: entry.is_external,

@@ -15,7 +15,7 @@ use std::{
     cmp,
     fmt::{self, Debug},
     iter, mem,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -153,6 +153,24 @@ impl FromProto for PathBuf {
 }
 
 impl ToProto for PathBuf {
+    #[cfg(target_os = "windows")]
+    fn to_proto(self) -> String {
+        self.components()
+            .filter_map(|comp| match comp {
+                std::path::Component::RootDir => None,
+                _ => Some(comp.as_os_str().to_string_lossy().to_string()),
+            })
+            .collect::<Vec<_>>()
+            .join("/")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn to_proto(self) -> String {
+        self.to_string_lossy().to_string()
+    }
+}
+
+impl ToProto for &Path {
     #[cfg(target_os = "windows")]
     fn to_proto(self) -> String {
         self.components()
