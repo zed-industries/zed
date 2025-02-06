@@ -14,7 +14,6 @@ path = "src/language_models.rs"
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-aws-smithy-runtime-api.workspace = true
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"]}
 aws_http_client.workspace = true
@@ -48,7 +47,7 @@ telemetry_events.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 util.workspace = true
 

@@ -1,8 +1,9 @@
 use aws_smithy_types::body::SdkBody;
 use futures::AsyncReadExt;
+use tokio::runtime::Handle;
 use http_client::{AsyncBody, Inner};
 
-pub fn convert_to_sdk_body(body: AsyncBody) -> SdkBody {
+pub async fn convert_to_sdk_body(body: AsyncBody, handle: Handle) -> SdkBody {
     match body.0 {
         Inner::Empty => SdkBody::empty(),
         Inner::Bytes(b) => {
@@ -10,13 +11,13 @@ pub fn convert_to_sdk_body(body: AsyncBody) -> SdkBody {
             SdkBody::from(b)
         }
         Inner::AsyncReader(mut reader) => {
-            // how do we get a background runtime here?
-            todo!()
-            // let mut buffer = Vec::new();
-            // let _ = reader.read_to_end(&mut buffer).await;
-            // buffer
-            //
-            // SdkBody::from(response)
+            let buffer = handle.spawn(async move {
+                let mut buffer = Vec::new();
+                let _ = reader.read_to_end(&mut buffer).await;
+                buffer
+            });
+
+            SdkBody::from(buffer.await.unwrap_or_default())
         }
     }
 }

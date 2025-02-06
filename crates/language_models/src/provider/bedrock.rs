@@ -12,7 +12,7 @@ use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
 use collections::BTreeMap;
 use gpui_tokio::Tokio;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{Stream, TryFutureExt};
+use futures::{ready, Stream, TryFutureExt, TryStreamExt};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -33,6 +33,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use smol::Async;
 use strum::IntoEnumIterator;
+use tokio::runtime::Handle;
+use tokio::task::JoinError;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
@@ -202,13 +204,13 @@ impl BedrockLanguageModelProvider {
             }),
         });
 
-        let coerced_client = AwsHttpClient::new(http_client.clone());
-
         let tokio_handle = Tokio::handle(cx);
+
+        let coerced_client = AwsHttpClient::new(http_client.clone(), tokio_handle.clone());
 
         Self {
             http_client: coerced_client,
-            handler: tokio_handle,
+            handler: tokio_handle.clone(),
             state,
         }
     }
@@ -306,7 +308,7 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncApp,
-    ) -> Result<BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>>> {
+    ) -> Result<BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
         let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
             let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
             (state.aa_id.clone(), state.sk.clone(), state.region.clone())
@@ -333,10 +335,18 @@ impl BedrockModel {
                 .build(),
         );
 
-        Ok(self.handler.spawn(async move {
-            let request = bedrock::stream_completion(runtime_client, request);
-            request.await.context("Failed to perform stream completion")
-        }).boxed())
+        let owned_handle = self.handler.clone();
+
+
+        Ok(async move {
+            let request = bedrock::stream_completion(runtime_client, request, owned_handle);
+
+            request.await.unwrap_or_else(|e| {
+                futures::stream::once(async move {
+                    Err(BedrockError::Other(e))
+                }).boxed()
+            })
+        }.boxed())
     }
 }
 
@@ -388,10 +398,12 @@ impl LanguageModel for BedrockModel {
             self.model.max_output_tokens(),
         );
 
+        let owned_handle = self.handler.clone();
+
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|e| anyhow!(e))?;
-            Ok(map_to_language_model_completion_events(response))
+            let response = request.map_err(|e| anyhow!(e)).unwrap().await;
+            Ok(map_to_language_model_completion_events(response, owned_handle))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -472,6 +484,7 @@ pub fn get_bedrock_tokens(
 
 pub fn map_to_language_model_completion_events(
     events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+    handle: Handle
 ) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
     struct State {
         events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
@@ -481,53 +494,58 @@ pub fn map_to_language_model_completion_events(
         State {
             events
         },
-        |mut state: State| async move {
-            while let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => match event {
-                        ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
-                            if let Some(ContentBlockDelta::Text(text_out)) = cb_delta.delta {
-                                return Some((
-                                    Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
-                                    state,
-                                ));
-                            } else if let Some(ContentBlockDelta::ToolUse(_)) = cb_delta.delta {
-                                return Some((
-                                    Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
-                                    state,
-                                ));
-                            } else if cb_delta.delta.is_none() {
-                                return Some((None, state));
-                            }
-                        }
-                        ConverseStreamOutput::ContentBlockStart(cb_start) => {
-                            if let Some(start) = cb_start.start {
-                                match start {
-                                    ContentBlockStart::ToolUse(_) => {
-                                        return Some((
-                                            Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
-                                            state,
-                                        ))
-                                    }
-                                    _ => {}
+        move |mut state: State| {
+        let inner_handle = handle.clone();
+        async move {
+            inner_handle.spawn(async {
+                while let Some(event) = state.events.next().await {
+                    match event {
+                        Ok(event) => match event {
+                            ConverseStreamOutput::ContentBlockDelta(cb_delta) => {
+                                if let Some(ContentBlockDelta::Text(text_out)) = cb_delta.delta {
+                                    return Some((
+                                        Some(Ok(LanguageModelCompletionEvent::Text(text_out))),
+                                        state,
+                                    ));
+                                } else if let Some(ContentBlockDelta::ToolUse(_)) = cb_delta.delta {
+                                    return Some((
+                                        Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
+                                        state,
+                                    ));
+                                } else if cb_delta.delta.is_none() {
+                                    return Some((None, state));
                                 }
                             }
-                        }
-                        ConverseStreamOutput::ContentBlockStop(_) => {
-                            return Some((
-                                Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet, this event will only be received on tool use"))),
-                                state,
-                            ))
-                        }
-                        ConverseStreamOutput::MessageStart(_) |
-                        ConverseStreamOutput::MessageStop(_) |
-                        ConverseStreamOutput::Metadata(_) => {}
-                        _ => {}
-                    },
-                    Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                            ConverseStreamOutput::ContentBlockStart(cb_start) => {
+                                if let Some(start) = cb_start.start {
+                                    match start {
+                                        ContentBlockStart::ToolUse(_) => {
+                                            return Some((
+                                                Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet"))),
+                                                state,
+                                            ))
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            ConverseStreamOutput::ContentBlockStop(_) => {
+                                return Some((
+                                    Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet, this event will only be received on tool use"))),
+                                    state,
+                                ))
+                            }
+                            ConverseStreamOutput::MessageStart(_) |
+                            ConverseStreamOutput::MessageStop(_) |
+                            ConverseStreamOutput::Metadata(_) => {}
+                            _ => {}
+                        },
+                        Err(err) => return Some((Some(Err(anyhow!(err))), state)),
+                    }
                 }
-            }
-            None
+                None
+            }).await.unwrap()
+        }
         },
     ).filter_map(|event| async move { event })
 }

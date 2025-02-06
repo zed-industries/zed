@@ -6,12 +6,14 @@ use aws_smithy_runtime_api::client::http::{HttpConnector as AwsConnector, HttpCo
 use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsHttpRequest, HttpResponse};
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
+use aws_smithy_runtime_api::http::StatusCode;
+use tokio::runtime::Handle;
 use http_client::{HttpClient, Request};
 use crate::utils::{convert_to_async_body, convert_to_sdk_body};
-use gpui_tokio::Tokio;
 
 struct AwsHttpConnector {
-    client: Arc<dyn HttpClient>
+    client: Arc<dyn HttpClient>,
+    handle: Handle
 }
 
 impl std::fmt::Debug for AwsHttpConnector {
@@ -34,28 +36,32 @@ impl AwsConnector for AwsHttpConnector {
 
         let fut_resp = self.client.send(Request::from_parts(parts.into(), coerced_body));
 
+        let owned_handle = self.handle.clone();
+
         HttpConnectorFuture::new(async move {
-            let response = fut_resp
-                .await
-                .map_err(|e| ConnectorError::other(e.into(), None))?
-                .map(|b| convert_to_sdk_body(b));
-            match HttpResponse::try_from(response) {
-                Ok(response) => Ok(response),
-                Err(err) => Err(ConnectorError::other(err.into(), None)),
-            }
+            let cloned_resp = match fut_resp.await {
+                Ok(resp) => resp,
+                Err(e) => return Err(ConnectorError::other(e.into(), None)),
+            };
+            let (parts, aws_body) = cloned_resp.into_parts();
+            let sdk_body = convert_to_sdk_body(aws_body, owned_handle).await;
+
+            Ok(HttpResponse::new(StatusCode::try_from(parts.status.as_u16()).unwrap(), sdk_body))
         })
 
     }
 }
 
 pub struct AwsHttpClient {
-    client: Arc<dyn HttpClient>
+    client: Arc<dyn HttpClient>,
+    handler: Handle
 }
 
 impl Clone for AwsHttpClient {
     fn clone(&self) -> Self {
         Self {
-            client: self.client.clone()
+            client: self.client.clone(),
+            handler: self.handler.clone()
         }
     }
 }
@@ -68,15 +74,16 @@ impl std::fmt::Debug for AwsHttpClient {
 }
 
 impl AwsHttpClient {
-    pub fn new(client: Arc<dyn HttpClient>) -> Self {
-        Self { client }
+    pub fn new(client: Arc<dyn HttpClient>, handle: Handle) -> Self {
+        Self { client, handler: handle }
     }
 }
 
 impl AwsClient for AwsHttpClient {
     fn http_connector(&self, settings: &HttpConnectorSettings, components: &RuntimeComponents) -> SharedHttpConnector {
         SharedHttpConnector::new(AwsHttpConnector {
-            client: self.client.clone()
+            client: self.client.clone(),
+            handle: self.handler.clone()
         })
     }
 }

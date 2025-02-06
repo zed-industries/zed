@@ -22,7 +22,7 @@ http_client.workspace = true
 schemars = { workspace = true, optional = true }
 strum.workspace = true
 thiserror.workspace = true
-gpui_tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 util.workspace = true
 aws-smithy-types.workspace = true
 aws-smithy-runtime-api.workspace = true
