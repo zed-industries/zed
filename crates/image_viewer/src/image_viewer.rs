@@ -1,4 +1,5 @@
-pub mod image_info;
+mod image_info;
+mod image_viewer_settings;
 
 use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
@@ -8,19 +9,20 @@ use gpui::{
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ObjectFit,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
-use image_info::ImageViewerSettings;
 use persistence::IMAGE_VIEWER;
+use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
+use settings::Settings;
 use std::path::PathBuf;
 use theme::Theme;
 use ui::prelude::*;
-
-use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
-use settings::Settings;
 use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
     ItemId, ItemSettings, ToolbarItemLocation, Workspace, WorkspaceId,
 };
+
+pub use crate::image_info::*;
+pub use crate::image_viewer_settings::*;
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
 

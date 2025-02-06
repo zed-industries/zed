@@ -26,7 +26,7 @@ use gpui::{
     Entity, Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel,
     ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind, WindowOptions,
 };
-use image_viewer::image_info::ImageInfo;
+use image_viewer::ImageInfo;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};

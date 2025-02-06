@@ -1,39 +1,10 @@
-use crate::ImageView;
-use anyhow;
 use gpui::{div, Context, Entity, IntoElement, ParentElement, Render, Subscription};
 use project::image_store::ImageMetadata;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::Settings;
 use ui::{prelude::*, Button, LabelSize, Window};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-pub struct ImageViewerSettings {
-    #[serde(default)]
-    unit_type: ImageFileSizeUnitType,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ImageFileSizeUnitType {
-    #[default]
-    Binary,
-    Decimal,
-}
-
-impl Settings for ImageViewerSettings {
-    const KEY: Option<&'static str> = Some("image_viewer");
-
-    type FileContent = Self;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut App,
-    ) -> Result<Self, anyhow::Error> {
-        sources.json_merge().or_else(|_| Ok(Self::default()))
-    }
-}
+use crate::{ImageFileSizeUnitType, ImageView, ImageViewerSettings};
 
 pub struct ImageInfo {
     metadata: Option<ImageMetadata>,
@@ -132,7 +103,6 @@ impl StatusItemView for ImageInfo {
         if let Some(image_view) = active_pane_item.and_then(|item| item.act_as::<ImageView>(cx)) {
             self.update_metadata(&image_view, cx);
 
-            // Observe view for changes
             self._observe_active_image = Some(cx.observe(&image_view, |this, view, cx| {
                 this.update_metadata(&view, cx);
             }));
