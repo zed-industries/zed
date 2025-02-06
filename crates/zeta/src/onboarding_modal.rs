@@ -380,14 +380,12 @@ impl Render for ZedPredictModal {
                         .when(self.data_collection_expanded, |element| {
                             element.child(
                                 v_flex()
-                                    .id("training-data-container")
                                     .mt_2()
                                     .p_2()
                                     .rounded_md()
                                     .bg(cx.theme().colors().editor_background.opacity(0.5))
                                     .border_1()
                                     .border_color(cx.theme().colors().border_variant)
-                                    .overflow_scroll()
                                     .child(
                                         div().child(
                                             Label::new("To improve edit predictions, help fine-tune Zed's model by sharing data from the open-source projects you work on.")
