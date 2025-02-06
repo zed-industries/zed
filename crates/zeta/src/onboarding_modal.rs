@@ -173,7 +173,12 @@ impl Render for ZedPredictModal {
             .max_h(max_height)
             .p_4()
             .gap_2()
-            .overflow_hidden()
+            .when(self.data_collection_expanded, |element| {
+                element.overflow_y_scroll()
+            })
+            .when(!self.data_collection_expanded, |element| {
+                element.overflow_hidden()
+            })
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
@@ -295,9 +300,7 @@ impl Render for ZedPredictModal {
             };
 
             fn label_item(label_text: impl Into<SharedString>) -> impl Element {
-                div()
-                    .w_full()
-                    .child(Label::new(label_text).color(Color::Muted).into_element())
+                Label::new(label_text).color(Color::Muted).into_element()
             }
 
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
@@ -309,7 +312,7 @@ impl Render for ZedPredictModal {
                             .mt_1p5()
                             .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
                     )
-                    .child(label_item(label_text))
+                    .child(div().w_full().child(label_item(label_text)))
             }
 
             fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
@@ -403,9 +406,11 @@ impl Render for ZedPredictModal {
                                     ))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "Files that can contain sensitive data, like `.env`, are",
+                                        "Files with sensitive data, like `.env`, are excluded",
                                         h_flex()
-                                            .child(label_item("excluded by default via the"))
+                                            .w_full()
+                                            .flex_wrap()
+                                            .child(label_item("by default via the"))
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
                                                     cx.listener(Self::inline_completions_doc),
