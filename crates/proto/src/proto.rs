@@ -16,6 +16,7 @@ use std::{
     fmt::{self, Debug},
     iter, mem,
     path::{Path, PathBuf},
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -149,6 +150,12 @@ pub trait ToProto {
 impl FromProto for PathBuf {
     fn from_proto(proto: String) -> Self {
         proto.split('/').collect()
+    }
+}
+
+impl FromProto for Arc<Path> {
+    fn from_proto(proto: String) -> Self {
+        PathBuf::from_proto(proto).into()
     }
 }
 

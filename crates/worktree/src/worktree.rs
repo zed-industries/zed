@@ -661,7 +661,7 @@ impl Worktree {
             let snapshot = Snapshot::new(
                 worktree.id,
                 worktree.root_name,
-                worktree.abs_path.map(FromProto::from_proto),
+                Arc::<Path>::from_proto(worktree.abs_path),
             );
 
             let background_snapshot = Arc::new(Mutex::new((snapshot.clone(), Vec::new())));
@@ -1174,7 +1174,7 @@ impl Worktree {
             (
                 this.scan_id(),
                 this.create_entry(
-                    request.path.map(FromProto::<Arc<Path>>::from_proto),
+                    Arc::<Path>::from_proto(request.path),
                     request.is_directory,
                     cx,
                 ),
@@ -1251,7 +1251,7 @@ impl Worktree {
                 this.scan_id(),
                 this.rename_entry(
                     ProjectEntryId::from_proto(request.entry_id),
-                    request.new_path.map(FromProto::<PathBuf>::from_proto),
+                    Arc::<Path>::from_proto(request.new_path),
                     cx,
                 ),
             )
@@ -1271,18 +1271,15 @@ impl Worktree {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            let relative_worktree_source_path =
-                request.relative_worktree_source_path.map(PathBuf::from);
+            let relative_worktree_source_path = request
+                .relative_worktree_source_path
+                .map(PathBuf::from_proto);
             (
                 this.scan_id(),
                 this.copy_entry(
                     ProjectEntryId::from_proto(request.entry_id),
                     relative_worktree_source_path,
-                    request
-                        .new_path
-                        .map(Into::<PathBuf>::into)
-                        .or_else(|| request.new_path_deprecated.map(PathBuf::from))
-                        .unwrap_or(PathBuf::new()),
+                    PathBuf::from_proto(request.new_path),
                     cx,
                 ),
             )
@@ -2491,7 +2488,7 @@ impl Snapshot {
             update.removed_entries.len()
         );
         self.update_abs_path(
-            SanitizedPath::from(update.abs_path.map(FromProto::<PathBuf>::from_proto)),
+            SanitizedPath::from(PathBuf::from_proto(update.abs_path)),
             update.root_name,
         );
 
@@ -3663,7 +3660,7 @@ impl File {
 
         Ok(Self {
             worktree,
-            path: proto.path.map(FromProto::from_proto),
+            path: Arc::<Path>::from_proto(proto.path),
             disk_state,
             entry_id: proto.entry_id.map(ProjectEntryId::from_proto),
             is_local: false,
@@ -3795,7 +3792,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        let repo_path = RepoPath(value.repo_path.map(FromProto::from_proto));
+        let repo_path = RepoPath(Arc::<Path>::from_proto(value.repo_path));
         let status = status_from_proto(value.simple_status, value.status)?;
         Ok(Self { repo_path, status })
     }
@@ -6186,7 +6183,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             EntryKind::File
         };
 
-        let path = entry.path.map(FromProto::from_proto);
+        let path = Arc::<Path>::from_proto(entry.path);
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         let is_always_included = always_included.is_match(path.as_ref());
         Ok(Entry {
@@ -6198,7 +6195,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Box::from(FromProto::<PathBuf>::from_proto(path_string))),
+                .map(|path_string| Box::from(PathBuf::from_proto(path_string))),
             is_ignored: entry.is_ignored,
             is_always_included,
             is_external: entry.is_external,
