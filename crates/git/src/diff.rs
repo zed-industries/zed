@@ -1,7 +1,8 @@
+use gpui::Entity;
 use rope::Rope;
 use std::{cmp, iter, ops::Range};
 use sum_tree::SumTree;
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point};
+use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
@@ -63,13 +64,13 @@ impl sum_tree::Summary for DiffHunkSummary {
 }
 
 #[derive(Debug, Clone)]
-pub struct BufferDiff {
+pub struct BufferDiffSnapshot {
     tree: SumTree<InternalDiffHunk>,
 }
 
-impl BufferDiff {
-    pub fn new(buffer: &BufferSnapshot) -> BufferDiff {
-        BufferDiff {
+impl BufferDiffSnapshot {
+    pub fn new(buffer: &BufferSnapshot) -> BufferDiffSnapshot {
+        BufferDiffSnapshot {
             tree: SumTree::new(buffer),
         }
     }
@@ -391,6 +392,149 @@ impl BufferDiff {
     }
 }
 
+pub struct BufferDiff {
+    pub buffer_id: BufferId,
+    pub base_text: Option<language::BufferSnapshot>,
+    pub diff_to_buffer: BufferDiffSnapshot,
+    pub unstaged_change_set: Option<Entity<BufferDiff>>,
+}
+
+impl std::fmt::Debug for BufferDiff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BufferChangeSet")
+            .field("buffer_id", &self.buffer_id)
+            .field("base_text", &self.base_text.as_ref().map(|s| s.text()))
+            .field("diff_to_buffer", &self.diff_to_buffer)
+            .finish()
+    }
+}
+
+pub enum BufferDiffEvent {
+    DiffChanged { changed_range: Range<text::Anchor> },
+    LanguageChanged,
+}
+
+impl EventEmitter<BufferDiffEvent> for BufferDiff {}
+
+impl BufferDiff {
+    fn set_state(
+        &mut self,
+        base_text: Option<language::BufferSnapshot>,
+        diff: BufferDiffSnapshot,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(base_text) = base_text.as_ref() {
+            let changed_range = if Some(base_text.remote_id())
+                != self.base_text.as_ref().map(|buffer| buffer.remote_id())
+            {
+                Some(text::Anchor::MIN..text::Anchor::MAX)
+            } else {
+                diff.compare(&self.diff_to_buffer, buffer)
+            };
+            if let Some(changed_range) = changed_range {
+                cx.emit(BufferDiffEvent::DiffChanged { changed_range });
+            }
+        }
+        self.base_text = base_text;
+        self.diff_to_buffer = diff;
+    }
+
+    pub fn diff_hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<text::Anchor>,
+        buffer_snapshot: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
+        self.diff_to_buffer
+            .hunks_intersecting_range(range, buffer_snapshot)
+    }
+
+    pub fn diff_hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<text::Anchor>,
+        buffer_snapshot: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
+        self.diff_to_buffer
+            .hunks_intersecting_range_rev(range, buffer_snapshot)
+    }
+
+    /// Used in cases where the change set isn't derived from git.
+    pub fn set_base_text(
+        &mut self,
+        base_buffer: Entity<language::Buffer>,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        let this = cx.weak_entity();
+        let base_buffer = base_buffer.read(cx).snapshot();
+        cx.spawn(|_, mut cx| async move {
+            let diff = cx
+                .background_executor()
+                .spawn({
+                    let base_buffer = base_buffer.clone();
+                    let buffer = buffer.clone();
+                    async move { BufferDiffSnapshot::build(Some(&base_buffer.text()), &buffer) }
+                })
+                .await;
+            let Some(this) = this.upgrade() else {
+                tx.send(()).ok();
+                return;
+            };
+            this.update(&mut cx, |this, cx| {
+                this.set_state(Some(base_buffer), diff, &buffer, cx);
+            })
+            .log_err();
+            tx.send(()).ok();
+        })
+        .detach();
+        rx
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn base_text_string(&self) -> Option<String> {
+        self.base_text.as_ref().map(|buffer| buffer.text())
+    }
+
+    pub fn new(buffer: &Entity<Buffer>, cx: &mut App) -> Self {
+        BufferDiff {
+            buffer_id: buffer.read(cx).remote_id(),
+            base_text: None,
+            diff_to_buffer: BufferDiffSnapshot::new(&buffer.read(cx).text_snapshot()),
+            unstaged_change_set: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn new_with_base_text(base_text: &str, buffer: &Entity<Buffer>, cx: &mut App) -> Self {
+        let mut base_text = base_text.to_owned();
+        text::LineEnding::normalize(&mut base_text);
+        let diff_to_buffer =
+            BufferDiffSnapshot::build(Some(&base_text), &buffer.read(cx).text_snapshot());
+        let base_text = language::Buffer::build_snapshot_sync(base_text.into(), None, None, cx);
+        BufferDiff {
+            buffer_id: buffer.read(cx).remote_id(),
+            base_text: Some(base_text),
+            diff_to_buffer,
+            unstaged_change_set: None,
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn recalculate_diff_sync(
+        &mut self,
+        snapshot: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let mut base_text = self.base_text.as_ref().map(|buffer| buffer.text());
+        if let Some(base_text) = base_text.as_mut() {
+            text::LineEnding::normalize(base_text);
+        }
+        let diff_to_buffer = BufferDiffSnapshot::build(base_text.as_deref(), &snapshot);
+        self.set_state(self.base_text.clone(), diff_to_buffer, &snapshot, cx);
+    }
+}
+
 /// Range (crossing new lines), old, new
 #[cfg(any(test, feature = "test-support"))]
 #[track_caller]
@@ -450,7 +594,7 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiff::new(&buffer);
+        let mut diff = BufferDiffSnapshot::new(&buffer);
         diff.update(&diff_base_rope, &buffer);
         assert_hunks(
             diff.hunks(&buffer),
@@ -511,7 +655,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiff::new(&buffer);
+        let mut diff = BufferDiffSnapshot::new(&buffer);
         diff.update(&diff_base_rope, &buffer);
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
@@ -557,8 +701,8 @@ mod tests {
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text_1);
 
-        let empty_diff = BufferDiff::new(&buffer);
-        let diff_1 = BufferDiff::build(Some(&base_text), &buffer);
+        let empty_diff = BufferDiffSnapshot::new(&buffer);
+        let diff_1 = BufferDiffSnapshot::build(Some(&base_text), &buffer);
         let range = diff_1.compare(&empty_diff, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(0, 0)..Point::new(8, 0));
 
@@ -576,7 +720,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_2 = BufferDiff::build(Some(&base_text), &buffer);
+        let diff_2 = BufferDiffSnapshot::build(Some(&base_text), &buffer);
         assert_eq!(None, diff_2.compare(&diff_1, &buffer));
 
         // Edit turns a deletion hunk into a modification.
@@ -593,7 +737,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_3 = BufferDiff::build(Some(&base_text), &buffer);
+        let diff_3 = BufferDiffSnapshot::build(Some(&base_text), &buffer);
         let range = diff_3.compare(&diff_2, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
 
@@ -610,7 +754,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_4 = BufferDiff::build(Some(&base_text), &buffer);
+        let diff_4 = BufferDiffSnapshot::build(Some(&base_text), &buffer);
         let range = diff_4.compare(&diff_3, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 4)..Point::new(4, 0));
 
@@ -628,7 +772,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_5 = BufferDiff::build(Some(&base_text), &buffer);
+        let diff_5 = BufferDiffSnapshot::build(Some(&base_text), &buffer);
         let range = diff_5.compare(&diff_4, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(3, 0)..Point::new(4, 0));
 
@@ -646,7 +790,7 @@ mod tests {
             "
             .unindent(),
         );
-        let diff_6 = BufferDiff::build(Some(&base_text), &buffer);
+        let diff_6 = BufferDiffSnapshot::build(Some(&base_text), &buffer);
         let range = diff_6.compare(&diff_5, &buffer).unwrap();
         assert_eq!(range.to_point(&buffer), Point::new(7, 0)..Point::new(8, 0));
     }
