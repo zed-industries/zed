@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{bail, Result};
 
 use async_trait::async_trait;
 use collections::BTreeMap;
@@ -125,7 +125,7 @@ impl ToolchainStore {
                 name: toolchain.name.into(),
                 // todo(windows)
                 // Do we need to convert path to native string?
-                path: PathBuf::from(toolchain.path).to_proto(),
+                path: PathBuf::from(toolchain.path).to_proto().into(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
@@ -414,7 +414,8 @@ impl RemoteToolchainStore {
                         // Do we need to convert path to native string?
                         path: PathBuf::from_proto(toolchain.path)
                             .to_string_lossy()
-                            .to_string(),
+                            .to_string()
+                            .into(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })
@@ -459,7 +460,8 @@ impl RemoteToolchainStore {
                     // Do we need to convert path to native string?
                     path: PathBuf::from_proto(toolchain.path)
                         .to_string_lossy()
-                        .to_string(),
+                        .to_string()
+                        .into(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })

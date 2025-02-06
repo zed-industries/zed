@@ -17,11 +17,7 @@ use settings::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
     SettingsSources, SettingsStore,
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use task::{TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};

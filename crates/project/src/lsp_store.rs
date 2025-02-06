@@ -5988,7 +5988,7 @@ impl LspStore {
             if let Some(message) = envelope.payload.summary {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: PathBuf::from_proto(message.path),
+                    path: Arc::<Path>::from_proto(message.path),
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message.language_server_id as usize);
