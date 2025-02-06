@@ -8,9 +8,9 @@ pub struct Model {
     pub id: i64,
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
-    // NOTE:
-    // One should use `CrossPlatformPath::to_db_string` to get the path string, and
-    // use `CrossPlatformPath::from_db_string` to get the path back.
+    /// NOTE:
+    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
+    /// PathBuf and String
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,

@@ -694,7 +694,10 @@ impl RejoinedProject {
 #[derive(Debug)]
 pub struct RejoinedWorktree {
     pub id: u64,
-    pub abs_path: Vec<String>,
+    /// NOTE:
+    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
+    /// PathBuf and String
+    pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
     pub updated_entries: Vec<proto::Entry>,
@@ -762,7 +765,10 @@ pub struct LeftProject {
 
 pub struct Worktree {
     pub id: u64,
-    pub abs_path: Vec<String>,
+    /// NOTE:
+    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
+    /// PathBuf and String
+    pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
     pub entries: Vec<proto::Entry>,
@@ -775,7 +781,10 @@ pub struct Worktree {
 
 #[derive(Debug)]
 pub struct WorktreeSettingsFile {
-    pub path: Vec<String>,
+    /// NOTE:
+    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
+    /// PathBuf and String
+    pub path: String,
     pub content: String,
     pub kind: LocalSettingsKind,
 }
