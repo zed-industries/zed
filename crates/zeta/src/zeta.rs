@@ -957,21 +957,31 @@ impl LicenseDetectionWatcher {
         let task = if worktree.abs_path().is_file() {
             Task::ready(())
         } else {
-            let loaded_files_task = futures::future::join_all(
-                LICENSE_FILES_TO_CHECK
-                    .iter()
-                    .map(|file| worktree.load_file(Path::new(file), cx)),
-            );
+            let loaded_files = LICENSE_FILES_TO_CHECK
+                .iter()
+                .map(Path::new)
+                .map(|file| worktree.load_file(file, cx))
+                .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
 
             cx.background_executor().spawn(async move {
-                for loaded_file in loaded_files_task.await {
-                    if let Some(content) = loaded_file.log_err() {
-                        if is_license_eligible_for_data_collection(&content.text) {
-                            *is_open_source_tx.borrow_mut() = true;
-                            break;
-                        }
+                for loaded_file in loaded_files.into_iter() {
+                    let Ok(loaded_file) = loaded_file.await else {
+                        continue;
+                    };
+
+                    let path = &loaded_file.file.path;
+                    if is_license_eligible_for_data_collection(&loaded_file.text) {
+                        log::info!("detected '{path:?}' as open source license");
+                        *is_open_source_tx.borrow_mut() = true;
+                    } else {
+                        log::info!("didn't detect '{path:?}' as open source license");
                     }
+
+                    // stop on the first license that successfully read
+                    return;
                 }
+
+                log::debug!("didn't find a license file to check, assuming closed source");
             })
         };
 
