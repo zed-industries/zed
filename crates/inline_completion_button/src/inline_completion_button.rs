@@ -387,7 +387,7 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(&self, mut menu: ContextMenu, cx: &mut App) -> ContextMenu {
         let fs = self.fs.clone();
 
-        menu = menu.header("Show Predict Edits For");
+        menu = menu.header("Show Edit Predictions For");
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
@@ -451,9 +451,9 @@ impl InlineCompletionButton {
         }
 
         menu = menu.item(
-            ContextMenuEntry::new("Exclude Files")
+            ContextMenuEntry::new("Configure Excluded Files")
                 .documentation_aside(|_| {
-                    Label::new("This item takes you to the settings where you can specify files that will never be captured by any edit prediction model. You can list both specific file extensions and individual file names.").into_any_element()
+                    Label::new("This item takes you to the settings where you can specify files that will never be captured by any edit prediction model. List both specific file extensions and individual file names.").into_any_element()
                 })
                 .handler(move |window, cx| {
                     if let Some(workspace) = window.root().flatten() {
