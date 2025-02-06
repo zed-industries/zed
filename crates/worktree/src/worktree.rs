@@ -372,15 +372,19 @@ impl WorkDirectory {
     /// of the project root folder, then the returned RepoPath is relative to the root
     /// of the repository and not a valid path inside the project.
     pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
-        if let Some(location_in_repo) = &self.location_in_repo {
-            Ok(location_in_repo.join(path).into())
+        let repo_path = if let Some(location_in_repo) = &self.location_in_repo {
+            // Avoid joining a `/` to location_in_repo in the case of a single-file worktree.
+            if path == Path::new("") {
+                RepoPath(location_in_repo.clone())
+            } else {
+                location_in_repo.join(path).into()
+            }
         } else {
-            let relativized_path = path
-                .strip_prefix(&self.path)
-                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?;
-
-            Ok(relativized_path.into())
-        }
+            path.strip_prefix(&self.path)
+                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?
+                .into()
+        };
+        Ok(repo_path)
     }
 
     /// This is the opposite operation to `relativize` above
