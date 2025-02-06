@@ -1,8 +1,12 @@
-use gpui::{
-    div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context, Pixels,
-    Render, SharedString, Window, WindowBounds, WindowOptions,
-};
 use std::rc::Rc;
+
+use gpui::{
+    div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context,
+    MouseDownEvent, MouseMoveEvent, Pixels, Point, Render, SharedString, UniformListScrollHandle,
+    Window, WindowBounds, WindowOptions,
+};
+
+const TOTAL_ITEMS: usize = 50000;
 
 pub struct Quote {
     name: SharedString,
@@ -232,15 +236,21 @@ impl RenderOnce for Item {
 
 struct DataTable {
     quotes: Vec<Rc<Quote>>,
+    scroll_handle: UniformListScrollHandle,
+    mouse_down_position: Point<Pixels>,
 }
 
 impl DataTable {
     fn new() -> Self {
-        Self { quotes: Vec::new() }
+        Self {
+            quotes: Vec::new(),
+            scroll_handle: UniformListScrollHandle::new(),
+            mouse_down_position: Point::default(),
+        }
     }
 
     fn generate(&mut self) {
-        self.quotes = (0..10000).map(|_| Rc::new(Quote::random())).collect();
+        self.quotes = (0..TOTAL_ITEMS).map(|_| Rc::new(Quote::random())).collect();
     }
 }
 
@@ -257,7 +267,37 @@ impl Render for DataTable {
             .flex()
             .flex_col()
             .gap_2()
-            .child(format!("Total: {} items", self.quotes.len()))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, _, _| {
+                    this.mouse_down_position = ev.position;
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
+                if ev.dragging() {
+                    let base_handle = this.scroll_handle.0.borrow_mut().base_handle.clone();
+                    let bounds = base_handle.bounds();
+                    let diff = ev.position - this.mouse_down_position - bounds.origin;
+                    let percentage = diff.y / bounds.size.height;
+
+                    let scroll_height = this
+                        .scroll_handle
+                        .0
+                        .borrow()
+                        .last_item_size
+                        .unwrap_or_default()
+                        .contents
+                        .height;
+
+                    let offset_y = (percentage * scroll_height).clamp(px(0.), scroll_height);
+                    base_handle.set_offset(point(px(0.), -offset_y));
+                    cx.notify();
+                }
+            }))
+            .child(format!(
+                "Total: {} items (Mouse down to drag scroll)",
+                self.quotes.len()
+            ))
             .child(
                 div()
                     .flex()
@@ -276,18 +316,21 @@ impl Render for DataTable {
                     })),
             )
             .child(
-                uniform_list(entity, "items", self.quotes.len(), {
-                    move |this, range, _, _| {
-                        let mut items = Vec::with_capacity(range.end - range.start);
-                        for i in range {
-                            if let Some(quote) = this.quotes.get(i) {
-                                items.push(Item::new(quote.clone()));
+                div().flex_1().relative().child(
+                    uniform_list(entity, "items", self.quotes.len(), {
+                        move |this, range, _, _| {
+                            let mut items = Vec::with_capacity(range.end - range.start);
+                            for i in range {
+                                if let Some(quote) = this.quotes.get(i) {
+                                    items.push(Item::new(quote.clone()));
+                                }
                             }
+                            items
                         }
-                        items
-                    }
-                })
-                .size_full(),
+                    })
+                    .size_full()
+                    .track_scroll(self.scroll_handle.clone()),
+                ),
             )
     }
 }
