@@ -424,6 +424,7 @@ fn initialize_panels(
                 cx.clone(),
             )
             .await?;
+            log::info!("[assistant2-debug] finished initializing Assistant2");
 
             (None, Some(assistant2_panel))
         } else {
@@ -439,6 +440,7 @@ fn initialize_panels(
 
         workspace_handle.update_in(&mut cx, |workspace, window, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
+                log::info!("[assistant2-debug] adding Assistant2 panel");
                 workspace.add_panel(assistant2_panel, window, cx);
             }
 
@@ -2662,9 +2664,9 @@ mod tests {
 
         let entries = cx.read(|cx| workspace.file_project_paths(cx));
         assert_eq!(
-                    initial_entries, entries,
-                    "Workspace entries should not change after opening excluded files and directories paths"
-                );
+                initial_entries, entries,
+                "Workspace entries should not change after opening excluded files and directories paths"
+            );
 
         cx.read(|cx| {
                 let pane = workspace.read(cx).active_pane().read(cx);
