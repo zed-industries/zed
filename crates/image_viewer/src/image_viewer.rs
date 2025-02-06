@@ -24,8 +24,6 @@ use workspace::{
 pub use crate::image_info::*;
 pub use crate::image_viewer_settings::*;
 
-const IMAGE_VIEWER_KIND: &str = "ImageView";
-
 pub struct ImageView {
     image_item: Entity<ImageItem>,
     project: Entity<Project>,
@@ -196,7 +194,7 @@ fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) ->
 
 impl SerializableItem for ImageView {
     fn serialized_item_kind() -> &'static str {
-        IMAGE_VIEWER_KIND
+        "ImageView"
     }
 
     fn deserialize(
