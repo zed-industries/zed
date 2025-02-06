@@ -14,8 +14,9 @@ use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{CommitAllChanges, CommitChanges, ToggleStaged};
 use gpui::*;
-use language::Buffer;
+use language::{Buffer, File};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
+use multi_buffer::ExcerptInfo;
 use panel::PanelHeader;
 use project::git::{GitEvent, Repository};
 use project::{Fs, Project, ProjectPath};
@@ -75,17 +76,9 @@ struct SerializedGitPanel {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Section {
+    Conflict,
     Tracked,
     New,
-}
-
-impl Section {
-    pub fn contains(&self, status: FileStatus) -> bool {
-        match self {
-            Section::Tracked => !status.is_created(),
-            Section::New => status.is_created(),
-        }
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -94,11 +87,18 @@ struct GitHeaderEntry {
 }
 
 impl GitHeaderEntry {
-    pub fn contains(&self, status_entry: &GitStatusEntry) -> bool {
-        self.header.contains(status_entry.status)
+    pub fn contains(&self, status_entry: &GitStatusEntry, repo: &Repository) -> bool {
+        let this = &self.header;
+        let status = status_entry.status;
+        match this {
+            Section::Conflict => repo.has_conflict(&status_entry.repo_path),
+            Section::Tracked => !status.is_created(),
+            Section::New => status.is_created(),
+        }
     }
     pub fn title(&self) -> &'static str {
         match self.header {
+            Section::Conflict => "Conflicts",
             Section::Tracked => "Changed",
             Section::New => "New",
         }
@@ -159,6 +159,8 @@ pub struct GitPanel {
     commit_task: Task<Result<()>>,
     commit_pending: bool,
 
+    conflicted_staged_count: usize,
+    conflicted_count: usize,
     tracked_staged_count: usize,
     tracked_count: usize,
     new_staged_count: usize,
@@ -275,6 +277,8 @@ impl GitPanel {
                 commit_editor,
                 project,
                 workspace,
+                conflicted_count: 0,
+                conflicted_staged_count: 0,
                 tracked_staged_count: 0,
                 tracked_count: 0,
                 new_staged_count: 0,
@@ -576,12 +580,13 @@ impl GitPanel {
             }
             GitListEntry::Header(section) => {
                 let goal_staged_state = !self.header_state(section.header).selected();
+                let repository = active_repository.read(cx);
                 let entries = self
                     .entries
                     .iter()
                     .filter_map(|entry| entry.status_entry())
                     .filter(|status_entry| {
-                        section.contains(&status_entry)
+                        section.contains(&status_entry, repository)
                             && status_entry.is_staged != Some(goal_staged_state)
                     })
                     .map(|status_entry| status_entry.repo_path.clone())
@@ -600,7 +605,8 @@ impl GitPanel {
         });
         let repo_paths = repo_paths.clone();
         let active_repository = active_repository.clone();
-        self.update_counts();
+        let repository = active_repository.read(cx);
+        self.update_counts(repository);
         cx.notify();
 
         cx.spawn({
@@ -739,8 +745,7 @@ impl GitPanel {
             .iter()
             .filter_map(|entry| entry.status_entry())
             .filter(|status_entry| {
-                Section::Tracked.contains(status_entry.status)
-                    && !status_entry.is_staged.unwrap_or(false)
+                !status_entry.status.is_created() && !status_entry.is_staged.unwrap_or(false)
             })
             .map(|status_entry| status_entry.repo_path.clone())
             .collect::<Vec<_>>();
@@ -908,6 +913,7 @@ impl GitPanel {
         self.entries_by_path.clear();
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
+        let mut conflict_entries = Vec::new();
 
         let Some(repo) = self.active_repository.as_ref() else {
             // Just clear entries if no repository is active.
@@ -924,6 +930,7 @@ impl GitPanel {
             let (depth, difference) =
                 Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
 
+            let is_conflict = repo.has_conflict(&entry.repo_path);
             let is_new = entry.status.is_created();
             let is_staged = entry.status.is_staged();
 
@@ -954,7 +961,9 @@ impl GitPanel {
                 is_staged,
             };
 
-            if is_new {
+            if is_conflict {
+                conflict_entries.push(entry);
+            } else if is_new {
                 new_entries.push(entry);
             } else {
                 changed_entries.push(entry);
@@ -962,8 +971,20 @@ impl GitPanel {
         }
 
         // Sort entries by path to maintain consistent order
+        conflict_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
         changed_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
         new_entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+
+        if conflict_entries.len() > 0 {
+            self.entries.push(GitListEntry::Header(GitHeaderEntry {
+                header: Section::Conflict,
+            }));
+            self.entries.extend(
+                conflict_entries
+                    .into_iter()
+                    .map(GitListEntry::GitStatusEntry),
+            );
+        }
 
         if changed_entries.len() > 0 {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
@@ -989,14 +1010,16 @@ impl GitPanel {
                     .insert(status_entry.repo_path.clone(), ix);
             }
         }
-        self.update_counts();
+        self.update_counts(repo);
 
         self.select_first_entry_if_none(cx);
 
         cx.notify();
     }
 
-    fn update_counts(&mut self) {
+    fn update_counts(&mut self, repo: &Repository) {
+        self.conflicted_count = 0;
+        self.conflicted_staged_count = 0;
         self.new_count = 0;
         self.tracked_count = 0;
         self.new_staged_count = 0;
@@ -1005,21 +1028,26 @@ impl GitPanel {
             let Some(status_entry) = entry.status_entry() else {
                 continue;
             };
-            if status_entry.status.is_created() {
+            if repo.has_conflict(&status_entry.repo_path) {
+                self.conflicted_count += 1;
+                if self.entry_is_staged(status_entry) != Some(false) {
+                    self.conflicted_staged_count += 1;
+                }
+            } else if status_entry.status.is_created() {
                 self.new_count += 1;
-                if self.entry_appears_staged(status_entry) != Some(false) {
+                if self.entry_is_staged(status_entry) != Some(false) {
                     self.new_staged_count += 1;
                 }
             } else {
                 self.tracked_count += 1;
-                if self.entry_appears_staged(status_entry) != Some(false) {
+                if self.entry_is_staged(status_entry) != Some(false) {
                     self.tracked_staged_count += 1;
                 }
             }
         }
     }
 
-    fn entry_appears_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
+    fn entry_is_staged(&self, entry: &GitStatusEntry) -> Option<bool> {
         for pending in self.pending.iter().rev() {
             if pending.repo_paths.contains(&entry.repo_path) {
                 return Some(pending.will_become_staged);
@@ -1040,6 +1068,7 @@ impl GitPanel {
         let (staged_count, count) = match header_type {
             Section::New => (self.new_staged_count, self.new_count),
             Section::Tracked => (self.tracked_staged_count, self.tracked_count),
+            Section::Conflict => (self.conflicted_staged_count, self.conflicted_count),
         };
         if staged_count == 0 {
             ToggleState::Unselected
@@ -1301,6 +1330,49 @@ impl GitPanel {
         )
     }
 
+    pub fn render_buffer_header_controls(
+        &self,
+        entity: &Entity<Self>,
+        file: &Arc<dyn File>,
+        _: &Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let repo = self.active_repository.as_ref()?.read(cx);
+        let repo_path = repo.worktree_id_path_to_repo_path(file.worktree_id(cx), file.path())?;
+        let ix = self.entries_by_path.get(&repo_path)?;
+        let entry = self.entries.get(*ix)?;
+
+        let is_staged = self.entry_is_staged(entry.status_entry()?);
+
+        let checkbox = Checkbox::new("stage-file", is_staged.into())
+            .disabled(!self.has_write_access(cx))
+            .fill()
+            .elevation(ElevationIndex::Surface)
+            .on_click({
+                let entry = entry.clone();
+                let git_panel = entity.downgrade();
+                move |_, window, cx| {
+                    git_panel
+                        .update(cx, |this, cx| {
+                            this.toggle_staged_for_entry(&entry, window, cx);
+                            cx.stop_propagation();
+                        })
+                        .ok();
+                }
+            });
+        Some(
+            h_flex()
+                .id("start-slot")
+                .child(checkbox)
+                .child(git_status_icon(entry.status_entry()?.status, cx))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    // prevent the list item active state triggering when toggling checkbox
+                    cx.stop_propagation();
+                })
+                .into_any_element(),
+        )
+    }
+
     fn render_entries(
         &self,
         has_write_access: bool,
@@ -1423,7 +1495,7 @@ impl GitPanel {
             self.header_state(header.header)
         } else {
             match header.header {
-                Section::Tracked => ToggleState::Selected,
+                Section::Tracked | Section::Conflict => ToggleState::Selected,
                 Section::New => ToggleState::Unselected,
             }
         };
@@ -1473,14 +1545,6 @@ impl GitPanel {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| entry.repo_path.to_string_lossy().into_owned());
 
-        let pending = self.pending.iter().rev().find_map(|pending| {
-            if pending.repo_paths.contains(&entry.repo_path) {
-                Some(pending.will_become_staged)
-            } else {
-                None
-            }
-        });
-
         let repo_path = entry.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -1512,10 +1576,7 @@ impl GitPanel {
 
         let id: ElementId = ElementId::Name(format!("entry_{}", display_name).into());
 
-        let mut is_staged = pending
-            .or_else(|| entry.is_staged)
-            .map(ToggleState::from)
-            .unwrap_or(ToggleState::Indeterminate);
+        let mut is_staged: ToggleState = self.entry_is_staged(entry).into();
 
         if !self.has_staged_changes() && !entry.status.is_created() {
             is_staged = ToggleState::Selected;
@@ -1596,6 +1657,16 @@ impl GitPanel {
                     ),
             )
             .into_any_element()
+    }
+
+    fn has_write_access(&self, cx: &App) -> bool {
+        let room = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned());
+
+        room.as_ref()
+            .map_or(true, |room| room.read(cx).local_participant().can_write())
     }
 }
 
@@ -1733,6 +1804,28 @@ impl Focusable for GitPanel {
 impl EventEmitter<Event> for GitPanel {}
 
 impl EventEmitter<PanelEvent> for GitPanel {}
+
+pub(crate) struct GitPanelAddon {
+    pub(crate) git_panel: Entity<GitPanel>,
+}
+
+impl editor::Addon for GitPanelAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn render_buffer_header_controls(
+        &self,
+        excerpt_info: &ExcerptInfo,
+        window: &Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let file = excerpt_info.buffer.file()?;
+        let git_panel = self.git_panel.read(cx);
+
+        git_panel.render_buffer_header_controls(&self.git_panel, &file, window, cx)
+    }
+}
 
 impl Panel for GitPanel {
     fn persistent_name() -> &'static str {

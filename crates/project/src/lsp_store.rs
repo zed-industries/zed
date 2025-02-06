@@ -7366,10 +7366,6 @@ impl LspStore {
 
         for diagnostic in &params.diagnostics {
             let source = diagnostic.source.as_ref();
-            let code = diagnostic.code.as_ref().map(|code| match code {
-                lsp::NumberOrString::Number(code) => code.to_string(),
-                lsp::NumberOrString::String(code) => code.clone(),
-            });
             let range = range_from_lsp(diagnostic.range);
             let is_supporting = diagnostic
                 .related_information
@@ -7378,7 +7374,7 @@ impl LspStore {
                     infos.iter().any(|info| {
                         primary_diagnostic_group_ids.contains_key(&(
                             source,
-                            code.clone(),
+                            diagnostic.code.clone(),
                             range_from_lsp(info.location.range),
                         ))
                     })
@@ -7390,7 +7386,7 @@ impl LspStore {
 
             if is_supporting {
                 supporting_diagnostics.insert(
-                    (source, code.clone(), range),
+                    (source, diagnostic.code.clone(), range),
                     (diagnostic.severity, is_unnecessary),
                 );
             } else {
@@ -7400,13 +7396,13 @@ impl LspStore {
 
                 sources_by_group_id.insert(group_id, source);
                 primary_diagnostic_group_ids
-                    .insert((source, code.clone(), range.clone()), group_id);
+                    .insert((source, diagnostic.code.clone(), range.clone()), group_id);
 
                 diagnostics.push(DiagnosticEntry {
                     range,
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
-                        code: code.clone(),
+                        code: diagnostic.code.clone(),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         message: diagnostic.message.trim().to_string(),
                         group_id,
@@ -7424,7 +7420,7 @@ impl LspStore {
                                 range,
                                 diagnostic: Diagnostic {
                                     source: diagnostic.source.clone(),
-                                    code: code.clone(),
+                                    code: diagnostic.code.clone(),
                                     severity: DiagnosticSeverity::INFORMATION,
                                     message: info.message.trim().to_string(),
                                     group_id,

@@ -2633,6 +2633,16 @@ impl EditorElement {
                                 ),
                         )
                     })
+                    .children(
+                        self.editor
+                            .read(cx)
+                            .addons
+                            .values()
+                            .filter_map(|addon| {
+                                addon.render_buffer_header_controls(for_excerpt, window, cx)
+                            })
+                            .take(1),
+                    )
                     .child(
                         h_flex()
                             .cursor_pointer()

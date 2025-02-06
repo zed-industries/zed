@@ -100,6 +100,7 @@ CREATE TABLE "worktree_repositories" (
     "branch" VARCHAR,
     "scan_id" INTEGER NOT NULL,
     "is_deleted" BOOL NOT NULL,
+    "current_merge_conflicts" VARCHAR,
     PRIMARY KEY(project_id, worktree_id, work_directory_id),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
     FOREIGN KEY(project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
