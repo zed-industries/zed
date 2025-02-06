@@ -4,10 +4,15 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{
     FeatureFlagAppExt as _, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
 };
+use gpui::actions;
+use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
+use settings::update_settings_file;
 use ui::App;
 use workspace::Workspace;
 
 use crate::{onboarding_modal::ZedPredictModal, RateCompletionModal, RateCompletions};
+
+actions!(edit_predictions, [ResetOnboarding]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
@@ -31,6 +36,20 @@ pub fn init(cx: &mut App) {
                 }
             },
         );
+
+        workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
+            update_settings_file::<AllLanguageSettings>(
+                workspace.app_state().fs.clone(),
+                cx,
+                move |file, _| {
+                    file.features
+                        .get_or_insert(Default::default())
+                        .inline_completion_provider = Some(InlineCompletionProvider::None)
+                },
+            );
+
+            crate::onboarding_banner::clear_dismissed(cx);
+        });
     })
     .detach();
 
