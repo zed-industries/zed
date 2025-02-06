@@ -1806,7 +1806,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 let mut event = event.clone();
-                event.position = (event.position - scale_offset) / scale_factor;
+                event.position = event.position / scale_factor - scale_offset;
 
                 listener(&event, phase, &hitbox, window, cx);
             })
@@ -1816,7 +1816,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
                 let mut event = event.clone();
-                event.position = (event.position - scale_offset) / scale_factor;
+                event.position = event.position / scale_factor - scale_offset;
 
                 listener(&event, phase, &hitbox, window, cx);
             })
@@ -1826,7 +1826,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                 let mut event = event.clone();
-                event.position = (event.position - scale_offset) / scale_factor;
+                event.position = event.position / scale_factor - scale_offset;
 
                 listener(&event, phase, &hitbox, window, cx);
             })
@@ -1836,7 +1836,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
                 let mut event = event.clone();
-                event.position = (event.position - scale_offset) / scale_factor;
+                event.position = event.position / scale_factor - scale_offset;
 
                 listener(&event, phase, &hitbox, window, cx);
             })
