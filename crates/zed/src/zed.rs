@@ -1223,9 +1223,7 @@ fn show_keymap_migration_notification_if_needed(
             .on_click(move |_, cx| {
                 let fs = <dyn Fs>::global(cx);
                 cx.spawn(move |weak_notification, mut cx| async move {
-                    KeymapFile::update_keymap_file(fs, |keymap, _| keymap.migrate_keymap(), &cx)
-                        .await
-                        .ok();
+                    KeymapFile::migrate_keymap(fs).await.ok();
                     weak_notification.update(&mut cx, |_, cx| {
                         cx.emit(DismissEvent);
                     }).ok();

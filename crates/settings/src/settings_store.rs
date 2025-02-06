@@ -1015,14 +1015,13 @@ impl SettingsStore {
         }
         false
     }
-
     pub fn migrate_settings(&self, fs: Arc<dyn Fs>) {
         self.setting_file_updates_tx
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
                     let old_text = Self::load_settings(&fs).await?;
                     let new_text = cx.read_global(|store: &SettingsStore, _| {
-                        store.get_new_text_post_migration(old_text, |content| {
+                        store.get_new_text_post_migration(old_text.clone(), |content| {
                             if let Some(content) = content.as_object_mut() {
                                 for (old_key, new_key) in SETTINGS_STRING_REPLACE.iter() {
                                     if let Some(value) = content.remove(*old_key) {
@@ -1045,11 +1044,16 @@ impl SettingsStore {
                     })?;
                     let initial_path = paths::settings_file().as_path();
                     if fs.is_file(initial_path).await {
+                        let backup_path = paths::home_dir().join(".zed_settings_backup");
+                        fs.atomic_write(backup_path, old_text)
+                            .await
+                            .with_context(|| {
+                                "Failed to create settings backup in home directory".to_string()
+                            })?;
                         let resolved_path =
                             fs.canonicalize(initial_path).await.with_context(|| {
                                 format!("Failed to canonicalize settings path {:?}", initial_path)
                             })?;
-
                         fs.atomic_write(resolved_path.clone(), new_text)
                             .await
                             .with_context(|| {
