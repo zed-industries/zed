@@ -118,9 +118,6 @@ impl ImageItem {
             worktree_root.join(image_path)
         };
 
-        if !path.exists() {
-            anyhow::bail!("File does not exist at path: {:?}", path);
-        }
         let fs = project.update(cx, |project, _| project.fs().clone())?;
 
         let image_bytes = fs.load_bytes(&path).await?;
