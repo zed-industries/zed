@@ -751,8 +751,8 @@ impl Element for MarkdownElement {
                     }
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
-                MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                MarkdownEvent::Text(parsed) => {
+                    builder.push_text(parsed, range.start);
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
