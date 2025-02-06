@@ -214,6 +214,10 @@ pub struct InlineCompletionSettings {
     pub provider: InlineCompletionProvider,
     /// A list of globs representing files that inline completions should be disabled for.
     pub disabled_globs: Vec<GlobMatcher>,
+    /// HTTP/HTTPS proxy to use for completions (currently supported only for Copilot)
+    pub proxy: Option<String>,
+    /// Disable certificate verification for completions proxy (not recommended)
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for all languages.
@@ -406,6 +410,16 @@ pub struct InlineCompletionSettingsContent {
     /// A list of globs representing files that inline completions should be disabled for.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
+    /// HTTP/HTTPS proxy to use for completions (currently supported only for Copilot)
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub proxy: Option<String>,
+    /// Disable certificate verification for completions proxy (not recommended)
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for enabling/disabling features.
@@ -1005,6 +1019,16 @@ impl settings::Settings for AllLanguageSettings {
             .map(|globs| globs.iter().collect())
             .ok_or_else(Self::missing_default)?;
 
+        let mut completions_proxy = default_value
+            .inline_completions
+            .as_ref()
+            .and_then(|f| f.proxy.clone());
+
+        let mut completions_proxy_no_verify = default_value
+            .inline_completions
+            .as_ref()
+            .and_then(|f| f.proxy_no_verify);
+
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
 
         for (language, suffixes) in &default_value.file_types {
@@ -1034,6 +1058,22 @@ impl settings::Settings for AllLanguageSettings {
                 .and_then(|f| f.disabled_globs.as_ref())
             {
                 completion_globs.extend(globs.iter());
+            }
+
+            if let Some(proxy) = user_settings
+                .inline_completions
+                .as_ref()
+                .and_then(|f| f.proxy.clone())
+            {
+                completions_proxy = Some(proxy);
+            }
+
+            if let Some(proxy_no_verify) = user_settings
+                .inline_completions
+                .as_ref()
+                .and_then(|f| f.proxy_no_verify)
+            {
+                completions_proxy_no_verify = Some(proxy_no_verify);
             }
 
             // A user's global settings override the default global settings and
@@ -1086,6 +1126,8 @@ impl settings::Settings for AllLanguageSettings {
                     .iter()
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
+                proxy: completions_proxy,
+                proxy_no_verify: completions_proxy_no_verify,
             },
             defaults,
             languages,
