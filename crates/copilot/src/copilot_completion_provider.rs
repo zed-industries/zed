@@ -63,10 +63,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_refreshing(&self) -> bool {
         self.pending_refresh.is_some()
     }

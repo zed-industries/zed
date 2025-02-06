@@ -1284,11 +1284,6 @@ impl Vim {
 
             let hide_inline_completions = match vim.mode {
                 Mode::Insert | Mode::Replace => false,
-                Mode::Normal => editor
-                    .inline_completion_provider()
-                    .map_or(true, |provider| {
-                        dbg!(!provider.show_completions_in_normal_mode())
-                    }),
                 _ => true,
             };
             editor.set_inline_completions_hidden_for_vim_mode(hide_inline_completions, window, cx);
