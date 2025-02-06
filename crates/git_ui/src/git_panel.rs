@@ -1030,7 +1030,7 @@ impl GitPanel {
             };
             if repo.has_conflict(&status_entry.repo_path) {
                 self.conflicted_count += 1;
-                if self.entry_appears_staged(status_entry) != Some(false) {
+                if self.entry_is_staged(status_entry) != Some(false) {
                     self.conflicted_staged_count += 1;
                 }
             } else if status_entry.status.is_created() {
