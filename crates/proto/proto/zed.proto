@@ -1,6 +1,18 @@
 syntax = "proto3";
 package zed.messages;
 
+// NOTE:
+// To serialize or deserialize a path string, you should always use:
+// ```rust
+// let path = Path::new("/some/path");
+// let proto = proto::SomePathStruct {
+//     path: path.to_proto()
+// };
+// let path = Path::from_proto(proto);
+// let path = PathBuf::from_proto(proto);
+// let path: Arc<Path> = proto.into();
+// ```
+
 // Looking for a number? Search "// current max"
 
 message PeerId {
