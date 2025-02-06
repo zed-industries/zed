@@ -1,9 +1,6 @@
-use anyhow::Result;
 use collections::HashMap;
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use tree_sitter::{Query, QueryMatch};
-
-pub struct KeymapMigration {}
 
 fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<String> {
     let mut parser = tree_sitter::Parser::new();
@@ -35,6 +32,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
         Some(text)
     }
 }
+
 pub fn migrate_keymap(text: &str) -> Option<String> {
     migrate(&text, KEYMAP_MIGRATION_PATTERNS, &KEYMAP_MIGRATION_QUERY)
 }
@@ -46,8 +44,6 @@ pub fn migrate_settings(text: &str) -> Option<String> {
         &SETTINGS_MIGRATION_QUERY,
     )
 }
-
-impl KeymapMigration {}
 
 type MigrationPatterns = &'static [(
     &'static str,
@@ -186,13 +182,13 @@ const ACTION_ARGUMENT_OBJECT_PATTERN: &str = r#"(document
                         (pair
                             key: (string (string_content))
                             value: ((array
-                                 (string (string_content) @action_name)
-                                 (object
+                                . (string (string_content) @action_name)
+                                . (object
                                     (pair
                                     key: (string (string_content) @action_key)
                                     value: (_)  @argument))
-                                ) @object
-                                ))
+                                . ) @array
+                            ))
                         )
                     )
                 )
@@ -231,7 +227,7 @@ fn replace_action_argument_object_with_single_value(
     let new_action_name = UNWRAP_OBJECTS.get(&action_name)?.get(&action_key)?;
 
     let range_to_replace = mat.nodes_for_capture_index(array_ix).next()?.byte_range();
-    let replacement = format!("\"[\"{}\", {}]\"", new_action_name, argument);
+    let replacement = format!("[\"{}\", {}]", new_action_name, argument);
     Some((range_to_replace, replacement))
 }
 
@@ -259,24 +255,24 @@ static UNWRAP_OBJECTS: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::
     ])
 });
 
-const ACTION_STRING_PATTERN: &str = r#"
-(array
-    (object
-        (pair
-            key: (string (string_content) @name)
-            value: (
-                (object
-                    (pair
-                        key: (string (string_content))
-                        value: (string (string_content) @action_name)
+const ACTION_STRING_PATTERN: &str = r#"(document
+    (array
+        (object
+            (pair
+                key: (string (string_content) @name)
+                value: (
+                    (object
+                        (pair
+                            key: (string (string_content))
+                            value: (string (string_content) @action_name)
+                        )
                     )
                 )
             )
         )
     )
-)
-(#eq? @name "bindings")
-"#;
+    (#eq? @name "bindings")
+)"#;
 
 fn rename_string_action(
     contents: &str,
@@ -325,15 +321,19 @@ fn rename_context_key(
     query: &Query,
 ) -> Option<(Range<usize>, String)> {
     let context_predicate_ix = query.capture_index_for_name("context_predicate").unwrap();
+    println!("looking for range now");
     let context_predicate_range = mat
         .nodes_for_capture_index(context_predicate_ix)
         .next()?
         .byte_range();
+    println!("context_predicate_range: {:?}", context_predicate_range);
     let old_predicate = contents.get(context_predicate_range.clone())?.to_string();
+    println!("should call this");
     let mut new_predicate = old_predicate.to_string();
     for (old_key, new_key) in CONTEXT_REPLACE.iter() {
         new_predicate = new_predicate.replace(old_key, new_key);
     }
+    println!("new predicate {:?}", new_predicate);
     if new_predicate != old_predicate {
         Some((context_predicate_range, new_predicate.to_string()))
     } else {
@@ -365,14 +365,14 @@ static SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
     .unwrap()
 });
 
-static SETTINGS_STRING_REPLACE_QUERY: &str = r#"
-(object
-  (pair
-    key: (string (string_content) @name)
-    value: (_)
-  )
-)
-"#;
+static SETTINGS_STRING_REPLACE_QUERY: &str = r#"(document
+    (object
+        (pair
+            key: (string (string_content) @name)
+            value: (_)
+        )
+    )
+)"#;
 
 fn replace_setting_name(
     contents: &str,
@@ -386,7 +386,6 @@ fn replace_setting_name(
         .byte_range();
     let setting_name = contents.get(setting_name_range.clone())?;
     let new_setting_name = SETTINGS_STRING_REPLACE.get(&setting_name)?;
-
     Some((setting_name_range, new_setting_name.to_string()))
 }
 
@@ -488,7 +487,7 @@ fn replace_setting_in_languages(
 }
 
 #[rustfmt::skip]
-pub static LANGUAGE_SETTINGS_REPLACE: LazyLock<
+static LANGUAGE_SETTINGS_REPLACE: LazyLock<
     HashMap<&'static str, &'static str>,
 > = LazyLock::new(|| {
     HashMap::from_iter([
@@ -501,19 +500,24 @@ pub static LANGUAGE_SETTINGS_REPLACE: LazyLock<
 mod tests {
     use super::*;
 
-    fn assert_migrate(input: &str, output: Option<&str>) {
+    fn assert_migrate_keymap(input: &str, output: Option<&str>) {
         let migrated = migrate_keymap(&input);
+        pretty_assertions::assert_eq!(migrated.as_deref(), output);
+    }
+
+    fn assert_migrate_settings(input: &str, output: Option<&str>) {
+        let migrated = migrate_settings(&input);
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
     #[test]
     fn test_replace_array_with_single_string() {
-        assert_migrate(
+        assert_migrate_keymap(
             r#"
             [
                 {
                     "bindings": {
-                        "cmd-1": ["workspace::ActivatePaneInDirection", "Up"],
+                        "cmd-1": ["workspace::ActivatePaneInDirection", "Up"]
                     }
                 }
             ]
@@ -523,7 +527,7 @@ mod tests {
             [
                 {
                     "bindings": {
-                        "cmd-1": "workspace::ActivatePaneUp",
+                        "cmd-1": "workspace::ActivatePaneUp"
                     }
                 }
             ]
@@ -534,12 +538,12 @@ mod tests {
 
     #[test]
     fn test_replace_action_argument_object_with_single_value() {
-        assert_migrate(
+        assert_migrate_keymap(
             r#"
             [
                 {
                     "bindings": {
-                        "cmd-1": ["editor::FoldAtLevel", { "level": 1 }],
+                        "cmd-1": ["editor::FoldAtLevel", { "level": 1 }]
                     }
                 }
             ]
@@ -560,12 +564,12 @@ mod tests {
 
     #[test]
     fn test_replace_action_argument_object_with_single_value_2() {
-        assert_migrate(
+        assert_migrate_keymap(
             r#"
             [
                 {
                     "bindings": {
-                        "cmd-1": ["vim::PushOperator", { "Object": { "some" : "value" } }],
+                        "cmd-1": ["vim::PushOperator", { "Object": { "some" : "value" } }]
                     }
                 }
             ]
@@ -586,12 +590,12 @@ mod tests {
 
     #[test]
     fn test_rename_string_action() {
-        assert_migrate(
+        assert_migrate_keymap(
             r#"
                 [
                     {
                         "bindings": {
-                            "cmd-1": "inline_completion::ToggleMenu",
+                            "cmd-1": "inline_completion::ToggleMenu"
                         }
                     }
                 ]
@@ -605,14 +609,14 @@ mod tests {
                         }
                     }
                 ]
-                "#,
+            "#,
             ),
         )
     }
 
     #[test]
     fn test_rename_context_key() {
-        assert_migrate(
+        assert_migrate_keymap(
             r#"
                 [
                     {
@@ -627,20 +631,20 @@ mod tests {
                         "context": "Editor && edit_prediction && !showing_completions"
                     }
                 ]
-                "#,
+            "#,
             ),
         )
     }
 
     #[test]
     fn test_replace_setting_name() {
-        assert_migrate(
+        assert_migrate_settings(
             r#"
                 {
                     "show_inline_completions_in_menu": true,
                     "show_inline_completions": true,
-                    "inline_completions_disabled_in": ["vim"],
-                    "inline_completions": ["vim"]
+                    "inline_completions_disabled_in": ["string"],
+                    "inline_completions": { "some" : "value" }
                 }
             "#,
             Some(
@@ -648,28 +652,58 @@ mod tests {
                 {
                     "show_edit_predictions_in_menu": true,
                     "show_edit_predictions": true,
-                    "edit_predictions_disabled_in": ["vim"],
-                    "edit_predictions": ["vim"]
+                    "edit_predictions_disabled_in": ["string"],
+                    "edit_predictions": { "some" : "value" }
                 }
-                "#,
+            "#,
             ),
         )
     }
 
     #[test]
     fn test_nested_string_replace_for_settings() {
-        assert_migrate(
+        assert_migrate_settings(
             r#"
                 {
-
+                    "features": {
+                        "inline_completion_provider": "zed"
+                    },
                 }
             "#,
             Some(
                 r#"
                 {
-
+                    "features": {
+                        "edit_prediction_provider": "zed"
+                    },
                 }
-                "#,
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_replace_settings_in_languages() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "languages": {
+                        "Astro": {
+                            "show_inline_completions": true
+                        }
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "languages": {
+                        "Astro": {
+                            "show_edit_predictions": true
+                        }
+                    }
+                }
+            "#,
             ),
         )
     }
