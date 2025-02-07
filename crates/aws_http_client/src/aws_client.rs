@@ -22,7 +22,7 @@ struct AwsHttpConnector {
 
 impl std::fmt::Debug for AwsHttpConnector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        f.debug_struct("AwsHttpConnector").finish()
     }
 }
 
