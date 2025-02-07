@@ -1,7 +1,7 @@
 use crate::{Toast, Workspace};
 use gpui::{
     svg, AnyView, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task,
+    Entity, EventEmitter, PromptLevel, Render, ScrollHandle, Task,
 };
 use parking_lot::Mutex;
 use std::sync::{Arc, LazyLock};
@@ -156,10 +156,11 @@ impl Workspace {
 
     pub fn show_initial_notifications(&mut self, cx: &mut Context<Self>) {
         // Allow absence of the global so that tests don't need to initialize it.
-        let app_notifications = cx
-            .try_global::<AppNotifications>()
+        let app_notifications = GLOBAL_APP_NOTIFICATIONS
+            .lock()
+            .app_notifications
             .iter()
-            .flat_map(|global| global.app_notifications.iter().cloned())
+            .cloned()
             .collect::<Vec<_>>();
         for (id, build_notification) in app_notifications {
             self.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
@@ -613,8 +614,6 @@ struct AppNotifications {
         Arc<dyn Fn(&mut Context<Workspace>) -> AnyView + Send + Sync>,
     )>,
 }
-
-impl Global for AppNotifications {}
 
 impl AppNotifications {
     pub fn insert(
