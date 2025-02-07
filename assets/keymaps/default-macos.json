@@ -737,6 +737,7 @@
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "enter": "editor::Newline",
       "cmd-enter": "git::Commit",
       "tab": "git_panel::FocusChanges",
       "shift-tab": "git_panel::FocusChanges",
