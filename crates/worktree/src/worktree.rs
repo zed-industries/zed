@@ -2817,6 +2817,7 @@ impl Snapshot {
 
     pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let path = path.as_ref();
+        debug_assert!(path.is_relative());
         self.traverse_from_path(true, true, true, path)
             .entry()
             .and_then(|entry| {
@@ -4384,6 +4385,13 @@ impl BackgroundScanner {
                         dot_git_abs_paths.push(dot_git_abs_path);
                     }
                 }
+                if abs_path.0.file_name() == Some(*GITIGNORE) {
+                    for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&abs_path.0)) {
+                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.dot_git_dir_abs_path.as_ref()) {
+                            dot_git_abs_paths.push(repo.dot_git_dir_abs_path.to_path_buf());
+                        }
+                    }
+                }
 
                 let relative_path: Arc<Path> =
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
@@ -5169,8 +5177,12 @@ impl BackgroundScanner {
 
                 let local_repository = match existing_repository_entry {
                     None => {
+                        let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path())
+                        else {
+                            return;
+                        };
                         match state.insert_git_repository(
-                            dot_git_dir.into(),
+                            relative.into(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         ) {
@@ -5299,8 +5311,8 @@ impl BackgroundScanner {
         let Some(mut repository) =
             snapshot.repository(job.local_repository.work_directory.path_key())
         else {
-            log::error!("Got an UpdateGitStatusesJob for a repository that isn't in the snapshot");
-            debug_assert!(false);
+            // happens when a folder is deleted
+            log::debug!("Got an UpdateGitStatusesJob for a repository that isn't in the snapshot");
             return;
         };
 

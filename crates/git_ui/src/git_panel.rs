@@ -1243,7 +1243,11 @@ impl GitPanel {
             .child(
                 v_flex()
                     .gap_3()
-                    .child("No changes to commit")
+                    .child(if self.active_repository.is_some() {
+                        "No changes to commit"
+                    } else {
+                        "No Git repositories"
+                    })
                     .text_ui_sm(cx)
                     .mx_auto()
                     .text_color(Color::Placeholder.color(cx)),
