@@ -567,7 +567,7 @@
     }
   },
   {
-    "context": "ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "context": "GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -625,7 +625,7 @@
     }
   },
   {
-    "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
+    "context": "GitPanel || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"

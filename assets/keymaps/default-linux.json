@@ -710,15 +710,20 @@
       "enter": "menu::Confirm",
       "space": "git::ToggleStaged",
       "ctrl-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll"
+      "ctrl-shift-space": "git::UnstageAll",
+      "tab": "git_panel::FocusEditor",
+      "shift-tab": "git_panel::FocusEditor",
+      "escape": "git_panel::ToggleFocus"
     }
   },
   {
-    "context": "GitPanel && CommitEditor > Editor",
+    "context": "GitPanel > Editor",
     "bindings": {
       "escape": "git_panel::FocusChanges",
-      "ctrl-enter": "git::CommitChanges",
-      "ctrl-shift-enter": "git::CommitAllChanges"
+      "ctrl-enter": "git::Commit",
+      "tab": "git_panel::FocusChanges",
+      "shift-tab": "git_panel::FocusChanges",
+      "alt-up": "git_panel::FocusChanges"
     }
   },
   {
