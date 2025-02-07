@@ -886,7 +886,18 @@ impl AllLanguageSettings {
     }
 
     /// Returns whether edit predictions are enabled for the given language and path.
-    pub fn show_inline_completions(&self, language: Option<&Arc<Language>>, cx: &App) -> bool {
+    pub fn inline_completions_enabled(
+        &self,
+        language: Option<&Arc<Language>>,
+        path: Option<&Path>,
+        cx: &App,
+    ) -> bool {
+        if let Some(path) = path {
+            if !self.inline_completions_enabled_for_path(path) {
+                return false;
+            }
+        }
+
         self.language(None, language.map(|l| l.name()).as_ref(), cx)
             .show_inline_completions
     }
