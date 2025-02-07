@@ -845,7 +845,7 @@ impl ContextEditor {
                                 gutter_width,
                                 block_id,
                                 selected,
-                                *window,
+                                window,
                                 cx,
                             )
                         })
