@@ -1551,12 +1551,20 @@ impl Project {
         };
 
         let worktree_id = worktree.read(cx).id();
+        let is_root_entry = self.entry_is_worktree_root(entry_id, cx);
 
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(|_, mut cx| async move {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-                (root_path.join(&old_path), root_path.join(&new_path))
+                if is_root_entry {
+                    (
+                        root_path.join(&old_path),
+                        root_path.parent().unwrap().join(&new_path),
+                    )
+                } else {
+                    (root_path.join(&old_path), root_path.join(&new_path))
+                }
             };
             LspStore::will_rename_entry(
                 lsp_store.clone(),

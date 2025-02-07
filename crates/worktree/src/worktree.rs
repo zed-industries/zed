@@ -1856,8 +1856,18 @@ impl LocalWorktree {
         };
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
-        let Ok(abs_new_path) = self.absolutize(&new_path) else {
-            return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+
+        let is_root_entry = self.root_entry().is_some_and(|e| e.id == entry_id);
+        let abs_new_path = if is_root_entry {
+            let Some(root_parent_path) = self.abs_path().parent() else {
+                return Task::ready(Err(anyhow!("no parent for path {:?}", self.abs_path)));
+            };
+            root_parent_path.join(&new_path)
+        } else {
+            let Ok(absolutize_path) = self.absolutize(&new_path) else {
+                return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+            };
+            absolutize_path
         };
         let abs_path = abs_new_path.clone();
         let fs = self.fs.clone();
@@ -1891,9 +1901,17 @@ impl LocalWorktree {
             rename.await?;
             Ok(this
                 .update(&mut cx, |this, cx| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(new_path.clone(), Some(old_path), cx)
+                    if is_root_entry {
+                        this.as_local_mut()
+                            .unwrap()
+                            .refresh_entry(old_path, None, cx)
+                    } else {
+                        this.as_local_mut().unwrap().refresh_entry(
+                            new_path.clone(),
+                            Some(old_path),
+                            cx,
+                        )
+                    }
                 })?
                 .await?
                 .map(CreatedEntry::Included)
