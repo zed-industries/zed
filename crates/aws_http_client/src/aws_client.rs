@@ -28,31 +28,28 @@ impl std::fmt::Debug for AwsHttpConnector {
 
 impl AwsConnector for AwsHttpConnector {
     fn call(&self, request: AwsHttpRequest) -> AwsConnectorFuture {
-        // convert AwsHttpRequest to Request<T>
         let aws_req = match request.try_into_http1x() {
             Ok(req) => req,
-            Err(e) => {
-                return HttpConnectorFuture::ready(Err(ConnectorError::other(e.into(), None)))
+            Err(err) => {
+                return HttpConnectorFuture::ready(Err(ConnectorError::other(err.into(), None)))
             }
         };
 
         let (parts, aws_body) = aws_req.into_parts();
 
-        let coerced_body = convert_to_async_body(aws_body);
+        let body = convert_to_async_body(aws_body);
 
-        let fut_resp = self
-            .client
-            .send(Request::from_parts(parts.into(), coerced_body));
+        let response = self.client.send(Request::from_parts(parts.into(), body));
 
-        let owned_handle = self.handle.clone();
+        let handle = self.handle.clone();
 
         HttpConnectorFuture::new(async move {
-            let cloned_resp = match fut_resp.await {
-                Ok(resp) => resp,
-                Err(e) => return Err(ConnectorError::other(e.into(), None)),
+            let response = match response.await {
+                Ok(response) => response,
+                Err(err) => return Err(ConnectorError::other(err.into(), None)),
             };
-            let (parts, aws_body) = cloned_resp.into_parts();
-            let sdk_body = convert_to_sdk_body(aws_body, owned_handle).await;
+            let (parts, aws_body) = response.into_parts();
+            let sdk_body = convert_to_sdk_body(aws_body, handle).await;
 
             Ok(HttpResponse::new(
                 StatusCode::try_from(parts.status.as_u16()).unwrap(),
@@ -62,18 +59,10 @@ impl AwsConnector for AwsHttpConnector {
     }
 }
 
+#[derive(Clone)]
 pub struct AwsHttpClient {
     client: Arc<dyn HttpClient>,
     handler: Handle,
-}
-
-impl Clone for AwsHttpClient {
-    fn clone(&self) -> Self {
-        Self {
-            client: self.client.clone(),
-            handler: self.handler.clone(),
-        }
-    }
 }
 
 impl std::fmt::Debug for AwsHttpClient {
