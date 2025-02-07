@@ -2,7 +2,6 @@ pub mod adapters;
 pub mod client;
 pub mod debugger_settings;
 pub mod proto_conversions;
-pub mod session;
 pub mod transport;
 
 pub use dap_types::*;

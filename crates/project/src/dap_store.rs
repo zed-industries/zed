@@ -4,12 +4,14 @@ use crate::{
         RestartStackFrameCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
         TerminateCommand, TerminateThreadsCommand, VariablesCommand,
     },
+    dap_session::{DebugSession, DebugSessionId},
     project_settings::ProjectSettings,
     ProjectEnvironment, ProjectItem as _, ProjectPath,
 };
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
+use dap::ContinueResponse;
 use dap::{
     adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName},
     client::{DebugAdapterClient, DebugAdapterClientId},
@@ -27,10 +29,6 @@ use dap::{
     SetVariableArguments, Source, SourceBreakpoint, StackFrame, StackTraceArguments,
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, SteppingGranularity,
     TerminateArguments, Variable,
-};
-use dap::{
-    session::{DebugSession, DebugSessionId},
-    ContinueResponse,
 };
 use dap_adapters::build_adapter;
 use fs::Fs;
@@ -640,8 +638,10 @@ impl DapStore {
                     .insert(client_id, session_id);
 
                 let session = store.session_by_id(&session_id).unwrap();
+                let weak_dap = cx.weak_entity();
 
                 session.update(cx, |session, cx| {
+                    session.add_client(Some(Arc::new(client)), client_id, weak_dap, cx);
                     let local_session = session.as_local_mut().unwrap();
 
                     local_session.update_configuration(
@@ -650,7 +650,6 @@ impl DapStore {
                         },
                         cx,
                     );
-                    local_session.add_client(Arc::new(client), cx);
                 });
 
                 // don't emit this event ourself in tests, so we can add request,
@@ -788,11 +787,10 @@ impl DapStore {
             };
 
             this.update(&mut cx, |store, cx| {
+                let weak_dap = cx.weak_entity();
+
                 session.update(cx, |session, cx| {
-                    session
-                        .as_local_mut()
-                        .unwrap()
-                        .add_client(client.clone(), cx);
+                    session.add_client(Some(client.clone()), client.id(), weak_dap, cx);
                 });
 
                 let client_id = client.id();
@@ -1252,7 +1250,7 @@ impl DapStore {
         self.request_dap(client_id, command, cx)
     }
 
-    fn request_dap<R: DapCommand>(
+    pub(crate) fn request_dap<R: DapCommand>(
         &self,
         client_id: &DebugAdapterClientId,
         request: R,
@@ -1815,6 +1813,29 @@ impl DapStore {
         }
 
         Ok(proto::Ack {})
+    }
+
+    async fn _handle_dap_command_2<T: DapCommand + PartialEq + Eq + Hash>(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<T::ProtoRequest>,
+        mut cx: AsyncApp,
+    ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
+    where
+        <T::DapRequest as dap::requests::Request>::Arguments: Send,
+        <T::DapRequest as dap::requests::Request>::Response: Send,
+    {
+        let request = T::from_proto(&envelope.payload);
+        let client_id = T::client_id_from_proto(&envelope.payload);
+
+        let _state = this.update(&mut cx, |this, cx| {
+            this.session_by_client_id(&client_id)?
+                .read(cx)
+                .client_state(client_id)?
+                .read(cx)
+                ._wait_for_request(request)
+        });
+
+        todo!()
     }
 
     async fn handle_dap_command<T: DapCommand>(

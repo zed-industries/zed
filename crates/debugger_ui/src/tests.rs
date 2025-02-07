@@ -9,6 +9,7 @@ use crate::{debugger_panel::DebugPanel, debugger_panel_item::DebugPanelItem};
 mod attach_modal;
 mod console;
 mod debugger_panel;
+mod module_list;
 mod stack_frame_list;
 mod variable_list;
 

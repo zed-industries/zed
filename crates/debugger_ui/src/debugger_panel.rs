@@ -8,7 +8,6 @@ use dap::{
     debugger_settings::DebuggerSettings,
     messages::{Events, Message},
     requests::{Request, RunInTerminal, StartDebugging},
-    session::DebugSessionId,
     Capabilities, CapabilitiesEvent, ContinuedEvent, ErrorResponse, ExitedEvent, LoadedSourceEvent,
     ModuleEvent, OutputEvent, RunInTerminalRequestArguments, RunInTerminalResponse, StoppedEvent,
     TerminatedEvent, ThreadEvent, ThreadEventReason,
@@ -18,6 +17,7 @@ use gpui::{
     Focusable, Subscription, Task, WeakEntity,
 };
 use project::{
+    dap_session::DebugSessionId,
     dap_store::{DapStore, DapStoreEvent},
     terminals::TerminalKind,
 };

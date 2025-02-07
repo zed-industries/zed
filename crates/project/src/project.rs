@@ -2,6 +2,7 @@ pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
 pub mod dap_command;
+pub mod dap_session;
 pub mod dap_store;
 pub mod debounced_delay;
 pub mod git;
@@ -28,7 +29,10 @@ use git::Repository;
 pub mod search_history;
 mod yarn;
 
-use crate::git::GitState;
+use crate::{
+    dap_session::{DebugSession, DebugSessionId},
+    git::GitState,
+};
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
 use client::{
@@ -40,7 +44,6 @@ use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     debugger_settings::DebuggerSettings,
     messages::Message,
-    session::{DebugSession, DebugSessionId},
     DebugAdapterConfig,
 };
 

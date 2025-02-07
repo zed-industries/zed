@@ -1,8 +1,8 @@
 use crate::stack_frame_list::{StackFrameId, StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSession, Scope,
-    ScopePresentationHint, Variable,
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint,
+    Variable,
 };
 use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
@@ -10,7 +10,7 @@ use gpui::{
     FocusHandle, Focusable, Hsla, ListOffset, ListState, MouseDownEvent, Point, Subscription, Task,
 };
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::dap_store::DapStore;
+use project::{dap_session::DebugSession, dap_store::DapStore};
 use rpc::proto::{
     self, DebuggerScopeVariableIndex, DebuggerVariableContainer, UpdateDebugAdapter,
     VariableListScopes, VariableListVariables,

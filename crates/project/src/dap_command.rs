@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use anyhow::{Ok, Result};
 use dap::{
     client::DebugAdapterClientId,
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
-    session::DebugSessionId,
     ContinueArguments, NextArguments, StepInArguments, StepOutArguments, SteppingGranularity,
     ValueFormat, Variable, VariablesArgumentsFilter,
 };
@@ -11,9 +12,9 @@ use gpui::{AsyncApp, WeakEntity};
 use rpc::proto;
 use util::ResultExt;
 
-use crate::dap_store::DapStore;
+use crate::{dap_session::DebugSessionId, dap_store::DapStore};
 
-pub trait DapCommand: 'static + Sized + Send + Sync + std::fmt::Debug {
+pub(crate) trait DapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
@@ -44,7 +45,7 @@ pub trait DapCommand: 'static + Sized + Send + Sync + std::fmt::Debug {
     ) -> <Self::ProtoRequest as proto::RequestMessage>::Response;
 
     fn response_from_proto(
-        self,
+        &self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response>;
 
@@ -56,7 +57,54 @@ pub trait DapCommand: 'static + Sized + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-#[derive(Debug)]
+impl<T: DapCommand> DapCommand for Arc<T> {
+    type Response = T::Response;
+    type DapRequest = T::DapRequest;
+    type ProtoRequest = T::ProtoRequest;
+
+    fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
+        T::client_id_from_proto(request)
+    }
+
+    fn from_proto(request: &Self::ProtoRequest) -> Self {
+        Arc::new(T::from_proto(request))
+    }
+
+    fn to_proto(
+        &self,
+        debug_client_id: &DebugAdapterClientId,
+        upstream_project_id: u64,
+    ) -> Self::ProtoRequest {
+        T::to_proto(self, debug_client_id, upstream_project_id)
+    }
+
+    fn response_to_proto(
+        debug_client_id: &DebugAdapterClientId,
+        message: Self::Response,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        T::response_to_proto(debug_client_id, message)
+    }
+
+    fn response_from_proto(
+        &self,
+        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+    ) -> Result<Self::Response> {
+        T::response_from_proto(self, message)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        T::to_dap(self)
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        T::response_from_dap(self, message)
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct StepCommand {
     pub thread_id: u64,
     pub granularity: Option<SteppingGranularity>,
@@ -82,7 +130,7 @@ impl StepCommand {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct NextCommand {
     pub inner: StepCommand,
 }
@@ -139,14 +187,14 @@ impl DapCommand for NextCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct StepInCommand {
     pub inner: StepCommand,
 }
@@ -211,14 +259,14 @@ impl DapCommand for StepInCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct StepOutCommand {
     pub inner: StepCommand,
 }
@@ -311,14 +359,14 @@ impl DapCommand for StepOutCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct StepBackCommand {
     pub inner: StepCommand,
 }
@@ -381,14 +429,14 @@ impl DapCommand for StepBackCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct ContinueCommand {
     pub args: ContinueArguments,
 }
@@ -466,7 +514,7 @@ impl DapCommand for ContinueCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(Self::Response {
@@ -485,7 +533,7 @@ impl DapCommand for ContinueCommand {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct PauseCommand {
     pub thread_id: u64,
 }
@@ -538,14 +586,14 @@ impl DapCommand for PauseCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct DisconnectCommand {
     pub restart: Option<bool>,
     pub terminate_debuggee: Option<bool>,
@@ -606,14 +654,14 @@ impl DapCommand for DisconnectCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct TerminateThreadsCommand {
     pub thread_ids: Option<Vec<u64>>,
 }
@@ -670,14 +718,14 @@ impl DapCommand for TerminateThreadsCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct TerminateCommand {
     pub restart: Option<bool>,
 }
@@ -730,14 +778,14 @@ impl DapCommand for TerminateCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct RestartCommand {
     pub raw: serde_json::Value,
 }
@@ -794,14 +842,14 @@ impl DapCommand for RestartCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct VariablesCommand {
     pub stack_frame_id: u64,
     pub scope_id: u64,
@@ -919,14 +967,14 @@ impl DapCommand for VariablesCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(Vec::from_proto(message.variables))
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) struct RestartStackFrameCommand {
     pub stack_frame_id: u64,
 }
@@ -979,9 +1027,138 @@ impl DapCommand for RestartStackFrameCommand {
     }
 
     fn response_from_proto(
-        self,
+        &self,
         _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
     ) -> Result<Self::Response> {
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(crate) struct ModulesCommand;
+
+impl DapCommand for ModulesCommand {
+    type Response = Vec<dap::Module>;
+    type DapRequest = dap::requests::Modules;
+    type ProtoRequest = proto::DapModulesRequest;
+
+    fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
+        DebugAdapterClientId::from_proto(request.client_id)
+    }
+
+    fn from_proto(_request: &Self::ProtoRequest) -> Self {
+        Self {}
+    }
+
+    fn to_proto(
+        &self,
+        debug_client_id: &DebugAdapterClientId,
+        upstream_project_id: u64,
+    ) -> proto::DapModulesRequest {
+        proto::DapModulesRequest {
+            project_id: upstream_project_id,
+            client_id: debug_client_id.to_proto(),
+        }
+    }
+
+    fn response_to_proto(
+        debug_client_id: &DebugAdapterClientId,
+        message: Self::Response,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        proto::DapModulesResponse {
+            modules: message
+                .into_iter()
+                .map(|module| module.to_proto())
+                .collect(),
+            client_id: debug_client_id.to_proto(),
+        }
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::ModulesArguments {
+            start_module: None,
+            module_count: None,
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.modules)
+    }
+
+    fn response_from_proto(
+        &self,
+        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message
+            .modules
+            .into_iter()
+            .filter_map(|module| dap::Module::from_proto(module).ok())
+            .collect())
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub(crate) struct LoadedSourcesCommand;
+
+impl DapCommand for LoadedSourcesCommand {
+    type Response = Vec<dap::Source>;
+    type DapRequest = dap::requests::LoadedSources;
+    type ProtoRequest = proto::DapLoadedSourcesRequest;
+
+    fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
+        DebugAdapterClientId::from_proto(request.client_id)
+    }
+
+    fn from_proto(_request: &Self::ProtoRequest) -> Self {
+        Self {}
+    }
+
+    fn to_proto(
+        &self,
+        debug_client_id: &DebugAdapterClientId,
+        upstream_project_id: u64,
+    ) -> proto::DapLoadedSourcesRequest {
+        proto::DapLoadedSourcesRequest {
+            project_id: upstream_project_id,
+            client_id: debug_client_id.to_proto(),
+        }
+    }
+
+    fn response_to_proto(
+        debug_client_id: &DebugAdapterClientId,
+        message: Self::Response,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        proto::DapLoadedSourcesResponse {
+            sources: message
+                .into_iter()
+                .map(|source| source.to_proto())
+                .collect(),
+            client_id: debug_client_id.to_proto(),
+        }
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::LoadedSourcesArguments {}
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.sources)
+    }
+
+    fn response_from_proto(
+        &self,
+        message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message
+            .sources
+            .into_iter()
+            .map(dap::Source::from_proto)
+            .collect())
     }
 }

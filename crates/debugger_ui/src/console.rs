@@ -3,8 +3,7 @@ use crate::{
     variable_list::VariableList,
 };
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSession,
-    OutputEvent, OutputEventGroup,
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, OutputEvent, OutputEventGroup,
 };
 use editor::{
     display_map::{Crease, CreaseId},
@@ -14,7 +13,7 @@ use fuzzy::StringMatchCandidate;
 use gpui::{Context, Entity, Render, Subscription, Task, TextStyle, WeakEntity};
 use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
 use menu::Confirm;
-use project::{dap_store::DapStore, Completion};
+use project::{dap_session::DebugSession, dap_store::DapStore, Completion};
 use rpc::proto;
 use settings::Settings;
 use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};

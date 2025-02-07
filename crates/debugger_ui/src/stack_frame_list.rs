@@ -3,12 +3,12 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use dap::client::DebugAdapterClientId;
 use dap::proto_conversions::ProtoConversion;
-use dap::session::DebugSession;
 use dap::StackFrame;
 use gpui::{
     list, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, Subscription, Task,
     WeakEntity,
 };
+use project::dap_session::DebugSession;
 use project::dap_store::DapStore;
 use project::ProjectPath;
 use rpc::proto::{DebuggerStackFrameList, UpdateDebugAdapter};

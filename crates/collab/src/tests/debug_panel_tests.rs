@@ -1255,7 +1255,7 @@ async fn test_module_list(
                 "Local supports modules request should be true"
             );
 
-            let local_module_list = item.module_list().read(cx).modules();
+            let local_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));
 
             assert_eq!(
                 2usize,
@@ -1263,7 +1263,7 @@ async fn test_module_list(
                 "Local module list should have two items in it"
             );
             assert_eq!(
-                &modules.clone(),
+                modules.clone(),
                 local_module_list,
                 "Local module list should match module list from response"
             );
@@ -1282,7 +1282,7 @@ async fn test_module_list(
                 item.capabilities(cx).supports_modules_request.unwrap(),
                 "Remote capabilities supports modules request should be true"
             );
-            let remote_module_list = item.module_list().read(cx).modules();
+            let remote_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));
 
             assert_eq!(
                 2usize,
@@ -1290,7 +1290,7 @@ async fn test_module_list(
                 "Remote module list should have two items in it"
             );
             assert_eq!(
-                &modules.clone(),
+                modules.clone(),
                 remote_module_list,
                 "Remote module list should match module list from response"
             );
@@ -1313,7 +1313,7 @@ async fn test_module_list(
                 item.capabilities(cx).supports_modules_request.unwrap(),
                 "Remote (mid session join) capabilities supports modules request should be true"
             );
-            let remote_module_list = item.module_list().read(cx).modules();
+            let remote_module_list = item.module_list().update(cx, |list, cx| list.modules(cx));
 
             assert_eq!(
                 2usize,
@@ -1321,7 +1321,7 @@ async fn test_module_list(
                 "Remote (mid session join) module list should have two items in it"
             );
             assert_eq!(
-                &modules.clone(),
+                modules.clone(),
                 remote_module_list,
                 "Remote (mid session join) module list should match module list from response"
             );

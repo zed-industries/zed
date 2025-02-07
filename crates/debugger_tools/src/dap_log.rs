@@ -1,7 +1,6 @@
 use dap::{
     client::{DebugAdapterClient, DebugAdapterClientId},
     debugger_settings::DebuggerSettings,
-    session::{DebugSession, DebugSessionId},
     transport::{IoKind, LogKind},
 };
 use editor::{Editor, EditorEvent};
@@ -13,7 +12,11 @@ use gpui::{
     actions, div, App, AppContext, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
     IntoElement, ParentElement, Render, SharedString, Styled, Subscription, WeakEntity, Window,
 };
-use project::{search::SearchQuery, Project};
+use project::{
+    dap_session::{DebugSession, DebugSessionId},
+    search::SearchQuery,
+    Project,
+};
 use settings::Settings as _;
 use std::{
     borrow::Cow,
