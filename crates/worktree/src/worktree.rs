@@ -2817,6 +2817,7 @@ impl Snapshot {
 
     pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
         let path = path.as_ref();
+        debug_assert!(path.is_relative());
         self.traverse_from_path(true, true, true, path)
             .entry()
             .and_then(|entry| {
@@ -5169,8 +5170,12 @@ impl BackgroundScanner {
 
                 let local_repository = match existing_repository_entry {
                     None => {
+                        let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path())
+                        else {
+                            return;
+                        };
                         match state.insert_git_repository(
-                            dot_git_dir.into(),
+                            relative.into(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         ) {
