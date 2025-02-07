@@ -1,12 +1,14 @@
-use std::rc::Rc;
+use std::{ops::Range, rc::Rc};
 
 use gpui::{
-    div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context,
-    MouseDownEvent, MouseMoveEvent, Pixels, Point, Render, SharedString, UniformListScrollHandle,
-    Window, WindowBounds, WindowOptions,
+    canvas, div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, SharedString,
+    UniformListScrollHandle, Window, WindowBounds, WindowOptions,
 };
 
-const TOTAL_ITEMS: usize = 50000;
+const TOTAL_ITEMS: usize = 10000;
+const SCROLLBAR_THUMB_WIDTH: Pixels = px(8.);
+const SCROLLBAR_THUMB_HEIGHT: Pixels = px(100.);
 
 pub struct Quote {
     name: SharedString,
@@ -134,11 +136,12 @@ impl Quote {
 
 #[derive(IntoElement)]
 struct Item {
+    ix: usize,
     quote: Rc<Quote>,
 }
 impl Item {
-    fn new(quote: Rc<Quote>) -> Self {
-        Item { quote }
+    fn new(ix: usize, quote: Rc<Quote>) -> Self {
+        Item { ix, quote }
     }
 
     fn render_cell(&self, key: &str, width: Pixels, color: gpui::Hsla) -> impl IntoElement {
@@ -146,7 +149,9 @@ impl Item {
             .whitespace_nowrap()
             .truncate()
             .w(width)
+            .px_1()
             .child(match key {
+                "id" => div().child(format!("{}", self.ix)),
                 "symbol" => div().child(self.quote.symbol.clone()),
                 "name" => div().child(self.quote.name.clone()),
                 "last_done" => div()
@@ -196,9 +201,10 @@ impl Item {
     }
 }
 
-const FIELDS: [(&str, f32); 23] = [
+const FIELDS: [(&str, f32); 24] = [
+    ("id", 64.),
     ("symbol", 64.),
-    ("name", 220.),
+    ("name", 180.),
     ("last_done", 80.),
     ("prev_close", 80.),
     ("open", 80.),
@@ -207,8 +213,8 @@ const FIELDS: [(&str, f32); 23] = [
     ("ttm", 50.),
     ("market_cap", 96.),
     ("float_cap", 96.),
-    ("turnover", 96.),
-    ("volume", 96.),
+    ("turnover", 120.),
+    ("volume", 100.),
     ("turnover_ratio", 96.),
     ("pe", 64.),
     ("pb", 64.),
@@ -221,6 +227,7 @@ const FIELDS: [(&str, f32); 23] = [
     ("dividend_payment", 64.),
     ("timestamp", 120.),
 ];
+
 impl RenderOnce for Item {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let color = self.quote.change_color();
@@ -230,32 +237,135 @@ impl RenderOnce for Item {
             .border_b_1()
             .border_color(rgb(0xE0E0E0))
             .py_0p5()
+            .px_2()
             .children(FIELDS.map(|(key, width)| self.render_cell(key, px(width), color)))
     }
 }
 
 struct DataTable {
+    /// Use `Rc` to share the same quote data across multiple items, avoid cloning.
     quotes: Vec<Rc<Quote>>,
+    visible_range: Range<usize>,
     scroll_handle: UniformListScrollHandle,
-    mouse_down_position: Point<Pixels>,
+    /// The position in thumb bounds when dragging start mouse down.
+    drag_position: Option<Point<Pixels>>,
 }
 
 impl DataTable {
     fn new() -> Self {
         Self {
             quotes: Vec::new(),
+            visible_range: 0..0,
             scroll_handle: UniformListScrollHandle::new(),
-            mouse_down_position: Point::default(),
+            drag_position: None,
         }
     }
 
     fn generate(&mut self) {
         self.quotes = (0..TOTAL_ITEMS).map(|_| Rc::new(Quote::random())).collect();
     }
+
+    fn table_bounds(&self) -> Bounds<Pixels> {
+        self.scroll_handle.0.borrow().base_handle.bounds()
+    }
+
+    fn scroll_top(&self) -> Pixels {
+        self.scroll_handle.0.borrow().base_handle.offset().y
+    }
+
+    fn scroll_height(&self) -> Pixels {
+        self.scroll_handle
+            .0
+            .borrow()
+            .last_item_size
+            .unwrap_or_default()
+            .contents
+            .height
+    }
+
+    fn render_scrollbar(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll_height = self.scroll_height();
+        let table_bounds = self.table_bounds();
+        let table_height = table_bounds.size.height;
+        if table_height == px(0.) {
+            return div().id("scrollbar");
+        }
+
+        let percentage = -self.scroll_top() / scroll_height;
+        let offset_top = (table_height * percentage).clamp(
+            px(4.),
+            (table_height - SCROLLBAR_THUMB_HEIGHT - px(4.)).max(px(4.)),
+        );
+        let entity = cx.entity();
+        let scroll_handle = self.scroll_handle.0.borrow().base_handle.clone();
+
+        div()
+            .id("scrollbar")
+            .absolute()
+            .top(offset_top)
+            .right_1()
+            .h(SCROLLBAR_THUMB_HEIGHT)
+            .w(SCROLLBAR_THUMB_WIDTH)
+            .bg(rgb(0xC0C0C0))
+            .hover(|this| this.bg(rgb(0xA0A0A0)))
+            .rounded_lg()
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |thumb_bounds, _, window, _| {
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |ev: &MouseDownEvent, _, _, cx| {
+                                if !thumb_bounds.contains(&ev.position) {
+                                    return;
+                                }
+
+                                entity.update(cx, |this, _| {
+                                    this.drag_position = Some(
+                                        ev.position - thumb_bounds.origin - table_bounds.origin,
+                                    );
+                                })
+                            }
+                        });
+                        window.on_mouse_event({
+                            let entity = entity.clone();
+                            move |_: &MouseUpEvent, _, _, cx| {
+                                entity.update(cx, |this, _| {
+                                    this.drag_position = None;
+                                })
+                            }
+                        });
+
+                        window.on_mouse_event(move |ev: &MouseMoveEvent, _, _, cx| {
+                            if !ev.dragging() {
+                                return;
+                            }
+
+                            let Some(drag_pos) = entity.read(cx).drag_position else {
+                                return;
+                            };
+
+                            let inside_offset = drag_pos.y;
+                            let percentage = ((ev.position.y - table_bounds.origin.y
+                                + inside_offset)
+                                / (table_bounds.size.height))
+                                .clamp(0., 1.);
+
+                            let offset_y = ((scroll_height - table_bounds.size.height)
+                                * percentage)
+                                .clamp(px(0.), scroll_height - SCROLLBAR_THUMB_HEIGHT);
+                            scroll_handle.set_offset(point(px(0.), -offset_y));
+                            cx.notify(entity.entity_id());
+                        })
+                    },
+                )
+                .size_full(),
+            )
+    }
 }
 
 impl Render for DataTable {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity();
 
         div()
@@ -268,8 +378,9 @@ impl Render for DataTable {
             .flex()
             .flex_col()
             .child(format!(
-                "Total: {} items (Mouse down to drag scroll)",
-                self.quotes.len()
+                "Total {} items, visible range: {:?}",
+                self.quotes.len(),
+                self.visible_range
             ))
             .child(
                 div()
@@ -277,38 +388,9 @@ impl Render for DataTable {
                     .flex_col()
                     .flex_1()
                     .overflow_hidden()
-                    .p_4()
                     .border_1()
                     .border_color(rgb(0xE0E0E0))
                     .rounded_md()
-                    .on_mouse_down(
-                        gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseDownEvent, _, _| {
-                            this.mouse_down_position = ev.position;
-                        }),
-                    )
-                    .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                        if ev.dragging() {
-                            let base_handle = this.scroll_handle.0.borrow_mut().base_handle.clone();
-                            let bounds = base_handle.bounds();
-                            let diff = ev.position - this.mouse_down_position - bounds.origin;
-                            let percentage = diff.y / bounds.size.height;
-
-                            let scroll_height = this
-                                .scroll_handle
-                                .0
-                                .borrow()
-                                .last_item_size
-                                .unwrap_or_default()
-                                .contents
-                                .height;
-
-                            let offset_y =
-                                (percentage * scroll_height).clamp(px(0.), scroll_height);
-                            base_handle.set_offset(point(px(0.), -offset_y));
-                            cx.notify();
-                        }
-                    }))
                     .child(
                         div()
                             .flex()
@@ -317,30 +399,40 @@ impl Render for DataTable {
                             .overflow_hidden()
                             .border_b_1()
                             .border_color(rgb(0xE0E0E0))
-                            .py_0p5()
+                            .text_color(rgb(0x555555))
+                            .p_2()
+                            .text_xs()
                             .children(FIELDS.map(|(key, width)| {
                                 div()
                                     .whitespace_nowrap()
                                     .flex_shrink_0()
                                     .truncate()
+                                    .px_1()
                                     .w(px(width))
-                                    .child(key)
+                                    .child(key.replace("_", " ").to_uppercase())
                             })),
                     )
                     .child(
-                        uniform_list(entity, "items", self.quotes.len(), {
-                            move |this, range, _, _| {
-                                let mut items = Vec::with_capacity(range.end - range.start);
-                                for i in range {
-                                    if let Some(quote) = this.quotes.get(i) {
-                                        items.push(Item::new(quote.clone()));
+                        div()
+                            .relative()
+                            .size_full()
+                            .child(
+                                uniform_list(entity, "items", self.quotes.len(), {
+                                    move |this, range, _, _| {
+                                        this.visible_range = range.clone();
+                                        let mut items = Vec::with_capacity(range.end - range.start);
+                                        for i in range {
+                                            if let Some(quote) = this.quotes.get(i) {
+                                                items.push(Item::new(i, quote.clone()));
+                                            }
+                                        }
+                                        items
                                     }
-                                }
-                                items
-                            }
-                        })
-                        .size_full()
-                        .track_scroll(self.scroll_handle.clone()),
+                                })
+                                .size_full()
+                                .track_scroll(self.scroll_handle.clone()),
+                            )
+                            .child(self.render_scrollbar(window, cx)),
                     ),
             )
     }
