@@ -5308,6 +5308,11 @@ impl BackgroundScanner {
             return;
         };
 
+        let merge_head_shas = job.local_repository.repo().merge_head_shas();
+        if merge_head_shas != job.local_repository.current_merge_head_shas {
+            mem::take(&mut repository.current_merge_conflicts);
+        }
+
         let mut new_entries_by_path = SumTree::new(&());
         for (repo_path, status) in statuses.entries.iter() {
             let project_path = repository.work_directory.unrelativize(repo_path);
@@ -5319,6 +5324,9 @@ impl BackgroundScanner {
                 },
                 &(),
             );
+            if status.is_conflicted() {
+                repository.current_merge_conflicts.insert(repo_path.clone());
+            }
 
             if let Some(path) = project_path {
                 changed_paths.push(path);
@@ -5331,6 +5339,13 @@ impl BackgroundScanner {
             .snapshot
             .repositories
             .insert_or_replace(repository, &());
+
+        state
+            .snapshot
+            .git_repositories
+            .update(&job.local_repository.work_directory_id, |entry| {
+                entry.current_merge_head_shas = merge_head_shas;
+            });
 
         util::extend_sorted(
             &mut state.changed_paths,
