@@ -1338,6 +1338,21 @@ fn surrounding_markers(
                 opening.end = range.end
             }
         }
+
+        let mut last_newline_end = None;
+        for (ch, range) in movement::chars_before(map, closing.start) {
+            if !ch.is_whitespace() {
+                break;
+            }
+            if ch == '\n' {
+                last_newline_end = Some(range.end);
+                break;
+            }
+        }
+        // Adjust closing.start to exclude whitespace after a newline, if present
+        if let Some(end) = last_newline_end {
+            closing.start = end;
+        }
     }
 
     let result = if around {
