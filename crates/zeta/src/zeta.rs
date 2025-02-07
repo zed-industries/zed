@@ -81,12 +81,6 @@ impl std::fmt::Display for InlineCompletionId {
     }
 }
 
-impl InlineCompletionId {
-    fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
 #[derive(Clone)]
 struct ZetaGlobal(Entity<Zeta>);
 
@@ -452,11 +446,10 @@ impl Zeta {
 
             let response = perform_predict_edits(client, llm_token, is_staff, body).await?;
 
-            let output_excerpt = response.output_excerpt;
-            log::debug!("completion response: {}", output_excerpt);
+            log::debug!("completion response: {}", &response.output_excerpt);
 
             Self::process_completion_response(
-                output_excerpt,
+                response,
                 buffer,
                 &snapshot,
                 values.editable_range,
@@ -495,6 +488,7 @@ impl Zeta {
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("e7861db5-0cea-4761-b1c5-ad083ac53a80").unwrap(),
                     output_excerpt: format!("{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 [here's an edit]
@@ -511,6 +505,7 @@ and then another
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("077c556a-2c49-44e2-bbc6-dafc09032a5e").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -527,6 +522,7 @@ and then another
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("df8c7b23-3d1d-4f99-a306-1f6264a41277").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -544,6 +540,7 @@ and then another
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("c743958d-e4d8-44a8-aa5b-eb1e305c5f5c").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -561,6 +558,7 @@ and then another
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("ff5cd7ab-ad06-4808-986e-d3391e7b8355").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -577,6 +575,7 @@ and then another
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("83cafa55-cdba-4b27-8474-1865ea06be94").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -592,6 +591,7 @@ and then another
                 &buffer,
                 position,
                 PredictEditsResponse {
+                    request_id: Uuid::parse_str("d5bd3afd-8723-47c7-bd77-15a3a926867b").unwrap(),
                     output_excerpt: format!(r#"{EDITABLE_REGION_START_MARKER}
 a longggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg line
 And maybe a short line
@@ -703,7 +703,7 @@ and then another
 
     #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
-        output_excerpt: String,
+        prediction_response: PredictEditsResponse,
         buffer: Entity<Buffer>,
         snapshot: &BufferSnapshot,
         editable_range: Range<usize>,
@@ -716,6 +716,8 @@ and then another
         cx: &AsyncApp,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = snapshot.clone();
+        let request_id = prediction_response.request_id;
+        let output_excerpt = prediction_response.output_excerpt;
         cx.spawn(|cx| async move {
             let output_excerpt: Arc<str> = output_excerpt.into();
 
@@ -746,7 +748,7 @@ and then another
             let edit_preview = edit_preview.await;
 
             Ok(Some(InlineCompletion {
-                id: InlineCompletionId::new(),
+                id: InlineCompletionId(request_id),
                 path,
                 excerpt_range: editable_range,
                 cursor_offset,
@@ -1550,6 +1552,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         }
 
         Some(inline_completion::InlineCompletion {
+            id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(completion.edit_preview.clone()),
         })
@@ -1598,7 +1601,7 @@ mod tests {
             edit_preview,
             path: Path::new("").into(),
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
-            id: InlineCompletionId::new(),
+            id: InlineCompletionId(Uuid::new_v4()),
             excerpt_range: 0..0,
             cursor_offset: 0,
             input_outline: "".into(),
@@ -1717,6 +1720,8 @@ mod tests {
                 .status(200)
                 .body(
                     serde_json::to_string(&PredictEditsResponse {
+                        request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
+                            .unwrap(),
                         output_excerpt: completion_response.to_string(),
                     })
                     .unwrap()
