@@ -144,6 +144,8 @@ impl State {
         if self.is_authenticated() {
             Task::ready(Ok(()))
         } else {
+            // TODO: Figure out how to only enter the pw once,
+            // perhaps serde it
             cx.spawn(|this, mut cx| async move {
                 let (aa_id, sk, region, from_env) = if let (Ok(aa_id), Ok(sk), Ok(region)) = (
                     std::env::var(ZED_BEDROCK_AAID),
@@ -316,8 +318,6 @@ impl BedrockModel {
             return Err(anyhow!("App state dropped"));
         };
 
-        println!("aa_id: {:?}, sk: {:?}, region: {:?}", aa_id, sk, region);
-
         // instantiate aws client here
         // we'll throw it in the model's struct after
         // Config::builder might be an expensive operation, figure out if it works or not
@@ -458,8 +458,6 @@ pub fn get_bedrock_tokens(
                     }
                 }
 
-                // TODO: Really figure out how to stop using Tiktoken
-                // and use the ConverseStream.UsageOutput method
                 if !string_contents.is_empty() {
                     string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
                         role: match message.role {
@@ -531,9 +529,9 @@ pub fn map_to_language_model_completion_events(
                             }
                             ConverseStreamOutput::ContentBlockStop(_) => {
                                 return Some((
-                                    Some(Err(anyhow!("The Bedrock provider has not implemented tool use yet, this event will only be received on tool use"))),
+                                    Some(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn))),
                                     state,
-                                ))
+                                ));
                             }
                             ConverseStreamOutput::MessageStart(_) |
                             ConverseStreamOutput::MessageStop(_) |

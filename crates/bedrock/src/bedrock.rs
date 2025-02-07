@@ -7,6 +7,7 @@ use std::pin::Pin;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
+use aws_sdk_bedrockruntime::error::ProvideErrorMetadata;
 pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
 use aws_sdk_bedrockruntime::types::{ContentBlockDelta, ContentBlockStopEvent};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
@@ -55,7 +56,7 @@ pub async fn stream_completion(
                 let stream: Pin<Box<dyn Stream<Item=Result<BedrockStreamingResponse, BedrockError>> + Send>> = Box::pin(stream::unfold(output.stream, |mut stream| async move {
                     match stream.recv().await {
                         Ok(Some(output)) => Some((Ok(output), stream)),
-                        Ok(None) => Some((Ok(BedrockStreamingResponse::ContentBlockStop(ContentBlockStopEvent::builder().build().unwrap())), stream)),
+                        Ok(None) => None,
                         Err(e) => {
                             Some((Err(BedrockError::Other(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e)))), stream))
                         }
@@ -66,45 +67,6 @@ pub async fn stream_completion(
             Err(e) => Err(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e))),
         }
     }).await.map_err(|e| anyhow!("Failed to spawn task: {:?}", e))?
-}
-
-
-fn map_stream_output(output: BedrockStreamingResponse) -> Option<Result<String, BedrockError>> {
-    match output {
-        BedrockStreamingResponse::ContentBlockDelta(event) => {
-            if let Some(ContentBlockDelta::Text(text)) = event.delta {
-                Some(Ok(text))
-            } else {
-                Some(Err(BedrockError::Other(anyhow!(
-                    "Received non-text content block delta"
-                ))))
-            }
-        }
-        BedrockStreamingResponse::ContentBlockStart(event) => {
-            //Todo: Implement tool use
-            Some(Err(BedrockError::Other(anyhow!(
-                "Received tool use event"
-            ))))
-        }
-        BedrockStreamingResponse::ContentBlockStop(_) => {
-            Some(Err(BedrockError::Other(anyhow!(
-                "Received tool use content block stop event"
-            ))))
-        }
-        BedrockStreamingResponse::MessageStart(_) |
-        BedrockStreamingResponse::MessageStop(_) |
-        BedrockStreamingResponse::Metadata(_) => {
-            // Todo: This shouldn't happen, but we'll see
-            Some(Err(BedrockError::Other(anyhow!(
-                "Received unexpected event"
-            ))))
-        }
-        _ => {
-            Some(Err(BedrockError::Other(anyhow!(
-                "Received unknown non-exhaustive event."
-            ))))
-        }
-    }
 }
 
 #[derive(Debug)]
