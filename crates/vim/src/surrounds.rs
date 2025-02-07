@@ -745,7 +745,7 @@ mod test {
         cx.update(|_, cx| {
             cx.bind_keys([KeyBinding::new(
                 "shift-s",
-                PushAddSurrounds,
+                PushAddSurrounds {},
                 Some("vim_mode == visual"),
             )])
         });
