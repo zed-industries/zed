@@ -101,7 +101,7 @@
     "jpeg": "image",
     "jpg": "image",
     "js": "javascript",
-    "json": "storage",
+    "json": "code",
     "jsonc": "storage",
     "jsx": "react",
     "jxl": "image",
