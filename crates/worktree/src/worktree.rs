@@ -5304,8 +5304,8 @@ impl BackgroundScanner {
         let Some(mut repository) =
             snapshot.repository(job.local_repository.work_directory.path_key())
         else {
-            log::error!("Got an UpdateGitStatusesJob for a repository that isn't in the snapshot");
-            debug_assert!(false);
+            // happens when a folder is deleted
+            log::debug!("Got an UpdateGitStatusesJob for a repository that isn't in the snapshot");
             return;
         };
 
