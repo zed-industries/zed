@@ -1,3 +1,5 @@
+use std::io::{Cursor, Write};
+
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
@@ -5,7 +7,6 @@ use bedrock::{BedrockInnerContent, BedrockMessage};
 use gpui::{point, size, App, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
-use std::io::{Cursor, Write};
 use ui::{px, SharedString};
 use util::ResultExt;
 
