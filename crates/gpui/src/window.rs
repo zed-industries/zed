@@ -2929,11 +2929,14 @@ impl Window {
         self.next_hitbox_id.0 += 1;
         let hitbox = Hitbox {
             id,
-            bounds: self.to_absolute_coordinates(bounds),
+            bounds,
             content_mask,
             opaque,
         };
-        self.next_frame.hitboxes.push(hitbox.clone());
+        self.next_frame.hitboxes.push(Hitbox {
+            bounds: self.to_absolute_coordinates(bounds),
+            ..hitbox.clone()
+        });
         hitbox
     }
 
