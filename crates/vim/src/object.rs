@@ -1338,15 +1338,6 @@ fn surrounding_markers(
                 opening.end = range.end
             }
         }
-
-        for (ch, range) in movement::chars_before(map, closing.start) {
-            if !ch.is_whitespace() {
-                break;
-            }
-            if ch != '\n' {
-                closing.start = range.start
-            }
-        }
     }
 
     let result = if around {
