@@ -338,6 +338,12 @@ fn modifier_symbol(modifier: ModifierType) -> &'static str {
     }
 }
 
+
+#[cfg(target_os = "macos")]
+const SEPARATOR: &str = "";
+#[cfg(not(target_os = "macos"))]
+const SEPARATOR: &str = " + ";
+
 impl std::fmt::Display for Keystroke {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut is_first = true;
@@ -348,28 +354,28 @@ impl std::fmt::Display for Keystroke {
         }
         if self.modifiers.alt {
             if !is_first {
-                f.write_str(" + ")?;
+                f.write_str(SEPARATOR)?;
             }
             f.write_str(modifier_symbol(ModifierType::Alt))?;
             is_first = false;
         }
         if self.modifiers.platform {
             if !is_first {
-                f.write_str(" + ")?;
+                f.write_str(SEPARATOR)?;
             }
             f.write_str(modifier_symbol(ModifierType::Platform))?;
             is_first = false;
         }
         if self.modifiers.shift {
             if !is_first {
-                f.write_str(" + ")?;
+                f.write_str(SEPARATOR)?;
             }
             f.write_str(modifier_symbol(ModifierType::Shift))?;
             is_first = false;
         }
         if self.modifiers.function {
             if !is_first {
-                f.write_str(" + ")?;
+                f.write_str(SEPARATOR)?;
             }
             f.write_str(modifier_symbol(ModifierType::Function))?;
             is_first = false;
@@ -392,11 +398,12 @@ impl std::fmt::Display for Keystroke {
         };
 
         if !is_first {
-            f.write_str(" + ")?;
+            f.write_str(SEPARATOR)?;
         }
         f.write_str(key)
     }
 }
+
 
 /// The state of the modifier keys at some point in time
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
