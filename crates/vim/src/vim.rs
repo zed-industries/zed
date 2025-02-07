@@ -23,6 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
+    scroll::Autoscroll,
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
@@ -344,7 +345,19 @@ impl Vim {
                 vim.push_count_digit(n.0, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
-                vim.input_ignored(" ".into(), window, cx)
+                let Some(anchor) = vim
+                    .editor()
+                    .and_then(|editor| editor.read(cx).inline_completion_start_anchor())
+                else {
+                    return;
+                };
+
+                vim.update_editor(window, cx, |_, editor, window, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.select_anchor_ranges([anchor..anchor])
+                    });
+                });
+                vim.switch_mode(Mode::Insert, true, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)
@@ -1274,7 +1287,7 @@ impl Vim {
     }
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(window, cx, |vim, editor, _, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.set_cursor_shape(vim.cursor_shape(), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
@@ -1282,14 +1295,11 @@ impl Vim {
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
 
-            let enable_inline_completions = match vim.mode {
-                Mode::Insert | Mode::Replace => true,
-                Mode::Normal => editor
-                    .inline_completion_provider()
-                    .map_or(false, |provider| provider.show_completions_in_normal_mode()),
-                _ => false,
+            let hide_inline_completions = match vim.mode {
+                Mode::Insert | Mode::Replace => false,
+                _ => true,
             };
-            editor.set_show_inline_completions_enabled(enable_inline_completions, cx);
+            editor.set_inline_completions_hidden_for_vim_mode(hide_inline_completions, window, cx);
         });
         cx.notify()
     }

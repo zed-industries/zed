@@ -42,7 +42,6 @@ pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
     fn show_completions_in_menu() -> bool;
-    fn show_completions_in_normal_mode() -> bool;
     fn show_tab_accept_marker() -> bool {
         false
     }
@@ -95,7 +94,6 @@ pub trait InlineCompletionProviderHandle {
         cx: &App,
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
-    fn show_completions_in_normal_mode(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn toggle_data_collection(&self, cx: &mut App);
@@ -140,10 +138,6 @@ where
 
     fn show_completions_in_menu(&self) -> bool {
         T::show_completions_in_menu()
-    }
-
-    fn show_completions_in_normal_mode(&self) -> bool {
-        T::show_completions_in_normal_mode()
     }
 
     fn show_tab_accept_marker(&self) -> bool {

@@ -679,9 +679,7 @@ pub struct Editor {
     active_inline_completion: Option<InlineCompletionState>,
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
-    // enable_inline_completions is a switch that Vim can use to disable
-    // edit predictions based on its mode.
-    show_inline_completions: bool,
+    inline_completions_hidden_for_vim_mode: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
     previewing_inline_completion: bool,
@@ -1390,8 +1388,8 @@ impl Editor {
             hovered_cursors: Default::default(),
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
+            inline_completions_hidden_for_vim_mode: false,
             show_inline_completions_override: None,
-            show_inline_completions: true,
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             custom_context_menu: None,
             show_git_blame_gutter: false,
@@ -1829,11 +1827,19 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
-    pub fn set_show_inline_completions_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        self.show_inline_completions = enabled;
-        if !self.show_inline_completions {
-            self.take_active_inline_completion(cx);
-            cx.notify();
+    pub fn set_inline_completions_hidden_for_vim_mode(
+        &mut self,
+        hidden: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if hidden != self.inline_completions_hidden_for_vim_mode {
+            self.inline_completions_hidden_for_vim_mode = hidden;
+            if hidden {
+                self.update_visible_inline_completion(window, cx);
+            } else {
+                self.refresh_inline_completion(true, false, window, cx);
+            }
         }
     }
 
@@ -1900,6 +1906,15 @@ impl Editor {
     ) {
         self.show_inline_completions_override = show_inline_completions;
         self.refresh_inline_completion(false, true, window, cx);
+    }
+
+    pub fn inline_completion_start_anchor(&self) -> Option<Anchor> {
+        let active_completion = self.active_inline_completion.as_ref()?;
+        let result = match &active_completion.completion {
+            InlineCompletion::Edit { edits, .. } => edits.first()?.0.start,
+            InlineCompletion::Move { target, .. } => *target,
+        };
+        Some(result)
     }
 
     fn inline_completions_disabled_in_scope(
@@ -2566,7 +2581,7 @@ impl Editor {
 
     pub fn dismiss_menus_and_popups(
         &mut self,
-        should_report_inline_completion_event: bool,
+        is_user_requested: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2590,7 +2605,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
+        if is_user_requested && self.discard_inline_completion(true, cx) {
             return true;
         }
 
@@ -4634,12 +4649,7 @@ impl Editor {
         }
 
         if !user_requested
-            && (!self.show_inline_completions
-                || !self.should_show_inline_completions_in_buffer(
-                    &buffer,
-                    cursor_buffer_position,
-                    cx,
-                )
+            && (!self.should_show_inline_completions_in_buffer(&buffer, cursor_buffer_position, cx)
                 || !self.is_focused(window)
                 || buffer.read(cx).is_empty())
         {
@@ -4752,7 +4762,7 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.show_inline_completions
+        if self.inline_completions_hidden_for_vim_mode
             || !self.should_show_inline_completions_in_buffer(&buffer, cursor_buffer_position, cx)
         {
             return None;
@@ -4873,6 +4883,7 @@ impl Editor {
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 let target = *target;
+                // Note that this is also done in vim's handler of the Tab action.
                 self.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
                     selections.select_anchor_ranges([target..target]);
                 });
@@ -5083,7 +5094,6 @@ impl Editor {
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
         if completions_menu_has_precedence
             || !offset_selection.is_empty()
-            || !self.show_inline_completions
             || self
                 .active_inline_completion
                 .as_ref()
@@ -5138,8 +5148,11 @@ impl Editor {
         } else {
             None
         };
-        let completion = if let Some(move_invalidation_row_range) = move_invalidation_row_range {
-            invalidation_row_range = move_invalidation_row_range;
+        let is_move =
+            move_invalidation_row_range.is_some() || self.inline_completions_hidden_for_vim_mode;
+        let completion = if is_move {
+            invalidation_row_range =
+                move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
             let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
             // TODO: Base this off of TreeSitter or word boundaries?
@@ -5158,7 +5171,10 @@ impl Editor {
                 snapshot,
             }
         } else {
-            if !self.inline_completion_visible_in_cursor_popover(true, cx) {
+            let show_completions_in_buffer = !self
+                .inline_completion_visible_in_cursor_popover(true, cx)
+                && !self.inline_completions_hidden_for_vim_mode;
+            if show_completions_in_buffer {
                 if edits
                     .iter()
                     .all(|(range, _)| range.to_offset(&multibuffer).is_empty())

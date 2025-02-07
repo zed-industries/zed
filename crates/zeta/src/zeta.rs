@@ -1513,10 +1513,6 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        true
-    }
-
     fn show_tab_accept_marker() -> bool {
         true
     }

@@ -3636,7 +3636,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
@@ -3649,7 +3649,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3665,7 +3665,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3740,7 +3740,7 @@ impl EditorElement {
                             self.editor.focus_handle(cx),
                             window,
                             cx,
-                        );
+                        )?;
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5742,24 +5742,32 @@ fn inline_completion_accept_indicator(
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
-) -> AnyElement {
-    let use_hardcoded_linux_preview_binding;
+) -> Option<AnyElement> {
+    let use_hardcoded_linux_bindings;
 
     #[cfg(target_os = "macos")]
     {
-        use_hardcoded_linux_preview_binding = false;
+        use_hardcoded_linux_bindings = false;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        use_hardcoded_linux_preview_binding = previewing;
+        use_hardcoded_linux_bindings = true;
     }
 
-    let accept_keystroke = if use_hardcoded_linux_preview_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "enter".to_string(),
-            key_char: None,
+    let accept_keystroke = if use_hardcoded_linux_bindings {
+        if previewing {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "enter".to_string(),
+                key_char: None,
+            }
+        } else {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "tab".to_string(),
+                key_char: None,
+            }
         }
     } else {
         let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
@@ -5767,10 +5775,10 @@ fn inline_completion_accept_indicator(
             .last()
             .and_then(|binding| binding.keystrokes().first())
         {
-            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
+            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
             keystroke.clone()
         } else {
-            return div().into_any();
+            return None;
         }
     };
 
@@ -5793,26 +5801,28 @@ fn inline_completion_accept_indicator(
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
-    h_flex()
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .gap_1()
-        .bg(cx.theme().colors().text_accent.opacity(0.15))
-        .border_1()
-        .border_color(cx.theme().colors().text_accent.opacity(0.8))
-        .rounded_md()
-        .shadow_sm()
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        })
-        .into_any()
+    Some(
+        h_flex()
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .gap_1()
+            .bg(cx.theme().colors().text_accent.opacity(0.15))
+            .border_1()
+            .border_color(cx.theme().colors().text_accent.opacity(0.8))
+            .rounded_md()
+            .shadow_sm()
+            .child(accept_key)
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            })
+            .into_any(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -376,10 +376,6 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_enabled(
         &self,
         _buffer: &gpui::Entity<language::Buffer>,

@@ -110,10 +110,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
         self.supermaven.read(cx).is_enabled()
     }
