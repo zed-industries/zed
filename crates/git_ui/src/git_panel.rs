@@ -57,6 +57,17 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });
+
+            workspace.register_action(|workspace, _: &Commit, window, cx| {
+                workspace.open_panel::<GitPanel>(window, cx);
+                if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                    git_panel
+                        .read(cx)
+                        .commit_editor
+                        .focus_handle(cx)
+                        .focus(window);
+                }
+            });
         },
     )
     .detach();
@@ -1190,6 +1201,7 @@ impl GitPanel {
         let editor = self.commit_editor.clone();
         let can_commit = (self.has_staged_changes() || self.has_tracked_changes())
             && self.pending_commit.is_none()
+            && !self.has_unstaged_conflicts()
             && self.has_write_access(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
 
@@ -1214,7 +1226,7 @@ impl GitPanel {
             .disabled(!can_commit)
             .on_click({
                 cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.commit_changes(&Commit, window, cx)
+                    this.commit_changes_impl(window, cx)
                 })
             });
 
@@ -1596,7 +1608,6 @@ impl GitPanel {
 
         div()
             .w_full()
-            .px_0p5()
             .child(
                 ListItem::new(id)
                     .indent_level(1)
@@ -1604,6 +1615,7 @@ impl GitPanel {
                     .spacing(ListItemSpacing::Sparse)
                     .start_slot(start_slot)
                     .toggle_state(selected)
+                    .focused(selected && self.focus_handle.is_focused(window))
                     .disabled(!has_write_access)
                     .on_click({
                         let entry = entry.clone();

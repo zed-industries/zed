@@ -8,7 +8,6 @@ use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
 use std::borrow::Borrow;
-use std::process::Stdio;
 use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
@@ -17,7 +16,6 @@ use std::{
 };
 use sum_tree::MapSeekTarget;
 use util::command::new_std_command;
-use util::paths::PathExt;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
