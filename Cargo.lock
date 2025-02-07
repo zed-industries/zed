@@ -1273,6 +1273,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-bedrockruntime"
+version = "1.73.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "425c42100a29a4361f8263a54b2f6cf01265116d3f82009df4fe0fcb907c46fb"
+dependencies = [
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-eventstream",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "aws-types",
+ "bytes 1.10.0",
+ "fastrand 2.3.0",
+ "http 0.2.12",
+ "once_cell",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-kinesis"
 version = "1.60.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1602,6 +1626,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws_http_client"
+version = "0.1.0"
+dependencies = [
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "tokio",
+]
+
+[[package]]
 name = "axum"
 version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1729,6 +1765,22 @@ name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
+
+[[package]]
+name = "bedrock"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "aws-config",
+ "aws-sdk-bedrockruntime",
+ "futures 0.3.31",
+ "gpui_tokio",
+ "schemars",
+ "serde",
+ "strum",
+ "thiserror 1.0.69",
+ "tokio",
+]
 
 [[package]]
 name = "bigdecimal"
@@ -6933,6 +6985,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "base64 0.22.1",
+ "bedrock",
  "collections",
  "deepseek",
  "futures 0.3.31",
@@ -6975,6 +7028,10 @@ version = "0.1.0"
 dependencies = [
  "anthropic",
  "anyhow",
+ "aws-config",
+ "aws-credential-types",
+ "aws_http_client",
+ "bedrock",
  "client",
  "collections",
  "copilot",
@@ -6985,6 +7042,7 @@ dependencies = [
  "futures 0.3.31",
  "google_ai",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "language_model",
  "lmstudio",
@@ -7003,6 +7061,7 @@ dependencies = [
  "theme",
  "thiserror 1.0.69",
  "tiktoken-rs",
+ "tokio",
  "ui",
  "util",
 ]
