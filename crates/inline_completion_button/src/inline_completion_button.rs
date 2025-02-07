@@ -1,7 +1,11 @@
 use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
-use editor::{actions::ShowEditPrediction, scroll::Autoscroll, Editor};
+use editor::{
+    actions::{ShowEditPrediction, ToggleEditPrediction},
+    scroll::Autoscroll,
+    Editor,
+};
 use feature_flags::{
     FeatureFlagAppExt, PredictEditsFeatureFlag, PredictEditsRateCompletionsFeatureFlag,
 };
@@ -44,6 +48,7 @@ struct CopilotErrorToast;
 pub struct InlineCompletionButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
+    editor_show_predictions: bool,
     editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
@@ -275,15 +280,29 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
+                let show_editor_predictions = self.editor_show_predictions;
+
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
+                    .when(enabled && !show_editor_predictions, |this| {
+                        this.indicator(Indicator::dot().color(Color::Muted))
+                            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                    })
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
-                        if enabled {
-                            element.tooltip(|window, cx| {
-                                Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                            })
-                        } else {
-                            element.tooltip(|window, cx| {
+                        element.tooltip(move |window, cx| {
+                            if enabled {
+                                if show_editor_predictions {
+                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                                } else {
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        Some(&ToggleMenu),
+                                        "Hidden For This File",
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            } else {
                                 Tooltip::with_meta(
                                     "Edit Prediction",
                                     Some(&ToggleMenu),
@@ -291,8 +310,8 @@ impl Render for InlineCompletionButton {
                                     window,
                                     cx,
                                 )
-                            })
-                        }
+                            }
+                        })
                     });
 
                 let this = cx.entity().clone();
@@ -347,6 +366,7 @@ impl InlineCompletionButton {
         Self {
             editor_subscription: None,
             editor_enabled: None,
+            editor_show_predictions: true,
             editor_focus_handle: None,
             language: None,
             file: None,
@@ -384,6 +404,21 @@ impl InlineCompletionButton {
 
         menu = menu.header("Show Edit Predictions For");
 
+        if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
+            menu = menu.toggleable_entry(
+                "This File",
+                self.editor_show_predictions,
+                IconPosition::Start,
+                Some(Box::new(ToggleEditPrediction)),
+                {
+                    let editor_focus_handle = editor_focus_handle.clone();
+                    move |window, cx| {
+                        editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                    }
+                },
+            );
+        }
+
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
             let language_enabled =
@@ -393,7 +428,7 @@ impl InlineCompletionButton {
             menu = menu.toggleable_entry(
                 language.name(),
                 language_enabled,
-                IconPosition::End,
+                IconPosition::Start,
                 None,
                 move |_, cx| {
                     toggle_show_inline_completions_for_language(language.clone(), fs.clone(), cx)
@@ -406,7 +441,7 @@ impl InlineCompletionButton {
         menu = menu.toggleable_entry(
             "All Files",
             globally_enabled,
-            IconPosition::End,
+            IconPosition::Start,
             None,
             move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         );
@@ -422,7 +457,7 @@ impl InlineCompletionButton {
                     // TODO: We want to add something later that communicates whether
                     // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
-                        .toggleable(IconPosition::End, data_collection.is_enabled())
+                        .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .documentation_aside(|_| {
                             Label::new(indoc!{"
                                 Help us improve our open model by sharing data from open source repositories. \
@@ -450,6 +485,8 @@ impl InlineCompletionButton {
 
         menu = menu.item(
             ContextMenuEntry::new("Configure Excluded Files")
+                .icon(IconName::LockOutlined)
+                .icon_color(Color::Muted)
                 .documentation_aside(|_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
@@ -486,7 +523,6 @@ impl InlineCompletionButton {
                     Some(Box::new(ShowEditPrediction)),
                     {
                         let editor_focus_handle = editor_focus_handle.clone();
-
                         move |window, cx| {
                             editor_focus_handle.dispatch_action(&ShowEditPrediction, window, cx);
                         }
@@ -571,6 +607,7 @@ impl InlineCompletionButton {
                 .unwrap_or(true),
             )
         };
+        self.editor_show_predictions = editor.should_show_inline_completions(cx);
         self.edit_prediction_provider = editor.edit_prediction_provider();
         self.language = language.cloned();
         self.file = file;

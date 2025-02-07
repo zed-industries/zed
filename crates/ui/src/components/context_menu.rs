@@ -674,7 +674,8 @@ impl Render for ContextMenu {
                                                                 let contents = if toggled {
                                                                     v_flex().flex_none().child(
                                                                         Icon::new(IconName::Check)
-                                                                            .color(Color::Accent),
+                                                                            .color(Color::Accent)
+                                                                            .size(*icon_size)
                                                                     )
                                                                 } else {
                                                                     v_flex().flex_none().size(

@@ -39,8 +39,8 @@
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
-      "ctrl-shift-z": "zeta::RateCompletions",
-      "ctrl-shift-i": "edit_prediction::ToggleMenu"
+      "ctrl-cmd-z": "zeta::RateCompletions",
+      "ctrl-cmd-i": "edit_prediction::ToggleMenu"
     }
   },
   {
@@ -132,7 +132,8 @@
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
       "ctrl-f12": "editor::GoToDeclaration",
-      "alt-ctrl-f12": "editor::GoToDeclarationSplit"
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit",
+      "ctrl-cmd-e": "editor::ToggleEditPrediction"
     }
   },
   {
@@ -619,8 +620,7 @@
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
-      "cmd-alt-i": "zed::DebugElements",
-      "ctrl-:": "editor::ToggleInlayHints"
+      "cmd-alt-i": "zed::DebugElements"
     }
   },
   {
@@ -633,7 +633,8 @@
       "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
-      "ctrl-enter": "assistant::InlineAssist"
+      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-:": "editor::ToggleInlayHints"
     }
   },
   {
