@@ -1225,58 +1225,20 @@ impl LocalLspStore {
                 }
             };
 
-            let mut format_operations: Vec<FormatOperation> = vec![];
-            {
-                match trigger {
-                    FormatTrigger::Save => {
-                        match &settings.format_on_save {
-                            FormatOnSave::Off => {
-                                // nothing
-                            }
-                            FormatOnSave::On => {
-                                match &settings.formatter {
-                                    SelectedFormatter::Auto => {
-                                        // do the auto-format: prefer prettier, fallback to primary language server
-                                        let diff = {
-                                            if prettier_settings.allowed {
-                                                Self::perform_format(
-                                                    &Formatter::Prettier,
-                                                    buffer,
-                                                    ranges,
-                                                    primary_server_and_path,
-                                                    lsp_store.clone(),
-                                                    &settings,
-                                                    &adapters_and_servers,
-                                                    push_to_history,
-                                                    &mut project_transaction,
-                                                    &mut cx,
-                                                )
-                                                .await
-                                            } else {
-                                                Self::perform_format(
-                                                    &Formatter::LanguageServer { name: None },
-                                                    buffer,
-                                                    ranges,
-                                                    primary_server_and_path,
-                                                    lsp_store.clone(),
-                                                    &settings,
-                                                    &adapters_and_servers,
-                                                    push_to_history,
-                                                    &mut project_transaction,
-                                                    &mut cx,
-                                                )
-                                                .await
-                                            }
-                                        }?;
-
-                                        if let Some(op) = diff {
-                                            format_operations.push(op);
-                                        }
-                                    }
-                                    SelectedFormatter::List(formatters) => {
-                                        for formatter in formatters.as_ref() {
-                                            let diff = Self::perform_format(
-                                                formatter,
+            match trigger {
+                FormatTrigger::Save => {
+                    match &settings.format_on_save {
+                        FormatOnSave::Off => {
+                            // nothing
+                        }
+                        FormatOnSave::On => {
+                            match &settings.formatter {
+                                SelectedFormatter::Auto => {
+                                    // do the auto-format: prefer prettier, fallback to primary language server
+                                    let diff = {
+                                        if prettier_settings.allowed {
+                                            Self::perform_format(
+                                                &Formatter::Prettier,
                                                 buffer,
                                                 ranges,
                                                 primary_server_and_path,
@@ -1287,88 +1249,106 @@ impl LocalLspStore {
                                                 &mut project_transaction,
                                                 &mut cx,
                                             )
-                                            .await?;
-                                            if let Some(op) = diff {
-                                                format_operations.push(op);
-                                            }
-
-                                            // format with formatter
+                                            .await
+                                        } else {
+                                            Self::perform_format(
+                                                &Formatter::LanguageServer { name: None },
+                                                buffer,
+                                                ranges,
+                                                primary_server_and_path,
+                                                lsp_store.clone(),
+                                                &settings,
+                                                &adapters_and_servers,
+                                                push_to_history,
+                                                &mut project_transaction,
+                                                &mut cx,
+                                            )
+                                            .await
                                         }
+                                    }?;
+
+                                    if let Some(op) = diff {
+                                        Self::apply_buffer_format_operation(
+                                            &buffer.handle,
+                                            op,
+                                            whitespace_transaction_id,
+                                            &mut project_transaction,
+                                            &mut cx,
+                                        )?;
+                                    }
+                                }
+                                SelectedFormatter::List(formatters) => {
+                                    for formatter in formatters.as_ref() {
+                                        let diff = Self::perform_format(
+                                            formatter,
+                                            buffer,
+                                            ranges,
+                                            primary_server_and_path,
+                                            lsp_store.clone(),
+                                            &settings,
+                                            &adapters_and_servers,
+                                            push_to_history,
+                                            &mut project_transaction,
+                                            &mut cx,
+                                        )
+                                        .await?;
+                                        if let Some(op) = diff {
+                                            let ok = Self::apply_buffer_format_operation(
+                                                &buffer.handle,
+                                                op,
+                                                whitespace_transaction_id,
+                                                &mut project_transaction,
+                                                &mut cx,
+                                            )?;
+                                            if !ok {
+                                                break;
+                                            }
+                                        }
+
+                                        // format with formatter
                                     }
                                 }
                             }
-                            FormatOnSave::List(formatters) => {
-                                for formatter in formatters.as_ref() {
-                                    let diff = Self::perform_format(
-                                        formatter,
-                                        buffer,
-                                        ranges,
-                                        primary_server_and_path,
-                                        lsp_store.clone(),
-                                        &settings,
-                                        &adapters_and_servers,
-                                        push_to_history,
+                        }
+                        FormatOnSave::List(formatters) => {
+                            for formatter in formatters.as_ref() {
+                                let diff = Self::perform_format(
+                                    formatter,
+                                    buffer,
+                                    ranges,
+                                    primary_server_and_path,
+                                    lsp_store.clone(),
+                                    &settings,
+                                    &adapters_and_servers,
+                                    push_to_history,
+                                    &mut project_transaction,
+                                    &mut cx,
+                                )
+                                .await?;
+                                if let Some(op) = diff {
+                                    let ok = Self::apply_buffer_format_operation(
+                                        &buffer.handle,
+                                        op,
+                                        whitespace_transaction_id,
                                         &mut project_transaction,
                                         &mut cx,
-                                    )
-                                    .await?;
-                                    if let Some(op) = diff {
-                                        format_operations.push(op);
+                                    )?;
+                                    if !ok {
+                                        break;
                                     }
                                 }
                             }
                         }
                     }
-                    FormatTrigger::Manual => {
-                        match &settings.formatter {
-                            SelectedFormatter::Auto => {
-                                // do the auto-format: prefer prettier, fallback to primary language server
-                                let diff = {
-                                    if prettier_settings.allowed {
-                                        Self::perform_format(
-                                            &Formatter::Prettier,
-                                            buffer,
-                                            ranges,
-                                            primary_server_and_path,
-                                            lsp_store.clone(),
-                                            &settings,
-                                            &adapters_and_servers,
-                                            push_to_history,
-                                            &mut project_transaction,
-                                            &mut cx,
-                                        )
-                                        .await
-                                    } else {
-                                        let formatter = Formatter::LanguageServer {
-                                            name: primary_language_server
-                                                .as_ref()
-                                                .map(|server| server.name().to_string()),
-                                        };
-                                        Self::perform_format(
-                                            &formatter,
-                                            buffer,
-                                            ranges,
-                                            primary_server_and_path,
-                                            lsp_store.clone(),
-                                            &settings,
-                                            &adapters_and_servers,
-                                            push_to_history,
-                                            &mut project_transaction,
-                                            &mut cx,
-                                        )
-                                        .await
-                                    }
-                                }?;
-
-                                if let Some(op) = diff {
-                                    format_operations.push(op)
-                                }
-                            }
-                            SelectedFormatter::List(formatters) => {
-                                for formatter in formatters.as_ref() {
-                                    // format with formatter
-                                    let diff = Self::perform_format(
-                                        formatter,
+                }
+                FormatTrigger::Manual => {
+                    match &settings.formatter {
+                        SelectedFormatter::Auto => {
+                            // do the auto-format: prefer prettier, fallback to primary language server
+                            let diff = {
+                                if prettier_settings.allowed {
+                                    Self::perform_format(
+                                        &Formatter::Prettier,
                                         buffer,
                                         ranges,
                                         primary_server_and_path,
@@ -1379,9 +1359,65 @@ impl LocalLspStore {
                                         &mut project_transaction,
                                         &mut cx,
                                     )
-                                    .await?;
-                                    if let Some(op) = diff {
-                                        format_operations.push(op);
+                                    .await
+                                } else {
+                                    let formatter = Formatter::LanguageServer {
+                                        name: primary_language_server
+                                            .as_ref()
+                                            .map(|server| server.name().to_string()),
+                                    };
+                                    Self::perform_format(
+                                        &formatter,
+                                        buffer,
+                                        ranges,
+                                        primary_server_and_path,
+                                        lsp_store.clone(),
+                                        &settings,
+                                        &adapters_and_servers,
+                                        push_to_history,
+                                        &mut project_transaction,
+                                        &mut cx,
+                                    )
+                                    .await
+                                }
+                            }?;
+
+                            if let Some(op) = diff {
+                                Self::apply_buffer_format_operation(
+                                    &buffer.handle,
+                                    op,
+                                    whitespace_transaction_id,
+                                    &mut project_transaction,
+                                    &mut cx,
+                                )?;
+                            }
+                        }
+                        SelectedFormatter::List(formatters) => {
+                            for formatter in formatters.as_ref() {
+                                // format with formatter
+                                let diff = Self::perform_format(
+                                    formatter,
+                                    buffer,
+                                    ranges,
+                                    primary_server_and_path,
+                                    lsp_store.clone(),
+                                    &settings,
+                                    &adapters_and_servers,
+                                    push_to_history,
+                                    &mut project_transaction,
+                                    &mut cx,
+                                )
+                                .await?;
+                                if let Some(op) = diff {
+                                    let ok = Self::apply_buffer_format_operation(
+                                        &buffer.handle,
+                                        op,
+                                        whitespace_transaction_id,
+                                        &mut project_transaction,
+                                        &mut cx,
+                                    )?;
+                                    if !ok {
+                                        break;
                                     }
                                 }
                             }
@@ -1389,53 +1425,63 @@ impl LocalLspStore {
                     }
                 }
             }
-
-            buffer.handle.update(&mut cx, |b, cx| {
-                // If the buffer had its whitespace formatted and was edited while the language-specific
-                // formatting was being computed, avoid applying the language-specific formatting, because
-                // it can't be grouped with the whitespace formatting in the undo history.
-                if let Some(transaction_id) = whitespace_transaction_id {
-                    if b.peek_undo_stack()
-                        .map_or(true, |e| e.transaction_id() != transaction_id)
-                    {
-                        format_operations.clear();
-                    }
-                }
-
-                // Apply any language-specific formatting, and group the two formatting operations
-                // in the buffer's undo history.
-                for operation in format_operations {
-                    match operation {
-                        FormatOperation::Lsp(edits) => {
-                            b.edit(edits, None, cx);
-                        }
-                        FormatOperation::External(diff) => {
-                            b.apply_diff(diff, cx);
-                        }
-                        FormatOperation::Prettier(diff) => {
-                            b.apply_diff(diff, cx);
-                        }
-                    }
-
-                    if let Some(transaction_id) = whitespace_transaction_id {
-                        b.group_until_transaction(transaction_id);
-                    } else if let Some(transaction) = project_transaction.0.get(&buffer.handle) {
-                        b.group_until_transaction(transaction.id)
-                    }
-                }
-
+            buffer.handle.update(&mut cx, |b, _cx| {
                 if let Some(transaction) = b.finalize_last_transaction().cloned() {
                     if !push_to_history {
                         b.forget_transaction(transaction.id);
+                        project_transaction
+                            .0
+                            .insert(buffer.handle.clone(), transaction);
                     }
-                    project_transaction
-                        .0
-                        .insert(buffer.handle.clone(), transaction);
                 }
             })?;
         }
 
         Ok(project_transaction)
+    }
+
+    fn apply_buffer_format_operation(
+        buffer_handle: &Entity<Buffer>,
+        operation: FormatOperation,
+        whitespace_transaction_id: Option<clock::Lamport>,
+        project_transaction: &mut ProjectTransaction,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<bool> {
+        return buffer_handle.update(cx, |b, cx| {
+            // If the buffer had its whitespace formatted and was edited while the language-specific
+            // formatting was being computed, avoid applying the language-specific formatting, because
+            // it can't be grouped with the whitespace formatting in the undo history.
+            let should_continue_formatting = match whitespace_transaction_id {
+                Some(transaction_id) => b
+                    .peek_undo_stack()
+                    .map_or(false, |e| e.transaction_id() == transaction_id),
+                None => true,
+            };
+
+            if should_continue_formatting {
+                // Apply any language-specific formatting, and group the two formatting operations
+                // in the buffer's undo history.
+                match operation {
+                    FormatOperation::Lsp(edits) => {
+                        b.edit(edits, None, cx);
+                    }
+                    FormatOperation::External(diff) => {
+                        b.apply_diff(diff, cx);
+                    }
+                    FormatOperation::Prettier(diff) => {
+                        b.apply_diff(diff, cx);
+                    }
+                }
+            }
+
+            if let Some(transaction_id) = whitespace_transaction_id {
+                b.group_until_transaction(transaction_id);
+            } else if let Some(transaction) = project_transaction.0.get(&buffer_handle) {
+                b.group_until_transaction(transaction.id)
+            }
+
+            return should_continue_formatting;
+        });
     }
 
     #[allow(clippy::too_many_arguments)]
