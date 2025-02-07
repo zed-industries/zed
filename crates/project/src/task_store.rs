@@ -51,7 +51,7 @@ impl EventEmitter<crate::Event> for TaskStore {}
 impl TaskStore {
     pub fn init(client: Option<&AnyProtoClient>) {
         if let Some(client) = client {
-            client.add_model_request_handler(Self::handle_task_context_for_location);
+            client.add_entity_request_handler(Self::handle_task_context_for_location);
         }
     }
 

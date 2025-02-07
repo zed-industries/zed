@@ -671,7 +671,7 @@ fn around_subword(
         is_word_end || is_subword_end
     });
 
-    Some(start..end)
+    Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
 }
 
 fn around_containing_word(

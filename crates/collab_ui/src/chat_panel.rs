@@ -97,14 +97,14 @@ impl ChatPanel {
         });
 
         cx.new(|cx| {
-            let model = cx.entity().downgrade();
+            let entity = cx.entity().downgrade();
             let message_list = ListState::new(
                 0,
                 gpui::ListAlignment::Bottom,
                 px(1000.),
                 move |ix, window, cx| {
-                    if let Some(model) = model.upgrade() {
-                        model.update(cx, |this: &mut Self, cx| {
+                    if let Some(entity) = entity.upgrade() {
+                        entity.update(cx, |this: &mut Self, cx| {
                             this.render_message(ix, window, cx).into_any_element()
                         })
                     } else {

@@ -8,7 +8,7 @@ use gpui::{App, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use release_channel::{ReleaseChannel, RELEASE_CHANNEL};
+use release_channel::{AppCommitSha, ReleaseChannel, RELEASE_CHANNEL};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -25,6 +25,7 @@ static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
     app_version: SemanticVersion,
+    app_commit_sha: Option<AppCommitSha>,
     system_id: Option<String>,
     installation_id: Option<String>,
     session_id: String,
@@ -54,12 +55,22 @@ pub fn init_panic_hook(
             let location = info.location().unwrap();
             let backtrace = Backtrace::new();
             eprintln!(
-                "Thread {:?} panicked with {:?} at {}:{}:{}\n{:?}",
+                "Thread {:?} panicked with {:?} at {}:{}:{}\n{}{:?}",
                 thread_name,
                 payload,
                 location.file(),
                 location.line(),
                 location.column(),
+                match app_commit_sha.as_ref() {
+                    Some(commit_sha) => format!(
+                        "https://github.com/zed-industries/zed/blob/{}/src/{}#L{} \
+                        (may not be uploaded, line may be incorrect if files modified)\n",
+                        commit_sha.0,
+                        location.file(),
+                        location.line()
+                    ),
+                    None => "".to_string(),
+                },
                 backtrace,
             );
             std::process::exit(-1);
@@ -103,6 +114,7 @@ pub fn init_panic_hook(
                 line: location.line(),
             }),
             app_version: app_version.to_string(),
+            app_commit_sha: app_commit_sha.as_ref().map(|sha| sha.0.clone()),
             release_channel: RELEASE_CHANNEL.dev_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),

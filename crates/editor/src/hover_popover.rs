@@ -279,9 +279,10 @@ fn show_hover(
                 delay.await;
             }
 
+            let offset = anchor.to_offset(&snapshot.buffer_snapshot);
             let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor)
+                .diagnostics_in_range::<usize>(offset..offset)
                 // Find the entry with the most specific range
                 .min_by_key(|entry| entry.range.len());
 
@@ -597,7 +598,7 @@ async fn parse_blocks(
                 },
                 syntax: cx.theme().syntax().clone(),
                 selection_background_color: { cx.theme().players().local().selection },
-                break_style: Default::default(),
+
                 heading: StyleRefinement::default()
                     .font_weight(FontWeight::BOLD)
                     .text_base()
@@ -884,8 +885,10 @@ mod tests {
                 let slice = data;
 
                 for (range, event) in slice.iter() {
-                    if [MarkdownEvent::Text, MarkdownEvent::Code].contains(event) {
-                        rendered_text.push_str(&text[range.clone()])
+                    match event {
+                        MarkdownEvent::Text(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::Code => rendered_text.push_str(&text[range.clone()]),
+                        _ => {}
                     }
                 }
             }
