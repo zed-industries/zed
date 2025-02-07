@@ -254,6 +254,7 @@ impl Render for InlineCompletionButton {
                         IconButton::new("zed-predict-pending-button", zeta_icon)
                             .shape(IconButtonShape::Square)
                             .indicator(Indicator::dot().color(Color::Error))
+                            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
