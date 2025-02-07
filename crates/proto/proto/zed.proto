@@ -347,7 +347,9 @@ message Envelope {
         DapModulesRequest dap_modules_request = 325;
         DapModulesResponse dap_modules_response = 326;
         DapLoadedSourcesRequest dap_loaded_sources_request = 327;
-        DapLoadedSourcesResponse dap_loaded_sources_response = 328; // current max
+        DapLoadedSourcesResponse dap_loaded_sources_response = 328;
+        ActiveDebugSessionsRequest active_debug_sessions_request = 329;
+        ActiveDebugSessionsResponse active_debug_sessions_response = 330; // current max
     }
 
     reserved 87 to 88;
@@ -605,7 +607,6 @@ message JoinProjectResponse {
     ChannelRole role = 6;
     reserved 7;
     repeated SynchronizeBreakpoints breakpoints = 8;
-    repeated DebuggerSession debug_sessions = 9;
 }
 
 message LeaveProject {
@@ -2533,18 +2534,24 @@ message DebuggerSessionEnded {
     uint64 session_id = 2;
 }
 
+message ActiveDebugSessionsRequest {
+    uint64 project_id = 1;
+}
+
+message ActiveDebugSessionsResponse {
+    repeated DebuggerSession sessions = 1;
+}
+
 message DebuggerSession {
     uint64 session_id = 1;
-    uint64 project_id = 2;
-    bool ignore_breakpoints = 3;
-    repeated DebugClient clients = 4;
+    bool ignore_breakpoints = 2;
+    repeated DebugClient clients = 3;
 }
 
 message DebugClient {
     uint64 client_id = 1;
     SetDebugClientCapabilities capabilities = 2;
-    SetActiveDebugLine active_debug_line = 3;
-    repeated SetDebuggerPanelItem debug_panel_items = 4;
+    repeated SetDebuggerPanelItem debug_panel_items = 3;
 }
 
 message ShutdownDebugClient {

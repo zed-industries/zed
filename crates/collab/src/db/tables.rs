@@ -14,8 +14,6 @@ pub mod channel_message;
 pub mod channel_message_mention;
 pub mod contact;
 pub mod contributor;
-pub mod debug_clients;
-pub mod debug_panel_items;
 pub mod embedding;
 pub mod extension;
 pub mod extension_version;

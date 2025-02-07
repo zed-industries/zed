@@ -412,6 +412,8 @@ messages!(
     (IgnoreBreakpointState, Background),
     (ToggleIgnoreBreakpoints, Background),
     (DebuggerSessionEnded, Background),
+    (ActiveDebugSessionsRequest, Foreground),
+    (ActiveDebugSessionsResponse, Foreground),
 );
 
 request_messages!(
@@ -559,7 +561,8 @@ request_messages!(
     (DapRestartRequest, Ack),
     (DapRestartStackFrameRequest, Ack),
     (DapShutdownSession, Ack),
-    (VariablesRequest, DapVariables)
+    (VariablesRequest, DapVariables),
+    (ActiveDebugSessionsRequest, ActiveDebugSessionsResponse)
 );
 
 entity_messages!(
@@ -676,6 +679,7 @@ entity_messages!(
     IgnoreBreakpointState,
     ToggleIgnoreBreakpoints,
     DebuggerSessionEnded,
+    ActiveDebugSessionsRequest,
 );
 
 entity_messages!(

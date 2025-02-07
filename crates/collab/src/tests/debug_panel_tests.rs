@@ -2496,7 +2496,7 @@ async fn test_debug_panel_console(host_cx: &mut TestAppContext, remote_cx: &mut 
                 console.editor().update(cx, |editor, cx| {
                     pretty_assertions::assert_eq!(
                         "
-                        First line
+                        <First line
                         First group
                             First item in group 1
                             Second item in group 1

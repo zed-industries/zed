@@ -1,6 +1,5 @@
 use crate::{attach_modal::AttachModal, debugger_panel_item::DebugPanelItem};
 use anyhow::Result;
-use client::proto;
 use collections::{BTreeMap, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
 use dap::{
@@ -21,7 +20,7 @@ use project::{
     dap_store::{DapStore, DapStoreEvent},
     terminals::TerminalKind,
 };
-use rpc::proto::{SetDebuggerPanelItem, UpdateDebugAdapter};
+use rpc::proto::{self, SetDebuggerPanelItem, UpdateDebugAdapter};
 use serde_json::Value;
 use settings::Settings;
 use std::{any::TypeId, collections::VecDeque, path::PathBuf, u64};
@@ -315,6 +314,20 @@ impl DebugPanel {
             .read(cx)
             .active_item()
             .and_then(|panel| panel.downcast::<DebugPanelItem>())
+    }
+
+    pub fn debug_panel_items_by_client(
+        &self,
+        client_id: &DebugAdapterClientId,
+        cx: &Context<Self>,
+    ) -> Vec<Entity<DebugPanelItem>> {
+        self.pane
+            .read(cx)
+            .items()
+            .filter_map(|item| item.downcast::<DebugPanelItem>())
+            .filter(|item| &item.read(cx).client_id() == client_id)
+            .map(|item| item.clone())
+            .collect()
     }
 
     pub fn debug_panel_item_by_client(
@@ -945,6 +958,9 @@ impl DebugPanel {
             project::dap_store::DapStoreEvent::UpdateThreadStatus(thread_status_update) => {
                 self.handle_thread_status_update(thread_status_update, cx);
             }
+            project::dap_store::DapStoreEvent::RemoteHasInitialized => {
+                self.handle_remote_has_initialized(window, cx)
+            }
             _ => {}
         }
     }
@@ -1011,6 +1027,18 @@ impl DebugPanel {
                     this.go_to_current_stack_frame(window, cx);
                 }
             });
+        }
+    }
+
+    fn handle_remote_has_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(mut dap_event_queue) = self
+            .dap_store
+            .clone()
+            .update(cx, |this, _| this.remote_event_queue())
+        {
+            while let Some(dap_event) = dap_event_queue.pop_front() {
+                self.on_dap_store_event(&self.dap_store.clone(), &dap_event, window, cx);
+            }
         }
     }
 
