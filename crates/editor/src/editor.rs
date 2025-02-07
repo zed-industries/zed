@@ -73,7 +73,6 @@ use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
 };
-use diff::DiffHunkStatus;
 use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, linear_color_stop, linear_gradient, point, prelude::*, pulsating_between,
@@ -15459,7 +15458,7 @@ impl EditorSnapshot {
             ) {
                 // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
                 // when the caret is just above or just below the deleted hunk.
-                let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
+                let allow_adjacent = hunk.status().is_removed();
                 let related_to_selection = if allow_adjacent {
                     hunk.row_range.overlaps(&query_rows)
                         || hunk.row_range.start == query_rows.end

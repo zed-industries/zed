@@ -131,16 +131,18 @@ pub struct MultiBufferDiffHunk {
     pub excerpt_id: ExcerptId,
     /// The range within the buffer's diff base that this hunk corresponds to.
     pub diff_base_byte_range: Range<usize>,
+    /// Whether or not this hunk also appears in the 'secondary diff'.
+    pub secondary_status: DiffHunkSecondaryStatus,
 }
 
 impl MultiBufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
         if self.buffer_range.start == self.buffer_range.end {
-            DiffHunkStatus::Removed
+            DiffHunkStatus::Removed(self.secondary_status)
         } else if self.diff_base_byte_range.is_empty() {
-            DiffHunkStatus::Added
+            DiffHunkStatus::Added(self.secondary_status)
         } else {
-            DiffHunkStatus::Modified
+            DiffHunkStatus::Modified(self.secondary_status)
         }
     }
 }
@@ -440,7 +442,7 @@ struct MultiBufferCursor<'a, D: TextDimension> {
 struct MultiBufferRegion<'a, D: TextDimension> {
     buffer: &'a BufferSnapshot,
     is_main_buffer: bool,
-    is_inserted_hunk: bool,
+    diff_hunk_status: Option<DiffHunkStatus>,
     excerpt: &'a Excerpt,
     buffer_range: Range<D>,
     range: Range<D>,
@@ -3470,6 +3472,7 @@ impl MultiBufferSnapshot {
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                secondary_status: hunk.secondary_status,
             })
         })
     }
@@ -3838,6 +3841,7 @@ impl MultiBufferSnapshot {
                         excerpt_id: excerpt.id,
                         buffer_range: hunk.buffer_range.clone(),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                        secondary_status: hunk.secondary_status,
                     });
                 }
             }
@@ -6142,6 +6146,7 @@ where
                 buffer_id,
                 base_text_byte_range,
                 has_trailing_newline,
+                hunk_info,
                 ..
             } => {
                 let diff = self.diffs.get(&buffer_id)?;
@@ -6158,14 +6163,15 @@ where
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
                     is_main_buffer: false,
-                    is_inserted_hunk: false,
+                    diff_hunk_status: Some(DiffHunkStatus::Removed(
+                        hunk_info.hunk_secondary_status,
+                    )),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 });
             }
             DiffTransform::BufferContent {
-                inserted_hunk_info: inserted_hunk_anchor,
-                ..
+                inserted_hunk_info, ..
             } => {
                 let buffer = &excerpt.buffer;
                 let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
@@ -6202,7 +6208,8 @@ where
                     excerpt,
                     has_trailing_newline,
                     is_main_buffer: true,
-                    is_inserted_hunk: inserted_hunk_anchor.is_some(),
+                    diff_hunk_status: inserted_hunk_info
+                        .map(|info| DiffHunkStatus::Added(info.hunk_secondary_status)),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })
@@ -7012,13 +7019,9 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
             multibuffer_row: Some(MultiBufferRow(self.point.row)),
-            diff_status: if region.is_inserted_hunk && self.point < region.range.end {
-                Some(DiffHunkStatus::Added)
-            } else if !region.is_main_buffer {
-                Some(DiffHunkStatus::Removed)
-            } else {
-                None
-            },
+            diff_status: region
+                .diff_hunk_status
+                .filter(|_| self.point < region.range.end),
         });
         self.point += Point::new(1, 0);
         result

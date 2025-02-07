@@ -1325,13 +1325,13 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .map(|info| (info.buffer_row, info.diff_status))
             .collect::<Vec<_>>(),
         vec![
-            (Some(0), Some(DiffHunkStatus::Added)),
+            (Some(0), Some(DiffHunkStatus::added())),
             (Some(1), None),
-            (Some(1), Some(DiffHunkStatus::Removed)),
-            (Some(2), Some(DiffHunkStatus::Added)),
+            (Some(1), Some(DiffHunkStatus::removed())),
+            (Some(2), Some(DiffHunkStatus::added())),
             (Some(3), None),
-            (Some(3), Some(DiffHunkStatus::Removed)),
-            (Some(4), Some(DiffHunkStatus::Removed)),
+            (Some(3), Some(DiffHunkStatus::removed())),
+            (Some(4), Some(DiffHunkStatus::removed())),
             (Some(4), None),
             (Some(5), None)
         ]
@@ -2279,7 +2279,7 @@ impl ReferenceMultibuffer {
                             buffer_start: Some(
                                 base_buffer.offset_to_point(hunk.diff_base_byte_range.start),
                             ),
-                            status: Some(DiffHunkStatus::Removed),
+                            status: Some(DiffHunkStatus::Removed(hunk.secondary_status)),
                         });
                     }
 
@@ -2294,7 +2294,7 @@ impl ReferenceMultibuffer {
                         buffer_id: Some(buffer.remote_id()),
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
-                        status: Some(DiffHunkStatus::Added),
+                        status: Some(DiffHunkStatus::Added(hunk.secondary_status)),
                     });
                     offset = hunk_range.end;
                 }
@@ -2665,7 +2665,7 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
             expected_row_infos
                 .into_iter()
                 .filter_map(
-                    |info| if info.diff_status == Some(DiffHunkStatus::Removed) {
+                    |info| if matches!(info.diff_status, Some(DiffHunkStatus::Removed(_))) {
                         None
                     } else {
                         info.buffer_row
@@ -3022,9 +3022,9 @@ fn format_diff(
         .zip(row_infos)
         .map(|((ix, line), info)| {
             let marker = match info.diff_status {
-                Some(DiffHunkStatus::Added) => "+ ",
-                Some(DiffHunkStatus::Removed) => "- ",
-                Some(DiffHunkStatus::Modified) => unreachable!(),
+                Some(DiffHunkStatus::Added(_)) => "+ ",
+                Some(DiffHunkStatus::Removed(_)) => "- ",
+                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
                 None => {
                     if has_diff && !line.is_empty() {
                         "  "

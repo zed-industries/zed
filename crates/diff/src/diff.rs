@@ -26,11 +26,11 @@ struct BufferDiffInner {
     base_text: Option<language::BufferSnapshot>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiffHunkStatus {
-    Added,
-    Modified,
-    Removed,
+    Added(DiffHunkSecondaryStatus),
+    Modified(DiffHunkSecondaryStatus),
+    Removed(DiffHunkSecondaryStatus),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -752,6 +752,31 @@ impl BufferDiff {
         );
         let snapshot = cx.background_executor().block(snapshot);
         self.set_state(snapshot, &buffer, cx);
+    }
+}
+
+impl DiffHunkStatus {
+    pub fn is_removed(&self) -> bool {
+        matches!(self, DiffHunkStatus::Removed(_))
+    }
+
+    // pub fn is_added(&self) -> bool {
+    //     matches!(self, DiffHunkStatus::Added(_))
+    // }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn removed() -> Self {
+        DiffHunkStatus::Removed(DiffHunkSecondaryStatus::None)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn added() -> Self {
+        DiffHunkStatus::Added(DiffHunkSecondaryStatus::None)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn modified() -> Self {
+        DiffHunkStatus::Modified(DiffHunkSecondaryStatus::None)
     }
 }
 

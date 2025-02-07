@@ -459,9 +459,9 @@ pub fn assert_state_with_diff(
         .zip(line_infos)
         .map(|(line, info)| {
             let mut marker = match info.diff_status {
-                Some(DiffHunkStatus::Added) => "+ ",
-                Some(DiffHunkStatus::Removed) => "- ",
-                Some(DiffHunkStatus::Modified) => unreachable!(),
+                Some(DiffHunkStatus::Added(_)) => "+ ",
+                Some(DiffHunkStatus::Removed(_)) => "- ",
+                Some(DiffHunkStatus::Modified(_)) => unreachable!(),
                 None => {
                     if has_diff {
                         "  "

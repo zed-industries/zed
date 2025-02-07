@@ -26,7 +26,7 @@ use crate::{
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
-use diff::DiffHunkStatus;
+use diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, Oid};
 use gpui::{
@@ -2138,7 +2138,7 @@ impl EditorElement {
                     .get(&display_row)
                     .unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
-                if row_info.diff_status == Some(DiffHunkStatus::Removed) {
+                if matches!(row_info.diff_status, Some(DiffHunkStatus::Removed(_))) {
                     return None;
                 }
 
@@ -4085,8 +4085,10 @@ impl EditorElement {
                 if row_infos[row_ix].diff_status.is_none() {
                     continue;
                 }
-                if row_infos[row_ix].diff_status == Some(DiffHunkStatus::Added)
-                    && *status != DiffHunkStatus::Added
+                if matches!(
+                    row_infos[row_ix].diff_status,
+                    Some(DiffHunkStatus::Added(_))
+                ) && !matches!(*status, DiffHunkStatus::Added(_))
                 {
                     continue;
                 }
@@ -4494,22 +4496,22 @@ impl EditorElement {
                         display_row_range,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| match status {
-                        DiffHunkStatus::Added => (
+                        DiffHunkStatus::Added(_) => (
                             hunk_hitbox.bounds,
                             cx.theme().status().created,
                             Corners::all(px(0.)),
                         ),
-                        DiffHunkStatus::Modified => (
+                        DiffHunkStatus::Modified(_) => (
                             hunk_hitbox.bounds,
                             cx.theme().status().modified,
                             Corners::all(px(0.)),
                         ),
-                        DiffHunkStatus::Removed if !display_row_range.is_empty() => (
+                        DiffHunkStatus::Removed(_) if !display_row_range.is_empty() => (
                             hunk_hitbox.bounds,
                             cx.theme().status().deleted,
                             Corners::all(px(0.)),
                         ),
-                        DiffHunkStatus::Removed => (
+                        DiffHunkStatus::Removed(_) => (
                             Bounds::new(
                                 point(
                                     hunk_hitbox.origin.x - hunk_hitbox.size.width,
@@ -4559,7 +4561,7 @@ impl EditorElement {
                 status,
                 ..
             } => {
-                if *status == DiffHunkStatus::Removed && display_row_range.is_empty() {
+                if status.is_removed() && display_row_range.is_empty() {
                     let row = display_row_range.start;
 
                     let offset = line_height / 2.;
@@ -5206,9 +5208,9 @@ impl EditorElement {
                                             end_display_row.0 -= 1;
                                         }
                                         let color = match &hunk.status() {
-                                            DiffHunkStatus::Added => theme.status().created,
-                                            DiffHunkStatus::Modified => theme.status().modified,
-                                            DiffHunkStatus::Removed => theme.status().deleted,
+                                            DiffHunkStatus::Added(_) => theme.status().created,
+                                            DiffHunkStatus::Modified(_) => theme.status().modified,
+                                            DiffHunkStatus::Removed(_) => theme.status().deleted,
                                         };
                                         ColoredRange {
                                             start: start_display_row,
@@ -6861,11 +6863,24 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
-                        let color = match row_info.diff_status {
-                            Some(DiffHunkStatus::Added) => style.status.created_background,
-                            Some(DiffHunkStatus::Removed) => style.status.deleted_background,
+                        let (mut color, secondary_status) = match row_info.diff_status {
+                            Some(DiffHunkStatus::Added(secondary_status)) => {
+                                let color = style.status.created_background;
+                                (color, secondary_status)
+                            }
+                            Some(DiffHunkStatus::Removed(secondary_status)) => {
+                                let color = style.status.deleted_background;
+                                (color, secondary_status)
+                            }
                             _ => continue,
                         };
+
+                        match secondary_status {
+                            DiffHunkSecondaryStatus::HasSecondaryHunk => color.a *= 0.5,
+                            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => color.a *= 0.7,
+                            DiffHunkSecondaryStatus::None => {}
+                        }
+
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
                             .or_insert(color);
