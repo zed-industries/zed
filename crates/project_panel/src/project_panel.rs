@@ -3565,8 +3565,7 @@ impl ProjectPanel {
             .cursor_pointer()
             .rounded_none()
             .bg(bg_color)
-            .border_1()
-            .border_r_2()
+            .border_l_3()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .when(is_local, |div| {
