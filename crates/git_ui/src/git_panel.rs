@@ -904,13 +904,6 @@ impl GitPanel {
                 Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
 
             let is_conflict = repo.has_conflict(&entry.repo_path);
-            if entry.status.is_conflicted() && !is_conflict {
-                dbg!(&repo
-                    .repository_entry
-                    .current_merge_conflicts
-                    .iter()
-                    .collect::<Vec<_>>());
-            }
             let is_new = entry.status.is_created();
             let is_staged = entry.status.is_staged();
 
