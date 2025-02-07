@@ -670,8 +670,12 @@ impl TitleBar {
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                         .action(
-                            "Themes…",
+                            "Themes",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                        )
+                        .action(
+                            "Icons",
+                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                         )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
@@ -713,8 +717,12 @@ impl TitleBar {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                             .action(
-                                "Themes…",
+                                "Themes",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action(
+                                "Icons",
+                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
                             .separator()
