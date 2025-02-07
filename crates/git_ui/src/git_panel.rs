@@ -156,7 +156,7 @@ pub struct GitPanel {
     entries_by_path: collections::HashMap<RepoPath, usize>,
     width: Option<Pixels>,
     pending: Vec<PendingOperation>,
-    commit_task: Option<Task<()>>,
+    pending_commit: Option<Task<()>>,
 
     conflicted_staged_count: usize,
     conflicted_count: usize,
@@ -268,7 +268,7 @@ impl GitPanel {
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
                 update_visible_entries_task: Task::ready(()),
-                commit_task: None,
+                pending_commit: None,
                 active_repository,
                 scroll_handle,
                 fs,
@@ -743,7 +743,7 @@ impl GitPanel {
         let task = cx.spawn_in(window, |this, mut cx| async move {
             let result = task.await;
             this.update_in(&mut cx, |this, window, cx| {
-                this.commit_task.take();
+                this.pending_commit.take();
                 match result {
                     Ok(()) => {
                         this.commit_editor
@@ -755,7 +755,7 @@ impl GitPanel {
             .ok();
         });
 
-        self.commit_task = Some(task);
+        self.pending_commit = Some(task);
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut Context<Self>) {
@@ -1042,6 +1042,7 @@ impl GitPanel {
     }
 
     fn has_unstaged_conflicts(&self) -> bool {
+        dbg!(&self.conflicted_count, &self.conflicted_staged_count);
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
 
@@ -1183,7 +1184,7 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &Context<Self>) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let can_commit = (self.has_staged_changes() || self.has_tracked_changes())
-            && self.commit_task.is_none()
+            && self.pending_commit.is_none()
             && self.has_write_access(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
 
