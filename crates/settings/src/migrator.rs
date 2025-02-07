@@ -1,4 +1,5 @@
 use collections::HashMap;
+use convert_case::{Case, Casing};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use tree_sitter::{Query, QueryMatch};
 
@@ -34,7 +35,24 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
 }
 
 pub fn migrate_keymap(text: &str) -> Option<String> {
-    migrate(&text, KEYMAP_MIGRATION_PATTERNS, &KEYMAP_MIGRATION_QUERY)
+    let transformed_text = migrate(
+        text,
+        KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS,
+        &KEYMAP_MIGRATION_TRANSFORMATION_QUERY,
+    );
+    let replacement_text = match &transformed_text {
+        Some(transformed_text) => migrate(
+            transformed_text,
+            KEYMAP_MIGRATION_REPLACEMENT_PATTERNS,
+            &KEYMAP_MIGRATION_REPLACEMENT_QUERY,
+        ),
+        None => migrate(
+            text,
+            KEYMAP_MIGRATION_REPLACEMENT_PATTERNS,
+            &KEYMAP_MIGRATION_REPLACEMENT_QUERY,
+        ),
+    };
+    replacement_text.or(transformed_text)
 }
 
 pub fn migrate_settings(text: &str) -> Option<String> {
@@ -50,7 +68,7 @@ type MigrationPatterns = &'static [(
     fn(&str, &QueryMatch, &Query) -> Option<(Range<usize>, String)>,
 )];
 
-static KEYMAP_MIGRATION_PATTERNS: MigrationPatterns = &[
+static KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS: MigrationPatterns = &[
     (ACTION_ARRAY_PATTERN, replace_array_with_single_string),
     (
         ACTION_ARGUMENT_OBJECT_PATTERN,
@@ -60,10 +78,10 @@ static KEYMAP_MIGRATION_PATTERNS: MigrationPatterns = &[
     (CONTEXT_PREDICATE_PATTERN, rename_context_key),
 ];
 
-static KEYMAP_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
+static KEYMAP_MIGRATION_TRANSFORMATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
     Query::new(
         &tree_sitter_json::LANGUAGE.into(),
-        &KEYMAP_MIGRATION_PATTERNS
+        &KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS
             .iter()
             .map(|pattern| pattern.0)
             .collect::<String>(),
@@ -255,6 +273,22 @@ static UNWRAP_OBJECTS: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::
     ])
 });
 
+static KEYMAP_MIGRATION_REPLACEMENT_PATTERNS: MigrationPatterns = &[(
+    ACTION_ARGUMENT_SNAKE_CASE_PATTERN,
+    action_argument_snake_case,
+)];
+
+static KEYMAP_MIGRATION_REPLACEMENT_QUERY: LazyLock<Query> = LazyLock::new(|| {
+    Query::new(
+        &tree_sitter_json::LANGUAGE.into(),
+        &KEYMAP_MIGRATION_REPLACEMENT_PATTERNS
+            .iter()
+            .map(|pattern| pattern.0)
+            .collect::<String>(),
+    )
+    .unwrap()
+});
+
 const ACTION_STRING_PATTERN: &str = r#"(document
     (array
         (object
@@ -335,6 +369,93 @@ fn rename_context_key(
     } else {
         None
     }
+}
+
+const ACTION_ARGUMENT_SNAKE_CASE_PATTERN: &str = r#"(document
+    (array
+        (object
+            (pair
+                key: (string (string_content) @name)
+                value: (
+                    (object
+                        (pair
+                            key: (string (string_content))
+                            value: ((array
+                                . (string (string_content) @action_name)
+                                . (object
+                                    (pair
+                                    key: (string (string_content) @argument_key)
+                                    value: (_)  @argument_value))
+                                . ) @array
+                            ))
+                        )
+                    )
+                )
+            )
+        )
+    (#eq? @name "bindings")
+)"#;
+
+fn is_snake_case(text: &str) -> bool {
+    text == text.to_case(Case::Snake)
+}
+
+fn to_snake_case(text: &str) -> String {
+    text.to_case(Case::Snake)
+}
+
+/// [ "editor::FoldAtLevel", { "SomeKey": "Value" } ] -> [ "editor::FoldAtLevel", { "some_key" : "value" } ]
+fn action_argument_snake_case(
+    contents: &str,
+    mat: &QueryMatch,
+    query: &Query,
+) -> Option<(Range<usize>, String)> {
+    let array_ix = query.capture_index_for_name("array").unwrap();
+    let action_name_ix = query.capture_index_for_name("action_name").unwrap();
+    let argument_key_ix = query.capture_index_for_name("argument_key").unwrap();
+    let argument_value_ix = query.capture_index_for_name("argument_value").unwrap();
+    let action_name = contents.get(
+        mat.nodes_for_capture_index(action_name_ix)
+            .next()?
+            .byte_range(),
+    )?;
+
+    let argument_key = contents.get(
+        mat.nodes_for_capture_index(argument_key_ix)
+            .next()?
+            .byte_range(),
+    )?;
+
+    let argument_value_node = mat.nodes_for_capture_index(argument_value_ix).next()?;
+    let argument_value = contents.get(argument_value_node.byte_range())?;
+
+    let mut needs_replacement = false;
+    let mut new_key = argument_key.to_string();
+    if !is_snake_case(argument_key) {
+        new_key = to_snake_case(argument_key);
+        needs_replacement = true;
+    }
+
+    let mut new_value = argument_value.to_string();
+    if argument_value_node.kind() == "string" {
+        let inner_value = argument_value.trim_matches('"');
+        if !is_snake_case(inner_value) {
+            new_value = format!("\"{}\"", to_snake_case(inner_value));
+            needs_replacement = true;
+        }
+    }
+
+    if !needs_replacement {
+        return None;
+    }
+
+    let range_to_replace = mat.nodes_for_capture_index(array_ix).next()?.byte_range();
+    let replacement = format!(
+        "[\"{}\", {{ \"{}\": {} }}]",
+        action_name, new_key, new_value
+    );
+
+    Some((range_to_replace, replacement))
 }
 
 // "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
@@ -627,6 +748,39 @@ mod tests {
                         "context": "Editor && edit_prediction && !showing_completions"
                     }
                 ]
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_action_argument_snake_case() {
+        // First performs transformations, then replacements
+        assert_migrate_keymap(
+            r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["vim::PushOperator", { "Object": { "SomeKey": "Value" } }],
+                        "cmd-2": ["vim::SomeOtherAction", { "OtherKey": "Value" }],
+                        "cmd-3": ["vim::SomeDifferentAction", { "OtherKey": true }],
+                        "cmd-4": ["vim::OneMore", { "OtherKey": 4 }]
+                    }
+                }
+            ]
+            "#,
+            Some(
+                r#"
+            [
+                {
+                    "bindings": {
+                        "cmd-1": ["vim::PushObject", { "some_key": "value" }],
+                        "cmd-2": ["vim::SomeOtherAction", { "other_key": "value" }],
+                        "cmd-3": ["vim::SomeDifferentAction", { "other_key": true }],
+                        "cmd-4": ["vim::OneMore", { "other_key": 4 }]
+                    }
+                }
+            ]
             "#,
             ),
         )
