@@ -496,7 +496,6 @@
   },
   {
     "context": "Editor && showing_completions",
-    "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::ConfirmCompletion",
       "tab": "editor::ComposeCompletion"
@@ -511,7 +510,6 @@
   },
   {
     "context": "Editor && inline_completion && !inline_completion_requires_modifier",
-    "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"
     }
@@ -602,14 +600,12 @@
   },
   {
     "context": "MessageEditor > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat"
     }
   },
   {
     "context": "ContextStrip",
-    "use_key_equivalents": true,
     "bindings": {
       "up": "assistant2::FocusUp",
       "right": "assistant2::FocusRight",
@@ -702,14 +698,12 @@
   },
   {
     "context": "GitPanel && !CommitEditor",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "git_panel::Close"
     }
   },
   {
     "context": "GitPanel && ChangesList",
-    "use_key_equivalents": true,
     "bindings": {
       "up": "menu::SelectPrev",
       "down": "menu::SelectNext",
@@ -721,7 +715,6 @@
   },
   {
     "context": "GitPanel && CommitEditor > Editor",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "git_panel::FocusChanges",
       "ctrl-enter": "git::CommitChanges",
@@ -833,7 +826,6 @@
   },
   {
     "context": "ZedPredictModal",
-    "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel"
     }
