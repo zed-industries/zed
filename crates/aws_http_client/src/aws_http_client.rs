@@ -38,10 +38,9 @@ impl AwsConnector for AwsHttpConnector {
 
         let (parts, body) = req.into_parts();
 
-        let response = self.client.send(Request::from_parts(
-            parts.into(),
-            convert_to_async_body(body),
-        ));
+        let response = self
+            .client
+            .send(Request::from_parts(parts, convert_to_async_body(body)));
 
         let handle = self.handle.clone();
 
