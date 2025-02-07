@@ -58,8 +58,17 @@ pub trait GitRepository: Send + Sync {
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
 
-    /// Returns the path to the repository, typically the `.git` folder.
-    fn dot_git_dir(&self) -> PathBuf;
+    /// Returns the absolute path to the repository. For worktrees, this will be the path to the
+    /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
+    fn path(&self) -> PathBuf;
+
+    /// Returns the absolute path to the ".git" dir for the main repository, typically a `.git`
+    /// folder. For worktrees, this will be the path to the repository the worktree was created
+    /// from. Otherwise, this is the same value as `path()`.
+    ///
+    /// Git documentation calls this the "commondir", and for git CLI is overridden by
+    /// `GIT_COMMON_DIR`.
+    fn main_repository_path(&self) -> PathBuf;
 
     /// Updates the index to match the worktree at the given paths.
     ///
@@ -109,9 +118,14 @@ impl GitRepository for RealGitRepository {
         }
     }
 
-    fn dot_git_dir(&self) -> PathBuf {
+    fn path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.path().into()
+    }
+
+    fn main_repository_path(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.commondir().into()
     }
 
     fn load_index_text(&self, path: &RepoPath) -> Option<String> {
@@ -344,7 +358,7 @@ pub struct FakeGitRepository {
 
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
-    pub dot_git_dir: PathBuf,
+    pub path: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
@@ -361,9 +375,9 @@ impl FakeGitRepository {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(dot_git_dir: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
-            dot_git_dir,
+            path,
             event_emitter,
             head_contents: Default::default(),
             index_contents: Default::default(),
@@ -405,9 +419,13 @@ impl GitRepository for FakeGitRepository {
         vec![]
     }
 
-    fn dot_git_dir(&self) -> PathBuf {
+    fn path(&self) -> PathBuf {
         let state = self.state.lock();
-        state.dot_git_dir.clone()
+        state.path.clone()
+    }
+
+    fn main_repository_path(&self) -> PathBuf {
+        self.path()
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -458,7 +476,7 @@ impl GitRepository for FakeGitRepository {
         state.current_branch_name = Some(name.to_owned());
         state
             .event_emitter
-            .try_send(state.dot_git_dir.clone())
+            .try_send(state.path.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
@@ -468,7 +486,7 @@ impl GitRepository for FakeGitRepository {
         state.branches.insert(name.to_owned());
         state
             .event_emitter
-            .try_send(state.dot_git_dir.clone())
+            .try_send(state.path.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
