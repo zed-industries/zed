@@ -832,13 +832,12 @@ impl ContextEditor {
                 let render_block: RenderBlock = Arc::new({
                     let this = this.clone();
                     let patch_range = range.clone();
-                    move |cx: &mut BlockContext| {
+                    move |cx: &mut BlockContext<'_, '_>| {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
                         let selected = cx.selected;
-                        let window = &mut cx.window;
-                        this.update(cx.app, |this, cx| {
+                        this.update_in(cx, |this, window, cx| {
                             this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
