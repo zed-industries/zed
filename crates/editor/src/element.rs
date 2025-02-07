@@ -3626,6 +3626,11 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
+                // todo! az clean up
+                if editor.inline_completion_requires_modifier(cx) {
+                    return None;
+                }
+
                 let previewing = false;
                 let target_display_point = target.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
