@@ -14,13 +14,14 @@ path = "src/language_models.rs"
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"]}
+aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws_http_client.workspace = true
 bedrock.workspace = true
 client.workspace = true
 collections.workspace = true
 copilot = { workspace = true, features = ["schemars"] }
+deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
@@ -30,11 +31,10 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
 language_model.workspace = true
+lmstudio = { workspace = true, features = ["schemars"] }
 menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
-lmstudio = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
-deepseek = { workspace = true, features = ["schemars"] }
 project.workspace = true
 proto.workspace = true
 schemars.workspace = true
