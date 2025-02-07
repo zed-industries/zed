@@ -6,8 +6,8 @@ use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
-    WeakEntity,
+    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use image::{ExtendedColorType, GenericImageView, ImageFormat, ImageReader};
 use language::{DiskState, File};
@@ -55,8 +55,8 @@ pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub color_type: Option<String>,
-    pub format: String,
+    pub color_type: Option<SharedString>,
+    pub format: SharedString,
 }
 
 pub struct ImageItem {
@@ -67,8 +67,8 @@ pub struct ImageItem {
     pub image_metadata: Option<ImageMetadata>,
 }
 
-fn image_color_type_description(color_type: ExtendedColorType) -> Option<String> {
-    let (channels, bits_per_channel) = match color_type {
+fn image_color_type_description(color_type: impl Into<ExtendedColorType>) -> Option<SharedString> {
+    let (channels, bits_per_channel) = match color_type.into() {
         ExtendedColorType::L8 => (1, 8),
         ExtendedColorType::L16 => (1, 16),
         ExtendedColorType::La8 => (2, 8),
@@ -89,13 +89,11 @@ fn image_color_type_description(color_type: ExtendedColorType) -> Option<String>
     }
 
     let bits_per_pixel = channels * bits_per_channel;
-    Some(format!(
-        "{channels} channels, {bits_per_pixel} bits per pixel"
-    ))
+    Some(format!("{channels} channels, {bits_per_pixel} bits per pixel").into())
 }
 
 impl ImageItem {
-    pub async fn image_info(
+    pub async fn load_image_metadata(
         image: Entity<ImageItem>,
         project: Entity<Project>,
         cx: &mut AsyncApp,
@@ -128,8 +126,6 @@ impl ImageItem {
         let image = image_reader.decode()?;
 
         let (width, height) = image.dimensions();
-        let color_type = image_color_type_description(image.color().into());
-
         let file_metadata = fs
             .metadata(path.as_path())
             .await?
@@ -150,8 +146,8 @@ impl ImageItem {
                 ImageFormat::Avif => "Avif",
                 _ => "Unknown",
             }
-            .to_string(),
-            color_type,
+            .into(),
+            color_type: image_color_type_description(image.color()),
         })
     }
 
@@ -763,7 +759,6 @@ mod tests {
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
-            // image_viewer::init(cx);
         });
     }
 

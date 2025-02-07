@@ -26,6 +26,6 @@ impl Settings for ImageViewerSettings {
         sources: SettingsSources<Self::FileContent>,
         _: &mut App,
     ) -> Result<Self, anyhow::Error> {
-        sources.json_merge().or_else(|_| Ok(Self::default()))
+        sources.json_merge()
     }
 }
