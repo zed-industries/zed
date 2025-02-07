@@ -1454,7 +1454,7 @@ impl BufferStore {
                             };
 
                             diff.update(cx, |diff, _| {
-                                diff.unstaged_diff = Some(unstaged_diff);
+                                diff.secondary_diff = Some(unstaged_diff);
                             });
                             diff_state.uncommitted_diff = Some(diff.downgrade())
                         }
@@ -2384,7 +2384,7 @@ impl BufferStore {
             use proto::open_uncommitted_diff_response::Mode;
 
             let staged_buffer = diff
-                .unstaged_diff
+                .secondary_diff
                 .as_ref()
                 .and_then(|diff| diff.read(cx).base_text());
 

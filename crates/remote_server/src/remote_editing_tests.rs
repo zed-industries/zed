@@ -1246,7 +1246,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     diff.read_with(cx, |diff, cx| {
         assert_eq!(diff.base_text_string().unwrap(), text_1);
         assert_eq!(
-            diff.unstaged_diff
+            diff.secondary_diff
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -1266,7 +1266,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     diff.read_with(cx, |diff, cx| {
         assert_eq!(diff.base_text_string().unwrap(), text_1);
         assert_eq!(
-            diff.unstaged_diff
+            diff.secondary_diff
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -1286,7 +1286,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     diff.read_with(cx, |diff, cx| {
         assert_eq!(diff.base_text_string().unwrap(), text_2);
         assert_eq!(
-            diff.unstaged_diff
+            diff.secondary_diff
                 .as_ref()
                 .unwrap()
                 .read(cx)

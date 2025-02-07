@@ -5,19 +5,19 @@ use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
 use sum_tree::SumTree;
-use text::{Anchor, BufferId, OffsetRangeExt, Point};
+use text::{Anchor, Bias, BufferId, OffsetRangeExt, Point};
 use util::ResultExt;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner,
-    pub unstaged_diff: Option<Entity<BufferDiff>>,
+    pub secondary_diff: Option<Entity<BufferDiff>>,
 }
 
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner,
-    unstaged_diff: Option<Box<BufferDiffSnapshot>>,
+    secondary_diff: Option<Box<BufferDiffSnapshot>>,
 }
 
 #[derive(Clone)]
@@ -34,10 +34,10 @@ pub enum DiffHunkStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum StagedStatus {
-    Unstaged,
-    Mixed,
-    Staged,
+pub enum DiffHunkSecondaryStatus {
+    HasSecondaryHunk,
+    OverlapsWithSecondaryHunk,
+    None,
 }
 
 // to stage a hunk:
@@ -64,7 +64,7 @@ pub struct DiffHunk {
     pub buffer_range: Range<Anchor>,
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
-    pub staged_status: StagedStatus,
+    pub secondary_status: DiffHunkSecondaryStatus,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -105,6 +105,16 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 }
 
+impl<'a> sum_tree::SeekTarget<'a, DiffHunkSummary, DiffHunkSummary> for Anchor {
+    fn cmp(
+        &self,
+        cursor_location: &DiffHunkSummary,
+        buffer: &text::BufferSnapshot,
+    ) -> cmp::Ordering {
+        self.cmp(&cursor_location.buffer_range.start, buffer)
+    }
+}
+
 impl std::fmt::Debug for BufferDiffInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferDiffSnapshot")
@@ -123,7 +133,7 @@ impl BufferDiffSnapshot {
         range: Range<Anchor>,
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let unstaged_counterpart = self.unstaged_diff.as_ref().map(|diff| &diff.inner);
+        let unstaged_counterpart = self.secondary_diff.as_ref().map(|diff| &diff.inner);
         self.inner
             .hunks_intersecting_range(range, buffer, unstaged_counterpart)
     }
@@ -146,7 +156,7 @@ impl BufferDiffInner {
         &'a self,
         range: Range<Anchor>,
         buffer: &'a text::BufferSnapshot,
-        unstaged_counterpart: Option<&Self>,
+        secondary: Option<&'a Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let range = range.to_offset(buffer);
 
@@ -176,9 +186,11 @@ impl BufferDiffInner {
             ]
         });
 
-        let mut unstaged_cursor = unstaged_counterpart
-            .as_ref()
-            .map(|diff| diff.hunks.cursor::<DiffHunkSummary>(buffer));
+        let mut secondary_cursor = secondary.as_ref().map(|diff| {
+            let mut cursor = diff.hunks.cursor::<DiffHunkSummary>(buffer);
+            cursor.next(buffer);
+            cursor
+        });
 
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || loop {
@@ -195,11 +207,33 @@ impl BufferDiffInner {
                 end_anchor = buffer.anchor_before(end_point);
             }
 
+            let mut secondary_status = DiffHunkSecondaryStatus::None;
+            if let Some(secondary_cursor) = secondary_cursor.as_mut() {
+                if start_anchor
+                    .cmp(&secondary_cursor.start().buffer_range.start, buffer)
+                    .is_gt()
+                {
+                    secondary_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                }
+                // possibilities:
+                // - we hit a hunk that matches exactly
+                // - we hit a hunk that is completely after our target (found_start >= target_end)
+                // - target_start <= found_start < target_end (overlap case)
+                if let Some(secondary_hunk) = secondary_cursor.item() {
+                    let secondary_range = secondary_hunk.buffer_range.to_point(buffer);
+                    if secondary_range == (start_point..end_point) {
+                        secondary_status = DiffHunkSecondaryStatus::HasSecondaryHunk;
+                    } else if secondary_range.start <= end_point {
+                        secondary_status = DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk;
+                    }
+                }
+            }
+
             return Some(DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
-                staged_status: StagedStatus::Mixed, // FIXME
+                secondary_status,
             });
         })
     }
@@ -232,7 +266,7 @@ impl BufferDiffInner {
                 row_range: range.start.row..end_row,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
-                staged_status: StagedStatus::Mixed, // FIXME
+                secondary_status: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk, // FIXME
             })
         })
     }
@@ -509,7 +543,7 @@ impl BufferDiff {
                 ),
                 base_text: Some(base_text),
             },
-            unstaged_diff: None,
+            secondary_diff: None,
         }
     }
 
@@ -596,8 +630,8 @@ impl BufferDiff {
     pub fn snapshot(&self, cx: &App) -> BufferDiffSnapshot {
         BufferDiffSnapshot {
             inner: self.inner.clone(),
-            unstaged_diff: self
-                .unstaged_diff
+            secondary_diff: self
+                .secondary_diff
                 .as_ref()
                 .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
         }
@@ -609,7 +643,10 @@ impl BufferDiff {
         buffer_snapshot: &'a text::BufferSnapshot,
         cx: &'a App,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let unstaged_counterpart = self.unstaged_diff.as_ref().map(|diff| &diff.read(cx).inner);
+        let unstaged_counterpart = self
+            .secondary_diff
+            .as_ref()
+            .map(|diff| &diff.read(cx).inner);
         self.inner
             .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
     }
@@ -673,7 +710,7 @@ impl BufferDiff {
         BufferDiff {
             buffer_id: buffer.remote_id(),
             inner: BufferDiff::build_empty(buffer),
-            unstaged_diff: None,
+            secondary_diff: None,
         }
     }
 
@@ -696,7 +733,7 @@ impl BufferDiff {
         BufferDiff {
             buffer_id: buffer.read(cx).remote_id(),
             inner: snapshot,
-            unstaged_diff: None,
+            secondary_diff: None,
         }
     }
 
