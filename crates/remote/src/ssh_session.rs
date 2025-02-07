@@ -99,8 +99,39 @@ fn parse_port_number(port_str: &str) -> Result<u16> {
         .map_err(|_| anyhow!("Invalid port number: {}", port_str))
 }
 
+fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
+    let parts: Vec<&str> = spec.split(':').collect();
+
+    match parts.len() {
+        4 => {
+            let local_port = parse_port_number(parts[1])?;
+            let remote_port = parse_port_number(parts[3])?;
+
+            Ok(SshPortForwardOption {
+                local_host: Some(parts[0].to_string()),
+                local_port,
+                remote_host: parts[2].to_string(),
+                remote_port,
+            })
+        }
+        3 => {
+            let local_port = parse_port_number(parts[0])?;
+            let remote_port = parse_port_number(parts[2])?;
+
+            Ok(SshPortForwardOption {
+                local_host: None,
+                local_port,
+                remote_host: parts[1].to_string(),
+                remote_port,
+            })
+        }
+        _ => anyhow::bail!("Invalid port forward format"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::parse_port_forward_spec;
     use super::parse_port_number;
 
     #[test]
@@ -118,6 +149,38 @@ mod tests {
         assert!(parse_port_number("-1").is_err());
         assert!(parse_port_number("65536").is_err());
         assert!(parse_port_number("99999").is_err());
+    }
+    #[test]
+    fn test_parse_local_and_remote_ports() {
+        let result = parse_port_forward_spec("8080:example.com:80").unwrap();
+        assert_eq!(result.local_port, 8080);
+        assert_eq!(result.remote_port, 80);
+        assert_eq!(result.remote_host, "example.com");
+        assert_eq!(result.local_host, None);
+    }
+
+    #[test]
+    fn test_parse_with_local_host() {
+        let result = parse_port_forward_spec("localhost:8080:example.com:80").unwrap();
+        assert_eq!(result.local_host, Some("localhost".to_string()));
+        assert_eq!(result.local_port, 8080);
+        assert_eq!(result.remote_host, "example.com");
+        assert_eq!(result.remote_port, 80);
+    }
+
+    #[test]
+    fn test_invalid_formats() {
+        // Too few parts
+        assert!(parse_port_forward_spec("8080:80").is_err());
+
+        // Too many parts
+        assert!(parse_port_forward_spec("local:8080:remote:80:extra").is_err());
+
+        // Invalid port numbers
+        assert!(parse_port_forward_spec("abc:example.com:80").is_err());
+        assert!(parse_port_forward_spec("8080:example.com:abc").is_err());
+        assert!(parse_port_forward_spec("localhost:abc:example.com:80").is_err());
+        assert!(parse_port_forward_spec("localhost:8080:example.com:abc").is_err());
     }
 }
 
@@ -169,33 +232,7 @@ impl SshConnectionOptions {
                 };
 
                 if let Some(spec) = forward_spec {
-                    let parts: Vec<&str> = spec.split(':').collect();
-
-                    match parts.len() {
-                        4 => {
-                            let local_port = parse_port_number(parts[1])?;
-                            let remote_port = parse_port_number(parts[3])?;
-
-                            port_forwards.push(SshPortForwardOption {
-                                local_host: Some(parts[0].to_string()),
-                                local_port,
-                                remote_host: parts[2].to_string(),
-                                remote_port,
-                            })
-                        }
-                        3 => {
-                            let local_port = parse_port_number(parts[0])?;
-                            let remote_port = parse_port_number(parts[2])?;
-
-                            port_forwards.push(SshPortForwardOption {
-                                local_host: None,
-                                local_port,
-                                remote_host: parts[1].to_string(),
-                                remote_port,
-                            })
-                        }
-                        _ => anyhow::bail!("Invalid port forward format"),
-                    }
+                    port_forwards.push(parse_port_forward_spec(&spec)?);
                 } else {
                     anyhow::bail!("Missing port forward format");
                 }
