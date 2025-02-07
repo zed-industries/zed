@@ -93,6 +93,34 @@ macro_rules! shell_script {
     }};
 }
 
+fn parse_port_number(port_str: &str) -> Result<u16> {
+    port_str
+        .parse()
+        .map_err(|_| anyhow!("Invalid port number: {}", port_str))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_port_number;
+
+    #[test]
+    fn test_parse_port_number() {
+        assert_eq!(parse_port_number("80").unwrap(), 80);
+        assert_eq!(parse_port_number("8080").unwrap(), 8080);
+        assert_eq!(parse_port_number("1").unwrap(), 1);
+        assert_eq!(parse_port_number("65535").unwrap(), 65535);
+    }
+
+    #[test]
+    fn test_invalid_port_numbers() {
+        assert!(parse_port_number("").is_err());
+        assert!(parse_port_number("abc").is_err());
+        assert!(parse_port_number("-1").is_err());
+        assert!(parse_port_number("65536").is_err());
+        assert!(parse_port_number("99999").is_err());
+    }
+}
+
 impl SshConnectionOptions {
     pub fn parse_command_line(input: &str) -> Result<Self> {
         let input = input.trim_start_matches("ssh ");
@@ -144,20 +172,32 @@ impl SshConnectionOptions {
                     let parts: Vec<&str> = spec.split(':').collect();
 
                     match parts.len() {
-                        4 => port_forwards.push(SshPortForwardOption {
-                            local_host: Some(parts[0].to_string()),
-                            local_port: parts[1].parse().unwrap_or(0),
-                            remote_host: parts[2].to_string(),
-                            remote_port: parts[3].parse().unwrap_or(0),
-                        }),
-                        3 => port_forwards.push(SshPortForwardOption {
-                            local_host: None,
-                            local_port: parts[0].parse().unwrap_or(0),
-                            remote_host: parts[1].to_string(),
-                            remote_port: parts[2].parse().unwrap_or(0),
-                        }),
+                        4 => {
+                            let local_port = parse_port_number(parts[1])?;
+                            let remote_port = parse_port_number(parts[3])?;
+
+                            port_forwards.push(SshPortForwardOption {
+                                local_host: Some(parts[0].to_string()),
+                                local_port,
+                                remote_host: parts[2].to_string(),
+                                remote_port,
+                            })
+                        }
+                        3 => {
+                            let local_port = parse_port_number(parts[0])?;
+                            let remote_port = parse_port_number(parts[2])?;
+
+                            port_forwards.push(SshPortForwardOption {
+                                local_host: None,
+                                local_port,
+                                remote_host: parts[1].to_string(),
+                                remote_port,
+                            })
+                        }
                         _ => anyhow::bail!("Invalid port forward format"),
                     }
+                } else {
+                    anyhow::bail!("Missing port forward format");
                 }
             }
 
