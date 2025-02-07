@@ -503,6 +503,7 @@ impl EditorElement {
         let position_map = layout.position_map.clone();
         window.on_key_event({
             let editor = self.editor.clone();
+            let text_hitbox = layout.text_hitbox.clone();
             move |event: &ModifiersChangedEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble {
                     return;
@@ -511,7 +512,7 @@ impl EditorElement {
                     if editor.hover_state.focused(window, cx) {
                         return;
                     }
-                    Self::modifiers_changed(editor, event, &position_map, window, cx)
+                    Self::modifiers_changed(editor, event, &position_map, &text_hitbox, window, cx)
                 })
             }
         });
@@ -521,18 +522,19 @@ impl EditorElement {
         editor: &mut Editor,
         event: &ModifiersChangedEvent,
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         editor.update_inline_completion_preview(&event.modifiers, window, cx);
 
         let mouse_position = window.mouse_position();
-        if !position_map.text_hitbox.is_hovered(window) {
+        if !text_hitbox.is_hovered(window) {
             return;
         }
 
         editor.update_hovered_link(
-            position_map.point_for_position(mouse_position),
+            position_map.point_for_position(text_hitbox.bounds, mouse_position),
             &position_map.snapshot,
             event.modifiers,
             window,
@@ -540,11 +542,14 @@ impl EditorElement {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
         hovered_hunk: Option<Range<Anchor>>,
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
+        gutter_hitbox: &Hitbox,
         line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -553,8 +558,6 @@ impl EditorElement {
             return;
         }
 
-        let text_hitbox = &position_map.text_hitbox;
-        let gutter_hitbox = &position_map.gutter_hitbox;
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
@@ -611,7 +614,8 @@ impl EditorElement {
             }
         }
 
-        let point_for_position = position_map.point_for_position(event.position);
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, event.position);
         let position = point_for_position.previous_valid;
         if modifiers.shift && modifiers.alt {
             editor.select(
@@ -686,13 +690,15 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseDownEvent,
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !position_map.text_hitbox.is_hovered(window) {
+        if !text_hitbox.is_hovered(window) {
             return;
         }
-        let point_for_position = position_map.point_for_position(event.position);
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, event.position);
         mouse_context_menu::deploy_context_menu(
             editor,
             Some(event.position),
@@ -707,14 +713,16 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseDownEvent,
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !position_map.text_hitbox.is_hovered(window) || window.default_prevented() {
+        if !text_hitbox.is_hovered(window) || window.default_prevented() {
             return;
         }
 
-        let point_for_position = position_map.point_for_position(event.position);
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, event.position);
         let position = point_for_position.previous_valid;
 
         editor.select(
@@ -731,11 +739,15 @@ impl EditorElement {
     fn mouse_up(
         editor: &mut Editor,
         event: &MouseUpEvent,
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "freebsd")),
+            allow(unused_variables)
+        )]
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let text_hitbox = &position_map.text_hitbox;
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
@@ -755,7 +767,8 @@ impl EditorElement {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             if EditorSettings::get_global(cx).middle_click_paste {
                 if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
-                    let point_for_position = position_map.point_for_position(event.position);
+                    let point_for_position =
+                        position_map.point_for_position(text_hitbox.bounds, event.position);
                     let position = point_for_position.previous_valid;
 
                     editor.select(
@@ -778,10 +791,10 @@ impl EditorElement {
         editor: &mut Editor,
         event: &ClickEvent,
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let text_hitbox = &position_map.text_hitbox;
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
@@ -791,7 +804,7 @@ impl EditorElement {
         };
 
         if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
-            let point = position_map.point_for_position(event.up.position);
+            let point = position_map.point_for_position(text_hitbox.bounds, event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
 
             cx.stop_propagation();
@@ -802,6 +815,7 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,
+        text_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
@@ -809,8 +823,7 @@ impl EditorElement {
             return;
         }
 
-        let text_bounds = position_map.text_hitbox.bounds;
-        let point_for_position = position_map.point_for_position(event.position);
+        let point_for_position = position_map.point_for_position(text_bounds, event.position);
         let mut scroll_delta = gpui::Point::<f32>::default();
         let vertical_margin = position_map.line_height.min(text_bounds.size.height / 3.0);
         let top = text_bounds.origin.y + vertical_margin;
@@ -857,18 +870,19 @@ impl EditorElement {
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,
+        text_hitbox: &Hitbox,
+        gutter_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let text_hitbox = &position_map.text_hitbox;
-        let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(window) {
-            let point_for_position = position_map.point_for_position(event.position);
+            let point_for_position =
+                position_map.point_for_position(text_hitbox.bounds, event.position);
 
             editor.update_hovered_link(
                 point_for_position,
@@ -4094,7 +4108,8 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
-        let point_for_position = position_map.point_for_position(window.mouse_position());
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, window.mouse_position());
 
         let mut controls = vec![];
 
@@ -4231,10 +4246,7 @@ impl EditorElement {
             let scroll_top = layout.position_map.snapshot.scroll_position().y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
-            window.paint_quad(fill(
-                layout.position_map.text_hitbox.bounds,
-                self.style.background,
-            ));
+            window.paint_quad(fill(layout.text_hitbox.bounds, self.style.background));
 
             if let EditorMode::Full = layout.mode {
                 let mut active_rows = layout.active_rows.iter().peekable();
@@ -4259,8 +4271,8 @@ impl EditorElement {
                                     end: layout.gutter_hitbox.right(),
                                 }),
                                 CurrentLineHighlight::Line => Some(Range {
-                                    start: layout.position_map.text_hitbox.bounds.left(),
-                                    end: layout.position_map.text_hitbox.bounds.right(),
+                                    start: layout.text_hitbox.bounds.left(),
+                                    end: layout.text_hitbox.bounds.right(),
                                 }),
                                 CurrentLineHighlight::All => Some(Range {
                                     start: layout.hitbox.left(),
@@ -4334,7 +4346,7 @@ impl EditorElement {
                     layout.position_map.snapshot.scroll_position().x * layout.position_map.em_width;
 
                 for (wrap_position, active) in layout.wrap_guides.iter() {
-                    let x = (layout.position_map.text_hitbox.origin.x
+                    let x = (layout.text_hitbox.origin.x
                         + *wrap_position
                         + layout.position_map.em_width / 2.)
                         - scroll_left;
@@ -4346,7 +4358,7 @@ impl EditorElement {
                             || scrollbar_y.as_ref().map_or(false, |sy| sy.visible)
                     };
 
-                    if x < layout.position_map.text_hitbox.origin.x
+                    if x < layout.text_hitbox.origin.x
                         || (show_scrollbars && x > self.scrollbar_left(&layout.hitbox.bounds))
                     {
                         continue;
@@ -4359,8 +4371,8 @@ impl EditorElement {
                     };
                     window.paint_quad(fill(
                         Bounds {
-                            origin: point(x, layout.position_map.text_hitbox.origin.y),
-                            size: size(px(1.), layout.position_map.text_hitbox.size.height),
+                            origin: point(x, layout.text_hitbox.origin.y),
+                            size: size(px(1.), layout.text_hitbox.size.height),
                         },
                         color,
                     ));
@@ -4735,7 +4747,7 @@ impl EditorElement {
     fn paint_text(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         window.with_content_mask(
             Some(ContentMask {
-                bounds: layout.position_map.text_hitbox.bounds,
+                bounds: layout.text_hitbox.bounds,
             }),
             |window| {
                 let cursor_style = if self
@@ -4749,7 +4761,7 @@ impl EditorElement {
                 } else {
                     CursorStyle::IBeam
                 };
-                window.set_cursor_style(cursor_style, &layout.position_map.text_hitbox);
+                window.set_cursor_style(cursor_style, &layout.text_hitbox);
 
                 let invisible_display_ranges = self.paint_highlights(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
@@ -4771,7 +4783,7 @@ impl EditorElement {
         layout: &mut EditorLayout,
         window: &mut Window,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
-        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+        window.paint_layer(layout.text_hitbox.bounds, |window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
             let line_end_overshoot = 0.15 * layout.position_map.line_height;
             for (range, color) in &layout.highlighted_ranges {
@@ -4850,7 +4862,7 @@ impl EditorElement {
         // A softer than perfect black
         let redaction_color = gpui::rgb(0x0e1111);
 
-        window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+        window.paint_layer(layout.text_hitbox.bounds, |window| {
             for range in layout.redacted_ranges.iter() {
                 self.paint_highlighted_range(
                     range.clone(),
@@ -5424,13 +5436,13 @@ impl EditorElement {
                     .collect(),
             };
 
-            highlighted_range.paint(layout.position_map.text_hitbox.bounds, window);
+            highlighted_range.paint(layout.text_hitbox.bounds, window);
         }
     }
 
     fn paint_inline_blame(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut inline_blame) = layout.inline_blame.take() {
-            window.paint_layer(layout.position_map.text_hitbox.bounds, |window| {
+            window.paint_layer(layout.text_hitbox.bounds, |window| {
                 inline_blame.paint(window, cx);
             })
         }
@@ -5549,6 +5561,8 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let text_hitbox = layout.text_hitbox.clone();
+            let gutter_hitbox = layout.gutter_hitbox.clone();
             let multi_buffer_range =
                 layout
                     .display_hunks
@@ -5587,16 +5601,32 @@ impl EditorElement {
                                 event,
                                 multi_buffer_range.clone(),
                                 &position_map,
+                                &text_hitbox,
+                                &gutter_hitbox,
                                 line_numbers.as_ref(),
                                 window,
                                 cx,
                             );
                         }),
                         MouseButton::Right => editor.update(cx, |editor, cx| {
-                            Self::mouse_right_down(editor, event, &position_map, window, cx);
+                            Self::mouse_right_down(
+                                editor,
+                                event,
+                                &position_map,
+                                &text_hitbox,
+                                window,
+                                cx,
+                            );
                         }),
                         MouseButton::Middle => editor.update(cx, |editor, cx| {
-                            Self::mouse_middle_down(editor, event, &position_map, window, cx);
+                            Self::mouse_middle_down(
+                                editor,
+                                event,
+                                &position_map,
+                                &text_hitbox,
+                                window,
+                                cx,
+                            );
                         }),
                         _ => {}
                     };
@@ -5607,11 +5637,12 @@ impl EditorElement {
         window.on_mouse_event({
             let editor = self.editor.clone();
             let position_map = layout.position_map.clone();
+            let text_hitbox = layout.text_hitbox.clone();
 
             move |event: &MouseUpEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     editor.update(cx, |editor, cx| {
-                        Self::mouse_up(editor, event, &position_map, window, cx)
+                        Self::mouse_up(editor, event, &position_map, &text_hitbox, window, cx)
                     });
                 }
             }
@@ -5620,6 +5651,8 @@ impl EditorElement {
         window.on_mouse_event({
             let editor = self.editor.clone();
             let position_map = layout.position_map.clone();
+            let text_hitbox = layout.text_hitbox.clone();
+
             let mut captured_mouse_down = None;
 
             move |event: &MouseUpEvent, phase, window, cx| match phase {
@@ -5633,7 +5666,7 @@ impl EditorElement {
                         .clone();
 
                     let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                    if pending_mouse_down.is_some() && position_map.text_hitbox.is_hovered(window) {
+                    if pending_mouse_down.is_some() && text_hitbox.is_hovered(window) {
                         captured_mouse_down = pending_mouse_down.take();
                         window.refresh();
                     }
@@ -5645,7 +5678,7 @@ impl EditorElement {
                             down: mouse_down,
                             up: event.clone(),
                         };
-                        Self::click(editor, &event, &position_map, window, cx);
+                        Self::click(editor, &event, &position_map, &text_hitbox, window, cx);
                     }
                 }),
             }
@@ -5654,6 +5687,8 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
+            let text_hitbox = layout.text_hitbox.clone();
+            let gutter_hitbox = layout.gutter_hitbox.clone();
 
             move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -5664,10 +5699,25 @@ impl EditorElement {
                         if event.pressed_button == Some(MouseButton::Left)
                             || event.pressed_button == Some(MouseButton::Middle)
                         {
-                            Self::mouse_dragged(editor, event, &position_map, window, cx)
+                            Self::mouse_dragged(
+                                editor,
+                                event,
+                                &position_map,
+                                text_hitbox.bounds,
+                                window,
+                                cx,
+                            )
                         }
 
-                        Self::mouse_moved(editor, event, &position_map, window, cx)
+                        Self::mouse_moved(
+                            editor,
+                            event,
+                            &position_map,
+                            &text_hitbox,
+                            &gutter_hitbox,
+                            window,
+                            cx,
+                        )
                     });
                 }
             }
@@ -7517,12 +7567,6 @@ impl Element for EditorElement {
                         em_width,
                         em_advance,
                         snapshot,
-                        gutter_hitbox: gutter_hitbox.clone(),
-                        text_hitbox: text_hitbox.clone(),
-                    });
-
-                    self.editor.update(cx, |editor, _| {
-                        editor.last_position_map = Some(position_map.clone())
                     });
 
                     let hunk_controls = self.layout_diff_hunk_controls(
@@ -7546,6 +7590,7 @@ impl Element for EditorElement {
                         wrap_guides,
                         indent_guides,
                         hitbox,
+                        text_hitbox,
                         gutter_hitbox,
                         display_hunks,
                         content_origin,
@@ -7717,6 +7762,7 @@ impl IntoElement for EditorElement {
 pub struct EditorLayout {
     position_map: Rc<PositionMap>,
     hitbox: Hitbox,
+    text_hitbox: Hitbox,
     gutter_hitbox: Hitbox,
     content_origin: gpui::Point<Pixels>,
     scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
@@ -7896,17 +7942,15 @@ struct CreaseTrailerLayout {
     bounds: Bounds<Pixels>,
 }
 
-pub(crate) struct PositionMap {
-    pub size: Size<Pixels>,
-    pub line_height: Pixels,
-    pub scroll_pixel_position: gpui::Point<Pixels>,
-    pub scroll_max: gpui::Point<f32>,
-    pub em_width: Pixels,
-    pub em_advance: Pixels,
-    pub line_layouts: Vec<LineWithInvisibles>,
-    pub snapshot: EditorSnapshot,
-    pub text_hitbox: Hitbox,
-    pub gutter_hitbox: Hitbox,
+struct PositionMap {
+    size: Size<Pixels>,
+    line_height: Pixels,
+    scroll_pixel_position: gpui::Point<Pixels>,
+    scroll_max: gpui::Point<f32>,
+    em_width: Pixels,
+    em_advance: Pixels,
+    line_layouts: Vec<LineWithInvisibles>,
+    snapshot: EditorSnapshot,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -7928,8 +7972,11 @@ impl PointForPosition {
 }
 
 impl PositionMap {
-    pub(crate) fn point_for_position(&self, position: gpui::Point<Pixels>) -> PointForPosition {
-        let text_bounds = self.text_hitbox.bounds;
+    fn point_for_position(
+        &self,
+        text_bounds: Bounds<Pixels>,
+        position: gpui::Point<Pixels>,
+    ) -> PointForPosition {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
