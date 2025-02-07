@@ -19,6 +19,7 @@ use serde::Deserialize;
 use ui::Context;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum Object {
     Word { ignore_punctuation: bool },
     Subword { ignore_punctuation: bool },
@@ -44,20 +45,20 @@ pub enum Object {
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
     include_below: bool,

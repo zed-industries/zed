@@ -20,6 +20,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
+use fs::Fs;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, App, AppContext as _, AsyncApp, Context, DismissEvent, Element,
@@ -1144,18 +1145,34 @@ pub fn handle_keymap_file_changes(
             cx.update(|cx| {
                 let load_result = KeymapFile::load(&user_keymap_content, cx);
                 match load_result {
-                    KeymapFileLoadResult::Success { key_bindings } => {
+                    KeymapFileLoadResult::Success {
+                        key_bindings,
+                        keymap_file,
+                    } => {
                         reload_keymaps(cx, key_bindings);
                         dismiss_app_notification(&notification_id, cx);
+                        show_keymap_migration_notification_if_needed(
+                            keymap_file,
+                            notification_id.clone(),
+                            cx,
+                        );
                     }
                     KeymapFileLoadResult::SomeFailedToLoad {
                         key_bindings,
+                        keymap_file,
                         error_message,
                     } => {
                         if !key_bindings.is_empty() {
                             reload_keymaps(cx, key_bindings);
                         }
-                        show_keymap_file_load_error(notification_id.clone(), error_message, cx)
+                        dismiss_app_notification(&notification_id, cx);
+                        if !show_keymap_migration_notification_if_needed(
+                            keymap_file,
+                            notification_id.clone(),
+                            cx,
+                        ) {
+                            show_keymap_file_load_error(notification_id.clone(), error_message, cx);
+                        }
                     }
                     KeymapFileLoadResult::JsonParseFailure { error } => {
                         show_keymap_file_json_error(notification_id.clone(), &error, cx)
@@ -1183,6 +1200,61 @@ fn show_keymap_file_json_error(
                     window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                     cx.emit(DismissEvent);
                 })
+        })
+    });
+}
+
+fn show_keymap_migration_notification_if_needed(
+    keymap_file: KeymapFile,
+    notification_id: NotificationId,
+    cx: &mut App,
+) -> bool {
+    if !KeymapFile::should_migrate_keymap(keymap_file) {
+        return false;
+    }
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new(move |_cx| {
+            let message = "A newer version of Zed has simplified several keymaps. Your existing keymaps may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
+            let button_text = "Backup and Migrate Keymap";
+            MessageNotification::new_from_builder(move |_, _| {
+                gpui::div().text_xs().child(message).into_any()
+            })
+            .primary_message(button_text)
+            .primary_on_click(move |_, cx| {
+                let fs = <dyn Fs>::global(cx);
+                cx.spawn(move |weak_notification, mut cx| async move {
+                    KeymapFile::migrate_keymap(fs).await.ok();
+                    weak_notification.update(&mut cx, |_, cx| {
+                        cx.emit(DismissEvent);
+                    }).ok();
+                }).detach();
+            })
+        })
+    });
+    return true;
+}
+
+fn show_settings_migration_notification_if_needed(
+    notification_id: NotificationId,
+    settings: serde_json::Value,
+    cx: &mut App,
+) {
+    if !SettingsStore::should_migrate_settings(&settings) {
+        return;
+    }
+    show_app_notification(notification_id, cx, move |cx| {
+        cx.new(move |_cx| {
+            let message = "A newer version of Zed has updated some settings. Your existing settings may be deprecated. You can migrate them by clicking below. A backup will be created in your home directory.";
+            let button_text = "Backup and Migrate Settings";
+            MessageNotification::new_from_builder(move |_, _| {
+                gpui::div().text_xs().child(message).into_any()
+            })
+            .primary_message(button_text)
+            .primary_on_click(move |_, cx| {
+                let fs = <dyn Fs>::global(cx);
+                cx.update_global(|store: &mut SettingsStore, _| store.migrate_settings(fs));
+                cx.emit(DismissEvent);
+            })
         })
     });
 }
@@ -1259,12 +1331,12 @@ pub fn load_default_keymap(cx: &mut App) {
     }
 }
 
-pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
+pub fn handle_settings_changed(result: Result<serde_json::Value, anyhow::Error>, cx: &mut App) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
 
-    match error {
-        Some(error) => {
+    match result {
+        Err(error) => {
             if let Some(InvalidSettingsError::LocalSettings { .. }) =
                 error.downcast_ref::<InvalidSettingsError>()
             {
@@ -1283,7 +1355,10 @@ pub fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut App) {
                 })
             });
         }
-        None => dismiss_app_notification(&id, cx),
+        Ok(settings) => {
+            dismiss_app_notification(&id, cx);
+            show_settings_migration_notification_if_needed(id, settings, cx);
+        }
     }
 }
 
@@ -3925,24 +4000,28 @@ mod tests {
                     "vim::FindCommand"
                     | "vim::Literal"
                     | "vim::ResizePane"
-                    | "vim::SwitchMode"
-                    | "vim::PushOperator"
+                    | "vim::PushObject"
+                    | "vim::PushFindForward"
+                    | "vim::PushFindBackward"
+                    | "vim::PushSneak"
+                    | "vim::PushSneakBackward"
+                    | "vim::PushChangeSurrounds"
+                    | "vim::PushJump"
+                    | "vim::PushDigraph"
+                    | "vim::PushLiteral"
                     | "vim::Number"
                     | "vim::SelectRegister"
                     | "terminal::SendText"
                     | "terminal::SendKeystroke"
                     | "app_menu::OpenApplicationMenu"
-                    | "app_menu::NavigateApplicationMenuInDirection"
                     | "picker::ConfirmInput"
                     | "editor::HandleInput"
                     | "editor::FoldAtLevel"
                     | "pane::ActivateItem"
                     | "workspace::ActivatePane"
-                    | "workspace::ActivatePaneInDirection"
                     | "workspace::MoveItemToPane"
                     | "workspace::MoveItemToPaneInDirection"
                     | "workspace::OpenTerminal"
-                    | "workspace::SwapPaneInDirection"
                     | "workspace::SendKeystrokes"
                     | "zed::OpenBrowser"
                     | "zed::OpenZedUrl" => {}

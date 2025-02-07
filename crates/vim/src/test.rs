@@ -17,12 +17,7 @@ use indoc::indoc;
 use search::BufferSearchBar;
 use workspace::WorkspaceSettings;
 
-use crate::{
-    insert::NormalBefore,
-    motion,
-    state::{Mode, Operator},
-    PushOperator,
-};
+use crate::{insert::NormalBefore, motion, state::Mode, PushSneak, PushSneakBackward};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -1347,17 +1342,17 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
         cx.bind_keys([
             KeyBinding::new(
                 "s",
-                PushOperator(Operator::Sneak { first_char: None }),
+                PushSneak { first_char: None },
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
                 "S",
-                PushOperator(Operator::SneakBackward { first_char: None }),
+                PushSneakBackward { first_char: None },
                 Some("vim_mode == normal"),
             ),
             KeyBinding::new(
                 "S",
-                PushOperator(Operator::SneakBackward { first_char: None }),
+                PushSneakBackward { first_char: None },
                 Some("vim_mode == visual"),
             ),
         ])

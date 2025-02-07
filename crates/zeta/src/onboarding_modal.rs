@@ -9,7 +9,7 @@ use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, MouseDownEvent, Render,
 };
-use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
+use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::{update_settings_file, Settings};
 use ui::{prelude::*, Checkbox, TintColor};
 use util::ResultExt;
@@ -105,7 +105,7 @@ impl ZedPredictModal {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
-                        .inline_completion_provider = Some(InlineCompletionProvider::Zed);
+                        .edit_prediction_provider = Some(EditPredictionProvider::Zed);
                 });
 
                 cx.emit(DismissEvent);

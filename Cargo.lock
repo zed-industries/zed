@@ -7837,6 +7837,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "migrator"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "convert_case 0.7.1",
+ "pretty_assertions",
+ "tree-sitter",
+ "tree-sitter-json",
+]
+
+[[package]]
 name = "mimalloc"
 version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11980,6 +11991,7 @@ dependencies = [
  "gpui",
  "indoc",
  "log",
+ "migrator",
  "paths",
  "pretty_assertions",
  "release_channel",
