@@ -8,9 +8,8 @@ pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::future::BoxFuture;
 use http::request::Builder;
-
 #[cfg(feature = "test-support")]
-use std::fmt::{Debug, Formatter};
+use std::fmt;
 use std::{
     any::type_name,
     sync::{Arc, Mutex},

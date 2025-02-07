@@ -1,10 +1,11 @@
-use bytes::Bytes;
-use futures::AsyncRead;
 use std::{
     io::{Cursor, Read},
     pin::Pin,
     task::Poll,
 };
+
+use bytes::Bytes;
+use futures::AsyncRead;
 
 /// Based on the implementation of AsyncBody in
 /// <https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs>.
