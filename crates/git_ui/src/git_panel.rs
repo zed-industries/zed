@@ -25,9 +25,9 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration, usize}
 use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, IndentGuideColors,
-    ListHeader, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
+    ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
-use util::{ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
@@ -316,7 +316,12 @@ impl GitPanel {
         git_panel
     }
 
-    pub fn set_focused_path(&mut self, path: ProjectPath, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_entry_by_path(
+        &mut self,
+        path: ProjectPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(git_repo) = self.active_repository.as_ref() else {
             return;
         };
@@ -326,7 +331,6 @@ impl GitPanel {
         let Some(ix) = self.entries_by_path.get(&repo_path) else {
             return;
         };
-
         self.selected_entry = Some(*ix);
         cx.notify();
     }
@@ -563,10 +567,17 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
-    fn open_selected(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry.and_then(|i| self.entries.get(i)) {
-            self.open_entry(entry, cx);
-        }
+    fn open_selected(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
+
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                })
+                .ok()
+        });
+        self.focus_handle.focus(window);
     }
 
     fn toggle_staged_for_entry(
@@ -660,31 +671,8 @@ impl GitPanel {
         }
     }
 
-    fn open_entry(&self, entry: &GitListEntry, cx: &mut Context<Self>) {
-        let Some(status_entry) = entry.status_entry() else {
-            return;
-        };
-        let Some(active_repository) = self.active_repository.as_ref() else {
-            return;
-        };
-        let Some(path) = active_repository
-            .read(cx)
-            .repo_path_to_project_path(&status_entry.repo_path)
-        else {
-            return;
-        };
-        let path_exists = self.project.update(cx, |project, cx| {
-            project.entry_for_path(&path, cx).is_some()
-        });
-        if !path_exists {
-            return;
-        }
-        // TODO maybe move all of this into project?
-        cx.emit(Event::OpenedEntry { path });
-    }
-
     /// Commit all staged changes
-    fn commit_changes(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
+    fn commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.commit_editor.read(cx);
         if editor.is_empty(cx) {
             if !editor.focus_handle(cx).contains_focused(window, cx) {
@@ -693,10 +681,10 @@ impl GitPanel {
             }
         }
 
-        self.commit_changes_impl(window, cx)
+        self.commit_changes(window, cx)
     }
 
-    fn commit_changes_impl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn commit_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
@@ -1225,9 +1213,7 @@ impl GitPanel {
             })
             .disabled(!can_commit)
             .on_click({
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.commit_changes_impl(window, cx)
-                })
+                cx.listener(move |this, _: &ClickEvent, window, cx| this.commit_changes(window, cx))
             });
 
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
@@ -1482,9 +1468,10 @@ impl GitPanel {
         ix: usize,
         header: &GitHeaderEntry,
         has_write_access: bool,
-        _window: &Window,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let selected = self.selected_entry == Some(ix);
         let header_state = if self.has_staged_changes() {
             self.header_state(header.header)
         } else {
@@ -1493,34 +1480,46 @@ impl GitPanel {
                 Section::New => ToggleState::Unselected,
             }
         };
-        let checkbox = Checkbox::new(header.title(), header_state)
+
+        let checkbox = Checkbox::new(("checkbox", ix), header_state)
             .disabled(!has_write_access)
-            .placeholder(!self.has_staged_changes())
             .fill()
-            .elevation(ElevationIndex::Surface);
-        let selected = self.selected_entry == Some(ix);
+            .placeholder(!self.has_staged_changes())
+            .elevation(ElevationIndex::Surface)
+            .on_click({
+                let header = header.clone();
+                cx.listener(move |this, _, window, cx| {
+                    this.toggle_staged_for_entry(&GitListEntry::Header(header.clone()), window, cx);
+                    cx.stop_propagation();
+                })
+            });
+
+        let start_slot = h_flex()
+            .id(("start-slot", ix))
+            .gap(DynamicSpacing::Base04.rems(cx))
+            .child(checkbox)
+            .tooltip(|window, cx| Tooltip::for_action("Stage File", &ToggleStaged, window, cx))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                // prevent the list item active state triggering when toggling checkbox
+                cx.stop_propagation();
+            });
 
         div()
             .w_full()
             .child(
-                ListHeader::new(header.title())
-                    .start_slot(checkbox)
+                ListItem::new(ix)
+                    .spacing(ListItemSpacing::Sparse)
+                    .start_slot(start_slot)
                     .toggle_state(selected)
-                    .on_toggle({
-                        let header = header.clone();
-                        cx.listener(move |this, _, window, cx| {
-                            if !has_write_access {
-                                return;
-                            }
+                    .focused(selected && self.focus_handle.is_focused(window))
+                    .disabled(!has_write_access)
+                    .on_click({
+                        cx.listener(move |this, _, _, cx| {
                             this.selected_entry = Some(ix);
-                            this.toggle_staged_for_entry(
-                                &GitListEntry::Header(header.clone()),
-                                window,
-                                cx,
-                            )
+                            cx.notify();
                         })
                     })
-                    .inset(true),
+                    .child(h_flex().child(self.entry_label(header.title(), Color::Muted))),
             )
             .into_any_element()
     }
@@ -1618,15 +1617,10 @@ impl GitPanel {
                     .focused(selected && self.focus_handle.is_focused(window))
                     .disabled(!has_write_access)
                     .on_click({
-                        let entry = entry.clone();
                         cx.listener(move |this, _, window, cx| {
                             this.selected_entry = Some(ix);
-                            let Some(workspace) = this.workspace.upgrade() else {
-                                return;
-                            };
-                            workspace.update(cx, |workspace, cx| {
-                                ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
-                            })
+                            cx.notify();
+                            this.open_selected(&Default::default(), window, cx);
                         })
                     })
                     .child(
@@ -1690,7 +1684,7 @@ impl Render for GitPanel {
                 this.on_action(cx.listener(|this, &ToggleStaged, window, cx| {
                     this.toggle_staged_for_selected(&ToggleStaged, window, cx)
                 }))
-                .on_action(cx.listener(GitPanel::commit_changes))
+                .on_action(cx.listener(GitPanel::commit))
             })
             .when(self.is_focused(window, cx), |this| {
                 this.on_action(cx.listener(Self::select_first))
