@@ -503,7 +503,7 @@ struct BackgroundScannerState {
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
     git_hosting_provider_registry: Option<Arc<GitHostingProviderRegistry>>,
-    repository_scans: HashMap<Arc<Path>, Task<()>>,
+    repository_scans: HashMap<PathKey, Task<()>>,
 }
 
 #[derive(Debug, Clone)]
@@ -2175,14 +2175,12 @@ impl LocalWorktree {
         let _maintain_remote_snapshot = cx.background_executor().spawn(async move {
             let mut is_first = true;
             while let Some((snapshot, entry_changes, repo_changes)) = snapshots_rx.next().await {
-                let update;
-                if is_first {
-                    update = snapshot.build_initial_update(project_id, worktree_id);
+                let update = if is_first {
                     is_first = false;
+                    snapshot.build_initial_update(project_id, worktree_id)
                 } else {
-                    update =
-                        snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes);
-                }
+                    snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes)
+                };
 
                 for update in proto::split_worktree_update(update) {
                     let _ = resume_updates_rx.try_recv();
@@ -2552,7 +2550,10 @@ impl Snapshot {
         mut update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
     ) -> Result<()> {
-        log::trace!(
+        if update.updated_entries.len() < 5 {
+            dbg!("@@@@@@@@@@@2", &update);
+        }
+        log::debug!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
             update.removed_entries.len()
@@ -4690,6 +4691,7 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, *GITIGNORE);
         swap_to_front(&mut child_paths, *DOT_GIT);
 
+        let mut git_status_update_jobs = Vec::new();
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
@@ -4703,7 +4705,8 @@ impl BackgroundScanner {
                 );
 
                 if let Some(local_repo) = repo {
-                    let _ = self.schedule_git_statuses_update(local_repo);
+                    // TODO kb if this is await'ed, all starts to work
+                    git_status_update_jobs.push(self.schedule_git_statuses_update(local_repo));
                 }
             } else if child_name == *GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
@@ -4819,6 +4822,29 @@ impl BackgroundScanner {
 
             new_entries.push(child_entry);
         }
+
+        let task_state = self.state.clone();
+        let phase = self.phase;
+        let status_updates_tx = self.status_updates_tx.clone();
+        let aa = job.abs_path.clone();
+        self.executor
+            .spawn(async move {
+                if !git_status_update_jobs.is_empty() {
+                    dbg!(("1", &aa, git_status_update_jobs.len()));
+                    let _updates_finished: Vec<Result<(), oneshot::Canceled>> =
+                        join_all(git_status_update_jobs).await;
+                    // TODO kb how to notify about git status updates
+                    let a = send_status_update_inner(
+                        phase,
+                        task_state,
+                        status_updates_tx,
+                        false,
+                        SmallVec::new(),
+                    );
+                    dbg!(a);
+                }
+            })
+            .detach();
 
         let mut state = self.state.lock();
 
@@ -5236,7 +5262,7 @@ impl BackgroundScanner {
                     None => {
                         let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path())
                         else {
-                            return;
+                            return Task::ready(());
                         };
                         match state.insert_git_repository(
                             relative.into(),
@@ -5321,22 +5347,23 @@ impl BackgroundScanner {
     }
 
     /// Update the git statuses for a given batch of entries.
-    fn update_git_statuses(&self, local_repository: LocalRepositoryEntry) -> oneshot::Receiver<()> {
-        let repository_path = local_repository.work_directory.path.clone();
+    fn schedule_git_statuses_update(
+        &self,
+        local_repository: LocalRepositoryEntry,
+    ) -> oneshot::Receiver<()> {
+        let repository_name = local_repository.work_directory.display_name();
+        let path_key = local_repository.work_directory.path_key();
+
         let state = self.state.clone();
         let (tx, rx) = oneshot::channel();
 
         self.state.lock().repository_scans.insert(
-            repository_path.clone(),
+            path_key.clone(),
             self.executor.spawn(async move {
-                log::trace!(
-                    "updating git statuses for repo {:?}",
-                    repository_path.display_name()
-                );
+                log::trace!("updating git statuses for repo {repository_name}",);
                 let t0 = Instant::now();
 
                 let Some(statuses) = local_repository
-                    .local_repository
                     .repo()
                     .status(&[git::WORK_DIRECTORY_REPO_PATH.clone()])
                     .log_err()
@@ -5344,8 +5371,7 @@ impl BackgroundScanner {
                     return;
                 };
                 log::trace!(
-                    "computed git statuses for repo {:?} in {:?}",
-                    repository_path.display_name(),
+                    "computed git statuses for repo {repository_name} in {:?}",
                     t0.elapsed()
                 );
 
@@ -5353,11 +5379,9 @@ impl BackgroundScanner {
                 let mut changed_paths = Vec::new();
                 let snapshot = state.lock().snapshot.snapshot.clone();
 
-                let Some(mut repository) =
-                    snapshot.repository(local_repository.work_directory.path_key())
-                else {
+                let Some(mut repository) = snapshot.repository(path_key) else {
                     // happens when a folder is deleted
-            log::debug!(
+                    log::debug!(
                         "Tried to update git statuses for a repository that isn't in the snapshot"
                     );
 
@@ -5407,8 +5431,7 @@ impl BackgroundScanner {
                 );
 
                 log::trace!(
-                    "applied git status updates for repo {:?} in {:?}",
-                    repository_path.display_name(),
+                    "applied git status updates for repo {repository_name} in {:?}",
                     t0.elapsed(),
                 );
                 tx.send(()).ok();
