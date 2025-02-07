@@ -5800,6 +5800,9 @@ fn inline_completion_accept_indicator(
         .child(accept_keystroke.key.clone());
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+    let accent_color = cx.theme().colors().text_accent;
+    let editor_bg_color = cx.theme().colors().editor_background;
+    let bg_color = editor_bg_color.blend(accent_color.opacity(0.2));
 
     Some(
         h_flex()
@@ -5807,7 +5810,7 @@ fn inline_completion_accept_indicator(
             .pl_1()
             .pr(padding_right)
             .gap_1()
-            .bg(cx.theme().colors().text_accent.opacity(0.15))
+            .bg(bg_color)
             .border_1()
             .border_color(cx.theme().colors().text_accent.opacity(0.8))
             .rounded_md()
