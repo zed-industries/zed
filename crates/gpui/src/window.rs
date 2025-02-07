@@ -630,8 +630,9 @@ pub struct Window {
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     scale_factor: f32,
-    element_coordinate_scale: Pixels,
-    element_coordinate_origin: Point<Pixels>,
+    applied_coordinate_id: Option<LayoutId>,
+    pub(crate) element_coordinate_scale: Pixels,
+    pub(crate) element_coordinate_origin: Point<Pixels>,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -915,6 +916,7 @@ impl Window {
             mouse_hit_test: HitTest::default(),
             modifiers,
             scale_factor,
+            applied_coordinate_id: None,
             element_coordinate_scale: px(1.0),
             element_coordinate_origin: Point::default(),
             bounds_observers: SubscriberSet::new(),
@@ -1471,6 +1473,7 @@ impl Window {
         origin: Point<Pixels>,
         scale: Option<f32>,
         relative: bool,
+        layout_id: Option<LayoutId>,
         f: F,
     ) -> R
     where
@@ -1480,8 +1483,14 @@ impl Window {
         let original_scale = self.element_coordinate_scale;
 
         if relative {
-            self.element_coordinate_origin += origin;
-            self.element_coordinate_scale *= scale.unwrap_or(1.0);
+            if layout_id.is_none() || layout_id != self.applied_coordinate_id {
+                self.element_coordinate_origin += origin;
+                self.element_coordinate_scale *= scale.unwrap_or(1.0);
+            }
+
+            if layout_id.is_some() {
+                self.applied_coordinate_id = layout_id;
+            }
         } else {
             self.element_coordinate_origin = origin;
             self.element_coordinate_scale = px(scale.unwrap_or(1.0));
@@ -2794,17 +2803,23 @@ impl Window {
         cx.layout_id_buffer.clear();
         cx.layout_id_buffer.extend(children);
 
-        self.with_coordinate_space(Point::default(), style.scale_multiplier, true, |window| {
-            let scale = window.element_coordinate_scale.0;
-            let rem_size = window.rem_size();
+        self.with_coordinate_space(
+            Point::default(),
+            style.scale_multiplier,
+            true,
+            None,
+            |window| {
+                let scale = window.element_coordinate_scale.0;
+                let rem_size = window.rem_size();
 
-            window.layout_engine.as_mut().unwrap().request_layout(
-                style,
-                scale,
-                rem_size,
-                &cx.layout_id_buffer,
-            )
-        })
+                window.layout_engine.as_mut().unwrap().request_layout(
+                    style,
+                    scale,
+                    rem_size,
+                    &cx.layout_id_buffer,
+                )
+            },
+        )
     }
 
     /// Add a node to the layout tree for the current frame. Instead of taking a `Style` and children,
@@ -2825,33 +2840,40 @@ impl Window {
     ) -> LayoutId {
         self.invalidator.debug_assert_prepaint();
 
-        self.with_coordinate_space(Point::default(), style.scale_multiplier, true, |window| {
-            let scale = window.element_coordinate_scale.0;
-            let rem_size = window.rem_size();
+        self.with_coordinate_space(
+            Point::default(),
+            style.scale_multiplier,
+            true,
+            None,
+            |window| {
+                let scale = window.element_coordinate_scale.0;
+                let rem_size = window.rem_size();
 
-            window
-                .layout_engine
-                .as_mut()
-                .unwrap()
-                .request_measured_layout(
-                    style,
-                    scale,
-                    rem_size,
-                    move |mut known_size, mut available_space, window, app| {
-                        // Unscale size inputs to measure function
-                        known_size = known_size.map(|size| size.map(|size| size / scale));
-                        available_space = available_space.map(|space| match space {
-                            AvailableSpace::Definite(pixels) => {
-                                AvailableSpace::Definite(pixels / scale)
-                            }
-                            x => x,
-                        });
+                window
+                    .layout_engine
+                    .as_mut()
+                    .unwrap()
+                    .request_measured_layout(
+                        style,
+                        scale,
+                        rem_size,
+                        move |mut known_size, mut available_space, window, app| {
+                            // Unscale size inputs to measure function
+                            known_size = known_size.map(|size| size.map(|size| size / scale));
+                            available_space = available_space.map(|space| match space {
+                                AvailableSpace::Definite(pixels) => {
+                                    AvailableSpace::Definite(pixels / scale)
+                                }
+                                x => x,
+                            });
 
-                        // Rescale output size
-                        measure(known_size, available_space, window, app).map(|size| size * scale)
-                    },
-                )
-        })
+                            // Rescale output size
+                            measure(known_size, available_space, window, app)
+                                .map(|size| size * scale)
+                        },
+                    )
+            },
+        )
     }
 
     /// Compute the layout for the given id within the given available space.

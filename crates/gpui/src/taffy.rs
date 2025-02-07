@@ -67,7 +67,8 @@ impl TaffyLayoutEngine {
                 .into();
             parent_id
         };
-        self.layout_scales.insert(layout_id, scale);
+        self.layout_scales
+            .insert(layout_id, style.scale_multiplier.unwrap_or(1.0));
         layout_id
     }
 
@@ -91,7 +92,8 @@ impl TaffyLayoutEngine {
             )
             .expect(EXPECT_MESSAGE)
             .into();
-        self.layout_scales.insert(layout_id, scale);
+        self.layout_scales
+            .insert(layout_id, style.scale_multiplier.unwrap_or(1.0));
         layout_id
     }
 

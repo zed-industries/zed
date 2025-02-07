@@ -271,6 +271,7 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
         request_layout: RequestLayoutState,
     },
     Prepaint {
+        layout_id: LayoutId,
         node_id: DispatchNodeId,
         global_id: Option<GlobalElementId>,
         bounds: Bounds<Pixels>,
@@ -337,8 +338,12 @@ impl<E: Element> Drawable<E> {
                 let bounds = window.layout_bounds(layout_id);
                 let scale = window.layout_scale(layout_id);
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                let prepaint =
-                    window.with_coordinate_space(bounds.origin, Some(scale), false, |window| {
+                let prepaint = window.with_coordinate_space(
+                    window.to_element_coordinates(bounds).origin,
+                    Some(scale),
+                    true,
+                    Some(layout_id),
+                    |window| {
                         self.element.prepaint(
                             global_id.as_ref(),
                             window.to_element_coordinates(bounds),
@@ -346,7 +351,8 @@ impl<E: Element> Drawable<E> {
                             window,
                             cx,
                         )
-                    });
+                    },
+                );
 
                 window.next_frame.dispatch_tree.pop_node();
 
@@ -355,6 +361,7 @@ impl<E: Element> Drawable<E> {
                 }
 
                 self.phase = ElementDrawPhase::Prepaint {
+                    layout_id,
                     node_id,
                     global_id,
                     bounds,
@@ -374,6 +381,7 @@ impl<E: Element> Drawable<E> {
     ) -> (E::RequestLayoutState, E::PrepaintState) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Prepaint {
+                layout_id,
                 node_id,
                 global_id,
                 bounds,
@@ -388,16 +396,22 @@ impl<E: Element> Drawable<E> {
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
-                window.with_coordinate_space(bounds.origin, Some(scale), false, |window| {
-                    self.element.paint(
-                        global_id.as_ref(),
-                        window.to_element_coordinates(bounds),
-                        &mut request_layout,
-                        &mut prepaint,
-                        window,
-                        cx,
-                    );
-                });
+                window.with_coordinate_space(
+                    window.to_element_coordinates(bounds).origin,
+                    Some(scale),
+                    true,
+                    Some(layout_id),
+                    |window| {
+                        self.element.paint(
+                            global_id.as_ref(),
+                            window.to_element_coordinates(bounds),
+                            &mut request_layout,
+                            &mut prepaint,
+                            window,
+                            cx,
+                        );
+                    },
+                );
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();
@@ -416,6 +430,13 @@ impl<E: Element> Drawable<E> {
         window: &mut Window,
         cx: &mut App,
     ) -> Size<Pixels> {
+        let available_space = available_space.map(|size| match size {
+            AvailableSpace::Definite(pixels) => {
+                AvailableSpace::Definite(pixels * window.element_coordinate_scale)
+            }
+            x => x,
+        });
+
         if matches!(&self.phase, ElementDrawPhase::Start) {
             self.request_layout(window, cx);
         }
@@ -455,7 +476,8 @@ impl<E: Element> Drawable<E> {
             _ => panic!("cannot measure after painting"),
         };
 
-        window.layout_bounds(layout_id).size
+        let bounds = window.layout_bounds(layout_id);
+        window.to_element_coordinates(bounds).size
     }
 }
 
@@ -555,7 +577,9 @@ impl AnyElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FocusHandle> {
-        window.with_absolute_element_offset(origin, |window| self.prepaint(window, cx))
+        window.with_absolute_element_offset(window.to_absolute_coordinates(origin), |window| {
+            self.prepaint(window, cx)
+        })
     }
 
     /// Performs layout on this element in the available space, then prepaints it at the given absolute origin.
