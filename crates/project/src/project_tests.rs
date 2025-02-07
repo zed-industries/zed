@@ -5776,6 +5776,9 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let language = rust_lang();
+    language_registry.add(language.clone());
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -5790,13 +5793,23 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
+    uncommitted_diff.read_with(cx, |diff, _| {
+        assert_eq!(
+            diff.snapshot
+                .base_text
+                .as_ref()
+                .and_then(|base| base.language().cloned()),
+            Some(language)
+        )
+    });
+
     cx.run_until_parked();
     uncommitted_diff.update(cx, |uncommitted_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
             uncommitted_diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
             &snapshot,
-            &uncommitted_diff.snapshot.base_text.as_ref().unwrap().text(),
+            &uncommitted_diff.base_text_string().unwrap(),
             &[
                 (0..1, "", "// print goodbye\n"),
                 (
