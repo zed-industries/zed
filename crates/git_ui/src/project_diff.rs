@@ -320,7 +320,7 @@ impl ProjectDiff {
         let diff_hunk_ranges = if diff.base_text().is_none() {
             vec![Point::zero()..snapshot.max_point()]
         } else {
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
                 .collect::<Vec<_>>()
         };

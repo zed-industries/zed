@@ -33,6 +33,28 @@ pub enum DiffHunkStatus {
     Removed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StagedStatus {
+    Unstaged,
+    Mixed,
+    Staged,
+}
+
+// to stage a hunk:
+// - assume hunk starts out as not staged
+// - hunk exists with the same buffer range in the unstaged diff and the uncommitted diff
+// - we want to construct a "version" of the file that
+//   - starts from the index base text
+//   - has the single hunk applied to it
+//     - the hunk is the one from the UNSTAGED diff, so that the diff base offset range is correct to apply to that diff base
+// - write that new version of the file into the index
+
+// to unstage a hunk
+// - no hunk in the unstaged diff intersects this hunk from the uncommitted diff
+// - we want to compute the hunk that
+//   - we can apply to the index text
+//   - at the end of applying it,
+
 /// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffHunk {
@@ -42,6 +64,7 @@ pub struct DiffHunk {
     pub buffer_range: Range<Anchor>,
     /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
+    pub staged_status: StagedStatus,
 }
 
 /// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
@@ -95,20 +118,14 @@ impl BufferDiffSnapshot {
         self.inner.hunks.is_empty()
     }
 
-    pub fn hunks_in_row_range<'a>(
-        &'a self,
-        range: Range<u32>,
-        buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiffHunk> {
-        self.inner.hunks_in_row_range(range, buffer)
-    }
-
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
         buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        self.inner.hunks_intersecting_range(range, buffer)
+        let unstaged_counterpart = self.unstaged_diff.as_ref().map(|diff| &diff.inner);
+        self.inner
+            .hunks_intersecting_range(range, buffer, unstaged_counterpart)
     }
 
     pub fn hunks_intersecting_range_rev<'a>(
@@ -125,20 +142,11 @@ impl BufferDiffSnapshot {
 }
 
 impl BufferDiffInner {
-    fn hunks_in_row_range<'a>(
-        &'a self,
-        range: Range<u32>,
-        buffer: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiffHunk> {
-        let start = buffer.anchor_before(Point::new(range.start, 0));
-        let end = buffer.anchor_after(Point::new(range.end, 0));
-        self.hunks_intersecting_range(start..end, buffer)
-    }
-
     fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
         buffer: &'a text::BufferSnapshot,
+        unstaged_counterpart: Option<&Self>,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         let range = range.to_offset(buffer);
 
@@ -168,6 +176,10 @@ impl BufferDiffInner {
             ]
         });
 
+        let mut unstaged_cursor = unstaged_counterpart
+            .as_ref()
+            .map(|diff| diff.hunks.cursor::<DiffHunkSummary>(buffer));
+
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || loop {
             let (start_point, (start_anchor, start_base)) = summaries.next()?;
@@ -187,6 +199,7 @@ impl BufferDiffInner {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: start_anchor..end_anchor,
+                staged_status: StagedStatus::Mixed, // FIXME
             });
         })
     }
@@ -219,6 +232,7 @@ impl BufferDiffInner {
                 row_range: range.start.row..end_row,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
+                staged_status: StagedStatus::Mixed, // FIXME
             })
         })
     }
@@ -593,16 +607,22 @@ impl BufferDiff {
         &'a self,
         range: Range<text::Anchor>,
         buffer_snapshot: &'a text::BufferSnapshot,
+        cx: &'a App,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        self.inner.hunks_intersecting_range(range, buffer_snapshot)
+        let unstaged_counterpart = self.unstaged_diff.as_ref().map(|diff| &diff.read(cx).inner);
+        self.inner
+            .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
     }
 
     pub fn hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
         buffer: &'a text::BufferSnapshot,
+        cx: &'a App,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
-        self.inner.hunks_in_row_range(range, buffer)
+        let start = buffer.anchor_before(Point::new(range.start, 0));
+        let end = buffer.anchor_after(Point::new(range.end, 0));
+        self.hunks_intersecting_range(start..end, buffer, cx)
     }
 
     /// Used in cases where the change set isn't derived from git.
@@ -759,7 +779,7 @@ mod tests {
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::build_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
             &[(1..2, "two\n", "HELLO\n")],
@@ -768,7 +788,7 @@ mod tests {
         buffer.edit([(0..0, "point five\n")]);
         diff = BufferDiff::build_sync(buffer.clone(), diff_base.clone(), cx);
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
             &[(0..1, "", "point five\n"), (2..3, "two\n", "HELLO\n")],
@@ -776,7 +796,7 @@ mod tests {
 
         diff = BufferDiff::build_empty(&buffer);
         assert_hunks(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer),
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
             &[],
@@ -829,13 +849,17 @@ mod tests {
             })
             .await;
         assert_eq!(
-            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer)
+            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None)
                 .count(),
             8
         );
 
         assert_hunks(
-            diff.hunks_in_row_range(7..12, &buffer),
+            diff.hunks_intersecting_range(
+                buffer.anchor_before(Point::new(7, 0))..buffer.anchor_before(Point::new(12, 0)),
+                &buffer,
+                None,
+            ),
             &buffer,
             &diff_base,
             &[
