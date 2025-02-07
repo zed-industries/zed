@@ -2076,6 +2076,7 @@ impl EditorElement {
         line_height: Pixels,
         scroll_position: gpui::Point<f32>,
         buffer_rows: &[RowInfo],
+        window: &Window,
         cx: &mut App,
     ) -> (Vec<ExcerptLine>, Vec<Option<(AnyElement, bool)>>) {
         let mut lines = Vec::new();
@@ -2095,8 +2096,8 @@ impl EditorElement {
                 let (excerpt_id, expand_direction) = row_info.expand_direction?;
 
                 let icon_name = match expand_direction {
-                    ExpandExcerptDirection::Up => IconName::ArrowUpFromLine,
-                    ExpandExcerptDirection::Down => IconName::ArrowDownFromLine,
+                    ExpandExcerptDirection::Up => IconName::ExpandUp,
+                    ExpandExcerptDirection::Down => IconName::ExpandDown,
                     ExpandExcerptDirection::UpAndDown => IconName::Split,
                 };
 
@@ -2127,11 +2128,23 @@ impl EditorElement {
                     .snapshot(cx)
                     .max_excerpt_buffer_row(excerpt_id)?;
                 let is_wide = max_row > 9999;
+                // get the font size a as a whole number
+                let mut font_size = self
+                    .style
+                    .text
+                    .font_size
+                    .to_pixels(window.rem_size())
+                    .round();
+                // Ensure icon size will be odd, so the center line won't be blurry
+                if font_size.0.round() % 2.0 == 0.0 {
+                    // todo: + or -?
+                    font_size -= px(1.0);
+                };
 
                 Some((
                     IconButton::new(("expand", ix), icon_name)
                         .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                        .icon_size(IconSize::Small)
+                        .icon_size(IconSize::Custom(font_size))
                         .size(ButtonSize::Compact)
                         .style(ButtonStyle::Transparent)
                         .on_click(move |_, _, cx| {
@@ -7066,6 +7079,7 @@ impl Element for EditorElement {
                                 line_height,
                                 scroll_position,
                                 &row_infos,
+                                window,
                                 cx,
                             )
                         });
