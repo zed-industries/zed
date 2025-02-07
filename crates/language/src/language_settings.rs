@@ -227,6 +227,8 @@ pub struct InlineCompletionSettings {
     pub disabled_globs: Vec<GlobMatcher>,
     /// When to show edit predictions previews in buffer.
     pub inline_preview: InlineCompletionPreviewMode,
+    /// Settings specific to GitHub Copilot.
+    pub copilot: CopilotSettings,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -238,6 +240,14 @@ pub enum InlineCompletionPreviewMode {
     Auto,
     /// Display inline when holding modifier key (alt by default).
     WhenHoldingModifier,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CopilotSettings {
+    /// HTTP/HTTPS proxy to use for Copilot.
+    pub proxy: Option<String>,
+    /// Disable certificate verification for proxy (not recommended).
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for all languages.
@@ -433,6 +443,23 @@ pub struct InlineCompletionSettingsContent {
     /// When to show edit predictions previews in buffer.
     #[serde(default)]
     pub inline_preview: InlineCompletionPreviewMode,
+    /// Settings specific to GitHub Copilot.
+    #[serde(default)]
+    pub copilot: CopilotSettingsContent,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct CopilotSettingsContent {
+    /// HTTP/HTTPS proxy to use for Copilot.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub proxy: Option<String>,
+    /// Disable certificate verification for the proxy (not recommended).
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub proxy_no_verify: Option<bool>,
 }
 
 /// The settings for enabling/disabling features.
@@ -1032,6 +1059,16 @@ impl settings::Settings for AllLanguageSettings {
             .map(|globs| globs.iter().collect())
             .ok_or_else(Self::missing_default)?;
 
+        let mut copilot_settings = default_value
+            .inline_completions
+            .as_ref()
+            .map(|settings| settings.copilot.clone())
+            .map(|copilot| CopilotSettings {
+                proxy: copilot.proxy,
+                proxy_no_verify: copilot.proxy_no_verify,
+            })
+            .unwrap_or_default();
+
         let mut file_types: HashMap<Arc<str>, GlobSet> = HashMap::default();
 
         for (language, suffixes) in &default_value.file_types {
@@ -1062,6 +1099,22 @@ impl settings::Settings for AllLanguageSettings {
                 if let Some(disabled_globs) = inline_completions.disabled_globs.as_ref() {
                     completion_globs.extend(disabled_globs.iter());
                 }
+            }
+
+            if let Some(proxy) = user_settings
+                .inline_completions
+                .as_ref()
+                .and_then(|settings| settings.copilot.proxy.clone())
+            {
+                copilot_settings.proxy = Some(proxy);
+            }
+
+            if let Some(proxy_no_verify) = user_settings
+                .inline_completions
+                .as_ref()
+                .and_then(|settings| settings.copilot.proxy_no_verify)
+            {
+                copilot_settings.proxy_no_verify = Some(proxy_no_verify);
             }
 
             // A user's global settings override the default global settings and
@@ -1115,6 +1168,7 @@ impl settings::Settings for AllLanguageSettings {
                     .filter_map(|g| Some(globset::Glob::new(g).ok()?.compile_matcher()))
                     .collect(),
                 inline_preview: inline_completions_preview,
+                copilot: copilot_settings,
             },
             defaults,
             languages,
