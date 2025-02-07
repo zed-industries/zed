@@ -5490,7 +5490,7 @@ impl Editor {
         cursor_point: Point,
         style: &EditorStyle,
         accept_keystroke: &gpui::Keystroke,
-        window: &Window,
+        _window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.inline_completion_provider.as_ref()?;
@@ -5545,20 +5545,51 @@ impl Editor {
         }
 
         let completion = match &self.active_inline_completion {
-            Some(completion) => self.render_edit_prediction_cursor_popover_preview(
-                completion,
-                cursor_point,
-                style,
-                window,
-                cx,
-            )?,
+            Some(completion) => match &completion.completion {
+                InlineCompletion::Move {
+                    target, snapshot, ..
+                } if !self.has_visible_completions_menu() => {
+                    use text::ToPoint as _;
+
+                    return Some(
+                        h_flex()
+                            .px_2()
+                            .py_1()
+                            .elevation_2(cx)
+                            .rounded_tl(px(0.))
+                            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                            .gap_2()
+                            .children(ui::render_modifiers(
+                                &accept_keystroke.modifiers,
+                                PlatformStyle::platform(),
+                                None,
+                                None,
+                                true,
+                            ))
+                            .child(Label::new("Preview").size(LabelSize::Small))
+                            .child(
+                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                    Icon::new(IconName::ArrowDown)
+                                } else {
+                                    Icon::new(IconName::ArrowUp)
+                                },
+                            )
+                            .into_any(),
+                    );
+                }
+                _ => self.render_edit_prediction_cursor_popover_preview(
+                    completion,
+                    cursor_point,
+                    style,
+                    cx,
+                )?,
+            },
 
             None if is_refreshing => match &self.stale_inline_completion_in_menu {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
                     style,
-                    window,
                     cx,
                 )?,
 
@@ -5569,9 +5600,6 @@ impl Editor {
 
             None => pending_completion_container().child(Label::new("No Prediction")),
         };
-
-        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
-        let completion = completion.font(buffer_font.clone());
 
         let completion = if is_refreshing {
             completion
@@ -5604,19 +5632,22 @@ impl Editor {
                         .h_full()
                         .gap_1()
                         .pl_2()
-                        .child(h_flex().font(buffer_font.clone()).gap_1().children(
-                            ui::render_modifiers(
-                                &accept_keystroke.modifiers,
-                                PlatformStyle::platform(),
-                                Some(if !has_completion {
-                                    Color::Muted
-                                } else {
-                                    Color::Default
-                                }),
-                                None,
-                                true,
-                            ),
-                        ))
+                        .child(
+                            h_flex()
+                                .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                .gap_1()
+                                .children(ui::render_modifiers(
+                                    &accept_keystroke.modifiers,
+                                    PlatformStyle::platform(),
+                                    Some(if !has_completion {
+                                        Color::Muted
+                                    } else {
+                                        Color::Default
+                                    }),
+                                    None,
+                                    true,
+                                )),
+                        )
                         .child(Label::new("Preview").into_any_element())
                         .opacity(if has_completion { 1.0 } else { 0.4 }),
                 )
@@ -5629,7 +5660,6 @@ impl Editor {
         completion: &InlineCompletionState,
         cursor_point: Point,
         style: &EditorStyle,
-        window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<Div> {
         use text::ToPoint as _;
@@ -5655,6 +5685,10 @@ impl Editor {
         }
 
         match &completion.completion {
+            InlineCompletion::Move { .. } => {
+                Some(div().pl_1().pr_2().child(Label::new("Jump to Edit")))
+            }
+
             InlineCompletion::Edit {
                 edits,
                 edit_preview,
@@ -5724,102 +5758,10 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
+                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                         .child(left)
                         .child(preview),
                 )
-            }
-
-            InlineCompletion::Move {
-                target,
-                range_around_target,
-                snapshot,
-            } => {
-                let highlighted_text = snapshot.highlighted_text_for_range(
-                    range_around_target.clone(),
-                    None,
-                    &style.syntax,
-                );
-                let base = h_flex().gap_3().flex_1().child(render_relative_row_jump(
-                    "Jump ",
-                    cursor_point.row,
-                    target.text_anchor.to_point(&snapshot).row,
-                ));
-
-                if highlighted_text.text.is_empty() {
-                    return Some(base);
-                }
-
-                let cursor_color = self.current_user_player_color(cx).cursor;
-
-                let start_point = range_around_target.start.to_point(&snapshot);
-                let end_point = range_around_target.end.to_point(&snapshot);
-                let target_point = target.text_anchor.to_point(&snapshot);
-
-                let styled_text = highlighted_text.to_styled_text(&style.text);
-                let text_len = highlighted_text.text.len();
-
-                let cursor_relative_position = window
-                    .text_system()
-                    .layout_line(
-                        highlighted_text.text,
-                        style.text.font_size.to_pixels(window.rem_size()),
-                        // We don't need to include highlights
-                        // because we are only using this for the cursor position
-                        &[TextRun {
-                            len: text_len,
-                            font: style.text.font(),
-                            color: style.text.color,
-                            background_color: None,
-                            underline: None,
-                            strikethrough: None,
-                        }],
-                    )
-                    .log_err()
-                    .map(|line| {
-                        line.x_for_index(
-                            target_point.column.saturating_sub(start_point.column) as usize
-                        )
-                    });
-
-                let fade_before = start_point.column > 0;
-                let fade_after = end_point.column < snapshot.line_len(end_point.row);
-
-                let background = cx.theme().colors().elevated_surface_background;
-
-                let preview = h_flex()
-                    .relative()
-                    .child(styled_text)
-                    .when(fade_before, |parent| {
-                        parent.child(div().absolute().top_0().left_0().w_4().h_full().bg(
-                            linear_gradient(
-                                90.,
-                                linear_color_stop(background, 0.),
-                                linear_color_stop(background.opacity(0.), 1.),
-                            ),
-                        ))
-                    })
-                    .when(fade_after, |parent| {
-                        parent.child(div().absolute().top_0().right_0().w_4().h_full().bg(
-                            linear_gradient(
-                                -90.,
-                                linear_color_stop(background, 0.),
-                                linear_color_stop(background.opacity(0.), 1.),
-                            ),
-                        ))
-                    })
-                    .when_some(cursor_relative_position, |parent, position| {
-                        parent.child(
-                            div()
-                                .w(px(2.))
-                                .h_full()
-                                .bg(cursor_color)
-                                .absolute()
-                                .top_0()
-                                .left(position),
-                        )
-                    });
-
-                Some(base.child(preview))
             }
         }
     }
