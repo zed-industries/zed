@@ -1059,7 +1059,7 @@ fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     input_outline
 }
 
-fn prompt_for_events<'a>(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
+fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
     let mut result = String::new();
     for event in events.iter().rev() {
         let event_string = event.to_prompt();
