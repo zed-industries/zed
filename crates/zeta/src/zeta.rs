@@ -189,7 +189,8 @@ pub struct Zeta {
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
-    tos_accepted: bool, // Terms of service accepted
+    /// Whether the terms of service have been accepted.
+    tos_accepted: bool,
     _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
