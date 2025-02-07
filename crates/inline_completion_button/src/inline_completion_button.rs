@@ -24,8 +24,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, PopoverMenu,
-    PopoverMenuHandle, Tooltip,
+    prelude::*, Clickable, ContextMenu, ContextMenuEntry, IconButton, IconButtonShape, Indicator,
+    PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use workspace::{
     create_and_open_local_file, item::ItemHandle, notifications::NotificationId, StatusItemView,
@@ -240,24 +240,20 @@ impl Render for InlineCompletionButton {
                 let current_user_terms_accepted =
                     self.user_store.read(cx).current_user_has_accepted_terms();
 
-                let icon_button = || {
-                    let base = IconButton::new("zed-predict-pending-button", zeta_icon)
-                        .shape(IconButtonShape::Square);
+                if !current_user_terms_accepted.unwrap_or(false) {
+                    let signed_in = current_user_terms_accepted.is_some();
+                    let tooltip_meta = if signed_in {
+                        "Read Terms of Service"
+                    } else {
+                        "Sign in to use"
+                    };
 
-                    match (
-                        current_user_terms_accepted,
-                        self.popover_menu_handle.is_deployed(),
-                        enabled,
-                    ) {
-                        (Some(false) | None, _, _) => {
-                            let signed_in = current_user_terms_accepted.is_some();
-                            let tooltip_meta = if signed_in {
-                                "Read Terms of Service"
-                            } else {
-                                "Sign in to use"
-                            };
-
-                            base.tooltip(move |window, cx| {
+                    return div().child(
+                        IconButton::new("zed-predict-pending-button", zeta_icon)
+                            .shape(IconButtonShape::Square)
+                            .indicator(Indicator::dot().color(Color::Error))
+                            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                            .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     "Edit Predictions",
                                     None,
@@ -266,34 +262,38 @@ impl Render for InlineCompletionButton {
                                     cx,
                                 )
                             })
-                            .on_click(cx.listener(
-                                move |_, _, window, cx| {
-                                    telemetry::event!(
-                                        "Pending ToS Clicked",
-                                        source = "Edit Prediction Status Button"
-                                    );
-                                    window.dispatch_action(
-                                        zed_actions::OpenZedPredictOnboarding.boxed_clone(),
-                                        cx,
-                                    );
-                                },
-                            ))
+                            .on_click(cx.listener(move |_, _, window, cx| {
+                                telemetry::event!(
+                                    "Pending ToS Clicked",
+                                    source = "Edit Prediction Status Button"
+                                );
+                                window.dispatch_action(
+                                    zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                    cx,
+                                );
+                            })),
+                    );
+                }
+
+                let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
+                    .shape(IconButtonShape::Square)
+                    .when(!self.popover_menu_handle.is_deployed(), |element| {
+                        if enabled {
+                            element.tooltip(|window, cx| {
+                                Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                            })
+                        } else {
+                            element.tooltip(|window, cx| {
+                                Tooltip::with_meta(
+                                    "Edit Prediction",
+                                    Some(&ToggleMenu),
+                                    "Disabled For This File",
+                                    window,
+                                    cx,
+                                )
+                            })
                         }
-                        (Some(true), true, _) => base,
-                        (Some(true), false, true) => base.tooltip(|window, cx| {
-                            Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                        }),
-                        (Some(true), false, false) => base.tooltip(|window, cx| {
-                            Tooltip::with_meta(
-                                "Edit Prediction",
-                                Some(&ToggleMenu),
-                                "Disabled For This File",
-                                window,
-                                cx,
-                            )
-                        }),
-                    }
-                };
+                    });
 
                 let this = cx.entity().clone();
 
@@ -311,7 +311,7 @@ impl Render for InlineCompletionButton {
 
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
-                        icon_button().with_animation(
+                        icon_button.with_animation(
                             "pulsating-label",
                             Animation::new(Duration::from_secs(2))
                                 .repeat()
@@ -320,7 +320,7 @@ impl Render for InlineCompletionButton {
                         ),
                     );
                 } else {
-                    popover_menu = popover_menu.trigger(icon_button());
+                    popover_menu = popover_menu.trigger(icon_button);
                 }
 
                 div().child(popover_menu.into_any_element())

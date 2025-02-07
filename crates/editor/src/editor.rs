@@ -5549,7 +5549,7 @@ impl Editor {
                     }))
                     .child(
                         h_flex()
-                            .w_full()
+                            .flex_1()
                             .gap_2()
                             .child(Icon::new(IconName::ZedPredict))
                             .child(Label::new("Accept Terms of Service"))
