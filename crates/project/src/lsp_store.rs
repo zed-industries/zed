@@ -177,7 +177,7 @@ impl LocalLspStore {
 
         match language_server_state {
             LanguageServerState::Running { server, .. } => Some(server),
-            LanguageServerState::Starting(_) => None,
+            LanguageServerState::Starting { .. } => None,
         }
     }
 
