@@ -93,6 +93,13 @@
     // workspace when the centered layout is used.
     "right_padding": 0.2
   },
+  // All settings related to the image viewer.
+  "image_viewer": {
+    // The unit for image file sizes.
+    // By default we're setting it to binary.
+    // The second option is decimal.
+    "unit": "binary"
+  },
   // The key to use for adding multiple cursors
   // Currently "alt" or "cmd_or_ctrl"  (also aliased as
   // "cmd" and "ctrl") are supported.

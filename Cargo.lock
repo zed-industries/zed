@@ -6363,6 +6363,8 @@ dependencies = [
  "file_icons",
  "gpui",
  "project",
+ "schemars",
+ "serde",
  "settings",
  "theme",
  "ui",
