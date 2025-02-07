@@ -12,12 +12,14 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Option<Str
 
     let mut cursor = tree_sitter::QueryCursor::new();
     let matches = cursor.matches(query, syntax_tree.root_node(), text.as_bytes());
+
     let mut edits = vec![];
     for mat in matches {
         if let Some((_, callback)) = patterns.get(mat.pattern_index) {
             edits.extend(callback(&text, &mat, query));
         }
     }
+
     edits.sort_by_key(|(range, _)| (range.start, Reverse(range.end)));
     edits.dedup_by(|(range_b, _), (range_a, _)| {
         range_a.contains(&range_b.start) || range_a.contains(&range_b.end)
@@ -97,7 +99,7 @@ const ACTION_ARRAY_PATTERN: &str = r#"(document
                 value: (
                     (object
                         (pair
-                            key: (string (string_content))
+                            key: (string)
                             value: ((array
                                 . (string (string_content) @action_name)
                                 . (string (string_content) @argument)
@@ -159,7 +161,6 @@ static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(||
         (("vim::PushOperator", "Delete"), "vim::PushDelete"),
         (("vim::PushOperator", "Yank"), "vim::PushYank"),
         (("vim::PushOperator", "Replace"), "vim::PushReplace"),
-        (("vim::PushOperator", "AddSurrounds"), "vim::PushAddSurrounds"),
         (("vim::PushOperator", "DeleteSurrounds"), "vim::PushDeleteSurrounds"),
         (("vim::PushOperator", "Mark"), "vim::PushMark"),
         (("vim::PushOperator", "Indent"), "vim::PushIndent"),
@@ -198,7 +199,7 @@ const ACTION_ARGUMENT_OBJECT_PATTERN: &str = r#"(document
                 value: (
                     (object
                         (pair
-                            key: (string (string_content))
+                            key: (string)
                             value: ((array
                                 . (string (string_content) @action_name)
                                 . (object
@@ -264,6 +265,7 @@ static UNWRAP_OBJECTS: LazyLock<HashMap<&str, HashMap<&str, &str>>> = LazyLock::
                 ("FindBackward", "vim::PushFindBackward"),
                 ("Sneak", "vim::PushSneak"),
                 ("SneakBackward", "vim::PushSneakBackward"),
+                ("AddSurrounds", "vim::PushAddSurrounds"),
                 ("ChangeSurrounds", "vim::PushChangeSurrounds"),
                 ("Jump", "vim::PushJump"),
                 ("Digraph", "vim::PushDigraph"),
@@ -297,7 +299,7 @@ const ACTION_STRING_PATTERN: &str = r#"(document
                 value: (
                     (object
                         (pair
-                            key: (string (string_content))
+                            key: (string)
                             value: (string (string_content) @action_name)
                         )
                     )
@@ -379,7 +381,7 @@ const ACTION_ARGUMENT_SNAKE_CASE_PATTERN: &str = r#"(document
                 value: (
                     (object
                         (pair
-                            key: (string (string_content))
+                            key: (string)
                             value: ((array
                                 . (string (string_content) @action_name)
                                 . (object
