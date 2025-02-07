@@ -15,15 +15,15 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    AcceptInlineCompletion, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
+    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
     DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, INLINE_COMPLETION_REQUIRES_MODIFIER_KEY_CONTEXT,
-    MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -512,33 +512,10 @@ impl EditorElement {
                     if editor.hover_state.focused(window, cx) {
                         return;
                     }
-                    Self::modifiers_changed(editor, event, &position_map, window, cx)
+                    editor.handle_modifiers_changed(event.modifiers, &position_map, window, cx);
                 })
             }
         });
-    }
-
-    fn modifiers_changed(
-        editor: &mut Editor,
-        event: &ModifiersChangedEvent,
-        position_map: &PositionMap,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        editor.update_inline_completion_preview(&event.modifiers, window, cx);
-
-        let mouse_position = window.mouse_position();
-        if !position_map.text_hitbox.is_hovered(window) {
-            return;
-        }
-
-        editor.update_hovered_link(
-            position_map.point_for_position(mouse_position),
-            &position_map.snapshot,
-            event.modifiers,
-            window,
-            cx,
-        )
     }
 
     fn mouse_left_down(
@@ -3191,10 +3168,8 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let accept_binding = AcceptInlineCompletionBinding::resolve(
-                        self.editor.focus_handle(cx),
-                        window,
-                    );
+                    let accept_binding =
+                        AcceptEditPredictionBinding::resolve(self.editor.focus_handle(cx), window);
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
@@ -5705,7 +5680,7 @@ fn inline_completion_accept_indicator(
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let accept_binding = AcceptInlineCompletionBinding::resolve(editor_focus_handle, window);
+    let accept_binding = AcceptEditPredictionBinding::resolve(editor_focus_handle, window);
     let accept_keystroke = accept_binding.keystroke()?;
 
     let accept_key = h_flex()
@@ -5754,13 +5729,13 @@ fn inline_completion_accept_indicator(
     )
 }
 
-pub struct AcceptInlineCompletionBinding(Option<gpui::KeyBinding>);
+pub struct AcceptEditPredictionBinding(Option<gpui::KeyBinding>);
 
-impl AcceptInlineCompletionBinding {
+impl AcceptEditPredictionBinding {
     pub fn resolve(editor_focus_handle: FocusHandle, window: &Window) -> Self {
-        AcceptInlineCompletionBinding(
+        AcceptEditPredictionBinding(
             window
-                .bindings_for_action_in(&AcceptInlineCompletion, &editor_focus_handle)
+                .bindings_for_action_in(&AcceptEditPrediction, &editor_focus_handle)
                 .into_iter()
                 .next(),
         )
@@ -5778,13 +5753,13 @@ impl AcceptInlineCompletionBinding {
     }
 }
 
-struct AcceptInlineCompletionsBindingValidator;
+struct AcceptEditPredictionsBindingValidator;
 
-inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptInlineCompletionsBindingValidator)) }
+inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptEditPredictionsBindingValidator)) }
 
-impl KeyBindingValidator for AcceptInlineCompletionsBindingValidator {
+impl KeyBindingValidator for AcceptEditPredictionsBindingValidator {
     fn action_type_id(&self) -> TypeId {
-        TypeId::of::<AcceptInlineCompletion>()
+        TypeId::of::<AcceptEditPrediction>()
     }
 
     fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
@@ -5794,7 +5769,7 @@ impl KeyBindingValidator for AcceptInlineCompletionsBindingValidator {
             return Ok(());
         }
         let required_predicate =
-            Not(Identifier(INLINE_COMPLETION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
+            Not(Identifier(EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
         match binding.predicate() {
             Some(predicate) if required_predicate.is_superset(&predicate) => {
                 return Ok(());
@@ -5808,10 +5783,10 @@ impl KeyBindingValidator for AcceptInlineCompletionsBindingValidator {
             This restriction does not apply when the context requires {}, \
             since these bindings will not be used when the completions menu \
             is open.",
-            MarkdownString::inline_code(AcceptInlineCompletion.name()),
+            MarkdownString::inline_code(AcceptEditPrediction.name()),
             MarkdownString::inline_code(&format!(
                 "!{}",
-                INLINE_COMPLETION_REQUIRES_MODIFIER_KEY_CONTEXT
+                EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT
             )),
         )))
     }
