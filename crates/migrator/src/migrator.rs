@@ -42,18 +42,11 @@ pub fn migrate_keymap(text: &str) -> Option<String> {
         KEYMAP_MIGRATION_TRANSFORMATION_PATTERNS,
         &KEYMAP_MIGRATION_TRANSFORMATION_QUERY,
     );
-    let replacement_text = match &transformed_text {
-        Some(transformed_text) => migrate(
-            transformed_text,
-            KEYMAP_MIGRATION_REPLACEMENT_PATTERNS,
-            &KEYMAP_MIGRATION_REPLACEMENT_QUERY,
-        ),
-        None => migrate(
-            text,
-            KEYMAP_MIGRATION_REPLACEMENT_PATTERNS,
-            &KEYMAP_MIGRATION_REPLACEMENT_QUERY,
-        ),
-    };
+    let replacement_text = migrate(
+        &transformed_text.as_ref().unwrap_or(&text.to_string()),
+        KEYMAP_MIGRATION_REPLACEMENT_PATTERNS,
+        &KEYMAP_MIGRATION_REPLACEMENT_QUERY,
+    );
     replacement_text.or(transformed_text)
 }
 
