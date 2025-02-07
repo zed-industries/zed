@@ -13,7 +13,6 @@ path = "src/aws_http_client.rs"
 
 [features]
 default = []
-schemars = ["dep:schemars"]
 
 [dependencies]
 aws-smithy-runtime-api.workspace = true

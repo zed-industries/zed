@@ -64,6 +64,7 @@ pub async fn stream_completion(
                             Ok(Some(output)) => Some((Ok(output), stream)),
                             Ok(None) => None,
                             Err(e) => Some((
+                                // Figure out how we can capture Throttling Exceptions
                                 Err(BedrockError::Other(anyhow!(
                                     "{:?}",
                                     aws_sdk_bedrockruntime::error::DisplayErrorContext(e)

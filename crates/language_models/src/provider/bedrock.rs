@@ -308,7 +308,7 @@ impl BedrockModel {
         request: bedrock::Request,
         cx: &AsyncApp,
     ) -> Result<
-        BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
+        BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse>>>,
     > {
         let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
             let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
@@ -340,7 +340,7 @@ impl BedrockModel {
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
 
             request.await.unwrap_or_else(|e| {
-                futures::stream::once(async move { Err(BedrockError::Other(e)) }).boxed()
+                futures::stream::once(async move { Err(e) }).boxed()
             })
         }
         .boxed())
