@@ -398,9 +398,9 @@ There are two options to choose from:
 
 ### Disabled Globs
 
-- Description: A list of globs representing files that edit predictions should be disabled for.
+- Description: A list of globs representing files that edit predictions should be disabled for. There's a sensible default list of globs already included. Any addition to this list will be merged with the default list.
 - Setting: `disabled_globs`
-- Default: `[".env"]`
+- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]`
 
 **Options**
 
