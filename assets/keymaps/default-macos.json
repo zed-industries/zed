@@ -349,7 +349,7 @@
       "cmd-}": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
-      "cmd-w": "pane::CloseActiveItem",
+      "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
       "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
       "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
