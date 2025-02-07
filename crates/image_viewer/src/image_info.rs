@@ -23,13 +23,13 @@ impl ImageInfo {
 
     fn update_metadata(&mut self, image_view: &Entity<ImageView>, cx: &mut Context<Self>) {
         let image_item = image_view.read(cx).image_item.clone();
-        let current_metadata = image_item.read(cx).image_metadata.clone();
+        let current_metadata = image_item.read(cx).image_metadata;
         if current_metadata.is_some() {
             self.metadata = current_metadata;
             cx.notify();
         } else {
             self.observe_image_item = Some(cx.observe(&image_item, |this, item, cx| {
-                this.metadata = item.read(cx).image_metadata.clone();
+                this.metadata = item.read(cx).image_metadata;
                 cx.notify();
             }));
         }
