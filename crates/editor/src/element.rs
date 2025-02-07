@@ -3673,10 +3673,11 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
                         previewing,
+                        false,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
@@ -3686,10 +3687,11 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
                         previewing,
+                        false,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3702,10 +3704,11 @@ impl EditorElement {
                         "Jump to Edit",
                         None,
                         previewing,
+                        false,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3775,10 +3778,11 @@ impl EditorElement {
                             label,
                             None,
                             previewing,
+                            hidden,
                             self.editor.focus_handle(cx),
                             window,
                             cx,
-                        );
+                        )?;
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5777,23 +5781,33 @@ fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     previewing: bool,
+    hidden: bool,
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
-) -> AnyElement {
+) -> Option<AnyElement> {
     let use_hardcoded_linux_preview_binding;
+    let use_hardcoded_linux_vim_tab_binding;
 
     #[cfg(target_os = "macos")]
     {
         use_hardcoded_linux_preview_binding = false;
+        use_hardcoded_linux_vim_tab_binding = false;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         use_hardcoded_linux_preview_binding = previewing;
+        use_hardcoded_linux_vim_tab_binding = hidden;
     }
 
-    let accept_keystroke = if use_hardcoded_linux_preview_binding {
+    let accept_keystroke = if use_hardcoded_linux_vim_tab_binding {
+        Keystroke {
+            modifiers: Default::default(),
+            key: "tab".to_string(),
+            key_char: None,
+        }
+    } else if use_hardcoded_linux_preview_binding {
         Keystroke {
             modifiers: Default::default(),
             key: "enter".to_string(),
@@ -5808,7 +5822,7 @@ fn inline_completion_accept_indicator(
             // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
             keystroke.clone()
         } else {
-            return div().into_any();
+            return None;
         }
     };
 
@@ -5830,26 +5844,28 @@ fn inline_completion_accept_indicator(
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
-    h_flex()
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .gap_1()
-        .bg(cx.theme().colors().text_accent.opacity(0.15))
-        .border_1()
-        .border_color(cx.theme().colors().text_accent.opacity(0.8))
-        .rounded_md()
-        .shadow_sm()
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        })
-        .into_any()
+    Some(
+        h_flex()
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .gap_1()
+            .bg(cx.theme().colors().text_accent.opacity(0.15))
+            .border_1()
+            .border_color(cx.theme().colors().text_accent.opacity(0.8))
+            .rounded_md()
+            .shadow_sm()
+            .child(accept_key)
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            })
+            .into_any(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
