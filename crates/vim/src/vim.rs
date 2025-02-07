@@ -347,7 +347,7 @@ impl Vim {
             Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
                 let Some(anchor) = vim
                     .editor()
-                    .and_then(|editor| editor.read(cx).inline_completion_anchor())
+                    .and_then(|editor| editor.read(cx).inline_completion_start_anchor())
                 else {
                     return;
                 };

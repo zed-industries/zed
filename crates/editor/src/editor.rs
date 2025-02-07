@@ -1898,7 +1898,7 @@ impl Editor {
         self.refresh_inline_completion(false, true, window, cx);
     }
 
-    pub fn inline_completion_anchor(&self) -> Option<Anchor> {
+    pub fn inline_completion_start_anchor(&self) -> Option<Anchor> {
         let active_completion = self.active_inline_completion.as_ref()?;
         let result = match &active_completion.completion {
             InlineCompletion::Edit { edits, .. } => edits.first()?.0.start,
