@@ -317,6 +317,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    end_slot_hover_state: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -522,6 +523,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            end_slot_hover_state: false,
         }
     }
 
@@ -2263,7 +2265,6 @@ impl Pane {
                     tab.tooltip(move |window, cx| element_fn(window, cx))
                 }
             })
-            .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
@@ -2274,9 +2275,21 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Medium)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.unpin_tab_at(ix, window, cx);
+                        }))
+                } else if is_active {
+                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_tooltip_text = "Close Tab";
+                    IconButton::new("close tab", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Default)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::Medium)
+                        .on_click(cx.listener(move |pane, _, window, cx| {
+                            pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
+                                .detach_and_log_err(cx);
                         }))
                 } else {
                     end_slot_action = &CloseActiveItem { save_intent: None };
@@ -2288,7 +2301,7 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Medium)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                                 .detach_and_log_err(cx);
@@ -2310,7 +2323,18 @@ impl Pane {
                         this.tooltip(Tooltip::text(end_slot_tooltip_text))
                     }
                 });
-                this.end_slot(end_slot)
+                if let Some(indicator) = indicator {
+                    this.end_slot(
+                        div()
+                            .when(!self.end_slot_hover_state, |this| this.child(indicator))
+                            .when(self.end_slot_hover_state, |this| this.child(end_slot)),
+                    )
+                    .on_hover(cx.listener(|this, hovered, _, _| {
+                        this.end_slot_hover_state = *hovered;
+                    }))
+                } else {
+                    this.end_slot(end_slot)
+                }
             })
             .child(
                 h_flex()
