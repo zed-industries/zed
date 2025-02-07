@@ -17,7 +17,7 @@ pub struct BufferDiff {
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
     inner: BufferDiffInner,
-    pub unstaged_diff: Option<Box<BufferDiffSnapshot>>,
+    unstaged_diff: Option<Box<BufferDiffSnapshot>>,
 }
 
 #[derive(Clone)]
@@ -579,28 +579,22 @@ impl BufferDiff {
         self.inner.base_text.as_ref()
     }
 
-    pub fn snapshot(&self) -> BufferDiffSnapshot {
+    pub fn snapshot(&self, cx: &App) -> BufferDiffSnapshot {
         BufferDiffSnapshot {
             inner: self.inner.clone(),
-            unstaged_diff: None,
+            unstaged_diff: self
+                .unstaged_diff
+                .as_ref()
+                .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
         }
     }
 
-    pub fn diff_hunks_intersecting_range<'a>(
+    pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<text::Anchor>,
         buffer_snapshot: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiffHunk> {
         self.inner.hunks_intersecting_range(range, buffer_snapshot)
-    }
-
-    pub fn diff_hunks_intersecting_range_rev<'a>(
-        &'a self,
-        range: Range<text::Anchor>,
-        buffer_snapshot: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiffHunk> {
-        self.inner
-            .hunks_intersecting_range_rev(range, buffer_snapshot)
     }
 
     pub fn hunks_in_row_range<'a>(

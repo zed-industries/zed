@@ -2188,7 +2188,7 @@ impl ReferenceMultibuffer {
             return;
         };
         let excerpt_range = excerpt.range.to_offset(&buffer);
-        for hunk in diff.read(cx).diff_hunks_intersecting_range(range, &buffer) {
+        for hunk in diff.read(cx).hunks_intersecting_range(range, &buffer) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
             if hunk_range.start < excerpt_range.start || hunk_range.start > excerpt_range.end {
                 continue;
@@ -2226,7 +2226,7 @@ impl ReferenceMultibuffer {
 
             let mut offset = buffer_range.start;
             let mut hunks = diff
-                .diff_hunks_intersecting_range(excerpt.range.clone(), buffer)
+                .hunks_intersecting_range(excerpt.range.clone(), buffer)
                 .peekable();
 
             while let Some(hunk) = hunks.next() {
