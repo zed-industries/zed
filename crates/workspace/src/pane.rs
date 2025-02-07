@@ -1239,7 +1239,7 @@ impl Pane {
             }
 
             // Activate any non-pinned tab in different pane
-            let current_pane = cx.model().clone();
+            let current_pane = cx.entity();
             self.workspace
                 .update(cx, |workspace, cx| {
                     let panes = workspace.center.panes();
@@ -4443,7 +4443,7 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
         let item_a = add_labeled_item(&pane, "A", false, cx);
@@ -4475,7 +4475,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // Non-pinned tabs in same pane
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
@@ -4506,7 +4506,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         // No non-pinned tabs in same pane, non-pinned tabs in another pane
         let pane1 = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
