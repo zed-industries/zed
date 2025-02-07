@@ -11,7 +11,7 @@ use util::ResultExt;
 pub struct BufferDiff {
     pub buffer_id: BufferId,
     inner: BufferDiffInner,
-    pub secondary_diff: Option<Entity<BufferDiff>>,
+    secondary_diff: Option<(Entity<BufferDiff>, gpui::Subscription)>,
 }
 
 #[derive(Clone)]
@@ -547,6 +547,22 @@ impl BufferDiff {
         }
     }
 
+    pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>, cx: &mut Context<Self>) {
+        let subscription = cx.subscribe(&diff, |_, _, event, cx| {
+            if let BufferDiffEvent::DiffChanged { changed_range } = event {
+                cx.emit(BufferDiffEvent::DiffChanged {
+                    // TODO translate/expand range to align with our (uncommitted) hunk boundaries
+                    changed_range: changed_range.clone(),
+                });
+            }
+        });
+        self.secondary_diff = Some((diff, subscription));
+    }
+
+    pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {
+        Some(self.secondary_diff.as_ref()?.0.clone())
+    }
+
     pub async fn update_diff(
         this: Entity<BufferDiff>,
         buffer: text::BufferSnapshot,
@@ -633,7 +649,7 @@ impl BufferDiff {
             secondary_diff: self
                 .secondary_diff
                 .as_ref()
-                .map(|diff| Box::new(diff.read(cx).snapshot(cx))),
+                .map(|(diff, _)| Box::new(diff.read(cx).snapshot(cx))),
         }
     }
 
@@ -646,7 +662,7 @@ impl BufferDiff {
         let unstaged_counterpart = self
             .secondary_diff
             .as_ref()
-            .map(|diff| &diff.read(cx).inner);
+            .map(|(diff, _)| &diff.read(cx).inner);
         self.inner
             .hunks_intersecting_range(range, buffer_snapshot, unstaged_counterpart)
     }
