@@ -47,6 +47,7 @@ pub struct ContextMenuEntry {
     handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut App)>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
+    documentation_aside: Option<Rc<dyn Fn(&mut App) -> AnyElement>>,
 }
 
 impl ContextMenuEntry {
@@ -61,6 +62,7 @@ impl ContextMenuEntry {
             handler: Rc::new(|_, _, _| {}),
             action: None,
             disabled: false,
+            documentation_aside: None,
         }
     }
 
@@ -108,6 +110,14 @@ impl ContextMenuEntry {
         self.disabled = disabled;
         self
     }
+
+    pub fn documentation_aside(
+        mut self,
+        element: impl Fn(&mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.documentation_aside = Some(Rc::new(element));
+        self
+    }
 }
 
 impl From<ContextMenuEntry> for ContextMenuItem {
@@ -125,6 +135,7 @@ pub struct ContextMenu {
     clicked: bool,
     _on_blur_subscription: Subscription,
     keep_open_on_confirm: bool,
+    documentation_aside: Option<(usize, Rc<dyn Fn(&mut App) -> AnyElement>)>,
 }
 
 impl Focusable for ContextMenu {
@@ -161,6 +172,7 @@ impl ContextMenu {
                     clicked: false,
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
+                    documentation_aside: None,
                 },
                 window,
                 cx,
@@ -209,6 +221,7 @@ impl ContextMenu {
             icon_color: None,
             action,
             disabled: false,
+            documentation_aside: None,
         }));
         self
     }
@@ -231,6 +244,7 @@ impl ContextMenu {
             icon_color: None,
             action,
             disabled: false,
+            documentation_aside: None,
         }));
         self
     }
@@ -281,6 +295,7 @@ impl ContextMenu {
             icon_size: IconSize::Small,
             icon_color: None,
             disabled: false,
+            documentation_aside: None,
         }));
         self
     }
@@ -294,7 +309,6 @@ impl ContextMenu {
             toggle: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
-
             handler: Rc::new(move |context, window, cx| {
                 if let Some(context) = &context {
                     window.focus(context);
@@ -306,6 +320,7 @@ impl ContextMenu {
             icon_position: IconPosition::End,
             icon_color: None,
             disabled: true,
+            documentation_aside: None,
         }));
         self
     }
@@ -314,7 +329,6 @@ impl ContextMenu {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: None,
             label: label.into(),
-
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
             icon: Some(IconName::ArrowUpRight),
@@ -322,6 +336,7 @@ impl ContextMenu {
             icon_position: IconPosition::End,
             icon_color: None,
             disabled: false,
+            documentation_aside: None,
         }));
         self
     }
@@ -356,15 +371,16 @@ impl ContextMenu {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
-        self.selected_index = self.items.iter().position(|item| item.is_selectable());
+        if let Some(ix) = self.items.iter().position(|item| item.is_selectable()) {
+            self.select_index(ix);
+        }
         cx.notify();
     }
 
     pub fn select_last(&mut self) -> Option<usize> {
         for (ix, item) in self.items.iter().enumerate().rev() {
             if item.is_selectable() {
-                self.selected_index = Some(ix);
-                return Some(ix);
+                return self.select_index(ix);
             }
         }
         None
@@ -384,7 +400,7 @@ impl ContextMenu {
             } else {
                 for (ix, item) in self.items.iter().enumerate().skip(next_index) {
                     if item.is_selectable() {
-                        self.selected_index = Some(ix);
+                        self.select_index(ix);
                         cx.notify();
                         break;
                     }
@@ -402,7 +418,7 @@ impl ContextMenu {
             } else {
                 for (ix, item) in self.items.iter().enumerate().take(ix).rev() {
                     if item.is_selectable() {
-                        self.selected_index = Some(ix);
+                        self.select_index(ix);
                         cx.notify();
                         break;
                     }
@@ -411,6 +427,20 @@ impl ContextMenu {
         } else {
             self.handle_select_last(&SelectLast, window, cx);
         }
+    }
+
+    fn select_index(&mut self, ix: usize) -> Option<usize> {
+        self.documentation_aside = None;
+        let item = self.items.get(ix)?;
+        if item.is_selectable() {
+            self.selected_index = Some(ix);
+            if let ContextMenuItem::Entry(entry) = item {
+                if let Some(callback) = &entry.documentation_aside {
+                    self.documentation_aside = Some((ix, callback.clone()));
+                }
+            }
+        }
+        Some(ix)
     }
 
     pub fn on_action_dispatch(
@@ -436,7 +466,7 @@ impl ContextMenu {
                 false
             }
         }) {
-            self.selected_index = Some(ix);
+            self.select_index(ix);
             self.delayed = true;
             cx.notify();
             let action = dispatched.boxed_clone();
@@ -479,198 +509,275 @@ impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
 
-        WithRemSize::new(ui_font_size)
-            .occlude()
-            .elevation_2(cx)
-            .flex()
-            .flex_row()
-            .child(
-                v_flex()
-                    .id("context-menu")
-                    .min_w(px(200.))
-                    .max_h(vh(0.75, window))
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .track_focus(&self.focus_handle(cx))
-                    .on_mouse_down_out(
-                        cx.listener(|this, _, window, cx| this.cancel(&menu::Cancel, window, cx)),
-                    )
-                    .key_context("menu")
-                    .on_action(cx.listener(ContextMenu::select_first))
-                    .on_action(cx.listener(ContextMenu::handle_select_last))
-                    .on_action(cx.listener(ContextMenu::select_next))
-                    .on_action(cx.listener(ContextMenu::select_prev))
-                    .on_action(cx.listener(ContextMenu::confirm))
-                    .on_action(cx.listener(ContextMenu::cancel))
-                    .when(!self.delayed, |mut el| {
-                        for item in self.items.iter() {
-                            if let ContextMenuItem::Entry(ContextMenuEntry {
-                                action: Some(action),
-                                disabled: false,
-                                ..
-                            }) = item
-                            {
-                                el = el.on_boxed_action(
-                                    &**action,
-                                    cx.listener(ContextMenu::on_action_dispatch),
-                                );
-                            }
-                        }
-                        el
-                    })
-                    .child(List::new().children(self.items.iter_mut().enumerate().map(
-                        |(ix, item)| {
-                            match item {
-                                ContextMenuItem::Separator => ListSeparator.into_any_element(),
-                                ContextMenuItem::Header(header) => {
-                                    ListSubHeader::new(header.clone())
-                                        .inset(true)
-                                        .into_any_element()
-                                }
-                                ContextMenuItem::Label(label) => ListItem::new(ix)
-                                    .inset(true)
-                                    .disabled(true)
-                                    .child(Label::new(label.clone()))
-                                    .into_any_element(),
-                                ContextMenuItem::Entry(ContextMenuEntry {
-                                    toggle,
-                                    label,
-                                    handler,
-                                    icon,
-                                    icon_position,
-                                    icon_size,
-                                    icon_color,
-                                    action,
-                                    disabled,
-                                }) => {
-                                    let handler = handler.clone();
-                                    let menu = cx.entity().downgrade();
-                                    let icon_color = if *disabled {
-                                        Color::Muted
-                                    } else {
-                                        icon_color.unwrap_or(Color::Default)
-                                    };
-                                    let label_color = if *disabled {
-                                        Color::Muted
-                                    } else {
-                                        Color::Default
-                                    };
-                                    let label_element = if let Some(icon_name) = icon {
-                                        h_flex()
-                                            .gap_1p5()
-                                            .when(*icon_position == IconPosition::Start, |flex| {
-                                                flex.child(
-                                                    Icon::new(*icon_name)
-                                                        .size(*icon_size)
-                                                        .color(icon_color),
-                                                )
-                                            })
-                                            .child(Label::new(label.clone()).color(label_color))
-                                            .when(*icon_position == IconPosition::End, |flex| {
-                                                flex.child(
-                                                    Icon::new(*icon_name)
-                                                        .size(*icon_size)
-                                                        .color(icon_color),
-                                                )
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        Label::new(label.clone())
-                                            .color(label_color)
-                                            .into_any_element()
-                                    };
+        let aside = self
+            .documentation_aside
+            .as_ref()
+            .map(|(_, callback)| callback.clone());
 
-                                    ListItem::new(ix)
-                                        .inset(true)
-                                        .disabled(*disabled)
-                                        .toggle_state(Some(ix) == self.selected_index)
-                                        .when_some(*toggle, |list_item, (position, toggled)| {
-                                            let contents = if toggled {
-                                                v_flex().flex_none().child(
-                                                    Icon::new(IconName::Check).color(Color::Accent),
-                                                )
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap_1()
+            .when_some(aside, |this, aside| {
+                this.child(
+                    WithRemSize::new(ui_font_size)
+                        .occlude()
+                        .elevation_2(cx)
+                        .p_2()
+                        .max_w_80()
+                        .child(aside(cx)),
+                )
+            })
+            .child(
+                WithRemSize::new(ui_font_size)
+                    .occlude()
+                    .elevation_2(cx)
+                    .flex()
+                    .flex_row()
+                    .child(
+                        v_flex()
+                            .id("context-menu")
+                            .min_w(px(200.))
+                            .max_h(vh(0.75, window))
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .track_focus(&self.focus_handle(cx))
+                            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                                this.cancel(&menu::Cancel, window, cx)
+                            }))
+                            .key_context("menu")
+                            .on_action(cx.listener(ContextMenu::select_first))
+                            .on_action(cx.listener(ContextMenu::handle_select_last))
+                            .on_action(cx.listener(ContextMenu::select_next))
+                            .on_action(cx.listener(ContextMenu::select_prev))
+                            .on_action(cx.listener(ContextMenu::confirm))
+                            .on_action(cx.listener(ContextMenu::cancel))
+                            .when(!self.delayed, |mut el| {
+                                for item in self.items.iter() {
+                                    if let ContextMenuItem::Entry(ContextMenuEntry {
+                                        action: Some(action),
+                                        disabled: false,
+                                        ..
+                                    }) = item
+                                    {
+                                        el = el.on_boxed_action(
+                                            &**action,
+                                            cx.listener(ContextMenu::on_action_dispatch),
+                                        );
+                                    }
+                                }
+                                el
+                            })
+                            .child(List::new().children(self.items.iter_mut().enumerate().map(
+                                |(ix, item)| {
+                                    match item {
+                                        ContextMenuItem::Separator => {
+                                            ListSeparator.into_any_element()
+                                        }
+                                        ContextMenuItem::Header(header) => {
+                                            ListSubHeader::new(header.clone())
+                                                .inset(true)
+                                                .into_any_element()
+                                        }
+                                        ContextMenuItem::Label(label) => ListItem::new(ix)
+                                            .inset(true)
+                                            .disabled(true)
+                                            .child(Label::new(label.clone()))
+                                            .into_any_element(),
+                                        ContextMenuItem::Entry(ContextMenuEntry {
+                                            toggle,
+                                            label,
+                                            handler,
+                                            icon,
+                                            icon_position,
+                                            icon_size,
+                                            icon_color,
+                                            action,
+                                            disabled,
+                                            documentation_aside,
+                                        }) => {
+                                            let handler = handler.clone();
+                                            let menu = cx.entity().downgrade();
+                                            let icon_color = if *disabled {
+                                                Color::Muted
                                             } else {
-                                                v_flex()
-                                                    .flex_none()
-                                                    .size(IconSize::default().rems())
+                                                icon_color.unwrap_or(Color::Default)
                                             };
-                                            match position {
-                                                IconPosition::Start => {
-                                                    list_item.start_slot(contents)
-                                                }
-                                                IconPosition::End => list_item.end_slot(contents),
-                                            }
-                                        })
-                                        .child(
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .child(label_element)
-                                                .debug_selector(|| format!("MENU_ITEM-{}", label))
-                                                .children(action.as_ref().and_then(|action| {
-                                                    self.action_context
-                                                        .as_ref()
-                                                        .map(|focus| {
-                                                            KeyBinding::for_action_in(
-                                                                &**action, focus, window,
+                                            let label_color = if *disabled {
+                                                Color::Muted
+                                            } else {
+                                                Color::Default
+                                            };
+                                            let label_element = if let Some(icon_name) = icon {
+                                                h_flex()
+                                                    .gap_1p5()
+                                                    .when(
+                                                        *icon_position == IconPosition::Start,
+                                                        |flex| {
+                                                            flex.child(
+                                                                Icon::new(*icon_name)
+                                                                    .size(*icon_size)
+                                                                    .color(icon_color),
                                                             )
-                                                        })
-                                                        .unwrap_or_else(|| {
-                                                            KeyBinding::for_action(
-                                                                &**action, window,
+                                                        },
+                                                    )
+                                                    .child(
+                                                        Label::new(label.clone())
+                                                            .color(label_color),
+                                                    )
+                                                    .when(
+                                                        *icon_position == IconPosition::End,
+                                                        |flex| {
+                                                            flex.child(
+                                                                Icon::new(*icon_name)
+                                                                    .size(*icon_size)
+                                                                    .color(icon_color),
                                                             )
-                                                        })
-                                                        .map(|binding| div().ml_4().child(binding))
-                                                })),
-                                        )
-                                        .on_click({
-                                            let context = self.action_context.clone();
-                                            move |_, window, cx| {
-                                                handler(context.as_ref(), window, cx);
-                                                menu.update(cx, |menu, cx| {
-                                                    menu.clicked = true;
-                                                    cx.emit(DismissEvent);
+                                                        },
+                                                    )
+                                                    .into_any_element()
+                                            } else {
+                                                Label::new(label.clone())
+                                                    .color(label_color)
+                                                    .into_any_element()
+                                            };
+                                            let documentation_aside_callback =
+                                                documentation_aside.clone();
+                                            div()
+                                                .id(("context-menu-child", ix))
+                                                .when_some(
+                                                    documentation_aside_callback,
+                                                    |this, documentation_aside_callback| {
+                                                        this.occlude().on_hover(cx.listener(
+                                                            move |menu, hovered, _, cx| {
+                                                                if *hovered {
+                                                                    menu.documentation_aside = Some((ix, documentation_aside_callback.clone()));
+                                                                    cx.notify();
+                                                                } else if matches!(menu.documentation_aside, Some((id, _)) if id == ix) {
+                                                                    menu.documentation_aside = None;
+                                                                    cx.notify();
+                                                                }
+                                                            },
+                                                        ))
+                                                    },
+                                                )
+                                                .child(
+                                                    ListItem::new(ix)
+                                                        .inset(true)
+                                                        .disabled(*disabled)
+                                                        .toggle_state(
+                                                            Some(ix) == self.selected_index,
+                                                        )
+                                                        .when_some(
+                                                            *toggle,
+                                                            |list_item, (position, toggled)| {
+                                                                let contents = if toggled {
+                                                                    v_flex().flex_none().child(
+                                                                        Icon::new(IconName::Check)
+                                                                            .color(Color::Accent),
+                                                                    )
+                                                                } else {
+                                                                    v_flex().flex_none().size(
+                                                                        IconSize::default().rems(),
+                                                                    )
+                                                                };
+                                                                match position {
+                                                                    IconPosition::Start => {
+                                                                        list_item
+                                                                            .start_slot(contents)
+                                                                    }
+                                                                    IconPosition::End => {
+                                                                        list_item.end_slot(contents)
+                                                                    }
+                                                                }
+                                                            },
+                                                        )
+                                                        .child(
+                                                            h_flex()
+                                                                .w_full()
+                                                                .justify_between()
+                                                                .child(label_element)
+                                                                .debug_selector(|| {
+                                                                    format!("MENU_ITEM-{}", label)
+                                                                })
+                                                                .children(
+                                                                    action.as_ref().and_then(
+                                                                        |action| {
+                                                                            self.action_context
+                                                                    .as_ref()
+                                                                    .map(|focus| {
+                                                                        KeyBinding::for_action_in(
+                                                                            &**action, focus,
+                                                                            window,
+                                                                        )
+                                                                    })
+                                                                    .unwrap_or_else(|| {
+                                                                        KeyBinding::for_action(
+                                                                            &**action, window,
+                                                                        )
+                                                                    })
+                                                                    .map(|binding| {
+                                                                        div().ml_4().child(binding)
+                                                                    })
+                                                                        },
+                                                                    ),
+                                                                ),
+                                                        )
+                                                        .on_click({
+                                                            let context =
+                                                                self.action_context.clone();
+                                                            move |_, window, cx| {
+                                                                handler(
+                                                                    context.as_ref(),
+                                                                    window,
+                                                                    cx,
+                                                                );
+                                                                menu.update(cx, |menu, cx| {
+                                                                    menu.clicked = true;
+                                                                    cx.emit(DismissEvent);
+                                                                })
+                                                                .ok();
+                                                            }
+                                                        }),
+                                                )
+                                                .into_any_element()
+                                        }
+                                        ContextMenuItem::CustomEntry {
+                                            entry_render,
+                                            handler,
+                                            selectable,
+                                        } => {
+                                            let handler = handler.clone();
+                                            let menu = cx.entity().downgrade();
+                                            let selectable = *selectable;
+                                            ListItem::new(ix)
+                                                .inset(true)
+                                                .toggle_state(if selectable {
+                                                    Some(ix) == self.selected_index
+                                                } else {
+                                                    false
                                                 })
-                                                .ok();
-                                            }
-                                        })
-                                        .into_any_element()
-                                }
-                                ContextMenuItem::CustomEntry {
-                                    entry_render,
-                                    handler,
-                                    selectable,
-                                } => {
-                                    let handler = handler.clone();
-                                    let menu = cx.entity().downgrade();
-                                    let selectable = *selectable;
-                                    ListItem::new(ix)
-                                        .inset(true)
-                                        .toggle_state(if selectable {
-                                            Some(ix) == self.selected_index
-                                        } else {
-                                            false
-                                        })
-                                        .selectable(selectable)
-                                        .when(selectable, |item| {
-                                            item.on_click({
-                                                let context = self.action_context.clone();
-                                                move |_, window, cx| {
-                                                    handler(context.as_ref(), window, cx);
-                                                    menu.update(cx, |menu, cx| {
-                                                        menu.clicked = true;
-                                                        cx.emit(DismissEvent);
+                                                .selectable(selectable)
+                                                .when(selectable, |item| {
+                                                    item.on_click({
+                                                        let context = self.action_context.clone();
+                                                        move |_, window, cx| {
+                                                            handler(context.as_ref(), window, cx);
+                                                            menu.update(cx, |menu, cx| {
+                                                                menu.clicked = true;
+                                                                cx.emit(DismissEvent);
+                                                            })
+                                                            .ok();
+                                                        }
                                                     })
-                                                    .ok();
-                                                }
-                                            })
-                                        })
-                                        .child(entry_render(window, cx))
-                                        .into_any_element()
-                                }
-                            }
-                        },
-                    ))),
+                                                })
+                                                .child(entry_render(window, cx))
+                                                .into_any_element()
+                                        }
+                                    }
+                                },
+                            ))),
+                    ),
             )
     }
 }

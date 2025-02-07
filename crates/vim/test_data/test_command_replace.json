@@ -24,8 +24,10 @@
 {"Key":":"}
 {"Key":"s"}
 {"Key":"/"}
-{"Key":"dd"}
+{"Key":"d"}
+{"Key":"d"}
 {"Key":"/"}
-{"Key":"ee"}
+{"Key":"e"}
+{"Key":"e"}
 {"Key":"enter"}
-{"Get":{"state":"aa\ndd\nˇee\ncc", "mode":"Normal"}}
+{"Get":{"state":"aa\ndd\nˇee\ncc","mode":"Normal"}}

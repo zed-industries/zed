@@ -5,6 +5,7 @@ use crate::{
 use language::{BufferSnapshot, Point};
 use std::{fmt::Write, ops::Range};
 
+#[derive(Debug)]
 pub struct InputExcerpt {
     pub editable_range: Range<Point>,
     pub prompt: String,

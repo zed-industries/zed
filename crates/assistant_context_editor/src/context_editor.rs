@@ -459,7 +459,7 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.editor.read(cx).has_active_completions_menu() {
+        if self.editor.read(cx).has_visible_completions_menu() {
             return;
         }
 

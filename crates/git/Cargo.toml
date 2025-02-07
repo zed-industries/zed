@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/git.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
@@ -32,10 +35,7 @@ url.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-unindent.workspace = true
-serde_json.workspace = true
 pretty_assertions.workspace = true
-text = {workspace = true, features = ["test-support"]}
-
-[features]
-test-support = []
+serde_json.workspace = true
+text = { workspace = true, features = ["test-support"] }
+unindent.workspace = true

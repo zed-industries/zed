@@ -1,6 +1,6 @@
 use crate::status::FileStatus;
+use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
-use crate::{GitHostingProviderRegistry, COMMIT_MESSAGE};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
@@ -46,6 +46,8 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
+    fn merge_head_shas(&self) -> Vec<String>;
+
     /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
@@ -56,8 +58,17 @@ pub trait GitRepository: Send + Sync {
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
 
-    /// Returns the path to the repository, typically the `.git` folder.
-    fn dot_git_dir(&self) -> PathBuf;
+    /// Returns the absolute path to the repository. For worktrees, this will be the path to the
+    /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
+    fn path(&self) -> PathBuf;
+
+    /// Returns the absolute path to the ".git" dir for the main repository, typically a `.git`
+    /// folder. For worktrees, this will be the path to the repository the worktree was created
+    /// from. Otherwise, this is the same value as `path()`.
+    ///
+    /// Git documentation calls this the "commondir", and for git CLI is overridden by
+    /// `GIT_COMMON_DIR`.
+    fn main_repository_path(&self) -> PathBuf;
 
     /// Updates the index to match the worktree at the given paths.
     ///
@@ -68,7 +79,7 @@ pub trait GitRepository: Send + Sync {
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
-    fn commit(&self, name_and_email: Option<(&str, &str)>) -> Result<()>;
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -107,9 +118,14 @@ impl GitRepository for RealGitRepository {
         }
     }
 
-    fn dot_git_dir(&self) -> PathBuf {
+    fn path(&self) -> PathBuf {
         let repo = self.repository.lock();
         repo.path().into()
+    }
+
+    fn main_repository_path(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.commondir().into()
     }
 
     fn load_index_text(&self, path: &RepoPath) -> Option<String> {
@@ -160,6 +176,18 @@ impl GitRepository for RealGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
+    }
+
+    fn merge_head_shas(&self) -> Vec<String> {
+        let mut shas = Vec::default();
+        self.repository
+            .lock()
+            .mergehead_foreach(|oid| {
+                shas.push(oid.to_string());
+                true
+            })
+            .ok();
+        shas
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -265,13 +293,16 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let status = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
-                .status()?;
-            if !status.success() {
-                return Err(anyhow!("Failed to stage paths: {status}"));
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to stage paths:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
         Ok(())
@@ -286,46 +317,45 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let cmd = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["reset", "--quiet", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
-                .status()?;
-            if !cmd.success() {
-                return Err(anyhow!("Failed to unstage paths: {cmd}"));
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
         Ok(())
     }
 
-    fn commit(&self, name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        let commit_file = self.dot_git_dir().join(*COMMIT_MESSAGE);
-        let commit_file_path = commit_file.to_string_lossy();
-        let mut args = vec![
-            "commit",
-            "--quiet",
-            "-F",
-            commit_file_path.as_ref(),
-            "--cleanup=strip",
-        ];
+        let mut args = vec!["commit", "--quiet", "-m", message, "--cleanup=strip"];
         let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
         if let Some(author) = author.as_deref() {
             args.push("--author");
             args.push(author);
         }
 
-        let cmd = new_std_command(&self.git_binary_path)
+        let output = new_std_command(&self.git_binary_path)
             .current_dir(&working_directory)
             .args(args)
-            .status()?;
-        if !cmd.success() {
-            return Err(anyhow!("Failed to commit: {cmd}"));
+            .output()?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Failed to commit:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
         Ok(())
     }
@@ -338,7 +368,7 @@ pub struct FakeGitRepository {
 
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
-    pub dot_git_dir: PathBuf,
+    pub path: PathBuf,
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
@@ -355,9 +385,9 @@ impl FakeGitRepository {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(dot_git_dir: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
-            dot_git_dir,
+            path,
             event_emitter,
             head_contents: Default::default(),
             index_contents: Default::default(),
@@ -395,9 +425,17 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn dot_git_dir(&self) -> PathBuf {
+    fn merge_head_shas(&self) -> Vec<String> {
+        vec![]
+    }
+
+    fn path(&self) -> PathBuf {
         let state = self.state.lock();
-        state.dot_git_dir.clone()
+        state.path.clone()
+    }
+
+    fn main_repository_path(&self) -> PathBuf {
+        self.path()
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -448,7 +486,7 @@ impl GitRepository for FakeGitRepository {
         state.current_branch_name = Some(name.to_owned());
         state
             .event_emitter
-            .try_send(state.dot_git_dir.clone())
+            .try_send(state.path.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
@@ -458,7 +496,7 @@ impl GitRepository for FakeGitRepository {
         state.branches.insert(name.to_owned());
         state
             .event_emitter
-            .try_send(state.dot_git_dir.clone())
+            .try_send(state.path.clone())
             .expect("Dropped repo change event");
         Ok(())
     }
@@ -480,7 +518,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn commit(&self, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
         unimplemented!()
     }
 }

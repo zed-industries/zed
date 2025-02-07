@@ -56,7 +56,7 @@ pub(super) struct ExpandedHunk {
 pub(crate) struct DiffMapSnapshot(TreeMap<BufferId, git::diff::BufferDiff>);
 
 pub(crate) struct DiffBaseState {
-    pub(crate) change_set: Model<BufferChangeSet>,
+    pub(crate) diff: Model<BufferChangeSet>,
     pub(crate) last_version: Option<usize>,
     _subscription: Subscription,
 }
@@ -80,38 +80,29 @@ impl DiffMap {
         self.snapshot.clone()
     }
 
-    pub fn add_change_set(
+    pub fn add_diff(
         &mut self,
-        change_set: Model<BufferChangeSet>,
+        diff: Model<BufferChangeSet>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let buffer_id = change_set.read(cx).buffer_id;
+        let buffer_id = diff.read(cx).buffer_id;
         self.snapshot
             .0
-            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
+            .insert(buffer_id, diff.read(cx).diff_to_buffer.clone());
         self.diff_bases.insert(
             buffer_id,
             DiffBaseState {
                 last_version: None,
-                _subscription: cx.observe_in(
-                    &change_set,
-                    window,
-                    move |editor, change_set, window, cx| {
-                        editor
-                            .diff_map
-                            .snapshot
-                            .0
-                            .insert(buffer_id, change_set.read(cx).diff_to_buffer.clone());
-                        Editor::sync_expanded_diff_hunks(
-                            &mut editor.diff_map,
-                            buffer_id,
-                            window,
-                            cx,
-                        );
-                    },
-                ),
-                change_set,
+                _subscription: cx.observe_in(&diff, window, move |editor, diff, window, cx| {
+                    editor
+                        .diff_map
+                        .snapshot
+                        .0
+                        .insert(buffer_id, diff.read(cx).diff_to_buffer.clone());
+                    Editor::sync_expanded_diff_hunks(&mut editor.diff_map, buffer_id, window, cx);
+                }),
+                diff,
             },
         );
         Editor::sync_expanded_diff_hunks(self, buffer_id, window, cx);
@@ -399,7 +390,7 @@ impl Editor {
             self.diff_map
                 .diff_bases
                 .get(&buffer_id)?
-                .change_set
+                .diff
                 .read(cx)
                 .base_text
                 .clone()
@@ -953,12 +944,12 @@ impl Editor {
         let mut diff_base_buffer = None;
         let mut diff_base_buffer_unchanged = true;
         if let Some(diff_base_state) = diff_base_state {
-            diff_base_state.change_set.update(cx, |change_set, _| {
-                if diff_base_state.last_version != Some(change_set.base_text_version) {
-                    diff_base_state.last_version = Some(change_set.base_text_version);
+            diff_base_state.diff.update(cx, |diff, _| {
+                if diff_base_state.last_version != Some(diff.base_text_version) {
+                    diff_base_state.last_version = Some(diff.base_text_version);
                     diff_base_buffer_unchanged = false;
                 }
-                diff_base_buffer = change_set.base_text.clone();
+                diff_base_buffer = diff.base_text.clone();
             })
         }
 
@@ -1498,14 +1489,14 @@ mod tests {
                     (buffer_1.clone(), diff_base_1),
                     (buffer_2.clone(), diff_base_2),
                 ] {
-                    let change_set = cx.new(|cx| {
+                    let diff = cx.new(|cx| {
                         BufferChangeSet::new_with_base_text(
                             diff_base.to_string(),
                             buffer.read(cx).text_snapshot(),
                             cx,
                         )
                     });
-                    editor.diff_map.add_change_set(change_set, window, cx)
+                    editor.diff_map.add_diff(diff, window, cx)
                 }
             })
             .unwrap();

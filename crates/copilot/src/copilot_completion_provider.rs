@@ -2,10 +2,8 @@ use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
-use language::{
-    language_settings::{all_language_settings, AllLanguageSettings},
-    Buffer, OffsetRangeExt, ToOffset,
-};
+use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
+use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -63,33 +61,22 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_refreshing(&self) -> bool {
         self.pending_refresh.is_some()
     }
 
     fn is_enabled(
         &self,
-        buffer: &Entity<Buffer>,
-        cursor_position: language::Anchor,
+        _buffer: &Entity<Buffer>,
+        _cursor_position: language::Anchor,
         cx: &App,
     ) -> bool {
-        if !self.copilot.read(cx).status().is_authorized() {
-            return false;
-        }
-
-        let buffer = buffer.read(cx);
-        let file = buffer.file();
-        let language = buffer.language_at(cursor_position);
-        let settings = all_language_settings(file, cx);
-        settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+        self.copilot.read(cx).status().is_authorized()
     }
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -205,7 +192,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
     fn discard(&mut self, cx: &mut Context<Self>) {
         let settings = AllLanguageSettings::get_global(cx);
 
-        let copilot_enabled = settings.inline_completions_enabled(None, None, cx);
+        let copilot_enabled = settings.show_inline_completions(None, cx);
 
         if !copilot_enabled {
             return;
@@ -290,7 +277,10 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::future::Future;
-    use util::test::{marked_text_ranges_by, TextRangeMarker};
+    use util::{
+        path,
+        test::{marked_text_ranges_by, TextRangeMarker},
+    };
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -949,24 +939,24 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            path!("/test"),
             json!({
                 ".env": "SECRET=something\n",
                 "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
-        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/.env", cx)
+                project.open_local_buffer(path!("/test/.env"), cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/README.md", cx)
+                project.open_local_buffer(path!("/test/README.md"), cx)
             })
             .await
             .unwrap();

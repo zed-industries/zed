@@ -3,8 +3,9 @@ use crate::{
     RowExt,
 };
 use collections::BTreeMap;
+use diff::DiffHunkStatus;
 use futures::Future;
-use git::diff::DiffHunkStatus;
+
 use gpui::{
     prelude::*, AnyWindowHandle, App, Context, Entity, Focusable as _, Keystroke, Pixels, Point,
     VisualTestContext, Window, WindowHandle,

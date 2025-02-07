@@ -158,7 +158,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending_rename.is_some() || self.has_active_completions_menu() {
+        if self.pending_rename.is_some() || self.has_visible_completions_menu() {
             return;
         }
 
