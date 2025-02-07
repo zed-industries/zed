@@ -881,7 +881,12 @@ fn about(
 ) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
-    let message = format!("{release_channel} {version}");
+    let debug = if cfg!(debug_assertions) {
+        "(debug)"
+    } else {
+        ""
+    };
+    let message = format!("{release_channel} {version} {debug}");
     let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
 
     let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
