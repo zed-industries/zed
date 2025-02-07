@@ -988,8 +988,9 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn toggle_auto_coauthors(&mut self, _cx: &mut App) {
+    fn toggle_auto_coauthors(&mut self, cx: &mut Context<Self>) {
         self.enable_auto_coauthors = !self.enable_auto_coauthors;
+        cx.notify();
     }
 
     fn header_state(&self, header_type: Section) -> ToggleState {
@@ -1219,24 +1220,34 @@ impl GitPanel {
                 })
             });
 
-        let co_author_button = panel_icon_button("add-co-author", IconName::UserGroup)
-            .icon_color(if self.enable_auto_coauthors {
-                Color::Muted
-            } else {
-                Color::Accent
-            })
+        let co_authors_enabled = self.enable_auto_coauthors;
+
+        let co_author_button = panel_icon_button("add-co-author", IconName::UserPlus)
+            .icon_color(Color::Muted)
             .icon_size(IconSize::Small)
-            .toggle_state(self.enable_auto_coauthors)
+            .selected_style(ButtonStyle::Filled)
+            .selected_icon_color(Color::Default)
+            .layer(ElevationIndex::Surface)
+            .toggle_state(co_authors_enabled)
             .on_click({
                 cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle_auto_coauthors(cx);
+                    cx.notify();
                 })
             })
             .tooltip(move |window, cx| {
                 Tooltip::with_meta(
-                    "Toggle automatic co-authors",
+                    if co_authors_enabled {
+                        "Add co-authors automatically"
+                    } else {
+                        "Don't add co-authors automatically"
+                    },
                     None,
-                    "Automatically adds current collaborators",
+                    if co_authors_enabled {
+                        "Current collaborators will be added. Click to disable."
+                    } else {
+                        "Current collaborators won't be added. Click to enable."
+                    },
                     window,
                     cx,
                 )
