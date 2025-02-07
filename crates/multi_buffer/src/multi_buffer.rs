@@ -2146,7 +2146,7 @@ impl MultiBuffer {
         let mut snapshot = self.snapshot.borrow_mut();
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
-        let diff = diff.snapshot.clone();
+        let diff = diff.snapshot();
         snapshot.diffs.insert(buffer_id, diff);
     }
 
@@ -2160,9 +2160,9 @@ impl MultiBuffer {
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
-        let mut diff = diff.snapshot.clone();
+        let mut diff = diff.snapshot();
         if diff.base_text.is_none() && self.all_diff_hunks_expanded {
-            diff = BufferDiffSnapshot::new_with_single_insertion(cx);
+            diff = BufferDiff::build_with_single_insertion(cx);
         }
 
         let mut snapshot = self.snapshot.borrow_mut();

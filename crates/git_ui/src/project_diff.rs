@@ -317,7 +317,7 @@ impl ProjectDiff {
 
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
-        let diff_hunk_ranges = if diff.snapshot.base_text.is_none() {
+        let diff_hunk_ranges = if diff.base_text().is_none() {
             vec![Point::zero()..snapshot.max_point()]
         } else {
             diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)

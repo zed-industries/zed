@@ -185,7 +185,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_diffs.push(cx.new(|cx| {
-                    let mut diff = BufferDiff::new(&branch_buffer, cx);
+                    let mut diff = BufferDiff::new(branch_buffer.read(cx));
                     let _ = diff.set_base_text(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),

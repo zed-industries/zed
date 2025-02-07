@@ -8,7 +8,7 @@ use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegist
 use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
-use diff::{BufferDiff, BufferDiffEvent, BufferDiffSnapshot};
+use diff::{BufferDiff, BufferDiffEvent};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
 use git::{blame::Blame, repository::RepoPath};
@@ -207,7 +207,7 @@ impl BufferDiffState {
             if let Some(unstaged_diff) = &unstaged_diff {
                 let snapshot = if index_changed || language_changed {
                     cx.update(|cx| {
-                        BufferDiffSnapshot::build(
+                        BufferDiff::build(
                             buffer.clone(),
                             index,
                             language.clone(),
@@ -219,10 +219,10 @@ impl BufferDiffState {
                 } else {
                     unstaged_diff
                         .read_with(&cx, |changes, cx| {
-                            BufferDiffSnapshot::build_with_base_buffer(
+                            BufferDiff::build_with_base_buffer(
                                 buffer.clone(),
                                 index,
-                                changes.snapshot.base_text.clone(),
+                                changes.base_text().cloned(),
                                 cx,
                             )
                         })?
@@ -240,10 +240,10 @@ impl BufferDiffState {
             if let Some(uncommitted_diff) = &uncommitted_diff {
                 let snapshot =
                     if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
-                        unstaged_diff.read_with(&cx, |diff, _| diff.snapshot.clone())?
+                        unstaged_diff.read_with(&cx, |diff, _| diff.snapshot())?
                     } else if head_changed || language_changed {
                         cx.update(|cx| {
-                            BufferDiffSnapshot::build(
+                            BufferDiff::build(
                                 buffer.clone(),
                                 head,
                                 language.clone(),
@@ -255,10 +255,10 @@ impl BufferDiffState {
                     } else {
                         uncommitted_diff
                             .read_with(&cx, |changes, cx| {
-                                BufferDiffSnapshot::build_with_base_buffer(
+                                BufferDiff::build_with_base_buffer(
                                     buffer.clone(),
                                     head,
-                                    changes.snapshot.base_text.clone(),
+                                    changes.base_text().cloned(),
                                     cx,
                                 )
                             })?
@@ -1476,22 +1476,14 @@ impl BufferStore {
                     diff_state.language = language;
                     diff_state.language_registry = language_registry;
 
-                    let diff = cx.new(|_| BufferDiff {
-                        buffer_id,
-                        snapshot: BufferDiffSnapshot::new(&text_snapshot),
-                        unstaged_diff: None,
-                    });
+                    let diff = cx.new(|_| BufferDiff::new(&text_snapshot));
                     match kind {
                         DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
                         DiffKind::Uncommitted => {
                             let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                                 diff
                             } else {
-                                let unstaged_diff = cx.new(|_| BufferDiff {
-                                    buffer_id,
-                                    snapshot: BufferDiffSnapshot::new(&text_snapshot),
-                                    unstaged_diff: None,
-                                });
+                                let unstaged_diff = cx.new(|_| BufferDiff::new(&text_snapshot));
                                 diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                                 unstaged_diff
                             };
@@ -2395,9 +2387,8 @@ impl BufferStore {
                 shared.diff = Some(diff.clone());
             }
         })?;
-        let staged_text = diff.read_with(&cx, |diff, _| {
-            diff.snapshot.base_text.as_ref().map(|buffer| buffer.text())
-        })?;
+        let staged_text =
+            diff.read_with(&cx, |diff, _| diff.base_text().map(|buffer| buffer.text()))?;
         Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
@@ -2430,12 +2421,12 @@ impl BufferStore {
             let staged_buffer = diff
                 .unstaged_diff
                 .as_ref()
-                .and_then(|diff| diff.read(cx).snapshot.base_text.as_ref());
+                .and_then(|diff| diff.read(cx).base_text());
 
             let mode;
             let staged_text;
             let committed_text;
-            if let Some(committed_buffer) = &diff.snapshot.base_text {
+            if let Some(committed_buffer) = diff.base_text() {
                 committed_text = Some(committed_buffer.text());
                 if let Some(staged_buffer) = staged_buffer {
                     if staged_buffer.remote_id() == committed_buffer.remote_id() {

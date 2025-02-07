@@ -6809,8 +6809,7 @@ impl Editor {
         let buffer = buffer.read(cx);
         let original_text = diff
             .read(cx)
-            .snapshot
-            .base_text
+            .base_text()
             .as_ref()?
             .as_rope()
             .slice(hunk.diff_base_byte_range.clone());
