@@ -1025,6 +1025,17 @@ impl LocalLspStore {
             Vec::new()
         }
     }
+    fn is_buffer_registered_for_any_server(
+        &self,
+        file_url: &Url,
+        buffer: &Entity<Buffer>,
+        cx: &mut App,
+    ) -> bool {
+        buffer.update(cx, |buffer, cx| {
+            self.language_servers_for_buffer(buffer, cx)
+                .any(|(_, server)| server.is_buffer_registered(&file_url))
+        })
+    }
 
     fn language_servers_for_buffer<'a>(
         &'a self,
@@ -3383,9 +3394,19 @@ impl LspStore {
                                         if let Some(local) = this.as_local_mut() {
                                             local.reset_buffer(&buffer, &f, cx);
 
-                                            local.unregister_old_buffer_from_language_servers(
-                                                &buffer, &f, cx,
-                                            );
+                                            if let Some(file_url) =
+                                                lsp::Url::from_file_path(&f.abs_path(cx)).log_err()
+                                            {
+                                                let is_registered_for_any_server = local
+                                                    .is_buffer_registered_for_any_server(
+                                                        &file_url, &buffer, cx,
+                                                    );
+                                                if is_registered_for_any_server {
+                                                    local.unregister_buffer_from_language_servers(
+                                                        &buffer, &file_url, cx,
+                                                    );
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -3467,11 +3488,8 @@ impl LspStore {
                 File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
             {
                 if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
-                    let is_registered_for_any_server = buffer.update(cx, |buffer, cx| {
-                        local_store
-                            .language_servers_for_buffer(buffer, cx)
-                            .any(|(_, server)| server.is_buffer_registered(&file_url))
-                    });
+                    let is_registered_for_any_server =
+                        local_store.is_buffer_registered_for_any_server(&file_url, &buffer, cx);
                     if is_registered_for_any_server {
                         local_store.unregister_buffer_from_language_servers(buffer, &file_url, cx);
                     }
@@ -5065,6 +5083,7 @@ impl LspStore {
                     .collect(),
             )
         })?;
+
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);

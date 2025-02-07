@@ -1296,9 +1296,9 @@ impl LanguageServer {
         version: i32,
         initial_text: String,
     ) {
-        let was_already_registered = self.registered_buffers.lock().insert(uri.clone());
+        let is_not_registered_yet = self.registered_buffers.lock().insert(uri.clone());
 
-        if was_already_registered {
+        if is_not_registered_yet {
             self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
             })
