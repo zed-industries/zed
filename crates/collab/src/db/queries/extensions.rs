@@ -10,6 +10,7 @@ impl Database {
     pub async fn get_extensions(
         &self,
         filter: Option<&str>,
+        provides_filter: Option<&BTreeSet<ExtensionProvides>>,
         max_schema_version: i32,
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
@@ -24,6 +25,10 @@ impl Database {
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
                 condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
+            }
+
+            if let Some(provides_filter) = provides_filter {
+                condition = apply_provides_filter(condition, provides_filter);
             }
 
             self.get_extensions_where(condition, Some(limit as u64), &tx)
@@ -282,6 +287,39 @@ impl Database {
                         description: ActiveValue::Set(version.description.clone()),
                         schema_version: ActiveValue::Set(version.schema_version),
                         wasm_api_version: ActiveValue::Set(version.wasm_api_version.clone()),
+                        provides_themes: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Themes),
+                        ),
+                        provides_icon_themes: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::IconThemes),
+                        ),
+                        provides_languages: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Languages),
+                        ),
+                        provides_grammars: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Grammars),
+                        ),
+                        provides_language_servers: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::LanguageServers),
+                        ),
+                        provides_context_servers: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::ContextServers),
+                        ),
+                        provides_slash_commands: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::SlashCommands),
+                        ),
+                        provides_indexed_docs_providers: ActiveValue::Set(
+                            version
+                                .provides
+                                .contains(&ExtensionProvides::IndexedDocsProviders),
+                        ),
+                        provides_snippets: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::Snippets),
+                        ),
                         download_count: ActiveValue::NotSet,
                     }
                 }))
@@ -352,10 +390,55 @@ impl Database {
     }
 }
 
+fn apply_provides_filter(
+    mut condition: Condition,
+    provides_filter: &BTreeSet<ExtensionProvides>,
+) -> Condition {
+    if provides_filter.contains(&ExtensionProvides::Themes) {
+        condition = condition.add(extension_version::Column::ProvidesThemes.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::IconThemes) {
+        condition = condition.add(extension_version::Column::ProvidesIconThemes.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::Languages) {
+        condition = condition.add(extension_version::Column::ProvidesLanguages.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::Grammars) {
+        condition = condition.add(extension_version::Column::ProvidesGrammars.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::LanguageServers) {
+        condition = condition.add(extension_version::Column::ProvidesLanguageServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::ContextServers) {
+        condition = condition.add(extension_version::Column::ProvidesContextServers.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::SlashCommands) {
+        condition = condition.add(extension_version::Column::ProvidesSlashCommands.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::IndexedDocsProviders) {
+        condition = condition.add(extension_version::Column::ProvidesIndexedDocsProviders.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::Snippets) {
+        condition = condition.add(extension_version::Column::ProvidesSnippets.eq(true));
+    }
+
+    condition
+}
+
 fn metadata_from_extension_and_version(
     extension: extension::Model,
     version: extension_version::Model,
 ) -> ExtensionMetadata {
+    let provides = version.provides();
+
     ExtensionMetadata {
         id: extension.external_id.into(),
         manifest: rpc::ExtensionApiManifest {
@@ -370,6 +453,7 @@ fn metadata_from_extension_and_version(
             repository: version.repository,
             schema_version: Some(version.schema_version),
             wasm_api_version: version.wasm_api_version,
+            provides,
         },
 
         published_at: convert_time_to_chrono(version.published_at),

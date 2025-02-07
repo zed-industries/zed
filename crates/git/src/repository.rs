@@ -1,6 +1,6 @@
 use crate::status::FileStatus;
+use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
-use crate::{GitHostingProviderRegistry, COMMIT_MESSAGE};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
@@ -46,6 +46,8 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
+    fn merge_head_shas(&self) -> Vec<String>;
+
     /// Returns the list of git statuses, sorted by path
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
@@ -68,7 +70,7 @@ pub trait GitRepository: Send + Sync {
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 
-    fn commit(&self, name_and_email: Option<(&str, &str)>) -> Result<()>;
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -160,6 +162,18 @@ impl GitRepository for RealGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
+    }
+
+    fn merge_head_shas(&self) -> Vec<String> {
+        let mut shas = Vec::default();
+        self.repository
+            .lock()
+            .mergehead_foreach(|oid| {
+                shas.push(oid.to_string());
+                true
+            })
+            .ok();
+        shas
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -265,13 +279,13 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let cmd = new_std_command(&self.git_binary_path)
+            let status = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
                 .status()?;
-            if !cmd.success() {
-                return Err(anyhow!("Failed to stage paths: {cmd}"));
+            if !status.success() {
+                return Err(anyhow!("Failed to stage paths: {status}"));
             }
         }
         Ok(())
@@ -298,22 +312,14 @@ impl GitRepository for RealGitRepository {
         Ok(())
     }
 
-    fn commit(&self, name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(&self, message: &str, name_and_email: Option<(&str, &str)>) -> Result<()> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        let commit_file = self.dot_git_dir().join(*COMMIT_MESSAGE);
-        let commit_file_path = commit_file.to_string_lossy();
-        let mut args = vec![
-            "commit",
-            "--quiet",
-            "-F",
-            commit_file_path.as_ref(),
-            "--cleanup=strip",
-        ];
+        let mut args = vec!["commit", "--quiet", "-m", message, "--cleanup=strip"];
         let author = name_and_email.map(|(name, email)| format!("{name} <{email}>"));
         if let Some(author) = author.as_deref() {
             args.push("--author");
@@ -393,6 +399,10 @@ impl GitRepository for FakeGitRepository {
 
     fn head_sha(&self) -> Option<String> {
         None
+    }
+
+    fn merge_head_shas(&self) -> Vec<String> {
+        vec![]
     }
 
     fn dot_git_dir(&self) -> PathBuf {
@@ -480,7 +490,7 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
-    fn commit(&self, _name_and_email: Option<(&str, &str)>) -> Result<()> {
+    fn commit(&self, _message: &str, _name_and_email: Option<(&str, &str)>) -> Result<()> {
         unimplemented!()
     }
 }

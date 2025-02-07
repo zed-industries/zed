@@ -7,6 +7,7 @@ use editor::Editor;
 use extension_host::ExtensionStore;
 use gpui::{AppContext as _, Context, Entity, SharedString, Window};
 use language::Buffer;
+use ui::prelude::*;
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::{notifications::NotificationId, Workspace};
 
@@ -172,8 +173,10 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension
                 ))
-                .with_click_message("Yes, install extension")
-                .on_click({
+                .primary_message("Yes, install extension")
+                .primary_icon(IconName::Check)
+                .primary_icon_color(Color::Success)
+                .primary_on_click({
                     let extension_id = extension_id.clone();
                     move |_window, cx| {
                         let extension_id = extension_id.clone();
@@ -183,8 +186,10 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
                         });
                     }
                 })
-                .with_secondary_click_message("No, don't install it")
-                .on_secondary_click(move |_window, cx| {
+                .secondary_message("No, don't install it")
+                .secondary_icon(IconName::Close)
+                .secondary_icon_color(Color::Error)
+                .secondary_on_click(move |_window, cx| {
                     let key = language_extension_key(&extension_id);
                     db::write_and_log(cx, move || {
                         KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())

@@ -188,9 +188,12 @@ fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
     let app_version = AppVersion::init(env!("CARGO_PKG_VERSION"));
+    let app_commit_sha =
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
 
     reliability::init_panic_hook(
         app_version,
+        app_commit_sha.clone(),
         system_id.as_ref().map(|id| id.to_string()),
         installation_id.as_ref().map(|id| id.to_string()),
         session_id.clone(),
@@ -281,8 +284,8 @@ fn main() {
     app.run(move |cx| {
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
-        if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
-            AppCommitSha::set_global(AppCommitSha(build_sha.into()), cx);
+        if let Some(app_commit_sha) = app_commit_sha {
+            AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);

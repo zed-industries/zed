@@ -146,6 +146,8 @@ pub fn init_settings(cx: &mut App) {
 }
 
 pub fn init(client: &Arc<Client>, cx: &mut App) {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
@@ -1131,15 +1133,8 @@ impl Client {
                         for error in root_certs.errors {
                             log::warn!("error loading native certs: {:?}", error);
                         }
-                        root_store.add_parsable_certificates(
-                            &root_certs
-                                .certs
-                                .into_iter()
-                                .map(|cert| cert.as_ref().to_owned())
-                                .collect::<Vec<_>>(),
-                        );
+                        root_store.add_parsable_certificates(root_certs.certs);
                         rustls::ClientConfig::builder()
-                            .with_safe_defaults()
                             .with_root_certificates(root_store)
                             .with_no_client_auth()
                     };

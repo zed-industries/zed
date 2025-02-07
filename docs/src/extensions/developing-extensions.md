@@ -95,6 +95,12 @@ To publish an extension, open a PR to [the `zed-industries/extensions` repo](htt
 In your PR, do the following:
 
 1. Add your extension as a Git submodule within the `extensions/` directory
+
+```sh
+git submodule add https://github.com/your-username/foobar-zed.git extensions/foobar
+git add extensions/foobar
+```
+
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
 
 ```toml
