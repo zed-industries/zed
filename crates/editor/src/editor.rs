@@ -680,7 +680,6 @@ pub struct Editor {
     /// Used to prevent flickering as the user types while the menu is open
     stale_inline_completion_in_menu: Option<InlineCompletionState>,
     inline_completions_hidden_for_vim_mode: bool,
-    show_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     menu_inline_completions_policy: MenuInlineCompletionsPolicy,
     previewing_inline_completion: bool,
@@ -1390,7 +1389,6 @@ impl Editor {
             next_editor_action_id: EditorActionId::default(),
             editor_actions: Rc::default(),
             inline_completions_hidden_for_vim_mode: false,
-            show_inline_completions: true,
             show_inline_completions_override: None,
             menu_inline_completions_policy: MenuInlineCompletionsPolicy::ByProvider,
             custom_context_menu: None,
@@ -4651,12 +4649,7 @@ impl Editor {
         }
 
         if !user_requested
-            && (!self.show_inline_completions
-                || !self.should_show_inline_completions_in_buffer(
-                    &buffer,
-                    cursor_buffer_position,
-                    cx,
-                )
+            && (!self.should_show_inline_completions_in_buffer(&buffer, cursor_buffer_position, cx)
                 || !self.is_focused(window)
                 || buffer.read(cx).is_empty())
         {
@@ -4769,7 +4762,7 @@ impl Editor {
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-        if !self.show_inline_completions
+        if self.inline_completions_hidden_for_vim_mode
             || !self.should_show_inline_completions_in_buffer(&buffer, cursor_buffer_position, cx)
         {
             return None;
