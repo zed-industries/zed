@@ -224,8 +224,8 @@ pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
-    /// There's a sensible default list of globs already included.
-    /// Any addition to this list will be merged with the default list.
+    /// This list adds to a pre-existing, sensible default set of globs.
+    /// Any additional ones you add are combined with them.
     pub disabled_globs: Vec<GlobMatcher>,
     /// When to show edit predictions previews in buffer.
     pub inline_preview: InlineCompletionPreviewMode,
@@ -430,8 +430,8 @@ pub struct LanguageSettingsContent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct InlineCompletionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
-    /// There's a sensible default list of globs already included.
-    /// Any addition to this list will be merged with the default list.
+    /// This list adds to a pre-existing, sensible default set of globs.
+    /// Any additional ones you add are combined with them.
     #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
     /// When to show edit predictions previews in buffer.
