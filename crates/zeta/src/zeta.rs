@@ -665,7 +665,7 @@ and then another
             loop {
                 let request_builder = http_client::Request::builder().method(Method::POST).uri(
                     http_client
-                        .build_zed_llm_url("/predict_edits_v2", &[])?
+                        .build_zed_llm_url("/predict_edits/v2", &[])?
                         .as_ref(),
                 );
                 let request = request_builder
