@@ -16,16 +16,9 @@ workspace = true
 path = "src/aws_client.rs"
 
 [dependencies]
-anyhow.workspace = true
 futures.workspace = true
 http_client.workspace = true
 schemars = { workspace = true, optional = true }
-strum.workspace = true
-thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-util.workspace = true
 aws-smithy-types.workspace = true
 aws-smithy-runtime-api.workspace = true
-
-[dev-dependencies]
-tokio.workspace = true
