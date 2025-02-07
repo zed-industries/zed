@@ -698,7 +698,7 @@ impl GitPanel {
 
         if self.has_unstaged_conflicts() {
             error_spawn(
-                "There are still conflicted files. You must stage these before comitting",
+                "There are still conflicts. You must stage these before committing",
                 window,
                 cx,
             );
@@ -707,7 +707,7 @@ impl GitPanel {
 
         let message = self.commit_editor.read(cx).text(cx);
         if message.trim().is_empty() {
-            error_spawn("Please provide a commit message", window, cx);
+            self.commit_editor.read(cx).focus_handle(cx).focus(window);
             return;
         }
 
@@ -1189,6 +1189,7 @@ impl GitPanel {
         let editor = self.commit_editor.clone();
         let can_commit = (self.has_staged_changes() || self.has_tracked_changes())
             && self.pending_commit.is_none()
+            && !editor.read(cx).is_empty(cx)
             && !self.has_unstaged_conflicts()
             && self.has_write_access(cx);
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
