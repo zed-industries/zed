@@ -10283,14 +10283,26 @@ impl Editor {
                     if entry.diagnostic.is_primary
                         && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
                         && entry.range.start != entry.range.end
-                        // if we match with the active diagnostic, skip it
-                        && Some(entry.diagnostic.group_id)
-                            != self.active_diagnostics.as_ref().map(|d| d.group_id)
                     {
-                        Some((entry.range, entry.diagnostic.group_id))
-                    } else {
-                        None
+                        let entry_group = entry.diagnostic.group_id;
+                        let in_next_group = self.active_diagnostics.as_ref().map_or(
+                            true,
+                            |active| match direction {
+                                Direction::Prev => {
+                                    entry_group != active.group_id
+                                        && (active.group_id == 0 || entry_group < active.group_id)
+                                }
+                                Direction::Next => {
+                                    entry_group != active.group_id
+                                        && (entry_group == 0 || entry_group > active.group_id)
+                                }
+                            },
+                        );
+                        if in_next_group {
+                            return Some((entry.range, entry.diagnostic.group_id));
+                        }
                     }
+                    None
                 });
 
             if let Some((primary_range, group_id)) = group {
