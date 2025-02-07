@@ -64,12 +64,17 @@ impl Display for SystemSpecs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let os_information = format!("OS: {} {}", self.os_name, self.os_version);
         let app_version_information = format!(
-            "Zed: v{} ({})",
+            "Zed: v{} ({}) {}",
             self.app_version,
             match &self.commit_sha {
                 Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
                 None => self.release_channel.to_string(),
-            }
+            },
+            if cfg!(debug_assertions) {
+                "(Taylor's Version)"
+            } else {
+                ""
+            },
         );
         let system_specs = [
             app_version_information,

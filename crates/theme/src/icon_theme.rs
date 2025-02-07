@@ -88,6 +88,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("image", "icons/file_icons/image.svg"),
     ("java", "icons/file_icons/java.svg"),
     ("javascript", "icons/file_icons/javascript.svg"),
+    ("json", "icons/file_icons/code.svg"),
     ("julia", "icons/file_icons/julia.svg"),
     ("kotlin", "icons/file_icons/kotlin.svg"),
     ("lock", "icons/file_icons/lock.svg"),

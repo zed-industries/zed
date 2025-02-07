@@ -11,8 +11,7 @@ use ui::{
     Window,
 };
 use ui::{Button, ButtonStyle};
-use workspace::Item;
-use workspace::Workspace;
+use workspace::{Item, SplitDirection, Workspace};
 
 actions!(debug, [OpenKeyContextView]);
 
@@ -20,7 +19,12 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
             let key_context_view = cx.new(|cx| KeyContextView::new(window, cx));
-            workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, window, cx)
+            workspace.split_item(
+                SplitDirection::Right,
+                Box::new(key_context_view),
+                window,
+                cx,
+            )
         });
     })
     .detach();

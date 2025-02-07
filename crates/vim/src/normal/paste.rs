@@ -13,7 +13,7 @@ use crate::{
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Paste {
     #[serde(default)]
     before: bool,

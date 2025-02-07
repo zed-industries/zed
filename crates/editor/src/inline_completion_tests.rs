@@ -1,6 +1,6 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
-use inline_completion::InlineCompletionProvider;
+use inline_completion::EditPredictionProvider;
 use language::{Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use project::Project;
@@ -315,7 +315,7 @@ fn assert_editor_active_move_completion(
 
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
-        editor.accept_inline_completion(&crate::AcceptInlineCompletion, window, cx)
+        editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
     })
 }
 
@@ -345,7 +345,7 @@ fn assign_editor_completion_provider(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_inline_completion_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
     })
 }
 
@@ -363,7 +363,7 @@ impl FakeInlineCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for FakeInlineCompletionProvider {
+impl EditPredictionProvider for FakeInlineCompletionProvider {
     fn name() -> &'static str {
         "fake-completion-provider"
     }

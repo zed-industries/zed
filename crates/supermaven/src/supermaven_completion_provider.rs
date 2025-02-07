@@ -2,7 +2,7 @@ use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
+use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{Anchor, Buffer, BufferSnapshot};
 use project::Project;
 use std::{
@@ -97,7 +97,7 @@ fn completion_from_diff(
     }
 }
 
-impl InlineCompletionProvider for SupermavenCompletionProvider {
+impl EditPredictionProvider for SupermavenCompletionProvider {
     fn name() -> &'static str {
         "supermaven"
     }
