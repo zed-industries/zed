@@ -469,7 +469,6 @@ type CompletionId = usize;
 pub(crate) enum EditDisplayMode {
     TabAccept {
         previewing_from_completions_menu: bool,
-        hidden: bool,
     },
     DiffPopover,
     Inline,
@@ -5089,8 +5088,11 @@ impl Editor {
         } else {
             None
         };
-        let completion = if let Some(move_invalidation_row_range) = move_invalidation_row_range {
-            invalidation_row_range = move_invalidation_row_range;
+        let is_move =
+            move_invalidation_row_range.is_some() || self.inline_completions_hidden_for_vim_mode;
+        let completion = if is_move {
+            invalidation_row_range =
+                move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
             let target_point = text::ToPoint::to_point(&target.text_anchor, &snapshot);
             // TODO: Base this off of TreeSitter or word boundaries?
@@ -5143,16 +5145,10 @@ impl Editor {
 
             invalidation_row_range = edit_start_row..edit_end_row;
 
-            let display_mode = if self.inline_completions_hidden_for_vim_mode {
-                EditDisplayMode::TabAccept {
-                    previewing_from_completions_menu: self.is_previewing_inline_completion(),
-                    hidden: true,
-                }
-            } else if all_edits_insertions_or_deletions(&edits, &multibuffer) {
+            let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
                     EditDisplayMode::TabAccept {
                         previewing_from_completions_menu: self.is_previewing_inline_completion(),
-                        hidden: false,
                     }
                 } else {
                     EditDisplayMode::Inline

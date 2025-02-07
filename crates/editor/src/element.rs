@@ -3673,7 +3673,6 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowUp),
                         previewing,
-                        false,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3687,7 +3686,6 @@ impl EditorElement {
                         "Jump to Edit",
                         Some(IconName::ArrowDown),
                         previewing,
-                        false,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3704,7 +3702,6 @@ impl EditorElement {
                         "Jump to Edit",
                         None,
                         previewing,
-                        false,
                         self.editor.focus_handle(cx),
                         window,
                         cx,
@@ -3758,10 +3755,8 @@ impl EditorElement {
                 match display_mode {
                     EditDisplayMode::TabAccept {
                         previewing_from_completions_menu,
-                        hidden,
                     } => {
                         let previewing = *previewing_from_completions_menu;
-                        let hidden = *hidden;
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3773,12 +3768,10 @@ impl EditorElement {
                             editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                         })?;
 
-                        let label = if hidden { "Preview" } else { "Accept" };
                         let mut element = inline_completion_accept_indicator(
-                            label,
+                            "Accept",
                             None,
                             previewing,
-                            hidden,
                             self.editor.focus_handle(cx),
                             window,
                             cx,
@@ -5781,37 +5774,35 @@ fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     previewing: bool,
-    hidden: bool,
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let use_hardcoded_linux_preview_binding;
-    let use_hardcoded_linux_vim_tab_binding;
+    let use_hardcoded_linux_bindings;
 
     #[cfg(target_os = "macos")]
     {
-        use_hardcoded_linux_preview_binding = false;
-        use_hardcoded_linux_vim_tab_binding = false;
+        use_hardcoded_linux_bindings = false;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        use_hardcoded_linux_preview_binding = previewing;
-        use_hardcoded_linux_vim_tab_binding = hidden;
+        use_hardcoded_linux_bindings = true;
     }
 
-    let accept_keystroke = if use_hardcoded_linux_vim_tab_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "tab".to_string(),
-            key_char: None,
-        }
-    } else if use_hardcoded_linux_preview_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "enter".to_string(),
-            key_char: None,
+    let accept_keystroke = if use_hardcoded_linux_bindings {
+        if previewing {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "enter".to_string(),
+                key_char: None,
+            }
+        } else {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "tab".to_string(),
+                key_char: None,
+            }
         }
     } else {
         let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
@@ -5819,7 +5810,7 @@ fn inline_completion_accept_indicator(
             .last()
             .and_then(|binding| binding.keystrokes().first())
         {
-            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
+            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
             keystroke.clone()
         } else {
             return None;
