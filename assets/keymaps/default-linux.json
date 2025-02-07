@@ -536,8 +536,7 @@
   {
     "bindings": {
       "ctrl-alt-shift-f": "workspace::FollowNextCollaborator",
-      "ctrl-alt-i": "zed::DebugElements",
-      "ctrl-:": "editor::ToggleInlayHints"
+      "ctrl-alt-i": "zed::DebugElements"
     }
   },
   {
@@ -555,7 +554,8 @@
       "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
-      "ctrl-enter": "assistant::InlineAssist"
+      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-:": "editor::ToggleInlayHints"
     }
   },
   {

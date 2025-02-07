@@ -620,8 +620,7 @@
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
-      "cmd-alt-i": "zed::DebugElements",
-      "ctrl-:": "editor::ToggleInlayHints"
+      "cmd-alt-i": "zed::DebugElements"
     }
   },
   {
@@ -634,7 +633,8 @@
       "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
-      "ctrl-enter": "assistant::InlineAssist"
+      "ctrl-enter": "assistant::InlineAssist",
+      "ctrl-:": "editor::ToggleInlayHints"
     }
   },
   {
