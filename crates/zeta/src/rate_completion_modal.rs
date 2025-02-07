@@ -52,8 +52,6 @@ impl RateCompletionModal {
     pub fn toggle(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
         if let Some(zeta) = Zeta::global(cx) {
             workspace.toggle_modal(window, cx, |_window, cx| RateCompletionModal::new(zeta, cx));
-
-            telemetry::event!("Rate Completion Modal Open", source = "Edit Prediction");
         }
     }
 

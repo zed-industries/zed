@@ -256,10 +256,6 @@ impl Render for InlineCompletionButton {
                                 )
                             })
                             .on_click(cx.listener(move |_, _, window, cx| {
-                                telemetry::event!(
-                                    "Pending ToS Clicked",
-                                    source = "Edit Prediction Status Button"
-                                );
                                 window.dispatch_action(
                                     zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                                     cx,
@@ -430,8 +426,6 @@ impl InlineCompletionButton {
 
             if data_collection.is_supported() {
                 let provider = provider.clone();
-                let enabled = data_collection.is_enabled();
-
                 menu = menu
                     .separator()
                     .header("Help Improve The Model")
@@ -440,21 +434,9 @@ impl InlineCompletionButton {
                     // TODO: We want to add something later that communicates whether
                     // the current project is open-source.
                     ContextMenuEntry::new("Share Training Data")
-                        .toggleable(IconPosition::Start, enabled)
+                        .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .handler(move |_, cx| {
                             provider.toggle_data_collection(cx);
-
-                            if !enabled {
-                                telemetry::event!(
-                                    "Data Collection Enabled",
-                                    source = "Edit Prediction Status Menu"
-                                );
-                            } else {
-                                telemetry::event!(
-                                    "Data Collection Disabled",
-                                    source = "Edit Prediction Status Menu"
-                                );
-                            }
                         }),
                 );
             }

@@ -6,8 +6,6 @@ use settings::SettingsStore;
 use ui::{prelude::*, ButtonLike, Tooltip};
 use util::ResultExt;
 
-use crate::onboarding_event;
-
 /// Prompts the user to try Zed's Edit Prediction feature
 pub struct ZedPredictBanner {
     dismissed: bool,
@@ -55,7 +53,6 @@ impl ZedPredictBanner {
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
-        onboarding_event!("Banner Dismissed");
         persist_dismissed(cx);
         self.dismissed = true;
         cx.notify();
@@ -110,7 +107,6 @@ impl Render for ZedPredictBanner {
                             ),
                     )
                     .on_click(|_, window, cx| {
-                        onboarding_event!("Banner Clicked");
                         window.dispatch_action(Box::new(zed_actions::OpenZedPredictOnboarding), cx)
                     }),
             )
