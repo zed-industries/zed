@@ -490,6 +490,7 @@ fn main() {
         project_panel::init(Assets, cx);
         git_ui::git_panel::init(cx);
         outline_panel::init(Assets, cx);
+        component_preview::init(cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);

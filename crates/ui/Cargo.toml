@@ -14,8 +14,10 @@ path = "src/ui.rs"
 
 [dependencies]
 chrono.workspace = true
+component.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
+linkme.workspace = true
 menu.workspace = true
 serde.workspace = true
 settings.workspace = true

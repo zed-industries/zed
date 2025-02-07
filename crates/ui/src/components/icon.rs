@@ -13,11 +13,7 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{
-    prelude::*,
-    traits::component_preview::{ComponentExample, ComponentPreview},
-    Indicator,
-};
+use crate::{prelude::*, Indicator};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -492,25 +488,25 @@ impl RenderOnce for IconWithIndicator {
     }
 }
 
-impl ComponentPreview for Icon {
-    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Icon>> {
-        let arrow_icons = vec![
-            IconName::ArrowDown,
-            IconName::ArrowLeft,
-            IconName::ArrowRight,
-            IconName::ArrowUp,
-            IconName::ArrowCircle,
-        ];
+// impl ComponentPreview for Icon {
+//     fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Icon>> {
+//         let arrow_icons = vec![
+//             IconName::ArrowDown,
+//             IconName::ArrowLeft,
+//             IconName::ArrowRight,
+//             IconName::ArrowUp,
+//             IconName::ArrowCircle,
+//         ];
 
-        vec![example_group_with_title(
-            "Arrow Icons",
-            arrow_icons
-                .into_iter()
-                .map(|icon| {
-                    let name = format!("{:?}", icon).to_string();
-                    ComponentExample::new(name, Icon::new(icon))
-                })
-                .collect(),
-        )]
-    }
-}
+//         vec![example_group_with_title(
+//             "Arrow Icons",
+//             arrow_icons
+//                 .into_iter()
+//                 .map(|icon| {
+//                     let name = format!("{:?}", icon).to_string();
+//                     ComponentExample::new(name, Icon::new(icon))
+//                 })
+//                 .collect(),
+//         )]
+//     }
+// }
