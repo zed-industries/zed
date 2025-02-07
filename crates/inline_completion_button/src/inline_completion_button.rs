@@ -229,7 +229,7 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                let enabled = self.editor_enabled.unwrap_or(false);
+                let enabled = self.editor_enabled.unwrap_or(true);
 
                 let zeta_icon = if enabled {
                     IconName::ZedPredict
@@ -469,9 +469,7 @@ impl InlineCompletionButton {
                 }),
         );
 
-        if self.file.as_ref().map_or(false, |file| {
-            !all_language_settings(Some(file), cx).inline_completions_enabled_for_path(file.path())
-        }) {
+        if !self.editor_enabled.unwrap_or(true) {
             menu = menu.item(
                 ContextMenuEntry::new("This file is excluded.")
                     .disabled(true)
