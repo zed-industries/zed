@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/aws_client.rs"
+path = "src/aws_http_client.rs"
 
 [features]
 default = []

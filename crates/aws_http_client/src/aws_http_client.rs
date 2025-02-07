@@ -1,6 +1,6 @@
-mod utils;
+use std::fmt;
+use std::sync::Arc;
 
-use crate::utils::{convert_to_async_body, convert_to_sdk_body};
 use aws_smithy_runtime_api::client::http::{
     HttpClient as AwsClient, HttpConnector as AwsConnector,
     HttpConnectorFuture as AwsConnectorFuture, HttpConnectorFuture, HttpConnectorSettings,
@@ -10,9 +10,10 @@ use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsHttpRequest
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use aws_smithy_runtime_api::http::StatusCode;
+use aws_smithy_types::body::SdkBody;
+use futures::AsyncReadExt;
+use http_client::{AsyncBody, Inner};
 use http_client::{HttpClient, Request};
-use std::fmt;
-use std::sync::Arc;
 use tokio::runtime::Handle;
 
 struct AwsHttpConnector {
@@ -28,18 +29,19 @@ impl std::fmt::Debug for AwsHttpConnector {
 
 impl AwsConnector for AwsHttpConnector {
     fn call(&self, request: AwsHttpRequest) -> AwsConnectorFuture {
-        let aws_req = match request.try_into_http1x() {
+        let req = match request.try_into_http1x() {
             Ok(req) => req,
             Err(err) => {
                 return HttpConnectorFuture::ready(Err(ConnectorError::other(err.into(), None)))
             }
         };
 
-        let (parts, aws_body) = aws_req.into_parts();
+        let (parts, body) = req.into_parts();
 
-        let body = convert_to_async_body(aws_body);
-
-        let response = self.client.send(Request::from_parts(parts.into(), body));
+        let response = self.client.send(Request::from_parts(
+            parts.into(),
+            convert_to_async_body(body),
+        ));
 
         let handle = self.handle.clone();
 
@@ -48,12 +50,12 @@ impl AwsConnector for AwsHttpConnector {
                 Ok(response) => response,
                 Err(err) => return Err(ConnectorError::other(err.into(), None)),
             };
-            let (parts, aws_body) = response.into_parts();
-            let sdk_body = convert_to_sdk_body(aws_body, handle).await;
+            let (parts, body) = response.into_parts();
+            let body = convert_to_sdk_body(body, handle).await;
 
             Ok(HttpResponse::new(
                 StatusCode::try_from(parts.status.as_u16()).unwrap(),
-                sdk_body,
+                body,
             ))
         })
     }
@@ -67,7 +69,7 @@ pub struct AwsHttpClient {
 
 impl std::fmt::Debug for AwsHttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+        f.debug_struct("AwsHttpClient").finish()
     }
 }
 
@@ -83,12 +85,35 @@ impl AwsHttpClient {
 impl AwsClient for AwsHttpClient {
     fn http_connector(
         &self,
-        settings: &HttpConnectorSettings,
-        components: &RuntimeComponents,
+        _settings: &HttpConnectorSettings,
+        _components: &RuntimeComponents,
     ) -> SharedHttpConnector {
         SharedHttpConnector::new(AwsHttpConnector {
             client: self.client.clone(),
             handle: self.handler.clone(),
         })
+    }
+}
+
+pub async fn convert_to_sdk_body(body: AsyncBody, handle: Handle) -> SdkBody {
+    match body.0 {
+        Inner::Empty => SdkBody::empty(),
+        Inner::Bytes(bytes) => SdkBody::from(bytes.into_inner()),
+        Inner::AsyncReader(mut reader) => {
+            let buffer = handle.spawn(async move {
+                let mut buffer = Vec::new();
+                let _ = reader.read_to_end(&mut buffer).await;
+                buffer
+            });
+
+            SdkBody::from(buffer.await.unwrap_or_default())
+        }
+    }
+}
+
+pub fn convert_to_async_body(body: SdkBody) -> AsyncBody {
+    match body.bytes() {
+        Some(bytes) => AsyncBody::from((*bytes).to_vec()),
+        None => AsyncBody::empty(),
     }
 }
