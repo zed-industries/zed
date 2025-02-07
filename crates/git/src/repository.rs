@@ -279,13 +279,16 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let status = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["update-index", "--add", "--remove", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
-                .status()?;
-            if !status.success() {
-                return Err(anyhow!("Failed to stage paths: {status}"));
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to stage paths:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
         Ok(())
@@ -300,13 +303,16 @@ impl GitRepository for RealGitRepository {
             .to_path_buf();
 
         if !paths.is_empty() {
-            let cmd = new_std_command(&self.git_binary_path)
+            let output = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
                 .args(["reset", "--quiet", "--"])
                 .args(paths.iter().map(|p| p.as_ref()))
-                .status()?;
-            if !cmd.success() {
-                return Err(anyhow!("Failed to unstage paths: {cmd}"));
+                .output()?;
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "Failed to unstage:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
             }
         }
         Ok(())
