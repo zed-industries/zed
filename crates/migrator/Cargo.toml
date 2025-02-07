@@ -14,9 +14,9 @@ doctest = false
 
 [dependencies]
 collections.workspace = true
+convert_case.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
-convert_case.workspace = true
 
 [dev-dependencies]
 pretty_assertions.workspace = true
