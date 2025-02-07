@@ -1,4 +1,4 @@
-use gpui::{App, Context, Entity};
+use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
 use project::Project;
 use std::ops::Range;
@@ -15,6 +15,8 @@ pub enum Direction {
 
 #[derive(Clone)]
 pub struct InlineCompletion {
+    /// The ID of the completion, if it has one.
+    pub id: Option<SharedString>,
     pub edits: Vec<(Range<language::Anchor>, String)>,
     pub edit_preview: Option<language::EditPreview>,
 }

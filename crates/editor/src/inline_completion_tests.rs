@@ -333,6 +333,7 @@ fn propose_edits<T: ToOffset>(
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
             provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+                id: None,
                 edits: edits.collect(),
                 edit_preview: None,
             }))
