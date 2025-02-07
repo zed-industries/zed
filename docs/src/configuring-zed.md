@@ -409,11 +409,7 @@ List of `string` values
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
-<<<<<<< HEAD
-- Setting: `inline_completions_disabled_in`
-=======
 - Setting: `edit_predictions_disabled_in`
->>>>>>> ad60676497 (inline completion -> edit prediction in settings and docs)
 - Default: `[]`
 
 **Options**
