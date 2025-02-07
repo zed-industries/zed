@@ -14875,7 +14875,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": sample_text_1,
             "second.rs": sample_text_2,
@@ -14883,7 +14883,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
@@ -15059,7 +15059,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": sample_text_1,
             "second.rs": sample_text_2,
@@ -15067,7 +15067,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
@@ -15206,13 +15206,13 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "main.rs": sample_text,
         }),
     )
     .await;
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
     let worktree = project.update(cx, |project, cx| {
