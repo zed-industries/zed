@@ -30,7 +30,7 @@ fn test_empty_singleton(cx: &mut App) {
             buffer_row: Some(0),
             multibuffer_row: Some(MultiBufferRow(0)),
             diff_status: None,
-            expand_direction: None,
+            expand_info: None,
         }]
     );
 }
@@ -2346,7 +2346,7 @@ impl ReferenceMultibuffer {
                             multibuffer_row: Some(MultiBufferRow(
                                 text[..ix].matches('\n').count() as u32
                             )),
-                            expand_direction: None,
+                            expand_info: None,
                         }
                     });
                 ix += line.len() + 1;

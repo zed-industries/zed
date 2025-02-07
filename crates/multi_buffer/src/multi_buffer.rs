@@ -323,13 +323,20 @@ impl ExcerptBoundary {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ExpandInfo {
+    pub direction: ExpandExcerptDirection,
+    pub excerpt_id: ExcerptId,
+    pub enabled: bool,
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
-    pub expand_direction: Option<(ExcerptId, ExpandExcerptDirection)>,
+    pub expand_info: Option<ExpandInfo>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -402,6 +409,7 @@ pub struct DiffTransformSummary {
 pub struct MultiBufferRows<'a> {
     point: Point,
     is_empty: bool,
+    is_singleton: bool,
     cursor: MultiBufferCursor<'a, Point>,
 }
 
@@ -3986,6 +3994,7 @@ impl MultiBufferSnapshot {
         let mut result = MultiBufferRows {
             point: Point::new(0, 0),
             is_empty: self.excerpts.is_empty(),
+            is_singleton: self.is_singleton(),
             cursor,
         };
         result.seek(start_row);
@@ -6988,7 +6997,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 buffer_row: Some(0),
                 multibuffer_row: Some(MultiBufferRow(0)),
                 diff_status: None,
-                expand_direction: None,
+                expand_info: None,
             });
         }
 
@@ -7017,7 +7026,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                         buffer_row: Some(last_row),
                         multibuffer_row: Some(multibuffer_row),
                         diff_status: None,
-                        expand_direction: None,
+                        expand_info: None,
                     });
                 } else {
                     return None;
@@ -7027,12 +7036,20 @@ impl<'a> Iterator for MultiBufferRows<'a> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
-        let expand_direction = if self.point.row == region.range.start.row && buffer_point.row > 0 {
-            Some(ExpandExcerptDirection::Up)
-        } else if self.point.row + 1 == region.range.end.row
-            && buffer_point.row + 1 < region.buffer.max_point().row
-        {
-            Some(ExpandExcerptDirection::Down)
+        let expand_info = if self.is_singleton {
+            None
+        } else if self.point.row == region.range.start.row {
+            Some(ExpandInfo {
+                direction: ExpandExcerptDirection::Up,
+                enabled: buffer_point.row > 0,
+                excerpt_id: region.excerpt.id,
+            })
+        } else if self.point.row + 1 == region.range.end.row {
+            Some(ExpandInfo {
+                direction: ExpandExcerptDirection::Down,
+                enabled: buffer_point.row + 1 < region.buffer.max_point().row,
+                excerpt_id: region.excerpt.id,
+            })
         } else {
             None
         };
@@ -7044,6 +7061,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 .diff_hunk_status
                 .filter(|_| self.point < region.range.end),
             expand_direction: expand_direction.map(|dir| (region.excerpt.id, dir)),
+            expand_info,
         });
         self.point += Point::new(1, 0);
         result

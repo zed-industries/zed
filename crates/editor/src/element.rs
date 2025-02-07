@@ -15,14 +15,13 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    AcceptEditPrediction, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
-    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
-    EditPredictionPreview, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    ExpandExcerpts, FocusedBlock, GoToHunk, GoToPrevHunk, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase,
-    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
-    EDIT_PREDICTION_REQUIRES_MODIFIER_KEY_CONTEXT, FILE_HEADER_HEIGHT,
+    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, ExpandExcerptsUp, FocusedBlock,
+    GoToHunk, GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
@@ -31,15 +30,15 @@ use collections::{BTreeMap, HashMap, HashSet};
 use file_icons::FileIcons;
 use git::{blame::BlameEntry, Oid};
 use gpui::{
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, svg, transparent_black, Action, AnyElement, App,
-    AvailableSpace, Axis, Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners,
-    CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity, Focusable as _,
-    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement,
-    KeyBindingContextPredicate, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled,
-    Subscription, TextRun, TextStyleRefinement, WeakEntity, Window,
+    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
+    relative, size, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
+    ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
+    Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
+    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -51,8 +50,8 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
-    RowInfo, ToOffset,
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
+    MultiBufferRow, RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};
@@ -1574,8 +1573,9 @@ impl EditorElement {
                 let x_offset = if *is_wide {
                     px(0.)
                 } else {
-                    ((gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.)
-                        .max(px(0.))
+                    px(0.)
+                    // ((gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.)
+                    //     .max(px(0.))
                 };
 
                 let centering_offset =
@@ -2076,44 +2076,63 @@ impl EditorElement {
         line_height: Pixels,
         scroll_position: gpui::Point<f32>,
         buffer_rows: &[RowInfo],
-        window: &Window,
+        window: &mut Window,
         cx: &mut App,
-    ) -> (Vec<ExcerptLine>, Vec<Option<(AnyElement, bool)>>) {
+    ) -> (Vec<ExcerptLine>, Vec<Option<(AnyElement, bool)>>) // TODO: Return a pixel offset instead of is_wide
+    {
         let mut lines = Vec::new();
 
-        const ICON_WIDTH: Pixels = px(23.);
-        const ICON_HEIGHT: Pixels = px(15.);
+        // get the font size a as a whole number
+        let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size());
+
+        let mut icon_size = editor_font_size.round();
+
+        // Ensure icon size will be odd, so the center line won't be blurry
+        if icon_size.0.round() % 2.0 == 0.0 {
+            // todo: + or -?
+            icon_size -= px(1.0);
+        };
 
         let mut start_line = None;
-        let line_x = gutter_hitbox.origin.x + ICON_WIDTH.half();
-        let start_y = gutter_hitbox.origin.y;
+        let line_y_spacing = 8.0;
+        let line_x = gutter_hitbox.origin.x + icon_size - px(3.5);
+        let start_y = gutter_hitbox.origin.y + px(line_y_spacing);
         let scroll_top = scroll_position.y * line_height;
 
         let elements = buffer_rows
             .into_iter()
             .enumerate()
             .map(|(ix, row_info)| {
-                let (excerpt_id, expand_direction) = row_info.expand_direction?;
+                let ExpandInfo {
+                    excerpt_id,
+                    direction,
+                    enabled,
+                } = row_info.expand_info?;
 
-                let icon_name = match expand_direction {
+                let icon_name = match direction {
                     ExpandExcerptDirection::Up => IconName::ExpandUp,
                     ExpandExcerptDirection::Down => IconName::ExpandDown,
                     ExpandExcerptDirection::UpAndDown => IconName::Split,
                 };
 
-                match expand_direction {
+                match direction {
                     ExpandExcerptDirection::Up => {
                         start_line = Some(ix);
                     }
                     ExpandExcerptDirection::Down => {
-                        let length = line_height * (ix - start_line.unwrap_or(0)) - ICON_HEIGHT
-                            + ICON_HEIGHT / 4.;
+                        let length = line_height * (ix - start_line.unwrap_or(0)) - icon_size
+                            + icon_size / 4.
+                            - px(line_y_spacing + 2.0);
                         let origin = gpui::Point::new(
                             line_x,
-                            start_y + line_height * (start_line.unwrap_or(0)) + ICON_HEIGHT
+                            start_y + line_height * (start_line.unwrap_or(0)) + icon_size
                                 - (scroll_top % line_height),
                         );
-                        lines.push(ExcerptLine { origin, length });
+                        let bounds = Bounds::new(origin, Size::new(px(1.), length));
+                        lines.push(ExcerptLine {
+                            bounds,
+                            color: cx.theme().colors().editor_line_number,
+                        });
                         start_line = None;
                     }
                     ExpandExcerptDirection::UpAndDown => {}
@@ -2128,30 +2147,25 @@ impl EditorElement {
                     .snapshot(cx)
                     .max_excerpt_buffer_row(excerpt_id)?;
                 let is_wide = max_row > 9999;
-                // get the font size a as a whole number
-                let mut font_size = self
-                    .style
-                    .text
-                    .font_size
-                    .to_pixels(window.rem_size())
-                    .round();
-                // Ensure icon size will be odd, so the center line won't be blurry
-                if font_size.0.round() % 2.0 == 0.0 {
-                    // todo: + or -?
-                    font_size -= px(1.0);
+
+                let tooltip_label = match direction {
+                    ExpandExcerptDirection::Up => "Expand excerpt up",
+                    ExpandExcerptDirection::Down => "Expand excerpt down",
+                    ExpandExcerptDirection::UpAndDown => "Expand excerpt up and down",
                 };
 
                 Some((
                     IconButton::new(("expand", ix), icon_name)
                         .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
-                        .icon_size(IconSize::Custom(font_size))
+                        .icon_size(IconSize::Custom(editor_font_size))
                         .size(ButtonSize::Compact)
                         .style(ButtonStyle::Transparent)
                         .on_click(move |_, _, cx| {
                             editor.update(cx, |editor, cx| {
-                                editor.expand_excerpt(excerpt_id, expand_direction, cx);
+                                editor.expand_excerpt(excerpt_id, direction, cx);
                             });
                         })
+                        .tooltip(Tooltip::text(tooltip_label))
                         .into_any_element(),
                     is_wide,
                 ))
@@ -2161,10 +2175,15 @@ impl EditorElement {
         if let Some(start_line) = start_line {
             let origin = gpui::Point::new(
                 line_x,
-                start_y + line_height * (start_line) + ICON_HEIGHT - (scroll_top % line_height),
+                start_y + line_height * (start_line) + icon_size - (scroll_top % line_height),
             );
             let length = gutter_hitbox.bottom() - origin.y;
-            lines.push(ExcerptLine { origin, length })
+
+            let bounds = Bounds::new(origin, Size::new(px(1.), length));
+            lines.push(ExcerptLine {
+                bounds,
+                color: cx.theme().colors().editor_line_number,
+            })
         }
 
         (lines, elements)
@@ -4384,13 +4403,7 @@ impl EditorElement {
         cx: &mut App,
     ) {
         for excerpt_line in &layout.excerpt_lines {
-            window.paint_quad(fill(
-                Bounds {
-                    origin: excerpt_line.origin,
-                    size: size(px(1.), excerpt_line.length),
-                },
-                cx.theme().colors().editor_line_number,
-            ));
+            window.paint_quad(fill(excerpt_line.bounds, excerpt_line.color));
         }
     }
 
@@ -8142,8 +8155,8 @@ pub struct IndentGuideLayout {
 
 #[derive(Debug)]
 pub struct ExcerptLine {
-    origin: gpui::Point<Pixels>,
-    length: Pixels,
+    bounds: gpui::Bounds<Pixels>,
+    color: Hsla,
 }
 
 pub struct CursorLayout {
