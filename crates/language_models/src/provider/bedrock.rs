@@ -1,11 +1,13 @@
-use crate::AllLanguageModelSettings;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
 use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput};
-use bedrock::bedrock_client::Config;
-use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
+use bedrock::bedrock_client::{self, Config};
+use bedrock::{BedrockError, BedrockStreamingResponse, Model};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{
@@ -27,13 +29,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
-use std::pin::Pin;
-use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
+
+use crate::AllLanguageModelSettings;
 
 const PROVIDER_ID: &str = "amazon-bedrock";
 const PROVIDER_NAME: &str = "Amazon Bedrock";
