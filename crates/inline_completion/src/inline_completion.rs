@@ -22,7 +22,7 @@ pub struct InlineCompletion {
 pub enum DataCollectionState {
     /// The provider doesn't support data collection.
     Unsupported,
-    /// Data collection is enabled
+    /// Data collection is enabled.
     Enabled,
     /// Data collection is disabled or unanswered.
     Disabled,
