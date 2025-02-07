@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context as _, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
+
 use git::repository::Branch;
 use gpui::{
     rems, AnyElement, App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -13,13 +14,34 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
-use zed_actions::branches::OpenRecent;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
-        workspace.register_action(BranchList::open);
+        workspace.register_action(open);
     })
     .detach();
+}
+
+pub fn open(
+    _: &mut Workspace,
+    _: &zed_actions::git::Branch,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let this = cx.entity().clone();
+    cx.spawn_in(window, |_, mut cx| async move {
+        // Modal branch picker has a longer trailoff than a popover one.
+        let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
+
+        this.update_in(&mut cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                BranchList::new(delegate, 34., window, cx)
+            })
+        })?;
+
+        Ok(())
+    })
+    .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
 }
 
 pub struct BranchList {
@@ -29,29 +51,7 @@ pub struct BranchList {
 }
 
 impl BranchList {
-    pub fn open(
-        _: &mut Workspace,
-        _: &OpenRecent,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        let this = cx.entity().clone();
-        cx.spawn_in(window, |_, mut cx| async move {
-            // Modal branch picker has a longer trailoff than a popover one.
-            let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
-
-            this.update_in(&mut cx, |workspace, window, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    BranchList::new(delegate, 34., window, cx)
-                })
-            })?;
-
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to read branches", window, cx, |_, _, _| None)
-    }
-
-    fn new(
+    pub fn new(
         delegate: BranchListDelegate,
         rem_width: f32,
         window: &mut Window,
@@ -114,7 +114,7 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
-    async fn new(
+    pub async fn new(
         workspace: Entity<Workspace>,
         branch_name_trailoff_after: usize,
         cx: &AsyncApp,
@@ -141,7 +141,7 @@ impl BranchListDelegate {
         })
     }
 
-    fn branch_count(&self) -> usize {
+    pub fn branch_count(&self) -> usize {
         self.matches
             .iter()
             .filter(|item| matches!(item, BranchEntry::Branch(_)))

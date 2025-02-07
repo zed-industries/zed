@@ -147,7 +147,6 @@ members = [
     "crates/ui_macros",
     "crates/util",
     "crates/util_macros",
-    "crates/vcs_menu",
     "crates/vim",
     "crates/vim_mode_setting",
     "crates/welcome",
@@ -346,7 +345,6 @@ ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
-vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
 welcome = { path = "crates/welcome" }
@@ -676,7 +674,6 @@ telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }
-vcs_menu = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]

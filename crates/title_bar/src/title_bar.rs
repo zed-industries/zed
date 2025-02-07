@@ -530,7 +530,7 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::branches::OpenRecent),
+                        Some(&zed_actions::git::Branch),
                         "Local branches only",
                         window,
                         cx,
@@ -538,7 +538,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone(), cx);
+                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 }),
         )
