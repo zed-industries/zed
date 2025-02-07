@@ -5556,6 +5556,7 @@ impl Editor {
                             .px_2()
                             .py_1()
                             .elevation_2(cx)
+                            .border_color(cx.theme().colors().border)
                             .rounded_tl(px(0.))
                             .gap_2()
                             .child(
@@ -5624,6 +5625,7 @@ impl Editor {
                 .flex_1()
                 .px_2()
                 .elevation_2(cx)
+                .border_color(cx.theme().colors().border)
                 .child(completion)
                 .child(ui::Divider::vertical())
                 .child(
@@ -5684,9 +5686,22 @@ impl Editor {
         }
 
         match &completion.completion {
-            InlineCompletion::Move { .. } => {
-                Some(div().pl_1().pr_2().child(Label::new("Jump to Edit")))
-            }
+            InlineCompletion::Move {
+                target, snapshot, ..
+            } => Some(
+                h_flex()
+                    .px_2()
+                    .gap_2()
+                    .flex_1()
+                    .child(
+                        if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                            Icon::new(IconName::ZedPredictDown)
+                        } else {
+                            Icon::new(IconName::ZedPredictUp)
+                        },
+                    )
+                    .child(Label::new("Jump to Edit")),
+            ),
 
             InlineCompletion::Edit {
                 edits,
