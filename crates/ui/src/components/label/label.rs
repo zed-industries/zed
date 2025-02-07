@@ -172,6 +172,11 @@ impl LabelCommon for Label {
         self.base = self.base.single_line();
         self
     }
+
+    fn buffer_font(mut self, cx: &App) -> Self {
+        self.base = self.base.buffer_font(cx);
+        self
+    }
 }
 
 impl RenderOnce for Label {
