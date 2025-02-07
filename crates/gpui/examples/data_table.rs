@@ -1,4 +1,8 @@
-use std::{ops::Range, rc::Rc};
+use std::{
+    ops::Range,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     canvas, div, point, prelude::*, px, rgb, size, uniform_list, App, Application, Bounds, Context,
@@ -18,7 +22,7 @@ pub struct Quote {
     open: f64,
     high: f64,
     low: f64,
-    timestamp: i64,
+    timestamp: Instant,
     volume: i64,
     turnover: f64,
     ttm: f64,
@@ -46,7 +50,8 @@ impl Quote {
         let open = prev_close + rng.gen_range(-3.0..3.0);
         let high = (prev_close + rng.gen_range::<f64, _>(0.0..10.0)).max(open);
         let low = (prev_close - rng.gen_range::<f64, _>(0.0..10.0)).min(open);
-        let timestamp = 1651115955 + rng.gen_range(-1000..1000);
+        // Randomize the timestamp in the past 24 hours
+        let timestamp = Instant::now() - Duration::from_secs(rng.gen_range(0..86400));
         let volume = rng.gen_range(1_000_000..100_000_000);
         let turnover = last_done * volume as f64;
         let symbol = {
@@ -74,8 +79,8 @@ impl Quote {
             rng.gen_range(10000..100000)
         );
         let ttm = rng.gen_range(0.0..10.0);
-        let market_cap = rng.gen_range(100.0..1000.0);
-        let float_cap = rng.gen_range(100.0..1000.0);
+        let market_cap = rng.gen_range(1_000_000.0..10_000_000.0);
+        let float_cap = market_cap + rng.gen_range(1_000.0..10_000.0);
         let shares = rng.gen_range(100.0..1000.0);
         let pb = market_cap / shares;
         let pe = market_cap / shares;
@@ -130,18 +135,18 @@ impl Quote {
     }
 
     fn turnover_ratio(&self) -> f64 {
-        self.turnover / self.volume as f64 * 100.0
+        self.volume as f64 / self.turnover * 100.0
     }
 }
 
 #[derive(IntoElement)]
-struct Item {
+struct TableRow {
     ix: usize,
     quote: Rc<Quote>,
 }
-impl Item {
+impl TableRow {
     fn new(ix: usize, quote: Rc<Quote>) -> Self {
-        Item { ix, quote }
+        Self { ix, quote }
     }
 
     fn render_cell(&self, key: &str, width: Pixels, color: gpui::Hsla) -> impl IntoElement {
@@ -165,7 +170,7 @@ impl Item {
                     .child(format!("{:.2}%", self.quote.change())),
                 "timestamp" => div()
                     .text_color(color)
-                    .child(format!("{}", self.quote.timestamp)),
+                    .child(format!("{:?}", self.quote.timestamp.elapsed().as_secs())),
                 "open" => div()
                     .text_color(color)
                     .child(format!("{:.2}", self.quote.open)),
@@ -181,11 +186,13 @@ impl Item {
                 "eps" => div()
                     .text_color(color)
                     .child(format!("{:.2}", self.quote.eps)),
-                "market_cap" => div().child(format!("{:.2}", self.quote.market_cap)),
-                "float_cap" => div().child(format!("{:.2}", self.quote.float_cap)),
-                "turnover" => div().child(format!("{:.2}", self.quote.turnover)),
-                "volume" => div().child(format!("{:.2}", self.quote.volume)),
-                "turnover_ratio" => div().child(format!("{:.2}%", self.quote.turnover_ratio())),
+                "market_cap" => {
+                    div().child(format!("{:.2} M", self.quote.market_cap / 1_000_000.0))
+                }
+                "float_cap" => div().child(format!("{:.2} M", self.quote.float_cap / 1_000_000.0)),
+                "turnover" => div().child(format!("{:.2} M", self.quote.turnover / 1_000_000.0)),
+                "volume" => div().child(format!("{:.2} M", self.quote.volume as f64 / 1_000_000.0)),
+                "turnove_ratio" => div().child(format!("{:.2}%", self.quote.turnover_ratio())),
                 "pe" => div().child(format!("{:.2}", self.quote.pe)),
                 "pb" => div().child(format!("{:.2}", self.quote.pb)),
                 "shares" => div().child(format!("{:.2}", self.quote.shares)),
@@ -228,7 +235,7 @@ const FIELDS: [(&str, f32); 24] = [
     ("timestamp", 120.),
 ];
 
-impl RenderOnce for Item {
+impl RenderOnce for TableRow {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let color = self.quote.change_color();
         div()
@@ -236,6 +243,11 @@ impl RenderOnce for Item {
             .flex_row()
             .border_b_1()
             .border_color(rgb(0xE0E0E0))
+            .bg(if self.ix % 2 == 0 {
+                rgb(0xFFFFFF)
+            } else {
+                rgb(0xFAFAFA)
+            })
             .py_0p5()
             .px_2()
             .children(FIELDS.map(|(key, width)| self.render_cell(key, px(width), color)))
@@ -400,7 +412,9 @@ impl Render for DataTable {
                             .border_b_1()
                             .border_color(rgb(0xE0E0E0))
                             .text_color(rgb(0x555555))
-                            .p_2()
+                            .bg(rgb(0xF0F0F0))
+                            .py_1()
+                            .px_2()
                             .text_xs()
                             .children(FIELDS.map(|(key, width)| {
                                 div()
@@ -423,7 +437,7 @@ impl Render for DataTable {
                                         let mut items = Vec::with_capacity(range.end - range.start);
                                         for i in range {
                                             if let Some(quote) = this.quotes.get(i) {
-                                                items.push(Item::new(i, quote.clone()));
+                                                items.push(TableRow::new(i, quote.clone()));
                                             }
                                         }
                                         items
