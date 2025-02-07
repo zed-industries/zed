@@ -3190,49 +3190,11 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let accept_keystroke: Option<Keystroke>;
-
-                    // TODO: load modifier from keymap.
-                    // `bindings_for_action_in` returns `None` in Linux, and is intermittent on macOS
-                    #[cfg(target_os = "macos")]
-                    {
-                        // let bindings = window.bindings_for_action_in(
-                        //     &crate::AcceptEditPrediction,
-                        //     &self.editor.focus_handle(cx),
-                        // );
-
-                        // let last_binding = bindings.last();
-
-                        // accept_keystroke = if let Some(binding) = last_binding {
-                        //     match &binding.keystrokes() {
-                        //         // TODO: no need to clone once this logic works on linux.
-                        //         [keystroke] => Some(keystroke.clone()),
-                        //         _ => None,
-                        //     }
-                        // } else {
-                        //     None
-                        // };
-                        accept_keystroke = Some(Keystroke {
-                            modifiers: gpui::Modifiers {
-                                alt: true,
-                                ..Default::default()
-                            },
-                            key: "tab".to_string(),
-                            key_char: None,
-                        });
-                    }
-
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        accept_keystroke = Some(Keystroke {
-                            modifiers: gpui::Modifiers {
-                                alt: true,
-                                ..Default::default()
-                            },
-                            key: "enter".to_string(),
-                            key_char: None,
-                        });
-                    }
+                    let bindings = window.bindings_for_action_in(
+                        &crate::AcceptInlineCompletion,
+                        &self.editor.focus_handle(cx),
+                    );
+                    let accept_keystroke = single_keystroke_binding(&bindings);
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
@@ -5739,47 +5701,14 @@ fn inline_completion_accept_indicator(
     label: impl Into<SharedString>,
     icon: Option<IconName>,
     previewing: bool,
-    focus_handle: FocusHandle,
+    editor_focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let use_hardcoded_linux_bindings;
-
-    #[cfg(target_os = "macos")]
-    {
-        use_hardcoded_linux_bindings = false;
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        use_hardcoded_linux_bindings = true;
-    }
-
-    let accept_keystroke = if use_hardcoded_linux_bindings {
-        if previewing {
-            Keystroke {
-                modifiers: Default::default(),
-                key: "enter".to_string(),
-                key_char: None,
-            }
-        } else {
-            Keystroke {
-                modifiers: Default::default(),
-                key: "tab".to_string(),
-                key_char: None,
-            }
-        }
-    } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptEditPrediction, &focus_handle);
-        if let Some(keystroke) = bindings
-            .last()
-            .and_then(|binding| binding.keystrokes().first())
-        {
-            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
-            keystroke.clone()
-        } else {
-            return None;
-        }
+    let bindings =
+        window.bindings_for_action_in(&crate::AcceptInlineCompletion, &editor_focus_handle);
+    let Some(accept_keystroke) = single_keystroke_binding(&bindings) else {
+        return None;
     };
 
     let accept_key = h_flex()
@@ -5826,6 +5755,17 @@ fn inline_completion_accept_indicator(
             })
             .into_any(),
     )
+}
+
+fn single_keystroke_binding(bindings: &[gpui::KeyBinding]) -> Option<&Keystroke> {
+    if let Some(binding) = bindings.last() {
+        match &binding.keystrokes() {
+            [keystroke] => Some(keystroke),
+            _ => None,
+        }
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
