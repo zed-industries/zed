@@ -28,7 +28,6 @@ pub struct MarkdownStyle {
     pub block_quote_border_color: Hsla,
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
-    pub break_style: StyleRefinement,
     pub heading: StyleRefinement,
 }
 
@@ -44,11 +43,11 @@ impl Default for MarkdownStyle {
             block_quote_border_color: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
-            break_style: Default::default(),
             heading: Default::default(),
         }
     }
 }
+
 pub struct Markdown {
     source: String,
     selection: Selection,
@@ -751,8 +750,8 @@ impl Element for MarkdownElement {
                     }
                     _ => log::error!("unsupported markdown tag end: {:?}", tag),
                 },
-                MarkdownEvent::Text => {
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.start);
+                MarkdownEvent::Text(parsed) => {
+                    builder.push_text(parsed, range.start);
                 }
                 MarkdownEvent::Code => {
                     builder.push_text_style(self.style.inline_code.clone());
@@ -777,12 +776,7 @@ impl Element for MarkdownElement {
                     builder.pop_div()
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.start),
-                MarkdownEvent::HardBreak => {
-                    let mut d = div().py_3();
-                    d.style().refine(&self.style.break_style);
-                    builder.push_div(d, range, markdown_end);
-                    builder.pop_div()
-                }
+                MarkdownEvent::HardBreak => builder.push_text("\n", range.start),
                 _ => log::error!("unsupported markdown event {:?}", event),
             }
         }
