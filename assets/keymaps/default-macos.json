@@ -39,8 +39,8 @@
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
-      "ctrl-shift-z": "zeta::RateCompletions",
-      "ctrl-shift-i": "edit_prediction::ToggleMenu"
+      "ctrl-cmd-z": "zeta::RateCompletions",
+      "ctrl-cmd-i": "edit_prediction::ToggleMenu"
     }
   },
   {
@@ -132,7 +132,8 @@
       "cmd-alt-g b": "editor::ToggleGitBlame",
       "cmd-i": "editor::ShowSignatureHelp",
       "ctrl-f12": "editor::GoToDeclaration",
-      "alt-ctrl-f12": "editor::GoToDeclarationSplit"
+      "alt-ctrl-f12": "editor::GoToDeclarationSplit",
+      "ctrl-cmd-e": "editor::ToggleEditPrediction"
     }
   },
   {
