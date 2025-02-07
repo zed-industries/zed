@@ -2,7 +2,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     Project, ProjectEntryId, ProjectItem, ProjectPath,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
@@ -98,27 +98,27 @@ impl ImageItem {
         project: Entity<Project>,
         cx: &mut AsyncApp,
     ) -> Result<ImageMetadata> {
-        let project_path = cx.update(|cx| image.read(cx).project_path(cx))?;
+        let (fs, image_path) = cx.update(|cx| {
+            let project_path = image.read(cx).project_path(cx);
 
-        let worktree = cx
-            .update(|cx| {
-                project
-                    .read(cx)
-                    .worktree_for_id(project_path.worktree_id, cx)
-            })?
-            .ok_or_else(|| anyhow::anyhow!("Worktree not found"))?;
+            let worktree = project
+                .read(cx)
+                .worktree_for_id(project_path.worktree_id, cx)
+                .ok_or_else(|| anyhow!("worktree not found"))?;
+            let worktree_root = worktree.read(cx).abs_path();
+            let image_path = image.read(cx).path();
+            let image_path = if image_path.is_absolute() {
+                image_path.to_path_buf()
+            } else {
+                worktree_root.join(image_path)
+            };
 
-        let worktree_root = cx.update(|cx| worktree.read(cx).abs_path())?;
-        let image_path = cx.update(|cx| image.read(cx).path().clone())?;
-        let path = if image_path.is_absolute() {
-            image_path.to_path_buf()
-        } else {
-            worktree_root.join(image_path)
-        };
+            let fs = project.read(cx).fs().clone();
 
-        let fs = project.update(cx, |project, _| project.fs().clone())?;
+            anyhow::Ok((fs, image_path))
+        })??;
 
-        let image_bytes = fs.load_bytes(&path).await?;
+        let image_bytes = fs.load_bytes(&image_path).await?;
         let image_format = image::guess_format(&image_bytes)?;
 
         let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
@@ -127,9 +127,9 @@ impl ImageItem {
 
         let (width, height) = image.dimensions();
         let file_metadata = fs
-            .metadata(path.as_path())
+            .metadata(image_path.as_path())
             .await?
-            .ok_or_else(|| anyhow::anyhow!("No metadata found"))?;
+            .ok_or_else(|| anyhow!("failed to load image metadata"))?;
 
         Ok(ImageMetadata {
             width,
