@@ -3,8 +3,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
+/// The settings for the image viewer.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ImageViewerSettings {
+    /// The unit to use for displaying image file sizes.
+    ///
+    /// Default: "binary"
     #[serde(default)]
     pub unit: ImageFileSizeUnit,
 }
@@ -12,8 +16,10 @@ pub struct ImageViewerSettings {
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnit {
+    /// Displays file size in binary units (e.g., KiB, MiB).
     #[default]
     Binary,
+    /// Displays file size in decimal units (e.g., KB, MB).
     Decimal,
 }
 
@@ -26,6 +32,11 @@ impl Settings for ImageViewerSettings {
         sources: SettingsSources<Self::FileContent>,
         _: &mut App,
     ) -> Result<Self, anyhow::Error> {
-        sources.json_merge()
+        SettingsSources::<Self::FileContent>::json_merge_with(
+            [sources.default]
+                .into_iter()
+                .chain(sources.user)
+                .chain(sources.server),
+        )
     }
 }
