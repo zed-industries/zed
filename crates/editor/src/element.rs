@@ -1552,10 +1552,8 @@ impl EditorElement {
     fn prepaint_expand_toggles(
         &self,
         expand_toggles: &mut [Option<(AnyElement, bool)>],
-        rows: &[RowInfo],
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
-        gutter_settings: crate::editor_settings::Gutter,
         scroll_pixel_position: gpui::Point<Pixels>,
         gutter_hitbox: &Hitbox,
         window: &mut Window,
@@ -2072,22 +2070,23 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn layout_expand_toggles(
+    fn layout_excerpt_gutter(
         &self,
-        // gutter_hitbox: &Hitbox,
-        // gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
         line_height: Pixels,
-        // scroll_pixel_position: gpui::Point<Pixels>,
-        // range: Range<DisplayRow>,
+        scroll_position: gpui::Point<f32>,
         buffer_rows: &[RowInfo],
-        // snapshot: &EditorSnapshot,
-        // window: &mut Window,
-        // editor: &Entity<Editor>,
         cx: &mut App,
     ) -> (Vec<ExcerptLine>, Vec<Option<(AnyElement, bool)>>) {
         let mut lines = Vec::new();
 
+        const ICON_WIDTH: Pixels = px(23.);
+        const ICON_HEIGHT: Pixels = px(15.);
+
         let mut start_line = None;
+        let line_x = gutter_hitbox.origin.x + ICON_WIDTH.half();
+        let start_y = gutter_hitbox.origin.y;
+        let scroll_top = scroll_position.y * line_height;
 
         let elements = buffer_rows
             .into_iter()
@@ -2106,11 +2105,15 @@ impl EditorElement {
                         start_line = Some(ix);
                     }
                     ExpandExcerptDirection::Down => {
-                        let length = line_height * (ix - start_line.unwrap_or(0));
-                        let origin = gpui::Point::new(px(5.), start_line.unwrap_or(0) *);
-                        lines.push(ExcerptLine {
-                            origin, length
-                        })
+                        let length = line_height * (ix - start_line.unwrap_or(0)) - ICON_HEIGHT
+                            + ICON_HEIGHT / 4.;
+                        let origin = gpui::Point::new(
+                            line_x,
+                            start_y + line_height * (start_line.unwrap_or(0)) + ICON_HEIGHT
+                                - (scroll_top % line_height),
+                        );
+                        lines.push(ExcerptLine { origin, length });
+                        start_line = None;
                     }
                     ExpandExcerptDirection::UpAndDown => {}
                 }
@@ -2143,12 +2146,12 @@ impl EditorElement {
             .collect();
 
         if let Some(start_line) = start_line {
-            let origin = gpui::Point::new(px(5.), start_line);
-            let length = (buffer_rows.len() - start_line) * line_height;
-            lines.push(ExcerptLine{
-                origin,
-                length
-            })
+            let origin = gpui::Point::new(
+                line_x,
+                start_y + line_height * (start_line) + ICON_HEIGHT - (scroll_top % line_height),
+            );
+            let length = gutter_hitbox.bottom() - origin.y;
+            lines.push(ExcerptLine { origin, length })
         }
 
         (lines, elements)
@@ -2572,24 +2575,10 @@ impl EditorElement {
             Block::FoldedBuffer {
                 first_excerpt,
                 prev_excerpt,
-                show_excerpt_controls,
                 height,
             } => {
                 let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id);
                 let mut result = v_flex().id(block_id).w_full();
-
-                if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
-                        result = result.child(self.render_expand_excerpt_control(
-                            block_id,
-                            ExpandExcerptDirection::Down,
-                            prev_excerpt.id,
-                            gutter_dimensions,
-                            window,
-                            cx,
-                        ));
-                    }
-                }
 
                 let jump_data = header_jump_data(snapshot, block_row_start, *height, first_excerpt);
                 result
@@ -2607,25 +2596,11 @@ impl EditorElement {
             Block::ExcerptBoundary {
                 prev_excerpt,
                 next_excerpt,
-                show_excerpt_controls,
                 height,
                 starts_new_buffer,
             } => {
                 let color = cx.theme().colors().clone();
                 let mut result = v_flex().id(block_id).w_full();
-
-                if let Some(prev_excerpt) = prev_excerpt {
-                    if *show_excerpt_controls {
-                        result = result.child(self.render_expand_excerpt_control(
-                            block_id,
-                            ExpandExcerptDirection::Down,
-                            prev_excerpt.id,
-                            gutter_dimensions,
-                            window,
-                            cx,
-                        ));
-                    }
-                }
 
                 if let Some(next_excerpt) = next_excerpt {
                     let jump_data =
@@ -2647,40 +2622,17 @@ impl EditorElement {
                             result = result
                                 .child(div().h(FILE_HEADER_HEIGHT as f32 * window.line_height()));
                         }
-
-                        if *show_excerpt_controls {
-                            result = result.child(self.render_expand_excerpt_control(
-                                block_id,
-                                ExpandExcerptDirection::Up,
-                                next_excerpt.id,
-                                gutter_dimensions,
-                                window,
-                                cx,
-                            ));
-                        }
                     } else {
-                        if *show_excerpt_controls {
-                            result = result.child(
-                                h_flex()
-                                    .relative()
-                                    .child(
-                                        div()
-                                            .top(px(0.))
-                                            .absolute()
-                                            .w_full()
-                                            .h_px()
-                                            .bg(color.border_variant),
-                                    )
-                                    .child(self.render_expand_excerpt_control(
-                                        block_id,
-                                        ExpandExcerptDirection::Up,
-                                        next_excerpt.id,
-                                        gutter_dimensions,
-                                        window,
-                                        cx,
-                                    )),
-                            );
-                        }
+                        result = result.child(
+                            h_flex().relative().child(
+                                div()
+                                    .top(line_height / 2.)
+                                    .absolute()
+                                    .w_full()
+                                    .h_px()
+                                    .bg(color.border_variant),
+                            ),
+                        );
                     };
                 }
 
@@ -2863,95 +2815,6 @@ impl EditorElement {
                             })),
                     ),
             )
-    }
-
-    fn render_expand_excerpt_control(
-        &self,
-        block_id: BlockId,
-        direction: ExpandExcerptDirection,
-        excerpt_id: ExcerptId,
-        gutter_dimensions: &GutterDimensions,
-        window: &Window,
-        cx: &mut App,
-    ) -> impl IntoElement {
-        let color = cx.theme().colors().clone();
-        let hover_color = color.border_variant.opacity(0.5);
-        let focus_handle = self.editor.focus_handle(cx).clone();
-
-        let icon_offset =
-            gutter_dimensions.width - (gutter_dimensions.left_padding + gutter_dimensions.margin);
-        let header_height = MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * window.line_height();
-        let group_name = if direction == ExpandExcerptDirection::Down {
-            "expand-down"
-        } else {
-            "expand-up"
-        };
-
-        let expand_area = |id: SharedString| {
-            h_flex()
-                .id(id)
-                .w_full()
-                .cursor_pointer()
-                .block_mouse_down()
-                .on_mouse_move(|_, _, cx| cx.stop_propagation())
-                .hover(|style| style.bg(hover_color))
-                .tooltip({
-                    let focus_handle = focus_handle.clone();
-                    move |window, cx| {
-                        Tooltip::for_action_in(
-                            "Expand Excerpt",
-                            &ExpandExcerpts { lines: 0 },
-                            &focus_handle,
-                            window,
-                            cx,
-                        )
-                    }
-                })
-        };
-
-        expand_area(
-            format!(
-                "block-{}-{}",
-                block_id,
-                if direction == ExpandExcerptDirection::Down {
-                    "down"
-                } else {
-                    "up"
-                }
-            )
-            .into(),
-        )
-        .group(group_name)
-        .child(
-            h_flex()
-                .w(icon_offset)
-                .h(header_height)
-                .flex_none()
-                .justify_end()
-                .child(
-                    ButtonLike::new("expand-icon")
-                        .style(ButtonStyle::Transparent)
-                        .child(
-                            svg()
-                                .path(if direction == ExpandExcerptDirection::Down {
-                                    IconName::ArrowDownFromLine.path()
-                                } else {
-                                    IconName::ArrowUpFromLine.path()
-                                })
-                                .size(IconSize::XSmall.rems())
-                                .text_color(cx.theme().colors().editor_line_number)
-                                .group_hover(group_name, |style| {
-                                    style.text_color(cx.theme().colors().editor_active_line_number)
-                                }),
-                        ),
-                ),
-        )
-        .on_click(window.listener_for(&self.editor, {
-            move |editor, _, _, cx| {
-                editor.expand_excerpt(excerpt_id, direction, cx);
-                cx.stop_propagation();
-            }
-        }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3188,7 +3051,6 @@ impl EditorElement {
         &self,
         StickyHeaderExcerpt {
             excerpt,
-            next_excerpt_controls_present,
             next_buffer_row,
         }: StickyHeaderExcerpt<'_>,
         scroll_position: f32,
@@ -3236,10 +3098,6 @@ impl EditorElement {
             // Push up the sticky header when the excerpt is getting close to the top of the viewport
 
             let mut max_row = next_buffer_row - FILE_HEADER_HEIGHT * 2;
-
-            if next_excerpt_controls_present {
-                max_row -= MULTI_BUFFER_EXCERPT_HEADER_HEIGHT;
-            }
 
             let offset = scroll_position - max_row as f32;
 
@@ -4504,6 +4362,23 @@ impl EditorElement {
                 }
             }
         })
+    }
+
+    fn paint_excerpt_lines(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        for excerpt_line in &layout.excerpt_lines {
+            window.paint_quad(fill(
+                Bounds {
+                    origin: excerpt_line.origin,
+                    size: size(px(1.), excerpt_line.length),
+                },
+                cx.theme().colors().editor_line_number,
+            ));
+        }
     }
 
     fn paint_indent_guides(
@@ -7186,15 +7061,11 @@ impl Element for EditorElement {
 
                     let (excerpt_lines, mut expand_toggles) =
                         window.with_element_namespace("crease_toggles", |window| {
-                            self.layout_expand_toggles(
-                                // &gutter_hitbox,
-                                // &gutter_dimensions,
+                            self.layout_excerpt_gutter(
+                                &gutter_hitbox,
                                 line_height,
-                                // // scroll_position,
-                                // start_row..end_row,
+                                scroll_position,
                                 &row_infos,
-                                // &snapshot,
-                                // window,
                                 cx,
                             )
                         });
@@ -7708,10 +7579,8 @@ impl Element for EditorElement {
                     window.with_element_namespace("expand_toggles", |window| {
                         self.prepaint_expand_toggles(
                             &mut expand_toggles,
-                            &row_infos,
                             line_height,
                             &gutter_dimensions,
-                            gutter_settings,
                             scroll_pixel_position,
                             &gutter_hitbox,
                             window,
@@ -7865,6 +7734,7 @@ impl Element for EditorElement {
                     if layout.gutter_hitbox.size.width > Pixels::ZERO {
                         self.paint_blamed_display_rows(layout, window, cx);
                         self.paint_line_numbers(layout, window, cx);
+                        self.paint_excerpt_lines(layout, window, cx);
                     }
 
                     self.paint_text(layout, window, cx);

@@ -7030,7 +7030,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         let expand_direction = if self.point.row == region.range.start.row && buffer_point.row > 0 {
             Some(ExpandExcerptDirection::Up)
         } else if self.point.row + 1 == region.range.end.row
-            && buffer_point.row < region.buffer.max_point().row
+            && buffer_point.row + 1 < region.buffer.max_point().row
         {
             Some(ExpandExcerptDirection::Down)
         } else {

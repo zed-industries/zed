@@ -285,14 +285,12 @@ pub enum Block {
         first_excerpt: ExcerptInfo,
         prev_excerpt: Option<ExcerptInfo>,
         height: u32,
-        show_excerpt_controls: bool,
     },
     ExcerptBoundary {
         prev_excerpt: Option<ExcerptInfo>,
         next_excerpt: Option<ExcerptInfo>,
         height: u32,
         starts_new_buffer: bool,
-        show_excerpt_controls: bool,
     },
 }
 
@@ -362,13 +360,11 @@ impl Debug for Block {
                 first_excerpt,
                 prev_excerpt,
                 height,
-                show_excerpt_controls,
             } => f
                 .debug_struct("FoldedBuffer")
                 .field("first_excerpt", &first_excerpt)
                 .field("prev_excerpt", prev_excerpt)
                 .field("height", height)
-                .field("show_excerpt_controls", show_excerpt_controls)
                 .finish(),
             Self::ExcerptBoundary {
                 starts_new_buffer,
@@ -772,11 +768,6 @@ impl BlockMap {
                 .filter(|prev| !folded_buffers.contains(&prev.buffer_id));
 
             let mut height = 0;
-            if prev_excerpt.is_some() {
-                if show_excerpt_controls {
-                    height += excerpt_footer_height;
-                }
-            }
 
             if let Some(new_buffer_id) = new_buffer_id {
                 let first_excerpt = excerpt_boundary.next.clone().unwrap();
@@ -810,7 +801,6 @@ impl BlockMap {
                         Block::FoldedBuffer {
                             prev_excerpt,
                             height: height + buffer_header_height,
-                            show_excerpt_controls,
                             first_excerpt,
                         },
                     ));
@@ -820,9 +810,6 @@ impl BlockMap {
             if excerpt_boundary.next.is_some() {
                 if new_buffer_id.is_some() {
                     height += buffer_header_height;
-                    if show_excerpt_controls {
-                        height += excerpt_header_height;
-                    }
                 } else {
                     height += excerpt_header_height;
                 }
@@ -843,7 +830,6 @@ impl BlockMap {
                     next_excerpt: excerpt_boundary.next,
                     height,
                     starts_new_buffer: new_buffer_id.is_some(),
-                    show_excerpt_controls,
                 },
             ))
         })
@@ -1424,19 +1410,13 @@ impl BlockSnapshot {
                     prev_excerpt,
                     next_excerpt,
                     starts_new_buffer,
-                    show_excerpt_controls,
                     ..
                 }) => {
-                    let matches_start = if *show_excerpt_controls && prev_excerpt.is_some() {
-                        start < top_row
-                    } else {
-                        start <= top_row
-                    };
+                    let matches_start = start <= top_row;
 
                     if matches_start && top_row <= end {
                         return next_excerpt.as_ref().map(|excerpt| StickyHeaderExcerpt {
                             next_buffer_row: None,
-                            next_excerpt_controls_present: *show_excerpt_controls,
                             excerpt,
                         });
                     }
@@ -1446,7 +1426,6 @@ impl BlockSnapshot {
                     return prev_excerpt.as_ref().map(|excerpt| StickyHeaderExcerpt {
                         excerpt,
                         next_buffer_row,
-                        next_excerpt_controls_present: *show_excerpt_controls,
                     });
                 }
                 Some(Block::FoldedBuffer {
@@ -1455,7 +1434,6 @@ impl BlockSnapshot {
                 }) if top_row <= start => {
                     return Some(StickyHeaderExcerpt {
                         next_buffer_row: Some(end),
-                        next_excerpt_controls_present: false,
                         excerpt,
                     });
                 }
@@ -1755,7 +1733,6 @@ impl<'a> BlockChunks<'a> {
 
 pub struct StickyHeaderExcerpt<'a> {
     pub excerpt: &'a ExcerptInfo,
-    pub next_excerpt_controls_present: bool,
     pub next_buffer_row: Option<u32>,
 }
 
