@@ -10,7 +10,7 @@ use gpui::{
     WeakEntity,
 };
 pub use image::ImageFormat;
-use image::{ExtendedColorType, GenericImageView,  ImageReader};
+use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
