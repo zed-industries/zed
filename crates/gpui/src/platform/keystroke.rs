@@ -338,7 +338,6 @@ fn modifier_symbol(modifier: ModifierType) -> &'static str {
     }
 }
 
-
 #[cfg(target_os = "macos")]
 const SEPARATOR: &str = "";
 #[cfg(not(target_os = "macos"))]
@@ -403,7 +402,6 @@ impl std::fmt::Display for Keystroke {
         f.write_str(key)
     }
 }
-
 
 /// The state of the modifier keys at some point in time
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Deserialize, Hash)]
