@@ -1142,7 +1142,12 @@ impl DisplaySnapshot {
     }
 
     pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
-        self.buffer_snapshot.line_indent_for_row(buffer_row)
+        let (buffer, range) = self
+            .buffer_snapshot
+            .buffer_line_for_row(buffer_row)
+            .unwrap();
+
+        buffer.line_indent_for_row(range.start.row)
     }
 
     pub fn line_len(&self, row: DisplayRow) -> u32 {
