@@ -6863,23 +6863,26 @@ impl Element for EditorElement {
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
-                        let (mut color, secondary_status) = match row_info.diff_status {
-                            Some(DiffHunkStatus::Added(secondary_status)) => {
-                                let color = style.status.created_background;
-                                (color, secondary_status)
-                            }
+                        let color = match row_info.diff_status {
+                            Some(DiffHunkStatus::Added(secondary_status)) => match secondary_status
+                            {
+                                DiffHunkSecondaryStatus::HasSecondaryHunk => gpui::green(),
+                                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => gpui::blue(),
+                                DiffHunkSecondaryStatus::None => style.status.created_background,
+                            },
                             Some(DiffHunkStatus::Removed(secondary_status)) => {
-                                let color = style.status.deleted_background;
-                                (color, secondary_status)
+                                match secondary_status {
+                                    DiffHunkSecondaryStatus::HasSecondaryHunk => gpui::red(),
+                                    DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                                        gpui::yellow()
+                                    }
+                                    DiffHunkSecondaryStatus::None => {
+                                        style.status.deleted_background
+                                    }
+                                }
                             }
                             _ => continue,
                         };
-
-                        match secondary_status {
-                            DiffHunkSecondaryStatus::HasSecondaryHunk => color.a *= 0.5,
-                            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => color.a *= 0.7,
-                            DiffHunkSecondaryStatus::None => {}
-                        }
 
                         highlighted_rows
                             .entry(start_row + DisplayRow(ix as u32))
