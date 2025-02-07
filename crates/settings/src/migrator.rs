@@ -462,8 +462,15 @@ fn action_argument_snake_case(
 }
 
 // "context": "Editor && inline_completion && !showing_completions" -> "Editor && edit_prediction && !showing_completions"
-pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> =
-    LazyLock::new(|| HashMap::from_iter([("inline_completion", "edit_prediction")]));
+pub static CONTEXT_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
+    HashMap::from_iter([
+        ("inline_completion", "edit_prediction"),
+        (
+            "inline_completion_requires_modifier",
+            "edit_prediction_requires_modifier",
+        ),
+    ])
+});
 
 static SETTINGS_MIGRATION_PATTERNS: MigrationPatterns = &[
     (SETTINGS_STRING_REPLACE_QUERY, replace_setting_name),
