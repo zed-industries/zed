@@ -13570,6 +13570,19 @@ impl Editor {
         }
     }
 
+    pub fn previewing_edit_prediction_move(&self) -> Option<Anchor> {
+        if !self.previewing_inline_completion {
+            return None;
+        }
+
+        self.active_inline_completion
+            .as_ref()
+            .and_then(|completion| match completion.completion {
+                InlineCompletion::Move { target, .. } => Some(target),
+                _ => None,
+            })
+    }
+
     pub fn show_local_cursors(&self, window: &mut Window, cx: &mut App) -> bool {
         (self.read_only(cx) || self.blink_manager.read(cx).visible())
             && self.focus_handle.is_focused(window)

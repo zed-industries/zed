@@ -1143,14 +1143,18 @@ impl EditorElement {
         let mut autoscroll_bounds = None;
         let cursor_layouts = self.editor.update(cx, |editor, cx| {
             let mut cursors = Vec::new();
+            let move_preview_cursor = editor.previewing_edit_prediction_move();
+            let show_local_cursors = editor.show_local_cursors(window, cx);
+
             for (player_color, selections) in selections {
                 for selection in selections {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !editor.show_local_cursors(window, cx))
+                    if (selection.is_local && !show_local_cursors)
                         || !in_range
                         || block_start_rows.contains(&cursor_position.row())
+                        || move_preview_cursor.is_some()
                     {
                         continue;
                     }
@@ -1272,6 +1276,24 @@ impl EditorElement {
                     cursors.push(cursor);
                 }
             }
+
+            if show_local_cursors {
+                if let Some(target) = move_preview_cursor {
+                    cursors.push(self.layout_edit_prediction_preview_cursor(
+                        snapshot,
+                        visible_display_row_range,
+                        line_layouts,
+                        content_origin,
+                        scroll_pixel_position,
+                        line_height,
+                        em_advance,
+                        target,
+                        window,
+                        cx,
+                    ));
+                }
+            }
+
             cursors
         });
 
@@ -1280,6 +1302,49 @@ impl EditorElement {
         }
 
         cursor_layouts
+    }
+
+    fn layout_edit_prediction_preview_cursor(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_display_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        em_advance: Pixels,
+        target: Anchor,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> CursorLayout {
+        let cursor_position = target.to_display_point(&snapshot.display_snapshot);
+        let cursor_row_layout =
+            &line_layouts[cursor_position.row().minus(visible_display_row_range.start) as usize];
+        let cursor_column = cursor_position.column() as usize;
+
+        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+        let mut block_width = cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+
+        if block_width == Pixels::ZERO {
+            block_width = em_advance;
+        }
+
+        let x = cursor_character_x - scroll_pixel_position.x;
+        let y =
+            (cursor_position.row().as_f32() - scroll_pixel_position.y / line_height) * line_height;
+
+        let mut cursor = CursorLayout {
+            color: self.style.local_player.cursor,
+            block_width,
+            origin: point(x, y),
+            line_height,
+            shape: CursorShape::Bar,
+            block_text: None,
+            cursor_name: None,
+        };
+
+        cursor.layout(content_origin, None, window, cx);
+        cursor
     }
 
     fn layout_scrollbars(
