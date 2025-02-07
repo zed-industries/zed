@@ -280,15 +280,29 @@ impl Render for InlineCompletionButton {
                     );
                 }
 
+                let show_editor_predictions = self.editor_show_predictions;
+
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
+                    .when(enabled && !show_editor_predictions, |this| {
+                        this.indicator(Indicator::dot().color(Color::Muted))
+                            .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                    })
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
-                        if enabled {
-                            element.tooltip(|window, cx| {
-                                Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
-                            })
-                        } else {
-                            element.tooltip(|window, cx| {
+                        element.tooltip(move |window, cx| {
+                            if enabled {
+                                if show_editor_predictions {
+                                    Tooltip::for_action("Edit Prediction", &ToggleMenu, window, cx)
+                                } else {
+                                    Tooltip::with_meta(
+                                        "Edit Prediction",
+                                        Some(&ToggleMenu),
+                                        "Hidden For This File",
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            } else {
                                 Tooltip::with_meta(
                                     "Edit Prediction",
                                     Some(&ToggleMenu),
@@ -296,8 +310,8 @@ impl Render for InlineCompletionButton {
                                     window,
                                     cx,
                                 )
-                            })
-                        }
+                            }
+                        })
                     });
 
                 let this = cx.entity().clone();
