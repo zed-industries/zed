@@ -221,6 +221,12 @@ impl Vim {
                 };
                 editor.insert(&text, window, cx);
                 editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                        selection.end = selection.start
+                    })
+                })
             });
         });
     }
@@ -237,6 +243,7 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         motion.expand_selection(map, selection, times, false, &text_layout_details);
@@ -250,6 +257,13 @@ impl Vim {
                     return;
                 };
                 editor.insert(&text, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                        selection.end = selection.start
+                    })
+                })
             });
         });
     }
@@ -811,6 +825,7 @@ mod test {
         cx.set_state(
             indoc! {"
                    ˇfish one
+                   two three
                    "},
             Mode::Normal,
         );
@@ -820,7 +835,16 @@ mod test {
         cx.assert_state(
             indoc! {"
                 fish fisˇh
+                two three
                 "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j b g r e");
+        cx.assert_state(
+            indoc! {"
+            fish fish
+            two fisˇh
+            "},
             Mode::Normal,
         );
         let clipboard: Register = cx.read_from_clipboard().unwrap().into();
