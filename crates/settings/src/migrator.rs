@@ -174,6 +174,7 @@ static TRANSFORM_ARRAY: LazyLock<HashMap<(&str, &str), &str>> = LazyLock::new(||
         (("vim::PushOperator", "Register"), "vim::PushRegister"),
         (("vim::PushOperator", "RecordRegister"), "vim::PushRecordRegister"),
         (("vim::PushOperator", "ReplayRegister"), "vim::PushReplayRegister"),
+        (("vim::PushOperator", "ReplaceWithRegister"), "vim::PushReplaceWithRegister"),
         (("vim::PushOperator", "ToggleComments"), "vim::PushToggleComments"),
         // vim switch
         (("vim::SwitchMode", "Normal"), "vim::SwitchToNormalMode"),

@@ -154,6 +154,7 @@ actions!(
         PushRegister,
         PushRecordRegister,
         PushReplayRegister,
+        PushReplaceWithRegister,
         PushToggleComments,
     ]
 );
@@ -628,6 +629,14 @@ impl Vim {
             Vim::action(editor, cx, |vim, _: &PushReplayRegister, window, cx| {
                 vim.push_operator(Operator::ReplayRegister, window, cx)
             });
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &PushReplaceWithRegister, window, cx| {
+                    vim.push_operator(Operator::ReplaceWithRegister, window, cx)
+                },
+            );
 
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)

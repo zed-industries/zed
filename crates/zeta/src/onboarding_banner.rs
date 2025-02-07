@@ -11,7 +11,7 @@ use crate::onboarding_event;
 /// Prompts the user to try Zed's Edit Prediction feature
 pub struct ZedPredictBanner {
     dismissed: bool,
-    provider: InlineCompletionProvider,
+    provider: EditPredictionProvider,
     _subscription: Subscription,
 }
 

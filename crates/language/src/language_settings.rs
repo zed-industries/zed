@@ -206,13 +206,13 @@ pub enum EditPredictionProvider {
     Zed,
 }
 
-impl InlineCompletionProvider {
+impl EditPredictionProvider {
     pub fn is_zed(&self) -> bool {
         match self {
-            InlineCompletionProvider::Zed => true,
-            InlineCompletionProvider::None
-            | InlineCompletionProvider::Copilot
-            | InlineCompletionProvider::Supermaven => false,
+            EditPredictionProvider::Zed => true,
+            EditPredictionProvider::None
+            | EditPredictionProvider::Copilot
+            | EditPredictionProvider::Supermaven => false,
         }
     }
 }
