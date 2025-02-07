@@ -192,7 +192,7 @@ impl TableRow {
                 "float_cap" => div().child(format!("{:.2} M", self.quote.float_cap / 1_000_000.0)),
                 "turnover" => div().child(format!("{:.2} M", self.quote.turnover / 1_000_000.0)),
                 "volume" => div().child(format!("{:.2} M", self.quote.volume as f64 / 1_000_000.0)),
-                "turnove_ratio" => div().child(format!("{:.2}%", self.quote.turnover_ratio())),
+                "turnover_ratio" => div().child(format!("{:.2}%", self.quote.turnover_ratio())),
                 "pe" => div().child(format!("{:.2}", self.quote.pe)),
                 "pb" => div().child(format!("{:.2}", self.quote.pb)),
                 "shares" => div().child(format!("{:.2}", self.quote.shares)),
