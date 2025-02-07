@@ -276,7 +276,6 @@ impl DiffSlashCommand {
                 .unwrap_or("")
                 .to_owned();
 
-            // Use language registry to detect language
             let language_name = Some(
                 Language::new(
                     language::LanguageConfig {
@@ -291,6 +290,7 @@ impl DiffSlashCommand {
 
             let start_pos = output.text.len();
 
+            // Calculate stats
             let mut file_stats = FileStats::default();
             if !file.is_binary {
                 for line in file.content.lines() {
@@ -308,19 +308,32 @@ impl DiffSlashCommand {
                 file_path, file_stats.insertions, file_stats.deletions
             ));
 
-            // Add initial collapsed diff view
+            // Add diff content with syntax highlighting
             if file.is_binary {
                 output.text.push_str("Binary file differs\n");
             } else if file.file_mode_change {
                 output.text.push_str(&file.content);
             } else {
+                // Use diff-{language} format for proper syntax highlighting and diff colors
                 output.text.push_str(&format!("```diff-{}\n", extension));
                 output.text.push_str(&file.content);
                 output.text.push_str("```\n");
+
+                // Add the full file context with syntax highlighting
+                if let (Some(old), Some(new)) = (file.old_content.as_ref(), file.new_content.as_ref()) {
+                    output.text.push_str("\nFull context:\n");
+                    // Use the language's syntax highlighting for the full files
+                    output.text.push_str(&format!("```{}\n", extension));
+                    output.text.push_str("--- Old\n");
+                    output.text.push_str(old);
+                    output.text.push_str("\n+++ New\n");
+                    output.text.push_str(new);
+                    output.text.push_str("```\n");
+                }
             }
             output.text.push('\n');
 
-            // Add section with metadata for expandable content
+            // Add section with metadata
             output.sections.push(SlashCommandOutputSection {
                 range: start_pos..output.text.len(),
                 icon: IconName::GitBranch,
