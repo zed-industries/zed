@@ -131,7 +131,7 @@ worktree = { workspace = true, features = ["test-support"] }
 livekit_client_macos = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(not(target_os = "macos"))'.dev-dependencies]
-livekit_client =  {workspace = true, features = ["test-support"] }
+livekit_client =  { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["async-stripe"]
