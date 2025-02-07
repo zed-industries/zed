@@ -50,7 +50,11 @@ use crate::state::ReplayableAction;
 
 /// Used to resize the current pane
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-pub struct ResizePane(pub ResizeIntent);
+pub struct ResizePane {
+    pub intent: ResizeIntent,
+    #[serde(default)]
+    pub scale_factor: usize,
+}
 
 /// An Action to Switch between modes
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -154,8 +158,14 @@ pub fn init(cx: &mut App) {
                 return;
             };
             let height = theme.buffer_font_size() * theme.buffer_line_height.value();
+            let scale_factor = if action.scale_factor == 0 {
+                1
+            } else {
+                action.scale_factor
+            };
+            let count = count * scale_factor as f32;
 
-            let (axis, amount) = match action.0 {
+            let (axis, amount) = match action.intent {
                 ResizeIntent::Lengthen => (Axis::Vertical, height),
                 ResizeIntent::Shorten => (Axis::Vertical, height * -1.),
                 ResizeIntent::Widen => (Axis::Horizontal, width.width),
