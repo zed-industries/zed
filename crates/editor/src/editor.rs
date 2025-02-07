@@ -12237,11 +12237,19 @@ impl Editor {
         cx: &mut Context<'_, Editor>,
     ) {
         self.buffer.update(cx, |buffer, cx| {
-            if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
-                buffer.collapse_diff_hunks(ranges, cx)
-            } else {
-                buffer.expand_diff_hunks(ranges, cx)
-            }
+            let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
+            buffer.expand_or_collapse_diff_hunks(ranges, expand, cx);
+        })
+    }
+
+    fn toggle_diff_hunks_in_ranges_narrow(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<'_, Editor>,
+    ) {
+        self.buffer.update(cx, |buffer, cx| {
+            let expand = !buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx);
+            buffer.expand_or_collapse_diff_hunks_narrow(ranges, expand, cx);
         })
     }
 

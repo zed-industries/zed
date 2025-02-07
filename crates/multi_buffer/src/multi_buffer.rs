@@ -2376,24 +2376,17 @@ impl MultiBuffer {
         false
     }
 
-    fn expand_or_collapse_diff_hunks(
+    fn expand_or_collapse_diff_hunks_internal(
         &mut self,
-        ranges: Vec<Range<Anchor>>,
+        ranges: impl Iterator<Item = (Range<Point>, ExcerptId)>,
         expand: bool,
         cx: &mut Context<Self>,
     ) {
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpt_edits = Vec::new();
-        for range in ranges.iter() {
-            let end_excerpt_id = range.end.excerpt_id;
-            let range = range.to_point(&snapshot);
-            let mut peek_end = range.end;
-            if range.end.row < snapshot.max_row().0 {
-                peek_end = Point::new(range.end.row + 1, 0);
-            };
-
-            for diff_hunk in snapshot.diff_hunks_in_range(range.start..peek_end) {
+        for (range, end_excerpt_id) in ranges {
+            for diff_hunk in snapshot.diff_hunks_in_range(range) {
                 if diff_hunk.excerpt_id.cmp(&end_excerpt_id, &snapshot).is_gt() {
                     continue;
                 }
@@ -2426,6 +2419,44 @@ impl MultiBuffer {
             singleton_buffer_edited: false,
             edited_buffer: None,
         });
+    }
+
+    pub fn expand_or_collapse_diff_hunks_narrow(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        expand: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot.borrow().clone();
+        self.expand_or_collapse_diff_hunks_internal(
+            ranges
+                .iter()
+                .map(move |range| (range.to_point(&snapshot), range.end.excerpt_id)),
+            expand,
+            cx,
+        );
+    }
+
+    pub fn expand_or_collapse_diff_hunks(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        expand: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.snapshot.borrow().clone();
+        self.expand_or_collapse_diff_hunks_internal(
+            ranges.iter().map(move |range| {
+                let end_excerpt_id = range.end.excerpt_id;
+                let range = range.to_point(&snapshot);
+                let mut peek_end = range.end;
+                if range.end.row < snapshot.max_row().0 {
+                    peek_end = Point::new(range.end.row + 1, 0);
+                };
+                (range.start..peek_end, end_excerpt_id)
+            }),
+            expand,
+            cx,
+        );
     }
 
     pub fn resize_excerpt(
