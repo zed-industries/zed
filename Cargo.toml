@@ -15,6 +15,7 @@ members = [
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_ui",
+    "crates/aws_http_client",
     "crates/bedrock",
     "crates/breadcrumbs",
     "crates/call",
