@@ -2085,7 +2085,8 @@ impl Project {
                 .upgrade()
                 .ok_or_else(|| anyhow!("Project dropped"))?;
 
-            let metadata = ImageItem::load_image_metadata(image_item.clone(), project, &mut cx).await?;
+            let metadata =
+                ImageItem::load_image_metadata(image_item.clone(), project, &mut cx).await?;
             image_item.update(&mut cx, |image_item, cx| {
                 image_item.image_metadata = Some(metadata);
                 cx.emit(ImageItemEvent::MetadataUpdated);

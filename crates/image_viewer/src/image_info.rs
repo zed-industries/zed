@@ -1,5 +1,5 @@
 use gpui::{div, Context, Entity, IntoElement, ParentElement, Render, Subscription};
-use project::image_store::ImageMetadata;
+use project::image_store::{ImageFormat, ImageMetadata};
 use settings::Settings;
 use ui::prelude::*;
 use workspace::{ItemHandle, StatusItemView, Workspace};
@@ -68,10 +68,31 @@ impl Render for ImageInfo {
         };
 
         let mut components = Vec::new();
-        components.push(format!("{}x{}", metadata.width, metadata.height).into());
-        components.push(format_file_size(metadata.file_size, settings.unit).into());
-        components.extend(metadata.color_type.clone());
-        components.push(metadata.format.clone());
+        components.push(format!("{}x{}", metadata.width, metadata.height));
+        components.push(format_file_size(metadata.file_size, settings.unit));
+
+        if let Some(colors) = metadata.colors {
+            components.push(format!(
+                "{} channels, {} bits per pixel",
+                colors.channels,
+                colors.bits_per_pixel()
+            ));
+        }
+
+        components.push(
+            match metadata.format {
+                ImageFormat::Png => "PNG",
+                ImageFormat::Jpeg => "JPEG",
+                ImageFormat::Gif => "GIF",
+                ImageFormat::WebP => "WebP",
+                ImageFormat::Tiff => "TIFF",
+                ImageFormat::Bmp => "BMP",
+                ImageFormat::Ico => "ICO",
+                ImageFormat::Avif => "Avif",
+                _ => "Unknown",
+            }
+            .to_string(),
+        );
 
         div().child(
             Button::new("image-metadata", components.join(" • ")).label_size(LabelSize::Small),

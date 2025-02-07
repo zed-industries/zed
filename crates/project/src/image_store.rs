@@ -6,10 +6,11 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, SharedString,
-    Subscription, Task, WeakEntity,
+    hash, prelude::*, App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task,
+    WeakEntity,
 };
-use image::{ExtendedColorType, GenericImageView, ImageFormat, ImageReader};
+pub use image::ImageFormat;
+use image::{ExtendedColorType, GenericImageView,  ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -50,13 +51,48 @@ pub enum ImageStoreEvent {
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ImageMetadata {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub color_type: Option<SharedString>,
-    pub format: SharedString,
+    pub colors: Option<ImageColorInfo>,
+    pub format: ImageFormat,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImageColorInfo {
+    pub channels: u8,
+    pub bits_per_channel: u8,
+}
+
+impl ImageColorInfo {
+    pub fn from_color_type(color_type: impl Into<ExtendedColorType>) -> Option<Self> {
+        let (channels, bits_per_channel) = match color_type.into() {
+            ExtendedColorType::L8 => (1, 8),
+            ExtendedColorType::L16 => (1, 16),
+            ExtendedColorType::La8 => (2, 8),
+            ExtendedColorType::La16 => (2, 16),
+            ExtendedColorType::Rgb8 => (3, 8),
+            ExtendedColorType::Rgb16 => (3, 16),
+            ExtendedColorType::Rgba8 => (4, 8),
+            ExtendedColorType::Rgba16 => (4, 16),
+            ExtendedColorType::A8 => (1, 8),
+            ExtendedColorType::Bgr8 => (3, 8),
+            ExtendedColorType::Bgra8 => (4, 8),
+            ExtendedColorType::Cmyk8 => (4, 8),
+            _ => return None,
+        };
+
+        Some(Self {
+            channels,
+            bits_per_channel,
+        })
+    }
+
+    pub const fn bits_per_pixel(&self) -> u8 {
+        self.channels * self.bits_per_channel
+    }
 }
 
 pub struct ImageItem {
@@ -65,31 +101,6 @@ pub struct ImageItem {
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
     pub image_metadata: Option<ImageMetadata>,
-}
-
-fn image_color_type_description(color_type: impl Into<ExtendedColorType>) -> Option<SharedString> {
-    let (channels, bits_per_channel) = match color_type.into() {
-        ExtendedColorType::L8 => (1, 8),
-        ExtendedColorType::L16 => (1, 16),
-        ExtendedColorType::La8 => (2, 8),
-        ExtendedColorType::La16 => (2, 16),
-        ExtendedColorType::Rgb8 => (3, 8),
-        ExtendedColorType::Rgb16 => (3, 16),
-        ExtendedColorType::Rgba8 => (4, 8),
-        ExtendedColorType::Rgba16 => (4, 16),
-        ExtendedColorType::A8 => (1, 8),
-        ExtendedColorType::Bgr8 => (3, 8),
-        ExtendedColorType::Bgra8 => (4, 8),
-        ExtendedColorType::Cmyk8 => (4, 8),
-        _ => (0, 0),
-    };
-
-    if channels == 0 {
-        return None;
-    }
-
-    let bits_per_pixel = channels * bits_per_channel;
-    Some(format!("{channels} channels, {bits_per_pixel} bits per pixel").into())
 }
 
 impl ImageItem {
@@ -135,19 +146,8 @@ impl ImageItem {
             width,
             height,
             file_size: file_metadata.len,
-            format: match image_format {
-                ImageFormat::Png => "PNG",
-                ImageFormat::Jpeg => "JPEG",
-                ImageFormat::Gif => "GIF",
-                ImageFormat::WebP => "WebP",
-                ImageFormat::Tiff => "TIFF",
-                ImageFormat::Bmp => "BMP",
-                ImageFormat::Ico => "ICO",
-                ImageFormat::Avif => "Avif",
-                _ => "Unknown",
-            }
-            .into(),
-            color_type: image_color_type_description(image.color()),
+            format: image_format,
+            colors: ImageColorInfo::from_color_type(image.color()),
         })
     }
 
