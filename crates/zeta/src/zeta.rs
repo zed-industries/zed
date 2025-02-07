@@ -58,11 +58,11 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
 const MAX_CONTEXT_TOKENS: usize = 100;
-const MAX_REWRITE_TOKENS: usize = 400;
+const MAX_REWRITE_TOKENS: usize = 300;
 const MAX_EVENT_TOKENS: usize = 400;
 
 /// Maximum number of events to track.
-const MAX_EVENT_COUNT: usize = 8;
+const MAX_EVENT_COUNT: usize = 16;
 
 actions!(edit_prediction, [ClearHistory]);
 
@@ -665,7 +665,7 @@ and then another
             loop {
                 let request_builder = http_client::Request::builder().method(Method::POST).uri(
                     http_client
-                        .build_zed_llm_url("/predict_edits", &[])?
+                        .build_zed_llm_url("/predict_edits_v2", &[])?
                         .as_ref(),
                 );
                 let request = request_builder
