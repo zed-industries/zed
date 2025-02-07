@@ -1285,6 +1285,10 @@ impl LanguageServer {
         self.workspace_folders.lock()
     }
 
+    pub fn is_buffer_registered(&self, uri: &Url) -> bool {
+        self.registered_buffers.lock().contains(uri)
+    }
+
     pub fn register_buffer(
         &self,
         uri: Url,

@@ -3467,7 +3467,14 @@ impl LspStore {
                 File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
             {
                 if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
-                    local_store.unregister_buffer_from_language_servers(buffer, &file_url, cx);
+                    let is_registered_for_any_server = buffer.update(cx, |buffer, cx| {
+                        local_store
+                            .language_servers_for_buffer(buffer, cx)
+                            .any(|(_, server)| server.is_buffer_registered(&file_url))
+                    });
+                    if is_registered_for_any_server {
+                        local_store.unregister_buffer_from_language_servers(buffer, &file_url, cx);
+                    }
                 }
             }
         }
