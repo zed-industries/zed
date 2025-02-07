@@ -197,10 +197,10 @@ impl RenderOnce for ListItem {
                     // .when(self.state == InteractionState::Focused, |this| {
                     .when_some(self.focused, |this, focused| {
                         if focused {
-                            this.border_1()
-                                .border_color(cx.theme().colors().border_focused)
+                            this.border_l_3()
+                                .border_color(cx.theme().players().local().cursor)
                         } else {
-                            this.border_1()
+                            this.border_l_3()
                         }
                     })
                     .when(self.selectable, |this| {
