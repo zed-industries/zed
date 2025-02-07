@@ -90,7 +90,7 @@ use hover_popover::{hide_hover, HoverState};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
-use inline_completion::{InlineCompletionProvider, InlineCompletionProviderHandle};
+use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
@@ -674,7 +674,7 @@ pub struct Editor {
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
-    inline_completion_provider: Option<RegisteredInlineCompletionProvider>,
+    edit_prediction_provider: Option<RegisteredInlineCompletionProvider>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_inline_completion: Option<InlineCompletionState>,
     /// Used to prevent flickering as the user types while the menu is open
@@ -1371,7 +1371,7 @@ impl Editor {
             hover_state: Default::default(),
             pending_mouse_down: None,
             hovered_link_state: Default::default(),
-            inline_completion_provider: None,
+            edit_prediction_provider: None,
             active_inline_completion: None,
             stale_inline_completion_in_menu: None,
             previewing_inline_completion: false,
@@ -1524,10 +1524,10 @@ impl Editor {
 
         if self.has_active_inline_completion() {
             key_context.add("copilot_suggestion");
-            key_context.add("inline_completion");
+            key_context.add("edit_prediction");
 
-            if showing_completions || self.inline_completion_requires_modifier(cx) {
-                key_context.add("inline_completion_requires_modifier");
+            if showing_completions || self.edit_prediction_requires_modifier(cx) {
+                key_context.add("edit_prediction_requires_modifier");
             }
         }
 
@@ -1737,15 +1737,15 @@ impl Editor {
         self.semantics_provider = provider;
     }
 
-    pub fn set_inline_completion_provider<T>(
+    pub fn set_edit_prediction_provider<T>(
         &mut self,
         provider: Option<Entity<T>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) where
-        T: InlineCompletionProvider,
+        T: EditPredictionProvider,
     {
-        self.inline_completion_provider =
+        self.edit_prediction_provider =
             provider.map(|provider| RegisteredInlineCompletionProvider {
                 _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
                     if this.focus_handle.is_focused(window) {
@@ -1877,7 +1877,7 @@ impl Editor {
 
     pub fn toggle_inline_completions(
         &mut self,
-        _: &ToggleInlineCompletions,
+        _: &ToggleEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1900,11 +1900,11 @@ impl Editor {
 
     pub fn set_show_inline_completions(
         &mut self,
-        show_inline_completions: Option<bool>,
+        show_edit_predictions: Option<bool>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.show_inline_completions_override = show_inline_completions;
+        self.show_inline_completions_override = show_edit_predictions;
         self.refresh_inline_completion(false, true, window, cx);
     }
 
@@ -1932,7 +1932,7 @@ impl Editor {
 
         scope.override_name().map_or(false, |scope_name| {
             settings
-                .inline_completions_disabled_in
+                .edit_predictions_disabled_in
                 .iter()
                 .any(|s| s == scope_name)
         })
@@ -3015,7 +3015,7 @@ impl Editor {
             }
 
             let trigger_in_words =
-                this.show_inline_completions_in_menu(cx) || !had_active_inline_completion;
+                this.show_edit_predictions_in_menu(cx) || !had_active_inline_completion;
             this.trigger_completion_on_input(&text, trigger_in_words, window, cx);
             linked_editing_ranges::refresh_linked_ranges(this, window, cx);
             this.refresh_inline_completion(true, false, window, cx);
@@ -3908,7 +3908,7 @@ impl Editor {
                         *editor.context_menu.borrow_mut() =
                             Some(CodeContextMenu::Completions(menu));
 
-                        if editor.show_inline_completions_in_menu(cx) {
+                        if editor.show_edit_predictions_in_menu(cx) {
                             editor.update_visible_inline_completion(window, cx);
                         } else {
                             editor.discard_inline_completion(false, cx);
@@ -3922,7 +3922,7 @@ impl Editor {
                         // If it was already hidden and we don't show inline
                         // completions in the menu, we should also show the
                         // inline-completion when available.
-                        if was_hidden && editor.show_inline_completions_in_menu(cx) {
+                        if was_hidden && editor.show_edit_predictions_in_menu(cx) {
                             editor.update_visible_inline_completion(window, cx);
                         }
                     }
@@ -3972,7 +3972,7 @@ impl Editor {
 
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
-        if self.show_inline_completions_in_menu(cx) {
+        if self.show_edit_predictions_in_menu(cx) {
             self.discard_inline_completion(true, cx);
         }
         let candidate_id = mat.candidate_id;
@@ -4653,7 +4653,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let provider = self.inline_completion_provider()?;
+        let provider = self.edit_prediction_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -4694,7 +4694,7 @@ impl Editor {
         }
     }
 
-    fn inline_completion_requires_modifier(&self, cx: &App) -> bool {
+    fn edit_prediction_requires_modifier(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
 
         self.buffer
@@ -4731,7 +4731,7 @@ impl Editor {
                     buffer.file(),
                     cx,
                 )
-                .show_inline_completions
+                .show_edit_predictions
         }
     }
 
@@ -4753,7 +4753,7 @@ impl Editor {
         cx: &App,
     ) -> bool {
         maybe!({
-            let provider = self.inline_completion_provider()?;
+            let provider = self.edit_prediction_provider()?;
             if !provider.is_enabled(&buffer, buffer_position, cx) {
                 return Some(false);
             }
@@ -4773,7 +4773,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let provider = self.inline_completion_provider()?;
+        let provider = self.edit_prediction_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -4791,7 +4791,7 @@ impl Editor {
 
     pub fn show_inline_completion(
         &mut self,
-        _: &ShowInlineCompletion,
+        _: &ShowEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4826,9 +4826,9 @@ impl Editor {
         .detach();
     }
 
-    pub fn next_inline_completion(
+    pub fn next_edit_prediction(
         &mut self,
-        _: &NextInlineCompletion,
+        _: &NextEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4844,9 +4844,9 @@ impl Editor {
         }
     }
 
-    pub fn previous_inline_completion(
+    pub fn previous_edit_prediction(
         &mut self,
-        _: &PreviousInlineCompletion,
+        _: &PreviousEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4862,9 +4862,9 @@ impl Editor {
         }
     }
 
-    pub fn accept_inline_completion(
+    pub fn accept_edit_prediction(
         &mut self,
-        _: &AcceptInlineCompletion,
+        _: &AcceptEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4885,7 +4885,7 @@ impl Editor {
             }
         }
 
-        if self.show_inline_completions_in_menu(cx) {
+        if self.show_edit_predictions_in_menu(cx) {
             self.hide_context_menu(window, cx);
         }
 
@@ -4904,7 +4904,7 @@ impl Editor {
                 });
             }
             InlineCompletion::Edit { edits, .. } => {
-                if let Some(provider) = self.inline_completion_provider() {
+                if let Some(provider) = self.edit_prediction_provider() {
                     provider.accept(cx);
                 }
 
@@ -4931,7 +4931,7 @@ impl Editor {
 
     pub fn accept_partial_inline_completion(
         &mut self,
-        _: &AcceptPartialInlineCompletion,
+        _: &AcceptPartialEditPrediction,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4988,7 +4988,7 @@ impl Editor {
                     self.refresh_inline_completion(true, true, window, cx);
                     cx.notify();
                 } else {
-                    self.accept_inline_completion(&Default::default(), window, cx);
+                    self.accept_edit_prediction(&Default::default(), window, cx);
                 }
             }
         }
@@ -5003,7 +5003,7 @@ impl Editor {
             self.report_inline_completion_event(false, cx);
         }
 
-        if let Some(provider) = self.inline_completion_provider() {
+        if let Some(provider) = self.edit_prediction_provider() {
             provider.discard(cx);
         }
 
@@ -5011,7 +5011,7 @@ impl Editor {
     }
 
     fn report_inline_completion_event(&self, accepted: bool, cx: &App) {
-        let Some(provider) = self.inline_completion_provider() else {
+        let Some(provider) = self.edit_prediction_provider() else {
             return;
         };
 
@@ -5064,7 +5064,7 @@ impl Editor {
         cx: &App,
     ) -> bool {
         if self.previewing_inline_completion
-            || !self.show_inline_completions_in_menu(cx)
+            || !self.show_edit_predictions_in_menu(cx)
             || !self.should_show_inline_completions(cx)
         {
             return false;
@@ -5074,7 +5074,7 @@ impl Editor {
             return true;
         }
 
-        has_completion && self.inline_completion_requires_modifier(cx)
+        has_completion && self.edit_prediction_requires_modifier(cx)
     }
 
     fn update_inline_completion_preview(
@@ -5083,7 +5083,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.show_inline_completions_in_menu(cx) {
+        if !self.show_edit_predictions_in_menu(cx) {
             return;
         }
 
@@ -5103,7 +5103,7 @@ impl Editor {
         let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
         let excerpt_id = cursor.excerpt_id;
 
-        let show_in_menu = self.show_inline_completions_in_menu(cx);
+        let show_in_menu = self.show_edit_predictions_in_menu(cx);
         let completions_menu_has_precedence = !show_in_menu
             && (self.context_menu.borrow().is_some()
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
@@ -5123,7 +5123,7 @@ impl Editor {
         }
 
         self.take_active_inline_completion(cx);
-        let provider = self.inline_completion_provider()?;
+        let provider = self.edit_prediction_provider()?;
 
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -5258,20 +5258,20 @@ impl Editor {
         Some(())
     }
 
-    pub fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
-        Some(self.inline_completion_provider.as_ref()?.provider.clone())
+    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
+        Some(self.edit_prediction_provider.as_ref()?.provider.clone())
     }
 
-    fn show_inline_completions_in_menu(&self, cx: &App) -> bool {
+    fn show_edit_predictions_in_menu(&self, cx: &App) -> bool {
         let by_provider = matches!(
             self.menu_inline_completions_policy,
             MenuInlineCompletionsPolicy::ByProvider
         );
 
         by_provider
-            && EditorSettings::get_global(cx).show_inline_completions_in_menu
+            && EditorSettings::get_global(cx).show_edit_predictions_in_menu
             && self
-                .inline_completion_provider()
+                .edit_prediction_provider()
                 .map_or(false, |provider| provider.show_completions_in_menu())
     }
 
@@ -5524,7 +5524,7 @@ impl Editor {
         window: &Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
-        let provider = self.inline_completion_provider.as_ref()?;
+        let provider = self.edit_prediction_provider.as_ref()?;
 
         if provider.provider.needs_terms_acceptance(cx) {
             return Some(
@@ -11808,7 +11808,7 @@ impl Editor {
             return;
         }
 
-        let fold_at_level = fold_at.level;
+        let fold_at_level = fold_at.0;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
         let mut stack = vec![(0, snapshot.max_row().0, 1)];
@@ -14202,14 +14202,14 @@ impl Editor {
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
 
-        let edit_predictions_provider = all_language_settings(file, cx).inline_completions.provider;
+        let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
-            == language::language_settings::InlineCompletionProvider::Copilot;
+            == language::language_settings::EditPredictionProvider::Copilot;
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)
             .settings_at(0, cx)
-            .show_inline_completions;
+            .show_edit_predictions;
 
         let project = project.read(cx);
         telemetry::event!(

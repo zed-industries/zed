@@ -12,11 +12,13 @@ use serde::{Deserialize, Serialize};
 pub fn init() {}
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
     pub url: String,
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
     pub url: String,
 }
@@ -69,6 +71,7 @@ pub mod theme_selector {
     use serde::Deserialize;
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -83,6 +86,7 @@ pub mod icon_theme_selector {
     use serde::Deserialize;
 
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Toggle {
         /// A list of icon theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
@@ -99,6 +103,7 @@ pub mod assistant {
     actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
@@ -107,6 +112,7 @@ pub mod assistant {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
     pub create_new_window: bool,
@@ -154,6 +160,7 @@ impl Spawn {
 
 /// Rerun the last task.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Rerun {
     /// Controls whether the task context is reevaluated prior to execution of a task.
     /// If it is not, environment variables such as ZED_COLUMN, ZED_FILE are gonna be the same as in the last execution of a task

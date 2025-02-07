@@ -1,7 +1,7 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
+use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
 use project::Project;
 use settings::Settings;
@@ -48,7 +48,7 @@ impl CopilotCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for CopilotCompletionProvider {
+impl EditPredictionProvider for CopilotCompletionProvider {
     fn name() -> &'static str {
         "copilot"
     }
@@ -301,7 +301,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         cx.set_state(indoc! {"
@@ -436,8 +436,8 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
-            // AcceptInlineCompletion when there is an active suggestion inserts it.
-            editor.accept_inline_completion(&Default::default(), window, cx);
+            // AcceptEditPrediction when there is an active suggestion inserts it.
+            editor.accept_edit_prediction(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
@@ -482,7 +482,7 @@ mod tests {
         );
 
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -496,8 +496,8 @@ mod tests {
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
-            // Using AcceptInlineCompletion again accepts the suggestion.
-            editor.accept_inline_completion(&Default::default(), window, cx);
+            // Using AcceptEditPrediction again accepts the suggestion.
+            editor.accept_edit_prediction(&Default::default(), window, cx);
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
@@ -526,7 +526,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         // Setup the editor with a completion request.
@@ -650,7 +650,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         cx.set_state(indoc! {"
@@ -669,7 +669,7 @@ mod tests {
             vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
@@ -740,7 +740,7 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
             })
             .unwrap();
 
@@ -758,7 +758,7 @@ mod tests {
             editor.change_selections(None, window, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
             });
-            editor.next_inline_completion(&Default::default(), window, cx);
+            editor.next_edit_prediction(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         _ = editor.update(cx, |editor, _, cx| {
@@ -834,7 +834,7 @@ mod tests {
         .await;
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         cx.update_editor(|editor, window, cx| {
-            editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+            editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
         });
 
         cx.set_state(indoc! {"
@@ -862,7 +862,7 @@ mod tests {
             vec![],
         );
         cx.update_editor(|editor, window, cx| {
-            editor.next_inline_completion(&Default::default(), window, cx)
+            editor.next_edit_prediction(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
@@ -930,7 +930,7 @@ mod tests {
     async fn test_copilot_disabled_globs(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         init_test(cx, |settings| {
             settings
-                .inline_completions
+                .edit_predictions
                 .get_or_insert(Default::default())
                 .disabled_globs = Some(vec![".env*".to_string()]);
         });
@@ -992,7 +992,7 @@ mod tests {
         let copilot_provider = cx.new(|_| CopilotCompletionProvider::new(copilot));
         editor
             .update(cx, |editor, window, cx| {
-                editor.set_inline_completion_provider(Some(copilot_provider), window, cx)
+                editor.set_edit_prediction_provider(Some(copilot_provider), window, cx)
             })
             .unwrap();
 

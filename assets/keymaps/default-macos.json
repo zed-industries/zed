@@ -40,7 +40,7 @@
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-shift-z": "zeta::RateCompletions",
-      "ctrl-shift-i": "inline_completion::ToggleMenu"
+      "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
   },
   {
@@ -155,19 +155,19 @@
     }
   },
   {
-    "context": "Editor && mode == full && inline_completion",
+    "context": "Editor && mode == full && edit_prediction",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-tab": "editor::NextInlineCompletion",
-      "alt-shift-tab": "editor::PreviousInlineCompletion",
-      "ctrl-cmd-right": "editor::AcceptPartialInlineCompletion"
+      "alt-tab": "editor::NextEditPrediction",
+      "alt-shift-tab": "editor::PreviousEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
-    "context": "Editor && !inline_completion",
+    "context": "Editor && !edit_prediction",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-tab": "editor::ShowInlineCompletion"
+      "alt-tab": "editor::ShowEditPrediction"
     }
   },
   {
@@ -413,15 +413,15 @@
       "cmd-k cmd-l": "editor::ToggleFold",
       "cmd-k cmd-[": "editor::FoldRecursive",
       "cmd-k cmd-]": "editor::UnfoldRecursive",
-      "cmd-k cmd-1": ["editor::FoldAtLevel", { "level": 1 }],
-      "cmd-k cmd-2": ["editor::FoldAtLevel", { "level": 2 }],
-      "cmd-k cmd-3": ["editor::FoldAtLevel", { "level": 3 }],
-      "cmd-k cmd-4": ["editor::FoldAtLevel", { "level": 4 }],
-      "cmd-k cmd-5": ["editor::FoldAtLevel", { "level": 5 }],
-      "cmd-k cmd-6": ["editor::FoldAtLevel", { "level": 6 }],
-      "cmd-k cmd-7": ["editor::FoldAtLevel", { "level": 7 }],
-      "cmd-k cmd-8": ["editor::FoldAtLevel", { "level": 8 }],
-      "cmd-k cmd-9": ["editor::FoldAtLevel", { "level": 9 }],
+      "cmd-k cmd-1": ["editor::FoldAtLevel", 1],
+      "cmd-k cmd-2": ["editor::FoldAtLevel", 2],
+      "cmd-k cmd-3": ["editor::FoldAtLevel", 3],
+      "cmd-k cmd-4": ["editor::FoldAtLevel", 4],
+      "cmd-k cmd-5": ["editor::FoldAtLevel", 5],
+      "cmd-k cmd-6": ["editor::FoldAtLevel", 6],
+      "cmd-k cmd-7": ["editor::FoldAtLevel", 7],
+      "cmd-k cmd-8": ["editor::FoldAtLevel", 8],
+      "cmd-k cmd-9": ["editor::FoldAtLevel", 9],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
       // Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
@@ -509,14 +509,14 @@
       "cmd-alt-s": "workspace::SaveAll",
       "cmd-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
-      "cmd-k cmd-left": ["workspace::ActivatePaneInDirection", "Left"],
-      "cmd-k cmd-right": ["workspace::ActivatePaneInDirection", "Right"],
-      "cmd-k cmd-up": ["workspace::ActivatePaneInDirection", "Up"],
-      "cmd-k cmd-down": ["workspace::ActivatePaneInDirection", "Down"],
-      "cmd-k shift-left": ["workspace::SwapPaneInDirection", "Left"],
-      "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
-      "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
-      "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "cmd-k cmd-left": "workspace::ActivatePaneLeft",
+      "cmd-k cmd-right": "workspace::ActivatePaneRight",
+      "cmd-k cmd-up": "workspace::ActivatePaneUp",
+      "cmd-k cmd-down": "workspace::ActivatePaneDown",
+      "cmd-k shift-left": "workspace::SwapPaneLeft",
+      "cmd-k shift-right": "workspace::SwapPaneRight",
+      "cmd-k shift-up": "workspace::SwapPaneUp",
+      "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions"
     }
   },
@@ -580,17 +580,17 @@
     }
   },
   {
-    "context": "Editor && inline_completion",
+    "context": "Editor && edit_prediction",
     "bindings": {
       // Changing the modifier currently breaks accepting while you also an LSP completions menu open
-      "alt-tab": "editor::AcceptInlineCompletion"
+      "alt-tab": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && inline_completion && !inline_completion_requires_modifier",
+    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
     "use_key_equivalents": true,
     "bindings": {
-      "tab": "editor::AcceptInlineCompletion"
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {

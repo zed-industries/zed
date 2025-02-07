@@ -475,8 +475,8 @@ impl EditorElement {
             }
         });
         register_action(editor, window, Editor::show_signature_help);
-        register_action(editor, window, Editor::next_inline_completion);
-        register_action(editor, window, Editor::previous_inline_completion);
+        register_action(editor, window, Editor::next_edit_prediction);
+        register_action(editor, window, Editor::previous_edit_prediction);
         register_action(editor, window, Editor::show_inline_completion);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
@@ -486,7 +486,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
         register_action(editor, window, Editor::accept_partial_inline_completion);
-        register_action(editor, window, Editor::accept_inline_completion);
+        register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::revert_file);
         register_action(editor, window, Editor::revert_selected_hunks);
         register_action(editor, window, Editor::apply_all_diff_hunks);
@@ -3197,7 +3197,7 @@ impl EditorElement {
                     #[cfg(target_os = "macos")]
                     {
                         // let bindings = window.bindings_for_action_in(
-                        //     &crate::AcceptInlineCompletion,
+                        //     &crate::AcceptEditPrediction,
                         //     &self.editor.focus_handle(cx),
                         // );
 
@@ -5770,7 +5770,7 @@ fn inline_completion_accept_indicator(
             }
         }
     } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+        let bindings = window.bindings_for_action_in(&crate::AcceptEditPrediction, &focus_handle);
         if let Some(keystroke) = bindings
             .last()
             .and_then(|binding| binding.keystrokes().first())

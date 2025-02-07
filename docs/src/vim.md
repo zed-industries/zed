@@ -368,10 +368,10 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 {
   "context": "Dock",
   "bindings": {
-    "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-    "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-    "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-    "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"]
+    "ctrl-w h": "workspace::ActivatePaneLeft",
+    "ctrl-w l": "workspace::ActivatePaneRight",
+    "ctrl-w k": "workspace::ActivatePaneUp",
+    "ctrl-w j": "workspace::ActivatePaneDown"
     // ... or other keybindings
   }
 }
@@ -399,12 +399,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 {
   "context": "vim_mode == visual",
   "bindings": {
-    "shift-s": [
-      "vim::PushOperator",
-      {
-        "AddSurrounds": {}
-      }
-    ]
+    "shift-s": ["vim::PushAddSurrounds", {}]
   }
 }
 ```
@@ -416,8 +411,8 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
   {
     "context": "vim_mode == normal || vim_mode == visual",
     "bindings": {
-      "s": ["vim::PushOperator", { "Sneak": {} }],
-      "S": ["vim::PushOperator", { "SneakBackward": {} }]
+      "s": ["vim::PushSneak", {}],
+      "S": ["vim::PushSneakBackward", {}]
     }
   }
 ]

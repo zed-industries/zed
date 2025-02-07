@@ -32,7 +32,7 @@
       "ctrl-q": "zed::Quit",
       "f11": "zed::ToggleFullScreen",
       "ctrl-alt-z": "zeta::RateCompletions",
-      "ctrl-shift-i": "inline_completion::ToggleMenu"
+      "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
   },
   {
@@ -145,17 +145,17 @@
     }
   },
   {
-    "context": "Editor && mode == full && inline_completion",
+    "context": "Editor && mode == full && edit_prediction",
     "bindings": {
-      "alt-]": "editor::NextInlineCompletion",
-      "alt-[": "editor::PreviousInlineCompletion",
-      "alt-right": "editor::AcceptPartialInlineCompletion"
+      "alt-]": "editor::NextEditPrediction",
+      "alt-[": "editor::PreviousEditPrediction",
+      "alt-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
-    "context": "Editor && !inline_completion",
+    "context": "Editor && !edit_prediction",
     "bindings": {
-      "alt-\\": "editor::ShowInlineCompletion"
+      "alt-\\": "editor::ShowEditPrediction"
     }
   },
   {
@@ -348,15 +348,15 @@
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
-      "ctrl-k ctrl-1": ["editor::FoldAtLevel", { "level": 1 }],
-      "ctrl-k ctrl-2": ["editor::FoldAtLevel", { "level": 2 }],
-      "ctrl-k ctrl-3": ["editor::FoldAtLevel", { "level": 3 }],
-      "ctrl-k ctrl-4": ["editor::FoldAtLevel", { "level": 4 }],
-      "ctrl-k ctrl-5": ["editor::FoldAtLevel", { "level": 5 }],
-      "ctrl-k ctrl-6": ["editor::FoldAtLevel", { "level": 6 }],
-      "ctrl-k ctrl-7": ["editor::FoldAtLevel", { "level": 7 }],
-      "ctrl-k ctrl-8": ["editor::FoldAtLevel", { "level": 8 }],
-      "ctrl-k ctrl-9": ["editor::FoldAtLevel", { "level": 9 }],
+      "ctrl-k ctrl-1": ["editor::FoldAtLevel", 1],
+      "ctrl-k ctrl-2": ["editor::FoldAtLevel", 2],
+      "ctrl-k ctrl-3": ["editor::FoldAtLevel", 3],
+      "ctrl-k ctrl-4": ["editor::FoldAtLevel", 4],
+      "ctrl-k ctrl-5": ["editor::FoldAtLevel", 5],
+      "ctrl-k ctrl-6": ["editor::FoldAtLevel", 6],
+      "ctrl-k ctrl-7": ["editor::FoldAtLevel", 7],
+      "ctrl-k ctrl-8": ["editor::FoldAtLevel", 8],
+      "ctrl-k ctrl-9": ["editor::FoldAtLevel", 9],
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
@@ -432,14 +432,14 @@
       "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
-      "ctrl-k ctrl-left": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-k ctrl-right": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-k ctrl-up": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-k ctrl-down": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-k shift-left": ["workspace::SwapPaneInDirection", "Left"],
-      "ctrl-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
-      "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
-      "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
+      "ctrl-k ctrl-left": "workspace::ActivatePaneLeft",
+      "ctrl-k ctrl-right": "workspace::ActivatePaneRight",
+      "ctrl-k ctrl-up": "workspace::ActivatePaneUp",
+      "ctrl-k ctrl-down": "workspace::ActivatePaneDown",
+      "ctrl-k shift-left": "workspace::SwapPaneLeft",
+      "ctrl-k shift-right": "workspace::SwapPaneRight",
+      "ctrl-k shift-up": "workspace::SwapPaneUp",
+      "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
       "ctrl-shift-r": "task::Rerun",
       "ctrl-alt-r": "task::Rerun",
@@ -453,8 +453,8 @@
   {
     "context": "ApplicationMenu",
     "bindings": {
-      "left": ["app_menu::NavigateApplicationMenuInDirection", "Left"],
-      "right": ["app_menu::NavigateApplicationMenuInDirection", "Right"]
+      "left": "app_menu::ActivateMenuLeft",
+      "right": "app_menu::ActivateMenuRight"
     }
   },
   // Bindings from Sublime Text
@@ -502,16 +502,16 @@
     }
   },
   {
-    "context": "Editor && inline_completion",
+    "context": "Editor && edit_prediction",
     "bindings": {
       // Changing the modifier currently breaks accepting while you also an LSP completions menu open
-      "alt-enter": "editor::AcceptInlineCompletion"
+      "alt-enter": "editor::AcceptEditPrediction"
     }
   },
   {
-    "context": "Editor && inline_completion && !inline_completion_requires_modifier",
+    "context": "Editor && edit_prediction && !edit_prediction_requires_modifier",
     "bindings": {
-      "tab": "editor::AcceptInlineCompletion"
+      "tab": "editor::AcceptEditPrediction"
     }
   },
   {

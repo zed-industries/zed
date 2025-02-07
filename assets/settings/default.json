@@ -25,7 +25,7 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "inline_completion_provider": "copilot"
+    "edit_prediction_provider": "copilot"
   },
   // The name of a font to use for rendering text in the editor
   "buffer_font_family": "Zed Plex Mono",
@@ -170,7 +170,7 @@
   "show_signature_help_after_edits": false,
   /// Whether to show the edit predictions next to the completions provided by a language server.
   /// Only has an effect if edit prediction provider supports it.
-  "show_inline_completions_in_menu": true,
+  "show_edit_predictions_in_menu": true,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -204,11 +204,11 @@
   // no matter how they were inserted.
   "always_treat_brackets_as_autoclosed": false,
   // Controls whether edit predictions are shown immediately (true)
-  // or manually by triggering `editor::ShowInlineCompletion` (false).
-  "show_inline_completions": true,
+  // or manually by triggering `editor::ShowEditPrediction` (false).
+  "show_edit_predictions": true,
   // Controls whether edit predictions are shown in a given language scope.
   // Example: ["string", "comment"]
-  "inline_completions_disabled_in": [],
+  "edit_predictions_disabled_in": [],
   // Whether to show tabs and spaces in the editor.
   // This setting can take four values:
   //
@@ -781,7 +781,7 @@
   // 2. Load direnv configuration through the shell hook, works for POSIX shells and fish.
   //      "load_direnv": "shell_hook"
   "load_direnv": "direct",
-  "inline_completions": {
+  "edit_predictions": {
     // A list of globs representing files that edit predictions should be disabled for.
     "disabled_globs": [
       "**/.env*",
