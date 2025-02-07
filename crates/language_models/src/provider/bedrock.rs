@@ -1,5 +1,5 @@
 use crate::AllLanguageModelSettings;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
@@ -8,8 +8,11 @@ use bedrock::bedrock_client::Config;
 use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use futures::{ready, Stream, TryFutureExt, TryStreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    stream::BoxStream,
+    FutureExt, Stream, StreamExt,
+};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
@@ -20,19 +23,15 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role, StopReason,
 };
-use std::future::Future;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
-use smol::Async;
 use std::pin::Pin;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use tokio::runtime::Handle;
-use tokio::task::JoinError;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
@@ -409,13 +408,13 @@ impl LanguageModel for BedrockModel {
 
     fn use_any_tool(
         &self,
-        request: LanguageModelRequest,
-        name: String,
-        description: String,
-        schema: Value,
-        cx: &AsyncApp,
+        _request: LanguageModelRequest,
+        _name: String,
+        _description: String,
+        _schema: Value,
+        _cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        todo!()
+        future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -604,7 +603,12 @@ impl ConfigurationView {
         }
     }
 
-    fn save_credentials(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_credentials(
+        &mut self,
+        _: &menu::Confirm,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let access_key_id = self.access_key_id_editor.read(cx).text(cx).to_string();
         let secret_access_key = self.secret_access_key_editor.read(cx).text(cx).to_string();
         let region = self.region_editor.read(cx).text(cx).to_string();
@@ -728,7 +732,7 @@ impl Render for ConfigurationView {
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .on_click(move |_, window, cx| cx.open_url(IAM_CONSOLE_URL))
+                        .on_click(move |_, _window, cx| cx.open_url(IAM_CONSOLE_URL))
                 )
                 )
                 .child(Label::new(INSTRUCTIONS[2]))

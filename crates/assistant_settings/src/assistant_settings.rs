@@ -5,7 +5,7 @@ use anthropic::Model as AnthropicModel;
 use deepseek::Model as DeepseekModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Pixels};
-use language_model::{BedrockModel, CloudModel, LanguageModel};
+use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};

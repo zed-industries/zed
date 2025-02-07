@@ -1,24 +1,22 @@
 mod models;
 
-use anyhow::{anyhow, Context, Error, Result};
-use futures::{stream, Stream};
-use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 
+use anyhow::{anyhow, Context, Error, Result};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::error::ProvideErrorMetadata;
 pub use aws_sdk_bedrockruntime::types::ContentBlock as BedrockInnerContent;
-use aws_sdk_bedrockruntime::types::{ContentBlockDelta, ContentBlockStopEvent};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
-pub use bedrock::types::ContentBlock as BedrockRequestContent;
-pub use bedrock::types::ConversationRole as BedrockRole;
 use bedrock::types::ConverseOutput as Response;
-pub use bedrock::types::ConverseStreamOutput as BedrockStreamingResponse;
-pub use bedrock::types::Message as BedrockMessage;
-pub use bedrock::types::ResponseStream as BedrockResponseStream;
+pub use bedrock::types::{
+    ContentBlock as BedrockRequestContent, ConversationRole as BedrockRole,
+    ConverseStreamOutput as BedrockStreamingResponse, Message as BedrockMessage,
+    ResponseStream as BedrockResponseStream,
+};
 use futures::stream::BoxStream;
+use futures::{stream, Stream};
 pub use models::*;
+use serde::{Deserialize, Serialize};
 use strum::Display;
 use thiserror::Error;
 
@@ -26,7 +24,7 @@ pub async fn complete(
     client: &bedrock::Client,
     request: Request,
 ) -> Result<Response, BedrockError> {
-    let mut response = bedrock::Client::converse(client)
+    let response = bedrock::Client::converse(client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into())
         .send()
@@ -34,7 +32,9 @@ pub async fn complete(
         .context("Failed to send request to Bedrock");
 
     match response {
-        Ok(output) => Ok(output.output.unwrap()),
+        Ok(output) => output
+            .output
+            .ok_or_else(|| BedrockError::Other(anyhow!("no output"))),
         Err(err) => Err(BedrockError::Other(err)),
     }
 }

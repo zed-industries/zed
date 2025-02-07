@@ -438,16 +438,7 @@ impl LanguageModelRequest {
                                     None
                                 }
                             }
-                            MessageContent::Image(image) => {
-                                todo!()
-                                // Some(bedrock::RequestContent::Image(ImageBlock{
-                                //     format: ImageFormat::,
-                                //     source: None,
-                                // })
-                            }
-                            _ => {
-                                unimplemented!()
-                            }
+                            _ => None,
                         })
                         .collect();
                     let bedrock_role = match message.role {
