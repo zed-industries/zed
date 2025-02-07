@@ -118,6 +118,8 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
         icons_root_dir: PathBuf,
         fs: Arc<dyn Fs>,
     ) -> Task<Result<()>>;
+
+    fn reload_current_icon_theme(&self, cx: &mut App);
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
@@ -184,6 +186,14 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         };
 
         proxy.load_icon_theme(icon_theme_path, icons_root_dir, fs)
+    }
+
+    fn reload_current_icon_theme(&self, cx: &mut App) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.reload_current_icon_theme(cx)
     }
 }
 
