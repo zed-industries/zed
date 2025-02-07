@@ -15,14 +15,15 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
-    BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    AcceptInlineCompletion, BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint,
+    DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
     EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk,
     GoToPrevHunk, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlineCompletion, JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
     RevertSelectedHunks, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, INLINE_COMPLETION_REQUIRES_MODIFIER_KEY_CONTEXT,
+    MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -34,11 +35,11 @@ use gpui::{
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
     ClickEvent, ClipboardItem, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementInputHandler, Entity, FocusHandle, Focusable as _, FontId,
-    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Keystroke, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    WeakEntity, Window,
+    GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, KeyBindingContextPredicate,
+    Keystroke, Length, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine,
+    SharedString, Size, StatefulInteractiveElement, Style, Styled, Subscription, TextRun,
+    TextStyleRefinement, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -54,7 +55,7 @@ use multi_buffer::{
     RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
-use settings::Settings;
+use settings::{KeyBindingValidator, KeyBindingValidatorRegistration, Settings};
 use smallvec::{smallvec, SmallVec};
 use std::{
     any::TypeId,
@@ -74,7 +75,7 @@ use ui::{
     POPOVER_Y_PADDING,
 };
 use unicode_segmentation::UnicodeSegmentation;
-use util::{RangeExt, ResultExt};
+use util::{markdown::MarkdownString, RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
@@ -3190,11 +3191,10 @@ impl EditorElement {
                 );
 
                 let edit_prediction = if edit_prediction_popover_visible {
-                    let bindings = window.bindings_for_action_in(
-                        &crate::AcceptInlineCompletion,
-                        &self.editor.focus_handle(cx),
+                    let accept_binding = AcceptInlineCompletionBinding::resolve(
+                        self.editor.focus_handle(cx),
+                        window,
                     );
-                    let accept_keystroke = single_keystroke_binding(&bindings);
 
                     self.editor.update(cx, move |editor, cx| {
                         let mut element = editor.render_edit_prediction_cursor_popover(
@@ -3202,7 +3202,7 @@ impl EditorElement {
                             max_width,
                             cursor_point,
                             style,
-                            accept_keystroke.as_ref()?,
+                            accept_binding.keystroke()?,
                             window,
                             cx,
                         )?;
@@ -5705,11 +5705,8 @@ fn inline_completion_accept_indicator(
     window: &Window,
     cx: &App,
 ) -> Option<AnyElement> {
-    let bindings =
-        window.bindings_for_action_in(&crate::AcceptInlineCompletion, &editor_focus_handle);
-    let Some(accept_keystroke) = single_keystroke_binding(&bindings) else {
-        return None;
-    };
+    let accept_binding = AcceptInlineCompletionBinding::resolve(editor_focus_handle, window);
+    let accept_keystroke = accept_binding.keystroke()?;
 
     let accept_key = h_flex()
         .px_0p5()
@@ -5757,14 +5754,66 @@ fn inline_completion_accept_indicator(
     )
 }
 
-fn single_keystroke_binding(bindings: &[gpui::KeyBinding]) -> Option<&Keystroke> {
-    if let Some(binding) = bindings.last() {
-        match &binding.keystrokes() {
-            [keystroke] => Some(keystroke),
-            _ => None,
+pub struct AcceptInlineCompletionBinding(Option<gpui::KeyBinding>);
+
+impl AcceptInlineCompletionBinding {
+    pub fn resolve(editor_focus_handle: FocusHandle, window: &Window) -> Self {
+        AcceptInlineCompletionBinding(
+            window
+                .bindings_for_action_in(&AcceptInlineCompletion, &editor_focus_handle)
+                .into_iter()
+                .next(),
+        )
+    }
+
+    pub fn keystroke(&self) -> Option<&Keystroke> {
+        if let Some(binding) = self.0.as_ref() {
+            match &binding.keystrokes() {
+                [keystroke] => Some(keystroke),
+                _ => None,
+            }
+        } else {
+            None
         }
-    } else {
-        None
+    }
+}
+
+struct AcceptInlineCompletionsBindingValidator;
+
+inventory::submit! { KeyBindingValidatorRegistration(|| Box::new(AcceptInlineCompletionsBindingValidator)) }
+
+impl KeyBindingValidator for AcceptInlineCompletionsBindingValidator {
+    fn action_type_id(&self) -> TypeId {
+        TypeId::of::<AcceptInlineCompletion>()
+    }
+
+    fn validate(&self, binding: &gpui::KeyBinding) -> Result<(), MarkdownString> {
+        use KeyBindingContextPredicate::*;
+
+        if binding.keystrokes().len() == 1 && binding.keystrokes()[0].modifiers.modified() {
+            return Ok(());
+        }
+        let required_predicate =
+            Not(Identifier(INLINE_COMPLETION_REQUIRES_MODIFIER_KEY_CONTEXT.into()).into());
+        match binding.predicate() {
+            Some(predicate) if required_predicate.is_superset(&predicate) => {
+                return Ok(());
+            }
+            _ => {}
+        }
+        Err(MarkdownString(format!(
+            "{} can only be bound to a single keystroke with modifiers, so \
+            that holding down these modifiers can be used to preview \
+            completions inline when the completions menu is open.\n\n\
+            This restriction does not apply when the context requires {}, \
+            since these bindings will not be used when the completions menu \
+            is open.",
+            MarkdownString::inline_code(AcceptInlineCompletion.name()),
+            MarkdownString::inline_code(&format!(
+                "!{}",
+                INLINE_COMPLETION_REQUIRES_MODIFIER_KEY_CONTEXT
+            )),
+        )))
     }
 }
 
