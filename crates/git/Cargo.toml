@@ -26,7 +26,6 @@ log.workspace = true
 parking_lot.workspace = true
 regex.workspace = true
 rope.workspace = true
-rpc.workspace = true
 serde.workspace = true
 smol.workspace = true
 sum_tree.workspace = true

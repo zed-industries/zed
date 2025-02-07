@@ -5277,7 +5277,6 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rope",
- "rpc",
  "serde",
  "serde_json",
  "smol",
