@@ -4816,6 +4816,7 @@ impl Editor {
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
                 let target = *target;
+                // Note that this is also done in vim's handler of the Tab action.
                 self.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
                     selections.select_anchor_ranges([target..target]);
                 });
