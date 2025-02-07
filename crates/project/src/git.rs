@@ -1,6 +1,7 @@
+use crate::buffer_store::BufferStore;
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use crate::{Project, ProjectPath};
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 use client::ProjectId;
 use futures::channel::{mpsc, oneshot};
 use futures::StreamExt as _;
@@ -8,24 +9,29 @@ use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
 };
-use gpui::{App, Context, Entity, EventEmitter, SharedString, Subscription, WeakEntity};
+use gpui::{
+    App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task, WeakEntity,
+};
+use language::{Buffer, LanguageRegistry};
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
+use std::path::Path;
 use std::sync::Arc;
+use text::BufferId;
 use util::{maybe, ResultExt};
 use worktree::{ProjectEntryId, RepositoryEntry, StatusEntry};
 
 pub struct GitState {
     project_id: Option<ProjectId>,
     client: Option<AnyProtoClient>,
-    repositories: Vec<RepositoryHandle>,
+    repositories: Vec<Entity<Repository>>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, oneshot::Sender<anyhow::Result<()>>)>,
     _subscription: Subscription,
 }
 
-#[derive(Clone)]
-pub struct RepositoryHandle {
+pub struct Repository {
+    commit_message_buffer: Option<Entity<Buffer>>,
     git_state: WeakEntity<GitState>,
     pub worktree_id: WorktreeId,
     pub repository_entry: RepositoryEntry,
@@ -44,36 +50,23 @@ pub enum GitRepo {
     },
 }
 
-impl PartialEq<Self> for RepositoryHandle {
-    fn eq(&self, other: &Self) -> bool {
-        self.worktree_id == other.worktree_id
-            && self.repository_entry.work_directory_id()
-                == other.repository_entry.work_directory_id()
-    }
-}
-
-impl Eq for RepositoryHandle {}
-
-impl PartialEq<RepositoryEntry> for RepositoryHandle {
-    fn eq(&self, other: &RepositoryEntry) -> bool {
-        self.repository_entry.work_directory_id() == other.work_directory_id()
-    }
-}
-
 enum Message {
     Commit {
         git_repo: GitRepo,
+        message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
     },
     Stage(GitRepo, Vec<RepoPath>),
     Unstage(GitRepo, Vec<RepoPath>),
 }
 
-pub enum Event {
-    RepositoriesUpdated,
+pub enum GitEvent {
+    ActiveRepositoryChanged,
+    FileSystemUpdated,
+    GitStateUpdated,
 }
 
-impl EventEmitter<Event> for GitState {}
+impl EventEmitter<GitEvent> for GitState {}
 
 impl GitState {
     pub fn new(
@@ -95,7 +88,7 @@ impl GitState {
         }
     }
 
-    pub fn active_repository(&self) -> Option<RepositoryHandle> {
+    pub fn active_repository(&self) -> Option<Entity<Repository>> {
         self.active_index
             .map(|index| self.repositories[index].clone())
     }
@@ -103,7 +96,7 @@ impl GitState {
     fn on_worktree_store_event(
         &mut self,
         worktree_store: Entity<WorktreeStore>,
-        _event: &WorktreeStoreEvent,
+        event: &WorktreeStoreEvent,
         cx: &mut Context<'_, Self>,
     ) {
         // TODO inspect the event
@@ -116,7 +109,7 @@ impl GitState {
 
         worktree_store.update(cx, |worktree_store, cx| {
             for worktree in worktree_store.worktrees() {
-                worktree.update(cx, |worktree, _| {
+                worktree.update(cx, |worktree, cx| {
                     let snapshot = worktree.snapshot();
                     for repo in snapshot.repositories().iter() {
                         let git_repo = worktree
@@ -137,27 +130,34 @@ impl GitState {
                         let Some(git_repo) = git_repo else {
                             continue;
                         };
-                        let existing = self
-                            .repositories
-                            .iter()
-                            .enumerate()
-                            .find(|(_, existing_handle)| existing_handle == &repo);
+                        let worktree_id = worktree.id();
+                        let existing =
+                            self.repositories
+                                .iter()
+                                .enumerate()
+                                .find(|(_, existing_handle)| {
+                                    existing_handle.read(cx).id()
+                                        == (worktree_id, repo.work_directory_id())
+                                });
                         let handle = if let Some((index, handle)) = existing {
                             if self.active_index == Some(index) {
                                 new_active_index = Some(new_repositories.len());
                             }
                             // Update the statuses but keep everything else.
-                            let mut existing_handle = handle.clone();
-                            existing_handle.repository_entry = repo.clone();
+                            let existing_handle = handle.clone();
+                            existing_handle.update(cx, |existing_handle, _| {
+                                existing_handle.repository_entry = repo.clone();
+                            });
                             existing_handle
                         } else {
-                            RepositoryHandle {
+                            cx.new(|_| Repository {
                                 git_state: this.clone(),
-                                worktree_id: worktree.id(),
+                                worktree_id,
                                 repository_entry: repo.clone(),
                                 git_repo,
                                 update_sender: self.update_sender.clone(),
-                            }
+                                commit_message_buffer: None,
+                            })
                         };
                         new_repositories.push(handle);
                     }
@@ -172,10 +172,17 @@ impl GitState {
         self.repositories = new_repositories;
         self.active_index = new_active_index;
 
-        cx.emit(Event::RepositoriesUpdated);
+        match event {
+            WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_) => {
+                cx.emit(GitEvent::GitStateUpdated);
+            }
+            _ => {
+                cx.emit(GitEvent::FileSystemUpdated);
+            }
+        }
     }
 
-    pub fn all_repositories(&self) -> Vec<RepositoryHandle> {
+    pub fn all_repositories(&self) -> Vec<Entity<Repository>> {
         self.repositories.clone()
     }
 
@@ -251,10 +258,12 @@ impl GitState {
             }
             Message::Commit {
                 git_repo,
+                message,
                 name_and_email,
             } => {
                 match git_repo {
                     GitRepo::Local(repo) => repo.commit(
+                        message.as_ref(),
                         name_and_email
                             .as_ref()
                             .map(|(name, email)| (name.as_ref(), email.as_ref())),
@@ -271,6 +280,7 @@ impl GitState {
                                 project_id: project_id.0,
                                 worktree_id: worktree_id.to_proto(),
                                 work_directory_id: work_directory_id.to_proto(),
+                                message: String::from(message),
                                 name: name.map(String::from),
                                 email: email.map(String::from),
                             })
@@ -284,7 +294,11 @@ impl GitState {
     }
 }
 
-impl RepositoryHandle {
+impl Repository {
+    fn id(&self) -> (WorktreeId, ProjectEntryId) {
+        (self.worktree_id, self.repository_entry.work_directory_id())
+    }
+
     pub fn display_name(&self, project: &Project, cx: &App) -> SharedString {
         maybe!({
             let path = self.repo_path_to_project_path(&"".into())?;
@@ -300,26 +314,32 @@ impl RepositoryHandle {
         .unwrap_or("".into())
     }
 
-    pub fn activate(&self, cx: &mut App) {
+    pub fn activate(&self, cx: &mut Context<Self>) {
         let Some(git_state) = self.git_state.upgrade() else {
             return;
         };
+        let entity = cx.entity();
         git_state.update(cx, |git_state, cx| {
-            let Some((index, _)) = git_state
+            let Some(index) = git_state
                 .repositories
                 .iter()
-                .enumerate()
-                .find(|(_, handle)| handle == &self)
+                .position(|handle| *handle == entity)
             else {
                 return;
             };
             git_state.active_index = Some(index);
-            cx.emit(Event::RepositoriesUpdated);
+            cx.emit(GitEvent::ActiveRepositoryChanged);
         });
     }
 
     pub fn status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
         self.repository_entry.status()
+    }
+
+    pub fn has_conflict(&self, path: &RepoPath) -> bool {
+        self.repository_entry
+            .current_merge_conflicts
+            .contains(&path)
     }
 
     pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
@@ -328,53 +348,135 @@ impl RepositoryHandle {
     }
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
-        if path.worktree_id != self.worktree_id {
+        self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    }
+
+    pub fn worktree_id_path_to_repo_path(
+        &self,
+        worktree_id: WorktreeId,
+        path: &Path,
+    ) -> Option<RepoPath> {
+        if worktree_id != self.worktree_id {
             return None;
         }
-        self.repository_entry.relativize(&path.path).log_err()
+        self.repository_entry.relativize(path).log_err()
     }
 
-    pub async fn stage_entries(&self, entries: Vec<RepoPath>) -> anyhow::Result<()> {
-        if entries.is_empty() {
-            return Ok(());
+    pub fn open_commit_buffer(
+        &mut self,
+        languages: Option<Arc<LanguageRegistry>>,
+        buffer_store: Entity<BufferStore>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Entity<Buffer>>> {
+        if let Some(buffer) = self.commit_message_buffer.clone() {
+            return Task::ready(Ok(buffer));
         }
+
+        if let GitRepo::Remote {
+            project_id,
+            client,
+            worktree_id,
+            work_directory_id,
+        } = self.git_repo.clone()
+        {
+            let client = client.clone();
+            cx.spawn(|repository, mut cx| async move {
+                let request = client.request(proto::OpenCommitMessageBuffer {
+                    project_id: project_id.0,
+                    worktree_id: worktree_id.to_proto(),
+                    work_directory_id: work_directory_id.to_proto(),
+                });
+                let response = request.await.context("requesting to open commit buffer")?;
+                let buffer_id = BufferId::new(response.buffer_id)?;
+                let buffer = buffer_store
+                    .update(&mut cx, |buffer_store, cx| {
+                        buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                    })?
+                    .await?;
+                if let Some(language_registry) = languages {
+                    let git_commit_language =
+                        language_registry.language_for_name("Git Commit").await?;
+                    buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_language(Some(git_commit_language), cx);
+                    })?;
+                }
+                repository.update(&mut cx, |repository, _| {
+                    repository.commit_message_buffer = Some(buffer.clone());
+                })?;
+                Ok(buffer)
+            })
+        } else {
+            self.open_local_commit_buffer(languages, buffer_store, cx)
+        }
+    }
+
+    fn open_local_commit_buffer(
+        &mut self,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        buffer_store: Entity<BufferStore>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Entity<Buffer>>> {
+        cx.spawn(|repository, mut cx| async move {
+            let buffer = buffer_store
+                .update(&mut cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
+                .await?;
+
+            if let Some(language_registry) = language_registry {
+                let git_commit_language = language_registry.language_for_name("Git Commit").await?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_language(Some(git_commit_language), cx);
+                })?;
+            }
+
+            repository.update(&mut cx, |repository, _| {
+                repository.commit_message_buffer = Some(buffer.clone());
+            })?;
+            Ok(buffer)
+        })
+    }
+
+    pub fn stage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        if entries.is_empty() {
+            result_tx.send(Ok(())).ok();
+            return result_rx;
+        }
         self.update_sender
             .unbounded_send((Message::Stage(self.git_repo.clone(), entries), result_tx))
-            .map_err(|_| anyhow!("Failed to submit stage operation"))?;
-
-        result_rx.await?
+            .ok();
+        result_rx
     }
 
-    pub async fn unstage_entries(&self, entries: Vec<RepoPath>) -> anyhow::Result<()> {
-        if entries.is_empty() {
-            return Ok(());
-        }
+    pub fn unstage_entries(&self, entries: Vec<RepoPath>) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
+        if entries.is_empty() {
+            result_tx.send(Ok(())).ok();
+            return result_rx;
+        }
         self.update_sender
             .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), result_tx))
-            .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
-        result_rx.await?
+            .ok();
+        result_rx
     }
 
-    pub async fn stage_all(&self) -> anyhow::Result<()> {
+    pub fn stage_all(&self) -> oneshot::Receiver<anyhow::Result<()>> {
         let to_stage = self
             .repository_entry
             .status()
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.stage_entries(to_stage).await
+        self.stage_entries(to_stage)
     }
 
-    pub async fn unstage_all(&self) -> anyhow::Result<()> {
+    pub fn unstage_all(&self) -> oneshot::Receiver<anyhow::Result<()>> {
         let to_unstage = self
             .repository_entry
             .status()
             .filter(|entry| entry.status.is_staged().unwrap_or(true))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.unstage_entries(to_unstage).await
+        self.unstage_entries(to_unstage)
     }
 
     /// Get a count of all entries in the active repository, including
@@ -395,18 +497,22 @@ impl RepositoryHandle {
         return self.have_changes() && (commit_all || self.have_staged_changes());
     }
 
-    pub async fn commit(
+    pub fn commit(
         &self,
+        message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
-    ) -> anyhow::Result<()> {
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
-        self.update_sender.unbounded_send((
-            Message::Commit {
-                git_repo: self.git_repo.clone(),
-                name_and_email,
-            },
-            result_tx,
-        ))?;
-        result_rx.await?
+        self.update_sender
+            .unbounded_send((
+                Message::Commit {
+                    git_repo: self.git_repo.clone(),
+                    message,
+                    name_and_email,
+                },
+                result_tx,
+            ))
+            .ok();
+        result_rx
     }
 }

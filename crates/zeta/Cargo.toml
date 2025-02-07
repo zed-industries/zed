@@ -37,8 +37,8 @@ language_models.workspace = true
 log.workspace = true
 menu.workspace = true
 postage.workspace = true
+project.workspace = true
 regex.workspace = true
-rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -52,6 +52,7 @@ uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::{Zeta, ZED_PREDICT_DATA_COLLECTION_CHOICE};
+use crate::{onboarding_event, ZED_PREDICT_DATA_COLLECTION_CHOICE};
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::FeatureFlagAppExt as _;
@@ -9,12 +9,11 @@ use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, ClickEvent, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, MouseDownEvent, Render,
 };
-use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
+use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
 use settings::{update_settings_file, Settings};
-use ui::{prelude::*, Checkbox, TintColor, Tooltip};
+use ui::{prelude::*, Checkbox, TintColor};
 use util::ResultExt;
 use workspace::{notifications::NotifyTaskExt, ModalView, Workspace};
-use worktree::Worktree;
 
 /// Introduces user to Zed's Edit Prediction feature and terms of service
 pub struct ZedPredictModal {
@@ -26,7 +25,6 @@ pub struct ZedPredictModal {
     terms_of_service: bool,
     data_collection_expanded: bool,
     data_collection_opted_in: bool,
-    worktrees: Vec<Entity<Worktree>>,
 }
 
 #[derive(PartialEq, Eq)]
@@ -48,8 +46,6 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let worktrees = workspace.visible_worktrees(cx).collect();
-
         workspace.toggle_modal(window, cx, |_window, cx| Self {
             user_store,
             client,
@@ -59,23 +55,28 @@ impl ZedPredictModal {
             terms_of_service: false,
             data_collection_expanded: false,
             data_collection_opted_in: false,
-            worktrees,
         });
     }
 
     fn view_terms(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/terms-of-service");
         cx.notify();
+
+        onboarding_event!("ToS Link Clicked");
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
         cx.notify();
+
+        onboarding_event!("Blog Link clicked");
     }
 
     fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.open_url("https://zed.dev/docs/configuring-zed#inline-completions");
         cx.notify();
+
+        onboarding_event!("Docs Link Clicked");
     }
 
     fn accept_and_enable(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -104,20 +105,18 @@ impl ZedPredictModal {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
-                        .inline_completion_provider = Some(InlineCompletionProvider::Zed);
+                        .edit_prediction_provider = Some(EditPredictionProvider::Zed);
                 });
-
-                if this.worktrees.is_empty() {
-                    cx.emit(DismissEvent);
-                    return;
-                }
-
-                Zeta::register(None, this.client.clone(), this.user_store.clone(), cx);
 
                 cx.emit(DismissEvent);
             })
         })
         .detach_and_notify_err(window, cx);
+
+        onboarding_event!(
+            "Enable Clicked",
+            data_collection_opted_in = self.data_collection_opted_in,
+        );
     }
 
     fn sign_in(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -134,12 +133,15 @@ impl ZedPredictModal {
 
             this.update(&mut cx, |this, cx| {
                 this.sign_in_status = status;
+                onboarding_event!("Signed In");
                 cx.notify()
             })?;
 
             result
         })
         .detach_and_notify_err(window, cx);
+
+        onboarding_event!("Sign In Clicked");
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
@@ -158,19 +160,30 @@ impl Focusable for ZedPredictModal {
 impl ModalView for ZedPredictModal {}
 
 impl Render for ZedPredictModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_height = window.viewport_size().height;
+        let max_height = window_height - px(200.);
+
         let base = v_flex()
-            .id("zed predict tos")
+            .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
-            .w(px(440.))
-            .p_4()
             .relative()
+            .w(px(440.))
+            .h_full()
+            .max_h(max_height)
+            .p_4()
             .gap_2()
-            .overflow_hidden()
+            .when(self.data_collection_expanded, |element| {
+                element.overflow_y_scroll()
+            })
+            .when(!self.data_collection_expanded, |element| {
+                element.overflow_hidden()
+            })
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|_, _: &menu::Cancel, _window, cx| {
+                onboarding_event!("Cancelled", trigger = "Action");
                 cx.emit(DismissEvent);
             }))
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, window, _cx| {
@@ -181,7 +194,7 @@ impl Render for ZedPredictModal {
                     .p_1p5()
                     .absolute()
                     .top_1()
-                    .left_1p5()
+                    .left_1()
                     .right_0()
                     .h(px(200.))
                     .child(
@@ -244,7 +257,7 @@ impl Render for ZedPredictModal {
                         v_flex()
                             .gap_2()
                             .items_center()
-                            .pr_4()
+                            .pr_2p5()
                             .child(tab(0).ml_neg_20())
                             .child(tab(1))
                             .child(tab(2).ml_20())
@@ -253,6 +266,7 @@ impl Render for ZedPredictModal {
             .child(h_flex().absolute().top_2().right_2().child(
                 IconButton::new("cancel", IconName::X).on_click(cx.listener(
                     |_, _: &ClickEvent, _window, cx| {
+                        onboarding_event!("Cancelled", trigger = "X click");
                         cx.emit(DismissEvent);
                     },
                 )),
@@ -291,9 +305,14 @@ impl Render for ZedPredictModal {
 
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
                 h_flex()
+                    .items_start()
                     .gap_2()
-                    .child(Icon::new(IconName::Check).size(IconSize::XSmall))
-                    .child(label_item(label_text))
+                    .child(
+                        div()
+                            .mt_1p5()
+                            .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
+                    )
+                    .child(div().w_full().child(label_item(label_text)))
             }
 
             fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
@@ -314,7 +333,7 @@ impl Render for ZedPredictModal {
                                 .label("Read and accept the")
                                 .on_click(cx.listener(move |this, state, _window, cx| {
                                     this.terms_of_service = *state == ToggleState::Selected;
-                                    cx.notify()
+                                    cx.notify();
                                 })),
                         )
                         .child(
@@ -329,6 +348,7 @@ impl Render for ZedPredictModal {
                     v_flex()
                         .child(
                             h_flex()
+                                .flex_wrap()
                                 .child(
                                     Checkbox::new(
                                         "training-data-checkbox",
@@ -336,17 +356,6 @@ impl Render for ZedPredictModal {
                                     )
                                     .label("Optionally share training data (OSS-only).")
                                     .fill()
-                                    .when(self.worktrees.is_empty(), |element| {
-                                        element.disabled(true).tooltip(move |window, cx| {
-                                            Tooltip::with_meta(
-                                                "No Project Open",
-                                                None,
-                                                "Open a project to enable this option.",
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                    })
                                     .on_click(cx.listener(
                                         move |this, state, _window, cx| {
                                             this.data_collection_opted_in =
@@ -355,7 +364,6 @@ impl Render for ZedPredictModal {
                                         },
                                     )),
                                 )
-                                // TODO: show each worktree if more than 1
                                 .child(
                                     Button::new("learn-more", "Learn More")
                                         .icon(accordion_icons.0)
@@ -364,7 +372,11 @@ impl Render for ZedPredictModal {
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.data_collection_expanded =
                                                 !this.data_collection_expanded;
-                                            cx.notify()
+                                            cx.notify();
+
+                                            if this.data_collection_expanded {
+                                                onboarding_event!("Data Collection Learn More Clicked");
+                                            }
                                         })),
                                 ),
                         )
@@ -394,9 +406,11 @@ impl Render for ZedPredictModal {
                                     ))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "Files that can contain sensitive data, like `.env`, are",
+                                        "Files with sensitive data, like `.env`, are excluded",
                                         h_flex()
-                                            .child(label_item("excluded by default via the"))
+                                            .w_full()
+                                            .flex_wrap()
+                                            .child(label_item("by default via the"))
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
                                                     cx.listener(Self::inline_completions_doc),

@@ -2188,6 +2188,7 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use workspace::DeploySearch;
 
     #[gpui::test]
@@ -2196,7 +2197,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
@@ -2205,7 +2206,7 @@ pub mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
@@ -2563,7 +2564,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
@@ -2572,7 +2573,7 @@ pub mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window;
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
@@ -2858,7 +2859,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "a": {
                     "one.rs": "const ONE: usize = 1;",
@@ -2983,7 +2984,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
                 "two.rs": "const TWO: usize = one::ONE + one::ONE;",
@@ -2992,7 +2993,7 @@ pub mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
         let workspace = window.root(cx).unwrap();
         let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
@@ -3313,13 +3314,13 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3537,13 +3538,13 @@ pub mod tests {
         // Setup 2 panes, both with a file open and one with a project search.
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3692,7 +3693,7 @@ pub mod tests {
         // We need many lines in the search results to be able to scroll the window
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "1.txt": "\n\n\n\n\n A \n\n\n\n\n",
                 "2.txt": "\n\n\n\n\n A \n\n\n\n\n",
@@ -3717,7 +3718,7 @@ pub mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project, cx));
@@ -3771,13 +3772,13 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });

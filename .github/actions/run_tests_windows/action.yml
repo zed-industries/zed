@@ -1,0 +1,26 @@
+name: "Run tests on Windows"
+description: "Runs the tests on Windows"
+
+inputs:
+  working-directory:
+    description: "The working directory"
+    required: true
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust
+      shell: pwsh
+      working-directory: ${{ inputs.working-directory }}
+      run: cargo install cargo-nextest --locked
+
+    - name: Install Node
+      uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
+      with:
+        node-version: "18"
+
+    - name: Run tests
+      shell: pwsh
+      working-directory: ${{ inputs.working-directory }}
+      run: cargo nextest run --workspace --no-fail-fast

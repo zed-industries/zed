@@ -12,6 +12,7 @@ pub fn test_settings() -> String {
         crate::default_settings().as_ref(),
     )
     .unwrap();
+    #[cfg(not(target_os = "windows"))]
     util::merge_non_null_json_value_into(
         serde_json::json!({
             "ui_font_family": "Courier",
@@ -19,6 +20,21 @@ pub fn test_settings() -> String {
             "ui_font_size": 14,
             "ui_font_fallback": [],
             "buffer_font_family": "Courier",
+            "buffer_font_features": {},
+            "buffer_font_size": 14,
+            "buffer_font_fallback": [],
+            "theme": EMPTY_THEME_NAME,
+        }),
+        &mut value,
+    );
+    #[cfg(target_os = "windows")]
+    util::merge_non_null_json_value_into(
+        serde_json::json!({
+            "ui_font_family": "Courier New",
+            "ui_font_features": {},
+            "ui_font_size": 14,
+            "ui_font_fallback": [],
+            "buffer_font_family": "Courier New",
             "buffer_font_features": {},
             "buffer_font_size": 14,
             "buffer_font_fallback": [],
@@ -65,7 +81,7 @@ pub fn watch_config_file(
 pub fn handle_settings_file_changes(
     mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut App,
-    settings_changed: impl Fn(Option<anyhow::Error>, &mut App) + 'static,
+    settings_changed: impl Fn(Result<serde_json::Value, anyhow::Error>, &mut App) + 'static,
 ) {
     let user_settings_content = cx
         .background_executor()
@@ -76,7 +92,7 @@ pub fn handle_settings_file_changes(
         if let Err(err) = &result {
             log::error!("Failed to load user settings: {err}");
         }
-        settings_changed(result.err(), cx);
+        settings_changed(result, cx);
     });
     cx.spawn(move |cx| async move {
         while let Some(user_settings_content) = user_settings_file_rx.next().await {
@@ -85,7 +101,7 @@ pub fn handle_settings_file_changes(
                 if let Err(err) = &result {
                     log::error!("Failed to load user settings: {err}");
                 }
-                settings_changed(result.err(), cx);
+                settings_changed(result, cx);
                 cx.refresh_windows();
             });
             if result.is_err() {

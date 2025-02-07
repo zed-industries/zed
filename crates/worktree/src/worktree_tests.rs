@@ -2156,7 +2156,13 @@ const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
     second_head: UnmergedStatusCode::Updated,
 });
 
+// NOTE:
+// This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
+// a directory which some program has already open.
+// This is a limitation of the Windows.
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2184,7 +2190,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     let repo = git_init(&root_path.join("projects/project1"));
     git_add("a", &repo);
     git_commit("init", &repo);
-    std::fs::write(root_path.join("projects/project1/a"), "aa").ok();
+    std::fs::write(root_path.join("projects/project1/a"), "aa").unwrap();
 
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
@@ -2209,7 +2215,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         root_path.join("projects/project1"),
         root_path.join("projects/project2"),
     )
-    .ok();
+    .unwrap();
     tree.flush_fs_events(cx).await;
 
     cx.read(|cx| {
@@ -2335,7 +2341,13 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
     });
 }
 
+// NOTE:
+// This test always fails on Windows, because on Windows, unlike on Unix, you can't rename
+// a directory which some program has already open.
+// This is a limitation of the Windows.
+// See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();

@@ -159,6 +159,7 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
 - The project panel supports many shortcuts modeled after the Vim plugin `netrw`: navigation with `hjkl`, open file with `o`, open file in a new tab with `t`, etc.
 - You can add key bindings to your keymap to navigate "camelCase" names. [Head down to the Optional key bindings](#optional-key-bindings) section to learn how.
+- You can use `gr` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
 
 ## Command palette
 
@@ -367,10 +368,10 @@ But you cannot use the same shortcuts to move between all the editor docks (the 
 {
   "context": "Dock",
   "bindings": {
-    "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-    "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-    "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-    "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"]
+    "ctrl-w h": "workspace::ActivatePaneLeft",
+    "ctrl-w l": "workspace::ActivatePaneRight",
+    "ctrl-w k": "workspace::ActivatePaneUp",
+    "ctrl-w j": "workspace::ActivatePaneDown"
     // ... or other keybindings
   }
 }
@@ -398,12 +399,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 {
   "context": "vim_mode == visual",
   "bindings": {
-    "shift-s": [
-      "vim::PushOperator",
-      {
-        "AddSurrounds": {}
-      }
-    ]
+    "shift-s": ["vim::PushAddSurrounds", {}]
   }
 }
 ```
@@ -415,8 +411,8 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
   {
     "context": "vim_mode == normal || vim_mode == visual",
     "bindings": {
-      "s": ["vim::PushOperator", { "Sneak": {} }],
-      "S": ["vim::PushOperator", { "SneakBackward": {} }]
+      "s": ["vim::PushSneak", {}],
+      "S": ["vim::PushSneakBackward", {}]
     }
   }
 ]

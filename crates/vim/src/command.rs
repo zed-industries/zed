@@ -567,37 +567,45 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("q", "uit"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("wq", ""),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Save),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("x", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("ex", "it"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::SaveAll),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Overwrite),
+            close_pinned: true,
         }),
         VimCommand::new(
             ("up", "date"),
@@ -657,10 +665,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("bd", "elete"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseActiveItem {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: true,
         }),
         VimCommand::new(("bn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("bN", "ext"), workspace::ActivatePrevItem).count(),
@@ -679,6 +689,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             ("tabc", "lose"),
             workspace::CloseActiveItem {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         ),
         VimCommand::new(
@@ -1455,6 +1466,7 @@ mod test {
     use editor::Editor;
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use util::path;
     use workspace::Workspace;
 
     #[gpui::test]
@@ -1516,7 +1528,8 @@ mod test {
             dd
             dd
             ˇcc"});
-        cx.simulate_shared_keystrokes("k : s / dd / ee enter").await;
+        cx.simulate_shared_keystrokes("k : s / d d / e e enter")
+            .await;
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
@@ -1551,13 +1564,13 @@ mod test {
     #[gpui::test]
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let path = Path::new("/root/dir/file.rs");
+        let path = Path::new(path!("/root/dir/file.rs"));
         let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
 
-        assert_eq!(fs.load(path).await.unwrap(), "@\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@\n");
 
         fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
 
@@ -1567,12 +1580,12 @@ mod test {
         assert!(cx.has_pending_prompt());
         // "Cancel"
         cx.simulate_prompt_answer(0);
-        assert_eq!(fs.load(path).await.unwrap(), "oops\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "oops\n");
         assert!(!cx.has_pending_prompt());
         // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
-        assert_eq!(fs.load(path).await.unwrap(), "@@\n");
+        assert_eq!(fs.load(path).await.unwrap().replace("\r\n", "\n"), "@@\n");
     }
 
     #[gpui::test]
@@ -1664,7 +1677,7 @@ mod test {
         let file_path = file.as_local().unwrap().abs_path(cx);
 
         assert_eq!(text, expected_text);
-        assert_eq!(file_path.to_str().unwrap(), expected_path);
+        assert_eq!(file_path, Path::new(expected_path));
     }
 
     #[gpui::test]
@@ -1673,16 +1686,22 @@ mod test {
 
         // Assert base state, that we're in /root/dir/file.rs
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
         });
 
         // Insert a new file
         let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
-            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs".as_bytes().to_vec(),
+            )
             .await;
         fs.as_fake()
-            .insert_file("/root/dir/file3.rs", "go to file3".as_bytes().to_vec())
+            .insert_file(
+                path!("/root/dir/file3.rs"),
+                "go to file3".as_bytes().to_vec(),
+            )
             .await;
 
         // Put the path to the second file into the currently open buffer
@@ -1694,7 +1713,12 @@ mod test {
         // We now have two items
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
+            assert_active_item(
+                workspace,
+                path!("/root/dir/file2.rs"),
+                "This is file2.rs",
+                cx,
+            );
         });
 
         // Update editor to point to `file2.rs`
@@ -1711,7 +1735,7 @@ mod test {
         // We now have three items
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
+            assert_active_item(workspace, path!("/root/dir/file3.rs"), "go to file3", cx);
         });
     }
 

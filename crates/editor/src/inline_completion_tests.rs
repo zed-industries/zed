@@ -1,8 +1,9 @@
 use gpui::{prelude::*, Entity};
 use indoc::indoc;
-use inline_completion::InlineCompletionProvider;
+use inline_completion::EditPredictionProvider;
 use language::{Language, LanguageConfig};
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use project::Project;
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
 use text::{Point, ToOffset};
 
@@ -314,7 +315,7 @@ fn assert_editor_active_move_completion(
 
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
-        editor.accept_inline_completion(&crate::AcceptInlineCompletion, window, cx)
+        editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
     })
 }
 
@@ -344,7 +345,7 @@ fn assign_editor_completion_provider(
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
-        editor.set_inline_completion_provider(Some(provider), window, cx);
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
     })
 }
 
@@ -362,7 +363,7 @@ impl FakeInlineCompletionProvider {
     }
 }
 
-impl InlineCompletionProvider for FakeInlineCompletionProvider {
+impl EditPredictionProvider for FakeInlineCompletionProvider {
     fn name() -> &'static str {
         "fake-completion-provider"
     }
@@ -372,10 +373,6 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
-    }
-
-    fn show_completions_in_normal_mode() -> bool {
         false
     }
 
@@ -394,6 +391,7 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,

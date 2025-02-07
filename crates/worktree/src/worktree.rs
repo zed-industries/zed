@@ -177,7 +177,7 @@ pub struct Snapshot {
     completed_scan_id: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepositoryEntry {
     /// The git status entries for this repository.
     /// Note that the paths on this repository are relative to the git work directory.
@@ -199,9 +199,10 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
-    pub work_directory_id: ProjectEntryId,
+    work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
+    pub current_merge_conflicts: TreeSet<RepoPath>,
 }
 
 impl Deref for RepositoryEntry {
@@ -255,6 +256,11 @@ impl RepositoryEntry {
                 .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
+            current_merge_conflicts: self
+                .current_merge_conflicts
+                .iter()
+                .map(|repo_path| repo_path.to_proto())
+                .collect(),
         }
     }
 
@@ -305,6 +311,11 @@ impl RepositoryEntry {
             branch: self.branch.as_ref().map(|branch| branch.to_string()),
             updated_statuses,
             removed_statuses,
+            current_merge_conflicts: self
+                .current_merge_conflicts
+                .iter()
+                .map(RepoPath::to_proto)
+                .collect(),
         }
     }
 }
@@ -360,15 +371,19 @@ impl WorkDirectory {
     /// of the project root folder, then the returned RepoPath is relative to the root
     /// of the repository and not a valid path inside the project.
     pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
-        if let Some(location_in_repo) = &self.location_in_repo {
-            Ok(location_in_repo.join(path).into())
+        let repo_path = if let Some(location_in_repo) = &self.location_in_repo {
+            // Avoid joining a `/` to location_in_repo in the case of a single-file worktree.
+            if path == Path::new("") {
+                RepoPath(location_in_repo.clone())
+            } else {
+                location_in_repo.join(path).into()
+            }
         } else {
-            let relativized_path = path
-                .strip_prefix(&self.path)
-                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?;
-
-            Ok(relativized_path.into())
-        }
+            path.strip_prefix(&self.path)
+                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?
+                .into()
+        };
+        Ok(repo_path)
     }
 
     /// This is the opposite operation to `relativize` above
@@ -454,6 +469,7 @@ struct BackgroundScannerState {
 
 #[derive(Debug, Clone)]
 pub struct LocalRepositoryEntry {
+    pub(crate) work_directory_id: ProjectEntryId,
     pub(crate) work_directory: WorkDirectory,
     pub(crate) git_dir_scan_id: usize,
     pub(crate) status_scan_id: usize,
@@ -463,6 +479,7 @@ pub struct LocalRepositoryEntry {
     pub(crate) dot_git_dir_abs_path: Arc<Path>,
     /// Absolute path to the .git file, if we're in a git worktree.
     pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
+    pub current_merge_head_shas: Vec<String>,
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
@@ -886,12 +903,36 @@ impl Worktree {
                             }
                         }
                     }
-                    Ok(None)
+                    Err(anyhow!("No repository found for {path:?}"))
                 })
             }
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load staged files")))
             }
+        }
+    }
+
+    pub fn load_committed_file(&self, path: &Path, cx: &App) -> Task<Result<Option<String>>> {
+        match self {
+            Worktree::Local(this) => {
+                let path = Arc::from(path);
+                let snapshot = this.snapshot();
+                cx.background_executor().spawn(async move {
+                    if let Some(repo) = snapshot.repository_for_path(&path) {
+                        if let Some(repo_path) = repo.relativize(&path).log_err() {
+                            if let Some(git_repo) =
+                                snapshot.git_repositories.get(&repo.work_directory_id)
+                            {
+                                return Ok(git_repo.repo_ptr.load_committed_text(&repo_path));
+                            }
+                        }
+                    }
+                    Err(anyhow!("No repository found for {path:?}"))
+                })
+            }
+            Worktree::Remote(_) => Task::ready(Err(anyhow!(
+                "remote worktrees can't yet load committed files"
+            ))),
         }
     }
 
@@ -1295,14 +1336,7 @@ impl LocalWorktree {
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_executor().spawn({
-            let abs_path = &snapshot.abs_path;
-            #[cfg(target_os = "windows")]
-            let abs_path = abs_path
-                .as_path()
-                .canonicalize()
-                .unwrap_or_else(|_| abs_path.as_path().to_path_buf());
-            #[cfg(not(target_os = "windows"))]
-            let abs_path = abs_path.as_path().to_path_buf();
+            let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
                 let (events, watcher) = fs.watch(&abs_path, FS_WATCH_LATENCY).await;
@@ -2500,6 +2534,13 @@ impl Snapshot {
         for repository in update.updated_repositories {
             let work_directory_id = ProjectEntryId::from_proto(repository.work_directory_id);
             if let Some(work_dir_entry) = self.entry_for_id(work_directory_id) {
+                let conflicted_paths = TreeSet::from_ordered_entries(
+                    repository
+                        .current_merge_conflicts
+                        .into_iter()
+                        .map(|path| RepoPath(Path::new(&path).into())),
+                );
+
                 if self
                     .repositories
                     .contains(&PathKey(work_dir_entry.path.clone()), &())
@@ -2519,6 +2560,7 @@ impl Snapshot {
                         .update(&PathKey(work_dir_entry.path.clone()), &(), |repo| {
                             repo.branch = repository.branch.map(Into::into);
                             repo.statuses_by_path.edit(edits, &());
+                            repo.current_merge_conflicts = conflicted_paths
                         });
                 } else {
                     let statuses = SumTree::from_iter(
@@ -2541,6 +2583,7 @@ impl Snapshot {
                             },
                             branch: repository.branch.map(Into::into),
                             statuses_by_path: statuses,
+                            current_merge_conflicts: conflicted_paths,
                         },
                         &(),
                     );
@@ -2665,21 +2708,10 @@ impl Snapshot {
 
     /// Get the repository whose work directory contains the given path.
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositoryEntry> {
-        let mut cursor = self.repositories.cursor::<PathProgress>(&());
-        let mut repository = None;
-
-        // Git repositories may contain other git repositories. As a side effect of
-        // lexicographic sorting by path, deeper repositories will be after higher repositories
-        // So, let's loop through every matching repository until we can't find any more to find
-        // the deepest repository that could contain this path.
-        while cursor.seek_forward(&PathTarget::Contains(path), Bias::Left, &())
-            && cursor.item().is_some()
-        {
-            repository = cursor.item();
-            cursor.next(&());
-        }
-
-        repository
+        self.repositories
+            .iter()
+            .filter(|repo| repo.work_directory.directory_contains(path))
+            .last()
     }
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
@@ -3319,18 +3351,23 @@ impl BackgroundScannerState {
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
 
-        let actual_repo_path = repository.dot_git_dir();
+        let repository_path = repository.path();
+        watcher.add(&repository_path).log_err()?;
 
-        let actual_dot_git_dir_abs_path = smol::block_on(find_git_dir(&actual_repo_path, fs))?;
-        watcher.add(&actual_repo_path).log_err()?;
-
-        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path.as_ref() == dot_git_abs_path
-        {
+        let actual_dot_git_dir_abs_path = repository.main_repository_path();
+        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path == dot_git_abs_path {
             None
         } else {
             // The two paths could be different because we opened a git worktree.
-            // When that happens, the .git path in the worktree (`dot_git_abs_path`) is a file that
-            // points to the worktree-subdirectory in the actual .git directory (`git_dir_path`)
+            // When that happens:
+            //
+            // * `dot_git_abs_path` is a file that points to the worktree-subdirectory in the actual
+            // .git directory.
+            //
+            // * `repository_path` is the worktree-subdirectory.
+            //
+            // * `actual_dot_git_dir_abs_path` is the path to the actual .git directory. In git
+            // documentation this is called the "commondir".
             watcher.add(&dot_git_abs_path).log_err()?;
             Some(Arc::from(dot_git_abs_path))
         };
@@ -3354,17 +3391,20 @@ impl BackgroundScannerState {
                 work_directory: work_directory.clone(),
                 branch: repository.branch_name().map(Into::into),
                 statuses_by_path: Default::default(),
+                current_merge_conflicts: Default::default(),
             },
             &(),
         );
 
         let local_repository = LocalRepositoryEntry {
+            work_directory_id: work_dir_id,
             work_directory: work_directory.clone(),
             git_dir_scan_id: 0,
             status_scan_id: 0,
             repo_ptr: repository.clone(),
-            dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
+            dot_git_dir_abs_path: actual_dot_git_dir_abs_path.into(),
             dot_git_worktree_abs_path,
+            current_merge_head_shas: Default::default(),
         };
 
         self.snapshot
@@ -3389,15 +3429,6 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
     }
     let config_metadata = fs.metadata(&path.join("config")).await;
     matches!(config_metadata, Ok(Some(_)))
-}
-
-async fn find_git_dir(path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
-    for ancestor in path.ancestors() {
-        if is_git_dir(ancestor, fs).await {
-            return Some(Arc::from(ancestor));
-        }
-    }
-    None
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
@@ -5126,11 +5157,11 @@ impl BackgroundScanner {
                         .snapshot
                         .git_repositories
                         .iter()
-                        .find_map(|(entry_id, repo)| {
+                        .find_map(|(_, repo)| {
                             if repo.dot_git_dir_abs_path.as_ref() == &dot_git_dir
                                 || repo.dot_git_worktree_abs_path.as_deref() == Some(&dot_git_dir)
                             {
-                                Some((*entry_id, repo.clone()))
+                                Some(repo.clone())
                             } else {
                                 None
                             }
@@ -5147,13 +5178,13 @@ impl BackgroundScanner {
                             None => continue,
                         }
                     }
-                    Some((entry_id, local_repository)) => {
+                    Some(local_repository) => {
                         if local_repository.git_dir_scan_id == scan_id {
                             continue;
                         }
                         let Some(work_dir) = state
                             .snapshot
-                            .entry_for_id(entry_id)
+                            .entry_for_id(local_repository.work_directory_id)
                             .map(|entry| entry.path.clone())
                         else {
                             continue;
@@ -5162,10 +5193,13 @@ impl BackgroundScanner {
                         let branch = local_repository.repo_ptr.branch_name();
                         local_repository.repo_ptr.reload_index();
 
-                        state.snapshot.git_repositories.update(&entry_id, |entry| {
-                            entry.git_dir_scan_id = scan_id;
-                            entry.status_scan_id = scan_id;
-                        });
+                        state.snapshot.git_repositories.update(
+                            &local_repository.work_directory_id,
+                            |entry| {
+                                entry.git_dir_scan_id = scan_id;
+                                entry.status_scan_id = scan_id;
+                            },
+                        );
                         state.snapshot.snapshot.repositories.update(
                             &PathKey(work_dir.clone()),
                             &(),
@@ -5270,6 +5304,11 @@ impl BackgroundScanner {
             return;
         };
 
+        let merge_head_shas = job.local_repository.repo().merge_head_shas();
+        if merge_head_shas != job.local_repository.current_merge_head_shas {
+            mem::take(&mut repository.current_merge_conflicts);
+        }
+
         let mut new_entries_by_path = SumTree::new(&());
         for (repo_path, status) in statuses.entries.iter() {
             let project_path = repository.work_directory.unrelativize(repo_path);
@@ -5281,6 +5320,9 @@ impl BackgroundScanner {
                 },
                 &(),
             );
+            if status.is_conflicted() {
+                repository.current_merge_conflicts.insert(repo_path.clone());
+            }
 
             if let Some(path) = project_path {
                 changed_paths.push(path);
@@ -5293,6 +5335,13 @@ impl BackgroundScanner {
             .snapshot
             .repositories
             .insert_or_replace(repository, &());
+
+        state
+            .snapshot
+            .git_repositories
+            .update(&job.local_repository.work_directory_id, |entry| {
+                entry.current_merge_head_shas = merge_head_shas;
+            });
 
         util::extend_sorted(
             &mut state.changed_paths,
@@ -5965,7 +6014,6 @@ impl<'a> Iterator for Traversal<'a> {
 enum PathTarget<'a> {
     Path(&'a Path),
     Successor(&'a Path),
-    Contains(&'a Path),
 }
 
 impl<'a> PathTarget<'a> {
@@ -5977,13 +6025,6 @@ impl<'a> PathTarget<'a> {
                     Ordering::Greater
                 } else {
                     Ordering::Equal
-                }
-            }
-            PathTarget::Contains(path) => {
-                if path.starts_with(other) {
-                    Ordering::Equal
-                } else {
-                    Ordering::Greater
                 }
             }
         }

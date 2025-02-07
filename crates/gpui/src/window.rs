@@ -13,7 +13,7 @@ use crate::{
     Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
     Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    SUBPIXEL_VARIANTS,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::{FxHashMap, FxHashSet};
@@ -23,6 +23,7 @@ use futures::FutureExt;
 #[cfg(target_os = "macos")]
 use media::core_video::CVImageBuffer;
 use parking_lot::RwLock;
+use raw_window_handle::{HandleError, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -137,7 +138,7 @@ impl WindowInvalidator {
         self.inner.borrow_mut().dirty_views = views;
     }
 
-    pub fn not_painting(&self) -> bool {
+    pub fn not_drawing(&self) -> bool {
         self.inner.borrow().draw_phase == DrawPhase::None
     }
 
@@ -1035,7 +1036,7 @@ impl Window {
 
     /// Mark the window as dirty, scheduling it to be redrawn on the next frame.
     pub fn refresh(&mut self) {
-        if self.invalidator.not_painting() {
+        if self.invalidator.not_drawing() {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
         }
@@ -2553,12 +2554,11 @@ impl Window {
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let bounds = bounds.scale(scale_factor);
-        // Render the SVG at twice the size to get a higher quality result.
         let params = RenderSvgParams {
             path,
-            size: bounds
-                .size
-                .map(|pixels| DevicePixels::from((pixels.0 * 2.).ceil() as i32)),
+            size: bounds.size.map(|pixels| {
+                DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32)
+            }),
         };
 
         let Some(tile) =
@@ -3941,6 +3941,12 @@ impl AnyWindowHandle {
             .context("the type of the window's root view has changed")?;
 
         cx.read_window(&view, read)
+    }
+}
+
+impl HasWindowHandle for Window {
+    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
+        self.platform_window.window_handle()
     }
 }
 

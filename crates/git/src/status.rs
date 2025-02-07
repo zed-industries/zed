@@ -134,7 +134,11 @@ impl FileStatus {
     }
 
     pub fn has_changes(&self) -> bool {
-        self.is_modified() || self.is_created() || self.is_deleted() || self.is_untracked()
+        self.is_modified()
+            || self.is_created()
+            || self.is_deleted()
+            || self.is_untracked()
+            || self.is_conflicted()
     }
 
     pub fn is_modified(self) -> bool {

@@ -8,9 +8,10 @@ use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegist
 use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
+use diff::{BufferDiff, BufferDiffEvent, BufferDiffSnapshot};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
-use git::{blame::Blame, diff::BufferDiff, repository::RepoPath};
+use git::{blame::Blame, repository::RepoPath};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -34,9 +35,15 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use text::{BufferId, LineEnding, Rope};
+use text::BufferId;
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum DiffKind {
+    Unstaged,
+    Uncommitted,
+}
 
 /// A set of open buffers.
 pub struct BufferStore {
@@ -44,8 +51,8 @@ pub struct BufferStore {
     #[allow(clippy::type_complexity)]
     loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Entity<Buffer>, Arc<anyhow::Error>>>>>,
     #[allow(clippy::type_complexity)]
-    loading_change_sets:
-        HashMap<BufferId, Shared<Task<Result<Entity<BufferChangeSet>, Arc<anyhow::Error>>>>>,
+    loading_diffs:
+        HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     downstream_client: Option<(AnyProtoClient, u64)>,
@@ -55,22 +62,232 @@ pub struct BufferStore {
 #[derive(Hash, Eq, PartialEq, Clone)]
 struct SharedBuffer {
     buffer: Entity<Buffer>,
-    unstaged_changes: Option<Entity<BufferChangeSet>>,
+    diff: Option<Entity<BufferDiff>>,
     lsp_handle: Option<OpenLspBufferHandle>,
 }
 
-pub struct BufferChangeSet {
-    pub buffer_id: BufferId,
-    pub base_text: Option<language::BufferSnapshot>,
-    pub language: Option<Arc<Language>>,
-    pub diff_to_buffer: git::diff::BufferDiff,
-    pub recalculate_diff_task: Option<Task<Result<()>>>,
-    pub diff_updated_futures: Vec<oneshot::Sender<()>>,
-    pub language_registry: Option<Arc<LanguageRegistry>>,
+#[derive(Default)]
+struct BufferDiffState {
+    unstaged_diff: Option<WeakEntity<BufferDiff>>,
+    uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    recalculate_diff_task: Option<Task<Result<()>>>,
+    language: Option<Arc<Language>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    diff_updated_futures: Vec<oneshot::Sender<()>>,
+
+    head_text: Option<Arc<String>>,
+    index_text: Option<Arc<String>>,
+    head_changed: bool,
+    index_changed: bool,
+    language_changed: bool,
 }
 
-pub enum BufferChangeSetEvent {
-    DiffChanged { changed_range: Range<text::Anchor> },
+#[derive(Clone, Debug)]
+enum DiffBasesChange {
+    SetIndex(Option<String>),
+    SetHead(Option<String>),
+    SetEach {
+        index: Option<String>,
+        head: Option<String>,
+    },
+    SetBoth(Option<String>),
+}
+
+impl BufferDiffState {
+    fn buffer_language_changed(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
+        self.language = buffer.read(cx).language().cloned();
+        self.language_changed = true;
+        let _ = self.recalculate_diffs(buffer.read(cx).text_snapshot(), cx);
+    }
+
+    fn unstaged_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.unstaged_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.uncommitted_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn handle_base_texts_updated(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        message: proto::UpdateDiffBases,
+        cx: &mut Context<Self>,
+    ) {
+        use proto::update_diff_bases::Mode;
+
+        let Some(mode) = Mode::from_i32(message.mode) else {
+            return;
+        };
+
+        let diff_bases_change = match mode {
+            Mode::HeadOnly => DiffBasesChange::SetHead(message.committed_text),
+            Mode::IndexOnly => DiffBasesChange::SetIndex(message.staged_text),
+            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.committed_text),
+            Mode::IndexAndHead => DiffBasesChange::SetEach {
+                index: message.staged_text,
+                head: message.committed_text,
+            },
+        };
+
+        let _ = self.diff_bases_changed(buffer, diff_bases_change, cx);
+    }
+
+    fn diff_bases_changed(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        diff_bases_change: DiffBasesChange,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        match diff_bases_change {
+            DiffBasesChange::SetIndex(index) => {
+                self.index_text = index.map(|mut index| {
+                    text::LineEnding::normalize(&mut index);
+                    Arc::new(index)
+                });
+                self.index_changed = true;
+            }
+            DiffBasesChange::SetHead(head) => {
+                self.head_text = head.map(|mut head| {
+                    text::LineEnding::normalize(&mut head);
+                    Arc::new(head)
+                });
+                self.head_changed = true;
+            }
+            DiffBasesChange::SetBoth(text) => {
+                let text = text.map(|mut text| {
+                    text::LineEnding::normalize(&mut text);
+                    Arc::new(text)
+                });
+                self.head_text = text.clone();
+                self.index_text = text;
+                self.head_changed = true;
+                self.index_changed = true;
+            }
+            DiffBasesChange::SetEach { index, head } => {
+                self.index_text = index.map(|mut index| {
+                    text::LineEnding::normalize(&mut index);
+                    Arc::new(index)
+                });
+                self.index_changed = true;
+                self.head_text = head.map(|mut head| {
+                    text::LineEnding::normalize(&mut head);
+                    Arc::new(head)
+                });
+                self.head_changed = true;
+            }
+        }
+
+        self.recalculate_diffs(buffer, cx)
+    }
+
+    fn recalculate_diffs(
+        &mut self,
+        buffer: text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<()> {
+        let (tx, rx) = oneshot::channel();
+        self.diff_updated_futures.push(tx);
+
+        let language = self.language.clone();
+        let language_registry = self.language_registry.clone();
+        let unstaged_diff = self.unstaged_diff();
+        let uncommitted_diff = self.uncommitted_diff();
+        let head = self.head_text.clone();
+        let index = self.index_text.clone();
+        let index_changed = self.index_changed;
+        let head_changed = self.head_changed;
+        let language_changed = self.language_changed;
+        let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
+            (Some(index), Some(head)) => Arc::ptr_eq(index, head),
+            (None, None) => true,
+            _ => false,
+        };
+        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
+            if let Some(unstaged_diff) = &unstaged_diff {
+                let snapshot = if index_changed || language_changed {
+                    cx.update(|cx| {
+                        BufferDiffSnapshot::build(
+                            buffer.clone(),
+                            index,
+                            language.clone(),
+                            language_registry.clone(),
+                            cx,
+                        )
+                    })?
+                    .await
+                } else {
+                    unstaged_diff
+                        .read_with(&cx, |changes, cx| {
+                            BufferDiffSnapshot::build_with_base_buffer(
+                                buffer.clone(),
+                                index,
+                                changes.snapshot.base_text.clone(),
+                                cx,
+                            )
+                        })?
+                        .await
+                };
+
+                unstaged_diff.update(&mut cx, |unstaged_diff, cx| {
+                    unstaged_diff.set_state(snapshot, &buffer, cx);
+                    if language_changed {
+                        cx.emit(BufferDiffEvent::LanguageChanged);
+                    }
+                })?;
+            }
+
+            if let Some(uncommitted_diff) = &uncommitted_diff {
+                let snapshot =
+                    if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
+                        unstaged_diff.read_with(&cx, |diff, _| diff.snapshot.clone())?
+                    } else if head_changed || language_changed {
+                        cx.update(|cx| {
+                            BufferDiffSnapshot::build(
+                                buffer.clone(),
+                                head,
+                                language.clone(),
+                                language_registry.clone(),
+                                cx,
+                            )
+                        })?
+                        .await
+                    } else {
+                        uncommitted_diff
+                            .read_with(&cx, |changes, cx| {
+                                BufferDiffSnapshot::build_with_base_buffer(
+                                    buffer.clone(),
+                                    head,
+                                    changes.snapshot.base_text.clone(),
+                                    cx,
+                                )
+                            })?
+                            .await
+                    };
+
+                uncommitted_diff.update(&mut cx, |diff, cx| {
+                    diff.set_state(snapshot, &buffer, cx);
+                    if language_changed {
+                        cx.emit(BufferDiffEvent::LanguageChanged);
+                    }
+                })?;
+            }
+
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, _| {
+                    this.index_changed = false;
+                    this.head_changed = false;
+                    for tx in this.diff_updated_futures.drain(..) {
+                        tx.send(()).ok();
+                    }
+                })?;
+            }
+
+            Ok(())
+        }));
+
+        rx
+    }
 }
 
 enum BufferStoreState {
@@ -98,7 +315,7 @@ struct LocalBufferStore {
 enum OpenBuffer {
     Complete {
         buffer: WeakEntity<Buffer>,
-        unstaged_changes: Option<WeakEntity<BufferChangeSet>>,
+        diff_state: Entity<BufferDiffState>,
     },
     Operations(Vec<Operation>),
 }
@@ -118,19 +335,48 @@ pub struct ProjectTransaction(pub HashMap<Entity<Buffer>, language::Transaction>
 impl EventEmitter<BufferStoreEvent> for BufferStore {}
 
 impl RemoteBufferStore {
-    fn load_staged_text(&self, buffer_id: BufferId, cx: &App) -> Task<Result<Option<String>>> {
+    fn open_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Task<Result<Option<String>>> {
         let project_id = self.project_id;
         let client = self.upstream_client.clone();
         cx.background_executor().spawn(async move {
-            Ok(client
-                .request(proto::GetStagedText {
+            let response = client
+                .request(proto::OpenUnstagedDiff {
                     project_id,
                     buffer_id: buffer_id.to_proto(),
                 })
-                .await?
-                .staged_text)
+                .await?;
+            Ok(response.staged_text)
         })
     }
+
+    fn open_uncommitted_diff(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Task<Result<DiffBasesChange>> {
+        use proto::open_uncommitted_diff_response::Mode;
+
+        let project_id = self.project_id;
+        let client = self.upstream_client.clone();
+        cx.background_executor().spawn(async move {
+            let response = client
+                .request(proto::OpenUncommittedDiff {
+                    project_id,
+                    buffer_id: buffer_id.to_proto(),
+                })
+                .await?;
+            let mode = Mode::from_i32(response.mode).ok_or_else(|| anyhow!("Invalid mode"))?;
+            let bases = match mode {
+                Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
+                Mode::IndexAndHead => DiffBasesChange::SetEach {
+                    head: response.committed_text,
+                    index: response.staged_text,
+                },
+            };
+            Ok(bases)
+        })
+    }
+
     pub fn wait_for_remote_buffer(
         &mut self,
         id: BufferId,
@@ -398,21 +644,39 @@ impl RemoteBufferStore {
 }
 
 impl LocalBufferStore {
-    fn load_staged_text(&self, buffer: &Entity<Buffer>, cx: &App) -> Task<Result<Option<String>>> {
-        let Some(file) = buffer.read(cx).file() else {
-            return Task::ready(Ok(None));
-        };
+    fn worktree_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Option<(Entity<Worktree>, Arc<Path>)> {
+        let file = buffer.read(cx).file()?;
         let worktree_id = file.worktree_id(cx);
         let path = file.path().clone();
-        let Some(worktree) = self
+        let worktree = self
             .worktree_store
             .read(cx)
-            .worktree_for_id(worktree_id, cx)
-        else {
-            return Task::ready(Err(anyhow!("no such worktree")));
-        };
+            .worktree_for_id(worktree_id, cx)?;
+        Some((worktree, path))
+    }
 
-        worktree.read(cx).load_staged_file(path.as_ref(), cx)
+    fn load_staged_text(&self, buffer: &Entity<Buffer>, cx: &App) -> Task<Result<Option<String>>> {
+        if let Some((worktree, path)) = self.worktree_for_buffer(buffer, cx) {
+            worktree.read(cx).load_staged_file(path.as_ref(), cx)
+        } else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        }
+    }
+
+    fn load_committed_text(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Task<Result<Option<String>>> {
+        if let Some((worktree, path)) = self.worktree_for_buffer(buffer, cx) {
+            worktree.read(cx).load_committed_file(path.as_ref(), cx)
+        } else {
+            Task::ready(Err(anyhow!("no such worktree")))
+        }
     }
 
     fn save_local_buffer(
@@ -526,74 +790,137 @@ impl LocalBufferStore {
     ) {
         debug_assert!(worktree_handle.read(cx).is_local());
 
-        let buffer_change_sets = this
-            .opened_buffers
-            .values()
-            .filter_map(|buffer| {
-                if let OpenBuffer::Complete {
-                    buffer,
-                    unstaged_changes,
-                } = buffer
-                {
-                    let buffer = buffer.upgrade()?.read(cx);
-                    let file = File::from_dyn(buffer.file())?;
-                    if file.worktree != worktree_handle {
-                        return None;
-                    }
-                    changed_repos
-                        .iter()
-                        .find(|(work_dir, _)| file.path.starts_with(work_dir))?;
-                    let unstaged_changes = unstaged_changes.as_ref()?.upgrade()?;
-                    let snapshot = buffer.text_snapshot();
-                    Some((unstaged_changes, snapshot, file.path.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut diff_state_updates = Vec::new();
+        for buffer in this.opened_buffers.values() {
+            let OpenBuffer::Complete { buffer, diff_state } = buffer else {
+                continue;
+            };
+            let Some(buffer) = buffer.upgrade() else {
+                continue;
+            };
+            let buffer = buffer.read(cx);
+            let Some(file) = File::from_dyn(buffer.file()) else {
+                continue;
+            };
+            if file.worktree != worktree_handle {
+                continue;
+            }
+            let diff_state = diff_state.read(cx);
+            if changed_repos
+                .iter()
+                .any(|(work_dir, _)| file.path.starts_with(work_dir))
+            {
+                let snapshot = buffer.text_snapshot();
+                diff_state_updates.push((
+                    snapshot.clone(),
+                    file.path.clone(),
+                    diff_state
+                        .unstaged_diff
+                        .as_ref()
+                        .and_then(|set| set.upgrade())
+                        .is_some(),
+                    diff_state
+                        .uncommitted_diff
+                        .as_ref()
+                        .and_then(|set| set.upgrade())
+                        .is_some(),
+                ))
+            }
+        }
 
-        if buffer_change_sets.is_empty() {
+        if diff_state_updates.is_empty() {
             return;
         }
 
         cx.spawn(move |this, mut cx| async move {
             let snapshot =
                 worktree_handle.update(&mut cx, |tree, _| tree.as_local().unwrap().snapshot())?;
-            let diff_bases_by_buffer = cx
+            let diff_bases_changes_by_buffer = cx
                 .background_executor()
                 .spawn(async move {
-                    buffer_change_sets
+                    diff_state_updates
                         .into_iter()
-                        .filter_map(|(change_set, buffer_snapshot, path)| {
-                            let local_repo = snapshot.local_repo_for_path(&path)?;
-                            let relative_path = local_repo.relativize(&path).ok()?;
-                            let base_text = local_repo.repo().load_index_text(&relative_path);
-                            Some((change_set, buffer_snapshot, base_text))
-                        })
+                        .filter_map(
+                            |(buffer_snapshot, path, needs_staged_text, needs_committed_text)| {
+                                let local_repo = snapshot.local_repo_for_path(&path)?;
+                                let relative_path = local_repo.relativize(&path).ok()?;
+                                let staged_text = if needs_staged_text {
+                                    local_repo.repo().load_index_text(&relative_path)
+                                } else {
+                                    None
+                                };
+                                let committed_text = if needs_committed_text {
+                                    local_repo.repo().load_committed_text(&relative_path)
+                                } else {
+                                    None
+                                };
+                                let diff_bases_change =
+                                    match (needs_staged_text, needs_committed_text) {
+                                        (true, true) => Some(if staged_text == committed_text {
+                                            DiffBasesChange::SetBoth(committed_text)
+                                        } else {
+                                            DiffBasesChange::SetEach {
+                                                index: staged_text,
+                                                head: committed_text,
+                                            }
+                                        }),
+                                        (true, false) => {
+                                            Some(DiffBasesChange::SetIndex(staged_text))
+                                        }
+                                        (false, true) => {
+                                            Some(DiffBasesChange::SetHead(committed_text))
+                                        }
+                                        (false, false) => None,
+                                    };
+                                Some((buffer_snapshot, diff_bases_change))
+                            },
+                        )
                         .collect::<Vec<_>>()
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| {
-                for (change_set, buffer_snapshot, staged_text) in diff_bases_by_buffer {
-                    change_set.update(cx, |change_set, cx| {
-                        if let Some(staged_text) = staged_text.clone() {
-                            let _ =
-                                change_set.set_base_text(staged_text, buffer_snapshot.clone(), cx);
-                        } else {
-                            change_set.unset_base_text(buffer_snapshot.clone(), cx);
-                        }
-                    });
+                for (buffer_snapshot, diff_bases_change) in diff_bases_changes_by_buffer {
+                    let Some(OpenBuffer::Complete { diff_state, .. }) =
+                        this.opened_buffers.get_mut(&buffer_snapshot.remote_id())
+                    else {
+                        continue;
+                    };
+                    let Some(diff_bases_change) = diff_bases_change else {
+                        continue;
+                    };
 
-                    if let Some((client, project_id)) = &this.downstream_client.clone() {
-                        client
-                            .send(proto::UpdateDiffBase {
+                    diff_state.update(cx, |diff_state, cx| {
+                        use proto::update_diff_bases::Mode;
+
+                        if let Some((client, project_id)) = this.downstream_client.as_ref() {
+                            let buffer_id = buffer_snapshot.remote_id().to_proto();
+                            let (staged_text, committed_text, mode) = match diff_bases_change
+                                .clone()
+                            {
+                                DiffBasesChange::SetIndex(index) => (index, None, Mode::IndexOnly),
+                                DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
+                                DiffBasesChange::SetEach { index, head } => {
+                                    (index, head, Mode::IndexAndHead)
+                                }
+                                DiffBasesChange::SetBoth(text) => {
+                                    (None, text, Mode::IndexMatchesHead)
+                                }
+                            };
+                            let message = proto::UpdateDiffBases {
                                 project_id: *project_id,
-                                buffer_id: buffer_snapshot.remote_id().to_proto(),
+                                buffer_id,
                                 staged_text,
-                            })
-                            .log_err();
-                    }
+                                committed_text,
+                                mode: mode as i32,
+                            };
+
+                            client.send(message).log_err();
+                        }
+
+                        let _ =
+                            diff_state.diff_bases_changed(buffer_snapshot, diff_bases_change, cx);
+                    });
                 }
             })
         })
@@ -898,8 +1225,9 @@ impl BufferStore {
         client.add_entity_request_handler(Self::handle_blame_buffer);
         client.add_entity_request_handler(Self::handle_reload_buffers);
         client.add_entity_request_handler(Self::handle_get_permalink_to_line);
-        client.add_entity_request_handler(Self::handle_get_staged_text);
-        client.add_entity_message_handler(Self::handle_update_diff_base);
+        client.add_entity_request_handler(Self::handle_open_unstaged_diff);
+        client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
+        client.add_entity_message_handler(Self::handle_update_diff_bases);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
@@ -920,7 +1248,7 @@ impl BufferStore {
             opened_buffers: Default::default(),
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
-            loading_change_sets: Default::default(),
+            loading_diffs: Default::default(),
             worktree_store,
         }
     }
@@ -943,7 +1271,7 @@ impl BufferStore {
             downstream_client: None,
             opened_buffers: Default::default(),
             loading_buffers: Default::default(),
-            loading_change_sets: Default::default(),
+            loading_diffs: Default::default(),
             shared_buffers: Default::default(),
             worktree_store,
         }
@@ -1016,30 +1344,36 @@ impl BufferStore {
             .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub fn open_unstaged_changes(
+    pub fn open_unstaged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         let buffer_id = buffer.read(cx).remote_id();
-        if let Some(change_set) = self.get_unstaged_changes(buffer_id) {
-            return Task::ready(Ok(change_set));
+        if let Some(diff) = self.get_unstaged_diff(buffer_id, cx) {
+            return Task::ready(Ok(diff));
         }
 
-        let task = match self.loading_change_sets.entry(buffer_id) {
+        let task = match self.loading_diffs.entry((buffer_id, DiffKind::Unstaged)) {
             hash_map::Entry::Occupied(e) => e.get().clone(),
             hash_map::Entry::Vacant(entry) => {
-                let load = match &self.state {
+                let staged_text = match &self.state {
                     BufferStoreState::Local(this) => this.load_staged_text(&buffer, cx),
-                    BufferStoreState::Remote(this) => this.load_staged_text(buffer_id, cx),
+                    BufferStoreState::Remote(this) => this.open_unstaged_diff(buffer_id, cx),
                 };
 
                 entry
                     .insert(
                         cx.spawn(move |this, cx| async move {
-                            Self::open_unstaged_changes_internal(this, load.await, buffer, cx)
-                                .await
-                                .map_err(Arc::new)
+                            Self::open_diff_internal(
+                                this,
+                                DiffKind::Unstaged,
+                                staged_text.await.map(DiffBasesChange::SetIndex),
+                                buffer,
+                                cx,
+                            )
+                            .await
+                            .map_err(Arc::new)
                         })
                         .shared(),
                     )
@@ -1051,53 +1385,136 @@ impl BufferStore {
             .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_change_set(&mut self, buffer_id: BufferId, change_set: Entity<BufferChangeSet>) {
-        self.loading_change_sets
-            .insert(buffer_id, Task::ready(Ok(change_set)).shared());
+    pub fn open_uncommitted_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(diff) = self.get_uncommitted_diff(buffer_id, cx) {
+            return Task::ready(Ok(diff));
+        }
+
+        let task = match self.loading_diffs.entry((buffer_id, DiffKind::Uncommitted)) {
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+            hash_map::Entry::Vacant(entry) => {
+                let changes = match &self.state {
+                    BufferStoreState::Local(this) => {
+                        let committed_text = this.load_committed_text(&buffer, cx);
+                        let staged_text = this.load_staged_text(&buffer, cx);
+                        cx.background_executor().spawn(async move {
+                            let committed_text = committed_text.await?;
+                            let staged_text = staged_text.await?;
+                            let diff_bases_change = if committed_text == staged_text {
+                                DiffBasesChange::SetBoth(committed_text)
+                            } else {
+                                DiffBasesChange::SetEach {
+                                    index: staged_text,
+                                    head: committed_text,
+                                }
+                            };
+                            Ok(diff_bases_change)
+                        })
+                    }
+                    BufferStoreState::Remote(this) => this.open_uncommitted_diff(buffer_id, cx),
+                };
+
+                entry
+                    .insert(
+                        cx.spawn(move |this, cx| async move {
+                            Self::open_diff_internal(
+                                this,
+                                DiffKind::Uncommitted,
+                                changes.await,
+                                buffer,
+                                cx,
+                            )
+                            .await
+                            .map_err(Arc::new)
+                        })
+                        .shared(),
+                    )
+                    .clone()
+            }
+        };
+
+        cx.background_executor()
+            .spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub async fn open_unstaged_changes_internal(
+    async fn open_diff_internal(
         this: WeakEntity<Self>,
-        text: Result<Option<String>>,
-        buffer: Entity<Buffer>,
+        kind: DiffKind,
+        texts: Result<DiffBasesChange>,
+        buffer_entity: Entity<Buffer>,
         mut cx: AsyncApp,
-    ) -> Result<Entity<BufferChangeSet>> {
-        let text = match text {
+    ) -> Result<Entity<BufferDiff>> {
+        let diff_bases_change = match texts {
             Err(e) => {
                 this.update(&mut cx, |this, cx| {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    this.loading_change_sets.remove(&buffer_id);
+                    let buffer = buffer_entity.read(cx);
+                    let buffer_id = buffer.remote_id();
+                    this.loading_diffs.remove(&(buffer_id, kind));
                 })?;
                 return Err(e);
             }
-            Ok(text) => text,
+            Ok(change) => change,
         };
 
-        let change_set = cx.new(|cx| BufferChangeSet::new(&buffer, cx)).unwrap();
-
-        if let Some(text) = text {
-            change_set
-                .update(&mut cx, |change_set, cx| {
-                    let snapshot = buffer.read(cx).text_snapshot();
-                    change_set.set_base_text(text, snapshot, cx)
-                })?
-                .await
-                .ok();
-        }
-
         this.update(&mut cx, |this, cx| {
-            let buffer_id = buffer.read(cx).remote_id();
-            this.loading_change_sets.remove(&buffer_id);
-            if let Some(OpenBuffer::Complete {
-                unstaged_changes, ..
-            }) = this.opened_buffers.get_mut(&buffer.read(cx).remote_id())
-            {
-                *unstaged_changes = Some(change_set.downgrade());
-            }
-        })?;
+            let buffer = buffer_entity.read(cx);
+            let buffer_id = buffer.remote_id();
+            let language = buffer.language().cloned();
+            let language_registry = buffer.language_registry();
+            let text_snapshot = buffer.text_snapshot();
+            this.loading_diffs.remove(&(buffer_id, kind));
 
-        Ok(change_set)
+            if let Some(OpenBuffer::Complete { diff_state, .. }) =
+                this.opened_buffers.get_mut(&buffer_id)
+            {
+                diff_state.update(cx, |diff_state, cx| {
+                    diff_state.language = language;
+                    diff_state.language_registry = language_registry;
+
+                    let diff = cx.new(|_| BufferDiff {
+                        buffer_id,
+                        snapshot: BufferDiffSnapshot::new(&text_snapshot),
+                        unstaged_diff: None,
+                    });
+                    match kind {
+                        DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
+                        DiffKind::Uncommitted => {
+                            let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
+                                diff
+                            } else {
+                                let unstaged_diff = cx.new(|_| BufferDiff {
+                                    buffer_id,
+                                    snapshot: BufferDiffSnapshot::new(&text_snapshot),
+                                    unstaged_diff: None,
+                                });
+                                diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
+                                unstaged_diff
+                            };
+
+                            diff.update(cx, |diff, _| {
+                                diff.unstaged_diff = Some(unstaged_diff);
+                            });
+                            diff_state.uncommitted_diff = Some(diff.downgrade())
+                        }
+                    };
+
+                    let rx = diff_state.diff_bases_changed(text_snapshot, diff_bases_change, cx);
+
+                    Ok(async move {
+                        rx.await.ok();
+                        Ok(diff)
+                    })
+                })
+            } else {
+                Err(anyhow!("buffer was closed"))
+            }
+        })??
+        .await
     }
 
     pub fn create_buffer(&mut self, cx: &mut Context<Self>) -> Task<Result<Entity<Buffer>>> {
@@ -1298,16 +1715,23 @@ impl BufferStore {
         }
     }
 
-    fn add_buffer(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
-        let remote_id = buffer.read(cx).remote_id();
-        let is_remote = buffer.read(cx).replica_id() != 0;
+    fn add_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &mut Context<Self>) -> Result<()> {
+        let buffer = buffer_entity.read(cx);
+        let language = buffer.language().cloned();
+        let language_registry = buffer.language_registry();
+        let remote_id = buffer.remote_id();
+        let is_remote = buffer.replica_id() != 0;
         let open_buffer = OpenBuffer::Complete {
-            buffer: buffer.downgrade(),
-            unstaged_changes: None,
+            buffer: buffer_entity.downgrade(),
+            diff_state: cx.new(|_| BufferDiffState {
+                language,
+                language_registry,
+                ..Default::default()
+            }),
         };
 
         let handle = cx.entity().downgrade();
-        buffer.update(cx, move |_, cx| {
+        buffer_entity.update(cx, move |_, cx| {
             cx.on_release(move |buffer, cx| {
                 handle
                     .update(cx, |_, cx| {
@@ -1324,7 +1748,7 @@ impl BufferStore {
             }
             hash_map::Entry::Occupied(mut entry) => {
                 if let OpenBuffer::Operations(operations) = entry.get_mut() {
-                    buffer.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx));
+                    buffer_entity.update(cx, |b, cx| b.apply_ops(operations.drain(..), cx));
                 } else if entry.get().upgrade().is_some() {
                     if is_remote {
                         return Ok(());
@@ -1337,8 +1761,8 @@ impl BufferStore {
             }
         }
 
-        cx.subscribe(&buffer, Self::on_buffer_event).detach();
-        cx.emit(BufferStoreEvent::BufferAdded(buffer));
+        cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
+        cx.emit(BufferStoreEvent::BufferAdded(buffer_entity));
         Ok(())
     }
 
@@ -1384,12 +1808,21 @@ impl BufferStore {
         })
     }
 
-    pub fn get_unstaged_changes(&self, buffer_id: BufferId) -> Option<Entity<BufferChangeSet>> {
-        if let OpenBuffer::Complete {
-            unstaged_changes, ..
-        } = self.opened_buffers.get(&buffer_id)?
-        {
-            unstaged_changes.as_ref()?.upgrade()
+    pub fn get_unstaged_diff(&self, buffer_id: BufferId, cx: &App) -> Option<Entity<BufferDiff>> {
+        if let OpenBuffer::Complete { diff_state, .. } = self.opened_buffers.get(&buffer_id)? {
+            diff_state.read(cx).unstaged_diff.as_ref()?.upgrade()
+        } else {
+            None
+        }
+    }
+
+    pub fn get_uncommitted_diff(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<Entity<BufferDiff>> {
+        if let OpenBuffer::Complete { diff_state, .. } = self.opened_buffers.get(&buffer_id)? {
+            diff_state.read(cx).uncommitted_diff.as_ref()?.upgrade()
         } else {
             None
         }
@@ -1509,21 +1942,13 @@ impl BufferStore {
     ) -> impl Future<Output = ()> {
         let mut futures = Vec::new();
         for buffer in buffers {
-            let buffer = buffer.read(cx).text_snapshot();
-            if let Some(OpenBuffer::Complete {
-                unstaged_changes, ..
-            }) = self.opened_buffers.get_mut(&buffer.remote_id())
+            if let Some(OpenBuffer::Complete { diff_state, .. }) =
+                self.opened_buffers.get_mut(&buffer.read(cx).remote_id())
             {
-                if let Some(unstaged_changes) = unstaged_changes
-                    .as_ref()
-                    .and_then(|changes| changes.upgrade())
-                {
-                    unstaged_changes.update(cx, |unstaged_changes, cx| {
-                        futures.push(unstaged_changes.recalculate_diff(buffer.clone(), cx));
-                    });
-                } else {
-                    unstaged_changes.take();
-                }
+                let buffer = buffer.read(cx).text_snapshot();
+                futures.push(diff_state.update(cx, |diff_state, cx| {
+                    diff_state.recalculate_diffs(buffer, cx)
+                }));
             }
         }
         async move {
@@ -1557,6 +1982,16 @@ impl BufferStore {
                         line_ending: serialize_line_ending(buffer.line_ending()) as i32,
                     })
                     .log_err();
+            }
+            BufferEvent::LanguageChanged => {
+                let buffer_id = buffer.read(cx).remote_id();
+                if let Some(OpenBuffer::Complete { diff_state, .. }) =
+                    self.opened_buffers.get(&buffer_id)
+                {
+                    diff_state.update(cx, |diff_state, cx| {
+                        diff_state.buffer_language_changed(buffer, cx);
+                    });
+                }
             }
             _ => {}
         }
@@ -1632,7 +2067,7 @@ impl BufferStore {
                     .entry(buffer_id)
                     .or_insert_with(|| SharedBuffer {
                         buffer: buffer.clone(),
-                        unstaged_changes: None,
+                        diff: None,
                         lsp_handle: None,
                     });
 
@@ -1937,16 +2372,16 @@ impl BufferStore {
         })
     }
 
-    pub async fn handle_get_staged_text(
+    pub async fn handle_open_unstaged_diff(
         this: Entity<Self>,
-        request: TypedEnvelope<proto::GetStagedText>,
+        request: TypedEnvelope<proto::OpenUnstagedDiff>,
         mut cx: AsyncApp,
-    ) -> Result<proto::GetStagedTextResponse> {
+    ) -> Result<proto::OpenUnstagedDiffResponse> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
-        let change_set = this
+        let diff = this
             .update(&mut cx, |this, cx| {
                 let buffer = this.get(buffer_id)?;
-                Some(this.open_unstaged_changes(buffer, cx))
+                Some(this.open_unstaged_diff(buffer, cx))
             })?
             .ok_or_else(|| anyhow!("no such buffer"))?
             .await?;
@@ -1957,43 +2392,95 @@ impl BufferStore {
                 .or_default();
             debug_assert!(shared_buffers.contains_key(&buffer_id));
             if let Some(shared) = shared_buffers.get_mut(&buffer_id) {
-                shared.unstaged_changes = Some(change_set.clone());
+                shared.diff = Some(diff.clone());
             }
         })?;
-        let staged_text = change_set.read_with(&cx, |change_set, _| {
-            change_set.base_text.as_ref().map(|buffer| buffer.text())
+        let staged_text = diff.read_with(&cx, |diff, _| {
+            diff.snapshot.base_text.as_ref().map(|buffer| buffer.text())
         })?;
-        Ok(proto::GetStagedTextResponse { staged_text })
+        Ok(proto::OpenUnstagedDiffResponse { staged_text })
     }
 
-    pub async fn handle_update_diff_base(
+    pub async fn handle_open_uncommitted_diff(
         this: Entity<Self>,
-        request: TypedEnvelope<proto::UpdateDiffBase>,
+        request: TypedEnvelope<proto::OpenUncommittedDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenUncommittedDiffResponse> {
+        let buffer_id = BufferId::new(request.payload.buffer_id)?;
+        let diff = this
+            .update(&mut cx, |this, cx| {
+                let buffer = this.get(buffer_id)?;
+                Some(this.open_uncommitted_diff(buffer, cx))
+            })?
+            .ok_or_else(|| anyhow!("no such buffer"))?
+            .await?;
+        this.update(&mut cx, |this, _| {
+            let shared_buffers = this
+                .shared_buffers
+                .entry(request.original_sender_id.unwrap_or(request.sender_id))
+                .or_default();
+            debug_assert!(shared_buffers.contains_key(&buffer_id));
+            if let Some(shared) = shared_buffers.get_mut(&buffer_id) {
+                shared.diff = Some(diff.clone());
+            }
+        })?;
+        diff.read_with(&cx, |diff, cx| {
+            use proto::open_uncommitted_diff_response::Mode;
+
+            let staged_buffer = diff
+                .unstaged_diff
+                .as_ref()
+                .and_then(|diff| diff.read(cx).snapshot.base_text.as_ref());
+
+            let mode;
+            let staged_text;
+            let committed_text;
+            if let Some(committed_buffer) = &diff.snapshot.base_text {
+                committed_text = Some(committed_buffer.text());
+                if let Some(staged_buffer) = staged_buffer {
+                    if staged_buffer.remote_id() == committed_buffer.remote_id() {
+                        mode = Mode::IndexMatchesHead;
+                        staged_text = None;
+                    } else {
+                        mode = Mode::IndexAndHead;
+                        staged_text = Some(staged_buffer.text());
+                    }
+                } else {
+                    mode = Mode::IndexAndHead;
+                    staged_text = None;
+                }
+            } else {
+                mode = Mode::IndexAndHead;
+                committed_text = None;
+                staged_text = staged_buffer.as_ref().map(|buffer| buffer.text());
+            }
+
+            proto::OpenUncommittedDiffResponse {
+                committed_text,
+                staged_text,
+                mode: mode.into(),
+            }
+        })
+    }
+
+    pub async fn handle_update_diff_bases(
+        this: Entity<Self>,
+        request: TypedEnvelope<proto::UpdateDiffBases>,
         mut cx: AsyncApp,
     ) -> Result<()> {
         let buffer_id = BufferId::new(request.payload.buffer_id)?;
-        let Some((buffer, change_set)) = this.update(&mut cx, |this, _| {
-            if let OpenBuffer::Complete {
-                unstaged_changes,
-                buffer,
-            } = this.opened_buffers.get(&buffer_id)?
+        this.update(&mut cx, |this, cx| {
+            if let Some(OpenBuffer::Complete { diff_state, buffer }) =
+                this.opened_buffers.get_mut(&buffer_id)
             {
-                Some((buffer.upgrade()?, unstaged_changes.as_ref()?.upgrade()?))
-            } else {
-                None
+                if let Some(buffer) = buffer.upgrade() {
+                    let buffer = buffer.read(cx).text_snapshot();
+                    diff_state.update(cx, |diff_state, cx| {
+                        diff_state.handle_base_texts_updated(buffer, request.payload, cx);
+                    })
+                }
             }
-        })?
-        else {
-            return Ok(());
-        };
-        change_set.update(&mut cx, |change_set, cx| {
-            if let Some(staged_text) = request.payload.staged_text {
-                let _ = change_set.set_base_text(staged_text, buffer.read(cx).text_snapshot(), cx);
-            } else {
-                change_set.unset_base_text(buffer.read(cx).text_snapshot(), cx)
-            }
-        })?;
-        Ok(())
+        })
     }
 
     pub fn reload_buffers(
@@ -2050,7 +2537,7 @@ impl BufferStore {
             buffer_id,
             SharedBuffer {
                 buffer: buffer.clone(),
-                unstaged_changes: None,
+                diff: None,
                 lsp_handle: None,
             },
         );
@@ -2202,176 +2689,6 @@ impl BufferStore {
                 .push(language::proto::serialize_transaction(&transaction));
         }
         serialized_transaction
-    }
-}
-
-impl EventEmitter<BufferChangeSetEvent> for BufferChangeSet {}
-
-impl BufferChangeSet {
-    pub fn new(buffer: &Entity<Buffer>, cx: &mut Context<Self>) -> Self {
-        cx.subscribe(buffer, |this, buffer, event, cx| match event {
-            BufferEvent::LanguageChanged => {
-                this.language = buffer.read(cx).language().cloned();
-                if let Some(base_text) = &this.base_text {
-                    let snapshot = language::Buffer::build_snapshot(
-                        base_text.as_rope().clone(),
-                        this.language.clone(),
-                        this.language_registry.clone(),
-                        cx,
-                    );
-                    this.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-                        let base_text = cx.background_executor().spawn(snapshot).await;
-                        this.update(&mut cx, |this, cx| {
-                            this.base_text = Some(base_text);
-                            cx.emit(BufferChangeSetEvent::DiffChanged {
-                                changed_range: text::Anchor::MIN..text::Anchor::MAX,
-                            });
-                        })
-                    }));
-                }
-            }
-            _ => {}
-        })
-        .detach();
-
-        let buffer = buffer.read(cx);
-
-        Self {
-            buffer_id: buffer.remote_id(),
-            base_text: None,
-            diff_to_buffer: git::diff::BufferDiff::new(buffer),
-            recalculate_diff_task: None,
-            diff_updated_futures: Vec::new(),
-            language: buffer.language().cloned(),
-            language_registry: buffer.language_registry(),
-        }
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new_with_base_text(
-        base_text: String,
-        buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut this = Self::new(&buffer, cx);
-        let _ = this.set_base_text(base_text, buffer.read(cx).text_snapshot(), cx);
-        this
-    }
-
-    pub fn diff_hunks_intersecting_range<'a>(
-        &'a self,
-        range: Range<text::Anchor>,
-        buffer_snapshot: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
-        self.diff_to_buffer
-            .hunks_intersecting_range(range, buffer_snapshot)
-    }
-
-    pub fn diff_hunks_intersecting_range_rev<'a>(
-        &'a self,
-        range: Range<text::Anchor>,
-        buffer_snapshot: &'a text::BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = git::diff::DiffHunk> {
-        self.diff_to_buffer
-            .hunks_intersecting_range_rev(range, buffer_snapshot)
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn base_text_string(&self) -> Option<String> {
-        self.base_text.as_ref().map(|buffer| buffer.text())
-    }
-
-    pub fn set_base_text(
-        &mut self,
-        mut base_text: String,
-        buffer_snapshot: text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        LineEnding::normalize(&mut base_text);
-        self.recalculate_diff_internal(base_text, buffer_snapshot, true, cx)
-    }
-
-    pub fn unset_base_text(
-        &mut self,
-        buffer_snapshot: text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) {
-        if self.base_text.is_some() {
-            self.base_text = None;
-            self.diff_to_buffer = BufferDiff::new(&buffer_snapshot);
-            self.recalculate_diff_task.take();
-            cx.notify();
-        }
-    }
-
-    pub fn recalculate_diff(
-        &mut self,
-        buffer_snapshot: text::BufferSnapshot,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        if let Some(base_text) = self.base_text.clone() {
-            self.recalculate_diff_internal(base_text.text(), buffer_snapshot, false, cx)
-        } else {
-            oneshot::channel().1
-        }
-    }
-
-    fn recalculate_diff_internal(
-        &mut self,
-        base_text: String,
-        buffer_snapshot: text::BufferSnapshot,
-        base_text_changed: bool,
-        cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<()> {
-        let (tx, rx) = oneshot::channel();
-        self.diff_updated_futures.push(tx);
-        self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
-            let (old_diff, new_base_text) = this.update(&mut cx, |this, cx| {
-                let new_base_text = if base_text_changed {
-                    let base_text_rope: Rope = base_text.as_str().into();
-                    let snapshot = language::Buffer::build_snapshot(
-                        base_text_rope,
-                        this.language.clone(),
-                        this.language_registry.clone(),
-                        cx,
-                    );
-                    cx.background_executor()
-                        .spawn(async move { Some(snapshot.await) })
-                } else {
-                    Task::ready(None)
-                };
-                (this.diff_to_buffer.clone(), new_base_text)
-            })?;
-
-            let diff = cx.background_executor().spawn(async move {
-                let new_diff = BufferDiff::build(&base_text, &buffer_snapshot);
-                let changed_range = if base_text_changed {
-                    Some(text::Anchor::MIN..text::Anchor::MAX)
-                } else {
-                    new_diff.compare(&old_diff, &buffer_snapshot)
-                };
-                (new_diff, changed_range)
-            });
-
-            let (new_base_text, (diff, changed_range)) = futures::join!(new_base_text, diff);
-
-            this.update(&mut cx, |this, cx| {
-                if let Some(new_base_text) = new_base_text {
-                    this.base_text = Some(new_base_text)
-                }
-                this.diff_to_buffer = diff;
-
-                this.recalculate_diff_task.take();
-                for tx in this.diff_updated_futures.drain(..) {
-                    tx.send(()).ok();
-                }
-                if let Some(changed_range) = changed_range {
-                    cx.emit(BufferChangeSetEvent::DiffChanged { changed_range });
-                }
-            })?;
-            Ok(())
-        }));
-        rx
     }
 }
 

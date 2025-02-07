@@ -21,14 +21,15 @@ mod project_tests;
 
 mod direnv;
 mod environment;
+use diff::BufferDiff;
 pub use environment::EnvironmentErrorMessage;
-use git::RepositoryHandle;
+use git::Repository;
 pub mod search_history;
 mod yarn;
 
 use crate::git::GitState;
 use anyhow::{anyhow, Context as _, Result};
-use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
+use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
 };
@@ -48,7 +49,6 @@ use ::git::{
     blame::Blame,
     repository::{Branch, GitRepository, RepoPath},
     status::FileStatus,
-    COMMIT_MESSAGE,
 };
 use gpui::{
     AnyEntity, App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter,
@@ -1956,17 +1956,31 @@ impl Project {
         })
     }
 
-    pub fn open_unstaged_changes(
+    pub fn open_unstaged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferChangeSet>>> {
+    ) -> Task<Result<Entity<BufferDiff>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
         self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.open_unstaged_changes(buffer, cx)
+            buffer_store.open_unstaged_diff(buffer, cx)
+        })
+    }
+
+    pub fn open_uncommitted_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_uncommitted_diff(buffer, cx)
         })
     }
 
@@ -1984,12 +1998,15 @@ impl Project {
                 project_id,
                 id: id.into(),
             });
-            cx.spawn(move |this, mut cx| async move {
+            cx.spawn(move |project, mut cx| async move {
                 let buffer_id = BufferId::new(request.await?.buffer_id)?;
-                this.update(&mut cx, |this, cx| {
-                    this.wait_for_remote_buffer(buffer_id, cx)
-                })?
-                .await
+                project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store.update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })
+                    })?
+                    .await
             })
         } else {
             Task::ready(Err(anyhow!("cannot open buffer while disconnected")))
@@ -2058,8 +2075,25 @@ impl Project {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
 
-        self.image_store.update(cx, |image_store, cx| {
+        let open_image_task = self.image_store.update(cx, |image_store, cx| {
             image_store.open_image(path.into(), cx)
+        });
+
+        let weak_project = cx.entity().downgrade();
+        cx.spawn(move |_, mut cx| async move {
+            let image_item = open_image_task.await?;
+            let project = weak_project
+                .upgrade()
+                .ok_or_else(|| anyhow!("Project dropped"))?;
+
+            let metadata =
+                ImageItem::load_image_metadata(image_item.clone(), project, &mut cx).await?;
+            image_item.update(&mut cx, |image_item, cx| {
+                image_item.image_metadata = Some(metadata);
+                cx.emit(ImageItemEvent::MetadataUpdated);
+            })?;
+
+            Ok(image_item)
         })
     }
 
@@ -2832,16 +2866,21 @@ impl Project {
 
         let proto_client = ssh_client.read(cx).proto_client();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|project, mut cx| async move {
             let buffer = proto_client
                 .request(proto::OpenServerSettings {
                     project_id: SSH_PROJECT_ID,
                 })
                 .await?;
 
-            let buffer = this
-                .update(&mut cx, |this, cx| {
-                    anyhow::Ok(this.wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx))
+            let buffer = project
+                .update(&mut cx, |project, cx| {
+                    project.buffer_store.update(cx, |buffer_store, cx| {
+                        anyhow::Ok(
+                            buffer_store
+                                .wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx),
+                        )
+                    })
                 })??
                 .await;
 
@@ -3172,13 +3211,15 @@ impl Project {
         });
         let guard = self.retain_remotely_created_models(cx);
 
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |project, mut cx| async move {
             let response = request.await?;
             for buffer_id in response.buffer_ids {
                 let buffer_id = BufferId::new(buffer_id)?;
-                let buffer = this
-                    .update(&mut cx, |this, cx| {
-                        this.wait_for_remote_buffer(buffer_id, cx)
+                let buffer = project
+                    .update(&mut cx, |project, cx| {
+                        project.buffer_store.update(cx, |buffer_store, cx| {
+                            buffer_store.wait_for_remote_buffer(buffer_id, cx)
+                        })
                     })?
                     .await?;
                 let _ = tx.send(buffer).await;
@@ -3984,7 +4025,11 @@ impl Project {
             .map(RepoPath::new)
             .collect();
 
-        repository_handle.stage_entries(entries).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.stage_entries(entries)
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -4006,7 +4051,11 @@ impl Project {
             .map(RepoPath::new)
             .collect();
 
-        repository_handle.unstage_entries(entries).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.unstage_entries(entries)
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -4020,9 +4069,14 @@ impl Project {
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
 
+        let message = SharedString::from(envelope.payload.message);
         let name = envelope.payload.name.map(SharedString::from);
         let email = envelope.payload.email.map(SharedString::from);
-        repository_handle.commit(name.zip(email)).await?;
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.commit(message, name.zip(email))
+            })?
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -4035,55 +4089,12 @@ impl Project {
         let work_directory_id = ProjectEntryId::from_proto(envelope.payload.work_directory_id);
         let repository_handle =
             Self::repository_for_request(&this, worktree_id, work_directory_id, &mut cx)?;
-        let git_repository = match &repository_handle.git_repo {
-            git::GitRepo::Local(git_repository) => git_repository.clone(),
-            git::GitRepo::Remote { .. } => {
-                anyhow::bail!("Cannot handle open commit message buffer for remote git repo")
-            }
-        };
-        let commit_message_file = git_repository.dot_git_dir().join(*COMMIT_MESSAGE);
-        let fs = this.update(&mut cx, |project, _| project.fs().clone())?;
-        fs.create_file(
-            &commit_message_file,
-            CreateOptions {
-                overwrite: false,
-                ignore_if_exists: true,
-            },
-        )
-        .await
-        .with_context(|| format!("creating commit message file {commit_message_file:?}"))?;
-
-        let (worktree, relative_path) = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .worktree_store
-                    .update(cx, |worktree_store, cx| {
-                        worktree_store.find_or_create_worktree(&commit_message_file, false, cx)
-                    })
-            })?
-            .await
-            .with_context(|| {
-                format!("deriving worktree for commit message file {commit_message_file:?}")
-            })?;
-
-        let buffer = this
-            .update(&mut cx, |headless_project, cx| {
-                headless_project
-                    .buffer_store
-                    .update(cx, |buffer_store, cx| {
-                        buffer_store.open_buffer(
-                            ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: Arc::from(relative_path),
-                            },
-                            cx,
-                        )
-                    })
-            })
-            .with_context(|| {
-                format!("opening buffer for commit message file {commit_message_file:?}")
+        let buffer = repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })?
             .await?;
+
         let peer_id = envelope.original_sender_id()?;
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
     }
@@ -4093,7 +4104,7 @@ impl Project {
         worktree_id: WorktreeId,
         work_directory_id: ProjectEntryId,
         cx: &mut AsyncApp,
-    ) -> Result<RepositoryHandle> {
+    ) -> Result<Entity<Repository>> {
         this.update(cx, |project, cx| {
             let repository_handle = project
                 .git_state()
@@ -4101,6 +4112,7 @@ impl Project {
                 .all_repositories()
                 .into_iter()
                 .find(|repository_handle| {
+                    let repository_handle = repository_handle.read(cx);
                     repository_handle.worktree_id == worktree_id
                         && repository_handle.repository_entry.work_directory_id()
                             == work_directory_id
@@ -4144,16 +4156,6 @@ impl Project {
             })
             .detach_and_log_err(cx);
         buffer.read(cx).remote_id()
-    }
-
-    pub fn wait_for_remote_buffer(
-        &mut self,
-        id: BufferId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
-        self.buffer_store.update(cx, |buffer_store, cx| {
-            buffer_store.wait_for_remote_buffer(id, cx)
-        })
     }
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -4315,11 +4317,11 @@ impl Project {
         &self.git_state
     }
 
-    pub fn active_repository(&self, cx: &App) -> Option<RepositoryHandle> {
+    pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
         self.git_state.read(cx).active_repository()
     }
 
-    pub fn all_repositories(&self, cx: &App) -> Vec<RepositoryHandle> {
+    pub fn all_repositories(&self, cx: &App) -> Vec<Entity<Repository>> {
         self.git_state.read(cx).all_repositories()
     }
 }

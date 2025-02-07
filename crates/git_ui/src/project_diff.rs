@@ -1,11 +1,8 @@
-use std::{
-    any::{Any, TypeId},
-    path::Path,
-    sync::Arc,
-};
+use std::any::{Any, TypeId};
 
 use anyhow::Result;
 use collections::HashSet;
+use diff::BufferDiff;
 use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;
@@ -13,9 +10,9 @@ use gpui::{
     actions, AnyElement, AnyView, App, AppContext, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, Capability, OffsetRangeExt};
-use multi_buffer::MultiBuffer;
-use project::{buffer_store::BufferChangeSet, git::GitState, Project, ProjectPath};
+use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
+use multi_buffer::{MultiBuffer, PathKey};
+use project::{git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -25,7 +22,7 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
-use crate::git_panel::GitPanel;
+use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 
 actions!(git, [Diff]);
 
@@ -33,21 +30,26 @@ pub(crate) struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
+    git_panel: Entity<GitPanel>,
     git_state: Entity<GitState>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
-    pending_scroll: Option<Arc<Path>>,
+    pending_scroll: Option<PathKey>,
 
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
 
 struct DiffBuffer {
-    abs_path: Arc<Path>,
+    path_key: PathKey,
     buffer: Entity<Buffer>,
-    change_set: Entity<BufferChangeSet>,
+    diff: Entity<BufferDiff>,
 }
+
+const CONFLICT_NAMESPACE: &'static str = "0";
+const TRACKED_NAMESPACE: &'static str = "1";
+const NEW_NAMESPACE: &'static str = "2";
 
 impl ProjectDiff {
     pub(crate) fn register(
@@ -72,7 +74,7 @@ impl ProjectDiff {
 
     pub fn deploy_at(
         workspace: &mut Workspace,
-        path: Option<Arc<Path>>,
+        entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -80,9 +82,16 @@ impl ProjectDiff {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
-            let workspace_handle = cx.entity().downgrade();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let workspace_handle = cx.entity();
+            let project_diff = cx.new(|cx| {
+                Self::new(
+                    workspace.project().clone(),
+                    workspace_handle,
+                    workspace.panel::<GitPanel>(cx).unwrap(),
+                    window,
+                    cx,
+                )
+            });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -92,16 +101,17 @@ impl ProjectDiff {
             );
             project_diff
         };
-        if let Some(path) = path {
+        if let Some(entry) = entry {
             project_diff.update(cx, |project_diff, cx| {
-                project_diff.scroll_to(path, window, cx);
+                project_diff.scroll_to(entry, window, cx);
             })
         }
     }
 
     fn new(
         project: Entity<Project>,
-        workspace: WeakEntity<Workspace>,
+        workspace: Entity<Workspace>,
+        git_panel: Entity<GitPanel>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -117,6 +127,9 @@ impl ProjectDiff {
                 cx,
             );
             diff_display_editor.set_expand_all_diff_hunks(cx);
+            diff_display_editor.register_addon(GitPanelAddon {
+                git_panel: git_panel.clone(),
+            });
             diff_display_editor
         });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
@@ -126,10 +139,8 @@ impl ProjectDiff {
         let git_state_subscription = cx.subscribe_in(
             &git_state,
             window,
-            move |this, _git_state, event, _window, _cx| match event {
-                project::git::Event::RepositoriesUpdated => {
-                    *this.update_needed.borrow_mut() = ();
-                }
+            move |this, _git_state, _event, _window, _cx| {
+                *this.update_needed.borrow_mut() = ();
             },
         );
 
@@ -144,7 +155,8 @@ impl ProjectDiff {
         Self {
             project,
             git_state: git_state.clone(),
-            workspace,
+            git_panel: git_panel.clone(),
+            workspace: workspace.downgrade(),
             focus_handle,
             editor,
             multibuffer,
@@ -155,15 +167,46 @@ impl ProjectDiff {
         }
     }
 
-    pub fn scroll_to(&mut self, path: Arc<Path>, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path, cx) {
+    pub fn scroll_to(
+        &mut self,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(git_repo) = self.git_state.read(cx).active_repository() else {
+            return;
+        };
+        let repo = git_repo.read(cx);
+
+        let Some(abs_path) = repo
+            .repo_path_to_project_path(&entry.repo_path)
+            .and_then(|project_path| self.project.read(cx).absolute_path(&project_path, cx))
+        else {
+            return;
+        };
+
+        let namespace = if repo.has_conflict(&entry.repo_path) {
+            CONFLICT_NAMESPACE
+        } else if entry.status.is_created() {
+            NEW_NAMESPACE
+        } else {
+            TRACKED_NAMESPACE
+        };
+
+        let path_key = PathKey::namespaced(namespace, &abs_path);
+
+        self.scroll_to_path(path_key, window, cx)
+    }
+
+    fn scroll_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
                     s.select_ranges([position..position]);
                 })
             })
         } else {
-            self.pending_scroll = Some(path);
+            self.pending_scroll = Some(path_key);
         }
     }
 
@@ -192,7 +235,7 @@ impl ProjectDiff {
                     .update(cx, |workspace, cx| {
                         if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
                             git_panel.update(cx, |git_panel, cx| {
-                                git_panel.set_focused_path(project_path.into(), window, cx)
+                                git_panel.select_entry_by_path(project_path.into(), window, cx)
                             })
                         }
                     })
@@ -213,38 +256,47 @@ impl ProjectDiff {
         let mut previous_paths = self.multibuffer.read(cx).paths().collect::<HashSet<_>>();
 
         let mut result = vec![];
-        for entry in repo.status() {
-            if !entry.status.has_changes() {
-                continue;
+        repo.update(cx, |repo, cx| {
+            for entry in repo.status() {
+                if !entry.status.has_changes() {
+                    continue;
+                }
+                let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
+                    continue;
+                };
+                let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+                    continue;
+                };
+                let namespace = if repo.has_conflict(&entry.repo_path) {
+                    CONFLICT_NAMESPACE
+                } else if entry.status.is_created() {
+                    NEW_NAMESPACE
+                } else {
+                    TRACKED_NAMESPACE
+                };
+                let path_key = PathKey::namespaced(namespace, &abs_path);
+
+                previous_paths.remove(&path_key);
+                let load_buffer = self
+                    .project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
+
+                let project = self.project.clone();
+                result.push(cx.spawn(|_, mut cx| async move {
+                    let buffer = load_buffer.await?;
+                    let changes = project
+                        .update(&mut cx, |project, cx| {
+                            project.open_uncommitted_diff(buffer.clone(), cx)
+                        })?
+                        .await?;
+                    Ok(DiffBuffer {
+                        path_key,
+                        buffer,
+                        diff: changes,
+                    })
+                }));
             }
-            let Some(project_path) = repo.repo_path_to_project_path(&entry.repo_path) else {
-                continue;
-            };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-                continue;
-            };
-            let abs_path = Arc::from(abs_path);
-
-            previous_paths.remove(&abs_path);
-            let load_buffer = self
-                .project
-                .update(cx, |project, cx| project.open_buffer(project_path, cx));
-
-            let project = self.project.clone();
-            result.push(cx.spawn(|_, mut cx| async move {
-                let buffer = load_buffer.await?;
-                let changes = project
-                    .update(&mut cx, |project, cx| {
-                        project.open_unstaged_changes(buffer.clone(), cx)
-                    })?
-                    .await?;
-                Ok(DiffBuffer {
-                    abs_path,
-                    buffer,
-                    change_set: changes,
-                })
-            }));
-        }
+        });
         self.multibuffer.update(cx, |multibuffer, cx| {
             for path in previous_paths {
                 multibuffer.remove_excerpts_for_path(path, cx);
@@ -259,28 +311,31 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let abs_path = diff_buffer.abs_path;
+        let path_key = diff_buffer.path_key;
         let buffer = diff_buffer.buffer;
-        let change_set = diff_buffer.change_set;
+        let diff = diff_buffer.diff;
 
         let snapshot = buffer.read(cx).snapshot();
-        let diff_hunk_ranges = change_set
-            .read(cx)
-            .diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-            .collect::<Vec<_>>();
+        let diff = diff.read(cx);
+        let diff_hunk_ranges = if diff.snapshot.base_text.is_none() {
+            vec![Point::zero()..snapshot.max_point()]
+        } else {
+            diff.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot)
+                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                .collect::<Vec<_>>()
+        };
 
         self.multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
-                abs_path.clone(),
+                path_key.clone(),
                 buffer,
                 diff_hunk_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
         });
-        if self.pending_scroll.as_ref() == Some(&abs_path) {
-            self.scroll_to(abs_path, window, cx);
+        if self.pending_scroll.as_ref() == Some(&path_key) {
+            self.scroll_to_path(path_key, window, cx);
         }
     }
 
@@ -390,9 +445,16 @@ impl Item for ProjectDiff {
     where
         Self: Sized,
     {
-        Some(
-            cx.new(|cx| ProjectDiff::new(self.project.clone(), self.workspace.clone(), window, cx)),
-        )
+        let workspace = self.workspace.upgrade()?;
+        Some(cx.new(|cx| {
+            ProjectDiff::new(
+                self.project.clone(),
+                workspace,
+                self.git_panel.clone(),
+                window,
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

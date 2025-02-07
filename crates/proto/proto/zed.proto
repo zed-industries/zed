@@ -129,7 +129,7 @@ message Envelope {
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
         UpdateUserPlan update_user_plan = 234;
-        UpdateDiffBase update_diff_base = 104;
+        UpdateDiffBases update_diff_bases = 104;
         AcceptTermsOfService accept_terms_of_service = 239;
         AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
@@ -304,15 +304,18 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289;
+        OpenUnstagedDiff open_unstaged_diff = 288;
+        OpenUnstagedDiffResponse open_unstaged_diff_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
 
         Stage stage = 293;
         Unstage unstage = 294;
         Commit commit = 295;
-        OpenCommitMessageBuffer open_commit_message_buffer = 296; // current max
+        OpenCommitMessageBuffer open_commit_message_buffer = 296;
+
+        OpenUncommittedDiff open_uncommitted_diff = 297;
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298; // current max
     }
 
     reserved 87 to 88;
@@ -365,6 +368,7 @@ enum ErrorCode {
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
+    CommitFailed = 19;
     reserved 6;
     reserved 14 to 15;
 }
@@ -1797,6 +1801,7 @@ message RepositoryEntry {
     optional string branch = 2;
     repeated StatusEntry updated_statuses = 3;
     repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
 }
 
 message StatusEntry {
@@ -2035,19 +2040,51 @@ message WorktreeMetadata {
     string abs_path = 4;
 }
 
-message UpdateDiffBase {
+message UpdateDiffBases {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+
+    enum Mode {
+        // No collaborator is using the unstaged diff.
+        HEAD_ONLY = 0;
+        // No collaborator is using the diff from HEAD.
+        INDEX_ONLY = 1;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD are the same for this path.
+        INDEX_MATCHES_HEAD = 2;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD differ for this path,
+        // where None means the path doesn't exist in that state of the repo.
+        INDEX_AND_HEAD = 3;
+    }
+
     optional string staged_text = 3;
+    optional string committed_text = 4;
+    Mode mode = 5;
 }
 
-message GetStagedText {
+message OpenUnstagedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message GetStagedTextResponse {
+message OpenUnstagedDiffResponse {
     optional string staged_text = 1;
+}
+
+message OpenUncommittedDiff {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message OpenUncommittedDiffResponse {
+    enum Mode {
+        INDEX_MATCHES_HEAD = 0;
+        INDEX_AND_HEAD = 1;
+    }
+    optional string staged_text = 1;
+    optional string committed_text = 2;
+    Mode mode = 3;
 }
 
 message GetNotifications {
@@ -2658,6 +2695,7 @@ message Commit {
     uint64 work_directory_id = 3;
     optional string name = 4;
     optional string email = 5;
+    string message = 6;
 }
 
 message OpenCommitMessageBuffer {
