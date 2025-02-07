@@ -382,6 +382,12 @@
     }
   },
   {
+    "context": "Editor && vim_mode == waiting",
+    "bindings": {
+        "escape": "vim::SwitchToNormalMode"
+    }
+  },
+  {
     "context": "vim_mode == operator",
     "bindings": {
       "ctrl-c": "vim::ClearOperators",
