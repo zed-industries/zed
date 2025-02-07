@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/diff.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 futures.workspace = true
 git2.workspace = true
@@ -23,10 +26,7 @@ text.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-unindent.workspace = true
-serde_json.workspace = true
 pretty_assertions.workspace = true
-text = {workspace = true, features = ["test-support"]}
-
-[features]
-test-support = []
+serde_json.workspace = true
+text = { workspace = true, features = ["test-support"] }
+unindent.workspace = true
