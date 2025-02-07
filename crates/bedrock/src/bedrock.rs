@@ -89,17 +89,11 @@ pub struct Request {
     pub model: String,
     pub max_tokens: u32,
     pub messages: Vec<BedrockMessage>,
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<String>,
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    // #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_sequences: Vec<String>,
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_k: Option<u32>,
-    // #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
 }
 
