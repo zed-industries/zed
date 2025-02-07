@@ -1048,7 +1048,6 @@ impl GitPanel {
     }
 
     fn has_unstaged_conflicts(&self) -> bool {
-        dbg!(&self.conflicted_count, &self.conflicted_staged_count);
         self.conflicted_count > 0 && self.conflicted_count != self.conflicted_staged_count
     }
 
