@@ -1,11 +1,13 @@
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use gpui::{App, Entity, Task, WeakEntity};
-use language::{BufferSnapshot, LspAdapterDelegate, Language, LanguageName};
+use language::{BufferSnapshot, Language, LanguageName, LspAdapterDelegate};
 use project::Project;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::{
     path::PathBuf,
     process::Command,
@@ -13,8 +15,6 @@ use std::{
 };
 use ui::prelude::*;
 use workspace::Workspace;
-use serde::Serialize;
-use std::collections::HashMap;
 
 #[derive(Debug)]
 struct DiffFile {
@@ -53,23 +53,36 @@ struct FileStats {
 pub struct DiffSlashCommand;
 
 impl DiffSlashCommand {
-    fn get_git_diffs(project: &Entity<Project>, cx: &App) -> Result<(Vec<DiffFile>, Vec<DiffFile>)> {
+    fn get_git_diffs(
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Result<(Vec<DiffFile>, Vec<DiffFile>)> {
         let staged = Self::get_git_diff_internal(project, true, cx)?;
         let unstaged = Self::get_git_diff_internal(project, false, cx)?;
         Ok((staged, unstaged))
     }
 
-    fn get_git_diff_internal(project: &Entity<Project>, staged: bool, cx: &App) -> Result<Vec<DiffFile>> {
+    fn get_git_diff_internal(
+        project: &Entity<Project>,
+        staged: bool,
+        cx: &App,
+    ) -> Result<Vec<DiffFile>> {
         let project = project.read(cx);
         let worktree = project
             .worktrees(cx)
             .next()
             .ok_or_else(|| anyhow!("No worktree found"))?;
-        
+
         let root_path = worktree.read(cx).abs_path().to_owned();
 
         let args = if staged {
-            vec!["diff", "--cached", "--no-color", "--patch-with-raw", "--full-index"]
+            vec![
+                "diff",
+                "--cached",
+                "--no-color",
+                "--patch-with-raw",
+                "--full-index",
+            ]
         } else {
             vec!["diff", "--no-color", "--patch-with-raw", "--full-index"]
         };
@@ -112,8 +125,16 @@ impl DiffSlashCommand {
                         content: current_content.clone(),
                         is_binary,
                         file_mode_change,
-                        old_content: if old_content.is_empty() { None } else { Some(old_content.clone()) },
-                        new_content: if new_content.is_empty() { None } else { Some(new_content.clone()) },
+                        old_content: if old_content.is_empty() {
+                            None
+                        } else {
+                            Some(old_content.clone())
+                        },
+                        new_content: if new_content.is_empty() {
+                            None
+                        } else {
+                            Some(new_content.clone())
+                        },
                     });
                     current_content.clear();
                     old_content.clear();
@@ -169,8 +190,16 @@ impl DiffSlashCommand {
                 content: current_content,
                 is_binary,
                 file_mode_change,
-                old_content: if old_content.is_empty() { None } else { Some(old_content) },
-                new_content: if new_content.is_empty() { None } else { Some(new_content) },
+                old_content: if old_content.is_empty() {
+                    None
+                } else {
+                    Some(old_content)
+                },
+                new_content: if new_content.is_empty() {
+                    None
+                } else {
+                    Some(new_content)
+                },
             });
         }
 
@@ -196,19 +225,20 @@ impl DiffSlashCommand {
         stats
     }
 
-    fn format_diff_output(staged_files: Vec<DiffFile>, unstaged_files: Vec<DiffFile>) -> SlashCommandOutput {
+    fn format_diff_output(
+        staged_files: Vec<DiffFile>,
+        unstaged_files: Vec<DiffFile>,
+    ) -> SlashCommandOutput {
         let mut output = SlashCommandOutput::default();
-        
+
         let staged_stats = Self::calculate_stats(&staged_files);
         let unstaged_stats = Self::calculate_stats(&unstaged_files);
-        
+
         if !staged_files.is_empty() {
             output.text.push_str("# Staged Changes\n");
             output.text.push_str(&format!(
                 "📊 {} files changed, {} insertions(+), {} deletions(-)\n\n",
-                staged_stats.files_changed,
-                staged_stats.insertions,
-                staged_stats.deletions
+                staged_stats.files_changed, staged_stats.insertions, staged_stats.deletions
             ));
             Self::append_files_to_output(&mut output, staged_files, true);
         }
@@ -220,9 +250,7 @@ impl DiffSlashCommand {
             output.text.push_str("# Unstaged Changes\n");
             output.text.push_str(&format!(
                 "📊 {} files changed, {} insertions(+), {} deletions(-)\n\n",
-                unstaged_stats.files_changed,
-                unstaged_stats.insertions,
-                unstaged_stats.deletions
+                unstaged_stats.files_changed, unstaged_stats.insertions, unstaged_stats.deletions
             ));
             Self::append_files_to_output(&mut output, unstaged_files, false);
         }
@@ -234,26 +262,35 @@ impl DiffSlashCommand {
         output
     }
 
-    fn append_files_to_output(output: &mut SlashCommandOutput, files: Vec<DiffFile>, is_staged: bool) {
+    fn append_files_to_output(
+        output: &mut SlashCommandOutput,
+        files: Vec<DiffFile>,
+        is_staged: bool,
+    ) {
         for file in files {
             let file_path = file.path.to_string_lossy().into_owned();
-            let extension = file.path
+            let extension = file
+                .path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or("")
                 .to_owned();
 
             // Use language registry to detect language
-            let language_name = Some(Language::new(
-                language::LanguageConfig {
-                    name: LanguageName::new(&extension),
-                    ..Default::default()
-                },
-                None,
-            ).name().to_string());
+            let language_name = Some(
+                Language::new(
+                    language::LanguageConfig {
+                        name: LanguageName::new(&extension),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .name()
+                .to_string(),
+            );
 
             let start_pos = output.text.len();
-            
+
             let mut file_stats = FileStats::default();
             if !file.is_binary {
                 for line in file.content.lines() {
@@ -268,11 +305,9 @@ impl DiffSlashCommand {
             // Add file header with stats and path
             output.text.push_str(&format!(
                 "📄 {} (+{}, -{})\n",
-                file_path,
-                file_stats.insertions,
-                file_stats.deletions
+                file_path, file_stats.insertions, file_stats.deletions
             ));
-            
+
             // Add initial collapsed diff view
             if file.is_binary {
                 output.text.push_str("Binary file differs\n");
@@ -294,14 +329,17 @@ impl DiffSlashCommand {
                 } else {
                     file_path.clone().into()
                 },
-                metadata: Some(serde_json::to_value(DiffMetadata {
-                    path: file_path,
-                    stats: file_stats,
-                    is_staged,
-                    old_content: file.old_content,
-                    new_content: file.new_content,
-                    language_name,
-                }).unwrap()),
+                metadata: Some(
+                    serde_json::to_value(DiffMetadata {
+                        path: file_path,
+                        stats: file_stats,
+                        is_staged,
+                        old_content: file.old_content,
+                        new_content: file.new_content,
+                        language_name,
+                    })
+                    .unwrap(),
+                ),
             });
         }
     }
@@ -358,7 +396,7 @@ impl SlashCommand for DiffSlashCommand {
         };
 
         let project = workspace.read(cx).project().clone();
-        
+
         match Self::get_git_diffs(&project, cx) {
             Ok((staged_files, unstaged_files)) => {
                 let output = Self::format_diff_output(staged_files, unstaged_files);
