@@ -6882,7 +6882,7 @@ impl Element for EditorElement {
                                 match secondary_status {
                                     DiffHunkSecondaryStatus::HasSecondaryHunk
                                     | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
-                                        pattern_slash(color)
+                                        pattern_slash(color, line_height.0 / 4.0)
                                     }
                                     DiffHunkSecondaryStatus::None => color.into(),
                                 }
@@ -6892,7 +6892,7 @@ impl Element for EditorElement {
                                 match secondary_status {
                                     DiffHunkSecondaryStatus::HasSecondaryHunk
                                     | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
-                                        pattern_slash(color)
+                                        pattern_slash(color, line_height.0 / 4.0)
                                     }
                                     DiffHunkSecondaryStatus::None => color.into(),
                                 }
