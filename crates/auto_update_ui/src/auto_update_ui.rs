@@ -9,7 +9,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
 use util::ResultExt as _;
-use workspace::notifications::NotificationId;
+use workspace::notifications::{show_app_notification, NotificationId};
 use workspace::Workspace;
 
 use crate::update_notification::UpdateNotification;
@@ -17,6 +17,7 @@ use crate::update_notification::UpdateNotification;
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut App) {
+    notify_if_app_was_updated(cx);
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
@@ -124,31 +125,35 @@ fn view_release_notes_locally(
         .detach();
 }
 
-pub fn notify_of_any_new_update(window: &mut Window, cx: &mut Context<Workspace>) -> Option<()> {
-    let updater = AutoUpdater::get(cx)?;
+/// Shows a notification across all workspaces if an update was previously automatically installed
+/// and this notification had not yet been shown.
+pub fn notify_if_app_was_updated(cx: &mut App) {
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
     let version = updater.read(cx).current_version();
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
 
-    cx.spawn_in(window, |workspace, mut cx| async move {
+    cx.spawn(|cx| async move {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
-            workspace.update(&mut cx, |workspace, cx| {
-                let workspace_handle = workspace.weak_handle();
-                workspace.show_notification(
+            cx.update(|cx| {
+                show_app_notification(
                     NotificationId::unique::<UpdateNotification>(),
                     cx,
-                    |cx| cx.new(|_| UpdateNotification::new(version, workspace_handle)),
+                    move |cx| {
+                        let workspace_handle = cx.entity().downgrade();
+                        cx.new(|_| UpdateNotification::new(version, workspace_handle))
+                    },
                 );
                 updater.update(cx, |updater, cx| {
                     updater
                         .set_should_show_update_notification(false, cx)
                         .detach_and_log_err(cx);
-                });
+                })
             })?;
         }
         anyhow::Ok(())
     })
     .detach();
-
-    None
 }

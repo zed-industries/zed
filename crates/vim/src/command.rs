@@ -1517,7 +1517,8 @@ mod test {
             dd
             dd
             ˇcc"});
-        cx.simulate_shared_keystrokes("k : s / dd / ee enter").await;
+        cx.simulate_shared_keystrokes("k : s / d d / e e enter")
+            .await;
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd

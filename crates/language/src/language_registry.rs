@@ -31,7 +31,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{maybe, paths::PathExt, post_inc, ResultExt};
+use util::{maybe, post_inc, ResultExt};
 
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
@@ -659,7 +659,7 @@ impl LanguageRegistry {
         user_file_types: Option<&HashMap<Arc<str>, GlobSet>>,
     ) -> Option<AvailableLanguage> {
         let filename = path.file_name().and_then(|name| name.to_str());
-        let extension = path.extension_or_hidden_file_name();
+        let extension = path.extension().and_then(|ext| ext.to_str());
         let path_suffixes = [extension, filename, path.to_str()];
         let empty = GlobSet::empty();
 

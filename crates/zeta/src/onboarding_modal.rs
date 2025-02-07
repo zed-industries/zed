@@ -160,15 +160,25 @@ impl Focusable for ZedPredictModal {
 impl ModalView for ZedPredictModal {}
 
 impl Render for ZedPredictModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_height = window.viewport_size().height;
+        let max_height = window_height - px(200.);
+
         let base = v_flex()
-            .id("zed predict tos")
+            .id("edit-prediction-onboarding")
             .key_context("ZedPredictModal")
-            .w(px(440.))
-            .p_4()
             .relative()
+            .w(px(440.))
+            .h_full()
+            .max_h(max_height)
+            .p_4()
             .gap_2()
-            .overflow_hidden()
+            .when(self.data_collection_expanded, |element| {
+                element.overflow_y_scroll()
+            })
+            .when(!self.data_collection_expanded, |element| {
+                element.overflow_hidden()
+            })
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
@@ -184,7 +194,7 @@ impl Render for ZedPredictModal {
                     .p_1p5()
                     .absolute()
                     .top_1()
-                    .left_1p5()
+                    .left_1()
                     .right_0()
                     .h(px(200.))
                     .child(
@@ -247,7 +257,7 @@ impl Render for ZedPredictModal {
                         v_flex()
                             .gap_2()
                             .items_center()
-                            .pr_4()
+                            .pr_2p5()
                             .child(tab(0).ml_neg_20())
                             .child(tab(1))
                             .child(tab(2).ml_20())
@@ -295,9 +305,14 @@ impl Render for ZedPredictModal {
 
             fn info_item(label_text: impl Into<SharedString>) -> impl Element {
                 h_flex()
+                    .items_start()
                     .gap_2()
-                    .child(Icon::new(IconName::Check).size(IconSize::XSmall))
-                    .child(label_item(label_text))
+                    .child(
+                        div()
+                            .mt_1p5()
+                            .child(Icon::new(IconName::Check).size(IconSize::XSmall)),
+                    )
+                    .child(div().w_full().child(label_item(label_text)))
             }
 
             fn multiline_info_item<E1: Into<SharedString>, E2: IntoElement>(
@@ -333,6 +348,7 @@ impl Render for ZedPredictModal {
                     v_flex()
                         .child(
                             h_flex()
+                                .flex_wrap()
                                 .child(
                                     Checkbox::new(
                                         "training-data-checkbox",
@@ -390,9 +406,11 @@ impl Render for ZedPredictModal {
                                     ))
                                     .child(info_item("Toggle it anytime via the status bar menu."))
                                     .child(multiline_info_item(
-                                        "Files that can contain sensitive data, like `.env`, are",
+                                        "Files with sensitive data, like `.env`, are excluded",
                                         h_flex()
-                                            .child(label_item("excluded by default via the"))
+                                            .w_full()
+                                            .flex_wrap()
+                                            .child(label_item("by default via the"))
                                             .child(
                                                 Button::new("doc-link", "disabled_globs").on_click(
                                                     cx.listener(Self::inline_completions_doc),

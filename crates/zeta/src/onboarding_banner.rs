@@ -11,6 +11,7 @@ use crate::onboarding_event;
 /// Prompts the user to try Zed's Edit Prediction feature
 pub struct ZedPredictBanner {
     dismissed: bool,
+    provider: InlineCompletionProvider,
     _subscription: Subscription,
 }
 
@@ -18,40 +19,30 @@ impl ZedPredictBanner {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             dismissed: get_dismissed(),
+            provider: all_language_settings(None, cx).inline_completions.provider,
             _subscription: cx.observe_global::<SettingsStore>(Self::handle_settings_changed),
         }
     }
 
     fn should_show(&self, cx: &mut App) -> bool {
-        if !cx.has_flag::<PredictEditsFeatureFlag>() || self.dismissed {
-            return false;
-        }
-
-        let provider = all_language_settings(None, cx).inline_completions.provider;
-
-        match provider {
-            InlineCompletionProvider::None
-            | InlineCompletionProvider::Copilot
-            | InlineCompletionProvider::Supermaven => true,
-            InlineCompletionProvider::Zed => false,
-        }
+        cx.has_flag::<PredictEditsFeatureFlag>() && !self.dismissed && !self.provider.is_zed()
     }
 
     fn handle_settings_changed(&mut self, cx: &mut Context<Self>) {
-        if self.dismissed {
+        let new_provider = all_language_settings(None, cx).inline_completions.provider;
+
+        if new_provider == self.provider {
             return;
         }
 
-        let provider = all_language_settings(None, cx).inline_completions.provider;
-
-        match provider {
-            InlineCompletionProvider::None
-            | InlineCompletionProvider::Copilot
-            | InlineCompletionProvider::Supermaven => {}
-            InlineCompletionProvider::Zed => {
-                self.dismiss(cx);
-            }
+        if new_provider.is_zed() {
+            self.dismiss(cx);
+        } else {
+            self.dismissed = get_dismissed();
         }
+
+        self.provider = new_provider;
+        cx.notify();
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
@@ -64,19 +55,24 @@ impl ZedPredictBanner {
 
 const DISMISSED_AT_KEY: &str = "zed_predict_banner_dismissed_at";
 
-pub(crate) fn get_dismissed() -> bool {
+fn get_dismissed() -> bool {
     db::kvp::KEY_VALUE_STORE
         .read_kvp(DISMISSED_AT_KEY)
         .log_err()
         .map_or(false, |dismissed| dismissed.is_some())
 }
 
-pub(crate) fn persist_dismissed(cx: &mut App) {
+fn persist_dismissed(cx: &mut App) {
     cx.spawn(|_| {
         let time = Utc::now().to_rfc3339();
         db::kvp::KEY_VALUE_STORE.write_kvp(DISMISSED_AT_KEY.into(), time)
     })
     .detach_and_log_err(cx);
+}
+
+pub(crate) fn clear_dismissed(cx: &mut App) {
+    cx.spawn(|_| db::kvp::KEY_VALUE_STORE.delete_kvp(DISMISSED_AT_KEY.into()))
+        .detach_and_log_err(cx);
 }
 
 impl Render for ZedPredictBanner {

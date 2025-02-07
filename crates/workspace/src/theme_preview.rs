@@ -6,7 +6,7 @@ use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
     Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
     Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
-    IconDecoration, Indicator, Switch, Table, TintColor, Tooltip,
+    IconDecoration, Indicator, KeybindingHint, Switch, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -408,6 +408,7 @@ impl ThemePreview {
             .child(Facepile::render_component_previews(window, cx))
             .child(Icon::render_component_previews(window, cx))
             .child(IconDecoration::render_component_previews(window, cx))
+            .child(KeybindingHint::render_component_previews(window, cx))
             .child(Indicator::render_component_previews(window, cx))
             .child(Switch::render_component_previews(window, cx))
             .child(Table::render_component_previews(window, cx))

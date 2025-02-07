@@ -93,6 +93,13 @@
     // workspace when the centered layout is used.
     "right_padding": 0.2
   },
+  // All settings related to the image viewer.
+  "image_viewer": {
+    // The unit for image file sizes.
+    // By default we're setting it to binary.
+    // The second option is decimal.
+    "unit": "binary"
+  },
   // The key to use for adding multiple cursors
   // Currently "alt" or "cmd_or_ctrl"  (also aliased as
   // "cmd" and "ctrl") are supported.
@@ -783,7 +790,14 @@
       "**/*.cert",
       "**/*.crt",
       "**/secrets.yml"
-    ]
+    ],
+    // When to show edit predictions previews in buffer.
+    // This setting takes two possible values:
+    // 1. Display inline when there are no language server completions available.
+    //     "inline_preview": "auto"
+    // 2. Display inline when holding modifier key (alt by default).
+    //     "inline_preview": "when_holding_modifier"
+    "inline_preview": "auto"
   },
   // Settings specific to journaling
   "journal": {

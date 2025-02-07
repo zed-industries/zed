@@ -15,6 +15,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use rpc::{proto, AnyProtoClient};
 use settings::WorktreeId;
+use std::path::Path;
 use std::sync::Arc;
 use text::BufferId;
 use util::{maybe, ResultExt};
@@ -313,16 +314,16 @@ impl Repository {
         .unwrap_or("".into())
     }
 
-    pub fn activate(&self, cx: &mut App) {
+    pub fn activate(&self, cx: &mut Context<Self>) {
         let Some(git_state) = self.git_state.upgrade() else {
             return;
         };
+        let entity = cx.entity();
         git_state.update(cx, |git_state, cx| {
-            let Some((index, _)) = git_state
+            let Some(index) = git_state
                 .repositories
                 .iter()
-                .enumerate()
-                .find(|(_, handle)| handle.read(cx).id() == self.id())
+                .position(|handle| *handle == entity)
             else {
                 return;
             };
@@ -335,16 +336,30 @@ impl Repository {
         self.repository_entry.status()
     }
 
+    pub fn has_conflict(&self, path: &RepoPath) -> bool {
+        self.repository_entry
+            .current_merge_conflicts
+            .contains(&path)
+    }
+
     pub fn repo_path_to_project_path(&self, path: &RepoPath) -> Option<ProjectPath> {
         let path = self.repository_entry.unrelativize(path)?;
         Some((self.worktree_id, path).into())
     }
 
     pub fn project_path_to_repo_path(&self, path: &ProjectPath) -> Option<RepoPath> {
-        if path.worktree_id != self.worktree_id {
+        self.worktree_id_path_to_repo_path(path.worktree_id, &path.path)
+    }
+
+    pub fn worktree_id_path_to_repo_path(
+        &self,
+        worktree_id: WorktreeId,
+        path: &Path,
+    ) -> Option<RepoPath> {
+        if worktree_id != self.worktree_id {
             return None;
         }
-        self.repository_entry.relativize(&path.path).log_err()
+        self.repository_entry.relativize(path).log_err()
     }
 
     pub fn open_commit_buffer(
