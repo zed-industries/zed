@@ -44,29 +44,44 @@ pub async fn stream_completion(
     request: Request,
     handle: tokio::runtime::Handle,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>, Error> {
-    handle.spawn(async move {
-        let response = bedrock::Client::converse_stream(&client)
-            .model_id(request.model.clone())
-            .set_messages(request.messages.into())
-            .send()
-            .await;
+    handle
+        .spawn(async move {
+            let response = bedrock::Client::converse_stream(&client)
+                .model_id(request.model.clone())
+                .set_messages(request.messages.into())
+                .send()
+                .await;
 
-        match response {
-            Ok(output) => {
-                let stream: Pin<Box<dyn Stream<Item=Result<BedrockStreamingResponse, BedrockError>> + Send>> = Box::pin(stream::unfold(output.stream, |mut stream| async move {
-                    match stream.recv().await {
-                        Ok(Some(output)) => Some((Ok(output), stream)),
-                        Ok(None) => None,
-                        Err(e) => {
-                            Some((Err(BedrockError::Other(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e)))), stream))
+            match response {
+                Ok(output) => {
+                    let stream: Pin<
+                        Box<
+                            dyn Stream<Item = Result<BedrockStreamingResponse, BedrockError>>
+                                + Send,
+                        >,
+                    > = Box::pin(stream::unfold(output.stream, |mut stream| async move {
+                        match stream.recv().await {
+                            Ok(Some(output)) => Some((Ok(output), stream)),
+                            Ok(None) => None,
+                            Err(e) => Some((
+                                Err(BedrockError::Other(anyhow!(
+                                    "{:?}",
+                                    aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
+                                ))),
+                                stream,
+                            )),
                         }
-                    }
-                }));
-                Ok(stream)
+                    }));
+                    Ok(stream)
+                }
+                Err(e) => Err(anyhow!(
+                    "{:?}",
+                    aws_sdk_bedrockruntime::error::DisplayErrorContext(e)
+                )),
             }
-            Err(e) => Err(anyhow!("{:?}", aws_sdk_bedrockruntime::error::DisplayErrorContext(e))),
-        }
-    }).await.map_err(|e| anyhow!("Failed to spawn task: {:?}", e))?
+        })
+        .await
+        .map_err(|e| anyhow!("Failed to spawn task: {:?}", e))?
 }
 
 #[derive(Debug)]

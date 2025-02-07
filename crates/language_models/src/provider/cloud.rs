@@ -43,9 +43,9 @@ use thiserror::Error;
 use tiktoken_rs::model;
 use ui::{prelude::*, TintColor};
 
+use super::anthropic::count_anthropic_tokens;
 use crate::provider::anthropic::map_to_language_model_completion_events;
 use crate::AllLanguageModelSettings;
-use super::anthropic::count_anthropic_tokens;
 
 pub const PROVIDER_NAME: &str = "Zed";
 
@@ -339,7 +339,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                })
+                }),
             };
             models.insert(model.id().to_string(), model.clone());
         }
@@ -585,7 +585,7 @@ impl LanguageModel for CloudLanguageModel {
                         min_total_token: cache.min_total_token,
                     })
             }
-            CloudModel::OpenAi(_) | CloudModel::Google(_) => None
+            CloudModel::OpenAi(_) | CloudModel::Google(_) => None,
         }
     }
 

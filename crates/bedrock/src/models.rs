@@ -62,7 +62,6 @@ pub enum Model {
     },
 }
 
-
 impl Model {
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
@@ -156,7 +155,9 @@ impl Model {
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
             Self::MistralMistralSmall2402V1 => "Mistral Small 2402 V1",
-            Self::Custom { display_name, name, .. } => display_name.as_deref().unwrap_or(name),
+            Self::Custom {
+                display_name, name, ..
+            } => display_name.as_deref().unwrap_or(name),
         }
     }
 
@@ -167,9 +168,7 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
-            _ => {
-                200_000
-            }
+            _ => 200_000,
         }
     }
 
@@ -180,9 +179,7 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
-            _ => {
-                4_096
-            }
+            _ => 4_096,
         }
     }
 
@@ -196,9 +193,7 @@ impl Model {
                 default_temperature,
                 ..
             } => default_temperature.unwrap_or(1.0),
-            _ => {
-                1.0
-            }
+            _ => 1.0,
         }
     }
 }

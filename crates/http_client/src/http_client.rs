@@ -327,7 +327,6 @@ impl HttpClient for BlockedHttpClient {
     }
 }
 
-
 #[cfg(feature = "test-support")]
 type FakeHttpHandler = Box<
     dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>

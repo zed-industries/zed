@@ -1,7 +1,7 @@
 use aws_smithy_types::body::SdkBody;
 use futures::AsyncReadExt;
-use tokio::runtime::Handle;
 use http_client::{AsyncBody, Inner};
+use tokio::runtime::Handle;
 
 pub async fn convert_to_sdk_body(body: AsyncBody, handle: Handle) -> SdkBody {
     match body.0 {

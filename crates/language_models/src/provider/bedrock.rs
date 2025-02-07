@@ -1,41 +1,38 @@
-use std::future::Future;
 use crate::AllLanguageModelSettings;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_http_client::AwsHttpClient;
-use bedrock::bedrock_client::types::{
-    ContentBlockDelta, ContentBlockStart, ConverseStreamOutput,
-};
+use bedrock::bedrock_client::types::{ContentBlockDelta, ContentBlockStart, ConverseStreamOutput};
 use bedrock::bedrock_client::Config;
 use bedrock::{bedrock_client, BedrockError, BedrockStreamingResponse, Model};
 use collections::BTreeMap;
-use gpui_tokio::Tokio;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{ready, Stream, TryFutureExt, TryStreamExt};
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
+use futures::{ready, Stream, TryFutureExt, TryStreamExt};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
 };
+use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
-    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter,
-    Role, StopReason
+    LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role, StopReason,
 };
+use std::future::Future;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{Settings, SettingsStore};
+use smol::Async;
 use std::pin::Pin;
 use std::sync::Arc;
-use smol::Async;
 use strum::IntoEnumIterator;
+use theme::ThemeSettings;
 use tokio::runtime::Handle;
 use tokio::task::JoinError;
-use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::ResultExt;
 
@@ -77,14 +74,17 @@ pub struct State {
 impl State {
     fn reset_credentials(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let delete_aa_id = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx).bedrock.access_key_id
+            &AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .access_key_id,
         );
         let delete_sk: Task<Result<()>> = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx).bedrock.secret_access_key,
+            &AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .secret_access_key,
         );
-        let delete_region = cx.delete_credentials(
-            &AllLanguageModelSettings::get_global(cx).bedrock.region,
-        );
+        let delete_region =
+            cx.delete_credentials(&AllLanguageModelSettings::get_global(cx).bedrock.region);
         cx.spawn(|this, mut cx| async move {
             delete_aa_id.await.ok();
             delete_sk.await.ok();
@@ -116,11 +116,7 @@ impl State {
             "Bearer",
             secret_key.as_bytes(),
         );
-        let write_region = cx.write_credentials(
-            ZED_BEDROCK_REGION,
-            "Bearer",
-            region.as_bytes(),
-        );
+        let write_region = cx.write_credentials(ZED_BEDROCK_REGION, "Bearer", region.as_bytes());
         cx.spawn(|this, mut cx| async move {
             write_aa_id.await?;
             write_sk.await?;
@@ -261,7 +257,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     http_client: self.http_client.clone(),
-                    handler: self.handler.clone(),  // internally reference counted, can be freely cloned
+                    handler: self.handler.clone(), // internally reference counted, can be freely cloned
                     state: self.state.clone(),
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
@@ -283,7 +279,8 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_credentials(cx))
+        self.state
+            .update(cx, |state, cx| state.reset_credentials(cx))
     }
 }
 
@@ -294,7 +291,6 @@ impl LanguageModelProviderState for BedrockLanguageModelProvider {
         Some(self.state.clone())
     }
 }
-
 
 struct BedrockModel {
     id: LanguageModelId,
@@ -310,7 +306,9 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncApp,
-    ) -> Result<BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
+    ) -> Result<
+        BoxFuture<'static, BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
+    > {
         let Ok((aa_id, sk, region)) = cx.read_entity(&self.state, |state, cx| {
             let _settings = &AllLanguageModelSettings::get_global(cx).bedrock;
             (state.aa_id.clone(), state.sk.clone(), state.region.clone())
@@ -337,16 +335,14 @@ impl BedrockModel {
 
         let owned_handle = self.handler.clone();
 
-
         Ok(async move {
             let request = bedrock::stream_completion(runtime_client, request, owned_handle);
 
             request.await.unwrap_or_else(|e| {
-                futures::stream::once(async move {
-                    Err(BedrockError::Other(e))
-                }).boxed()
+                futures::stream::once(async move { Err(BedrockError::Other(e)) }).boxed()
             })
-        }.boxed())
+        }
+        .boxed())
     }
 }
 
@@ -403,7 +399,10 @@ impl LanguageModel for BedrockModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.map_err(|e| anyhow!(e)).unwrap().await;
-            Ok(map_to_language_model_completion_events(response, owned_handle))
+            Ok(map_to_language_model_completion_events(
+                response,
+                owned_handle,
+            ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -481,11 +480,11 @@ pub fn get_bedrock_tokens(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
-    handle: Handle
-) -> impl Stream<Item=Result<LanguageModelCompletionEvent>> {
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    handle: Handle,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item=Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
     }
 
     futures::stream::unfold(
@@ -564,7 +563,7 @@ impl ConfigurationView {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
-            .detach();
+        .detach();
 
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
@@ -580,7 +579,7 @@ impl ConfigurationView {
                     this.load_credentials_task = None;
                     cx.notify();
                 })
-                    .log_err();
+                .log_err();
             }
         }));
 
@@ -618,7 +617,7 @@ impl ConfigurationView {
                 })?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn reset_credentials(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -635,7 +634,7 @@ impl ConfigurationView {
                 .update(&mut cx, |state, cx| state.reset_credentials(cx))?
                 .await
         })
-            .detach_and_log_err(cx);
+        .detach_and_log_err(cx);
     }
 
     fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {

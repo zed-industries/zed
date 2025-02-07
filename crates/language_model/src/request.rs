@@ -1,11 +1,11 @@
-use std::io::{Cursor, Write};
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
+use bedrock::{BedrockInnerContent, BedrockMessage};
 use gpui::{point, size, App, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
-use bedrock::{BedrockInnerContent, BedrockMessage};
+use std::io::{Cursor, Write};
 use ui::{px, SharedString};
 use util::ResultExt;
 
@@ -415,7 +415,7 @@ impl LanguageModelRequest {
         self,
         model: String,
         default_temperature: f32,
-        max_output_tokens: u32
+        max_output_tokens: u32,
     ) -> bedrock::Request {
         let mut new_messages: Vec<BedrockMessage> = Vec::new();
         let mut system_message = String::new();
@@ -453,7 +453,7 @@ impl LanguageModelRequest {
                     let bedrock_role = match message.role {
                         Role::User => bedrock::BedrockRole::User,
                         Role::Assistant => bedrock::BedrockRole::Assistant,
-                        Role::System => unreachable!("System role should never occur here")
+                        Role::System => unreachable!("System role should never occur here"),
                     };
                     if let Some(last_message) = new_messages.last_mut() {
                         if last_message.role == bedrock_role {
@@ -465,7 +465,8 @@ impl LanguageModelRequest {
                         BedrockMessage::builder()
                             .role(bedrock_role)
                             .set_content(Some(bedrock_message_content))
-                            .build().unwrap()  // unsafe unwrap, but it should be fine
+                            .build()
+                            .unwrap(), // unsafe unwrap, but it should be fine
                     );
                 }
                 Role::System => {
@@ -477,7 +478,7 @@ impl LanguageModelRequest {
             }
         }
 
-         bedrock::Request {
+        bedrock::Request {
             model,
             messages: new_messages,
             max_tokens: max_output_tokens,

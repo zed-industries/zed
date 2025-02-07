@@ -11,6 +11,7 @@ pub mod provider;
 mod settings;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
+use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 pub use crate::provider::cloud::LlmApiToken;
 pub use crate::provider::cloud::RefreshLlmTokenListener;
@@ -21,7 +22,6 @@ use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 pub use crate::settings::*;
 pub use logging::report_assistant_event;
-use crate::provider::bedrock::BedrockLanguageModelProvider;
 
 pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, fs: Arc<dyn Fs>, cx: &mut App) {
     crate::settings::init(fs, cx);

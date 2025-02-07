@@ -13,7 +13,7 @@ pub const MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME: &str = "x-zed-llm-max-month
 pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
-    Google
+    Google,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

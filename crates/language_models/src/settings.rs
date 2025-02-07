@@ -10,8 +10,8 @@ use settings::{update_settings_file, Settings, SettingsSources};
 
 use crate::provider::{
     self,
-    bedrock::AmazonBedrockSettings,
     anthropic::AnthropicSettings,
+    bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
