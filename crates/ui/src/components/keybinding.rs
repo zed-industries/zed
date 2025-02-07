@@ -15,6 +15,7 @@ pub struct KeyBinding {
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
+    size: Option<Pixels>,
 }
 
 impl KeyBinding {
@@ -47,12 +48,19 @@ impl KeyBinding {
         Self {
             key_binding,
             platform_style: PlatformStyle::platform(),
+            size: None,
         }
     }
 
     /// Sets the [`PlatformStyle`] for this [`KeyBinding`].
     pub fn platform_style(mut self, platform_style: PlatformStyle) -> Self {
         self.platform_style = platform_style;
+        self
+    }
+
+    /// Sets the size for this [`KeyBinding`].
+    pub fn size(mut self, size: Pixels) -> Self {
+        self.size = Some(size);
         self
     }
 }
@@ -83,9 +91,12 @@ impl RenderOnce for KeyBinding {
                         &keystroke.modifiers,
                         self.platform_style,
                         None,
+                        self.size,
                         false,
                     ))
-                    .map(|el| el.child(render_key(&keystroke, self.platform_style, None)))
+                    .map(|el| {
+                        el.child(render_key(&keystroke, self.platform_style, None, self.size))
+                    })
             }))
     }
 }
@@ -94,11 +105,14 @@ pub fn render_key(
     keystroke: &Keystroke,
     platform_style: PlatformStyle,
     color: Option<Color>,
+    size: Option<Pixels>,
 ) -> AnyElement {
     let key_icon = icon_for_key(keystroke, platform_style);
     match key_icon {
-        Some(icon) => KeyIcon::new(icon, color).into_any_element(),
-        None => Key::new(capitalize(&keystroke.key), color).into_any_element(),
+        Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+        None => Key::new(capitalize(&keystroke.key), color)
+            .size(size)
+            .into_any_element(),
     }
 }
 
@@ -130,6 +144,7 @@ pub fn render_modifiers(
     modifiers: &Modifiers,
     platform_style: PlatformStyle,
     color: Option<Color>,
+    size: Option<Pixels>,
     standalone: bool,
 ) -> impl Iterator<Item = AnyElement> {
     enum KeyOrIcon {
@@ -200,8 +215,8 @@ pub fn render_modifiers(
             PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
         })
         .map(move |key_or_icon| match key_or_icon {
-            KeyOrIcon::Key(key) => Key::new(key, color).into_any_element(),
-            KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).into_any_element(),
+            KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
+            KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
         })
 }
 
@@ -209,26 +224,26 @@ pub fn render_modifiers(
 pub struct Key {
     key: SharedString,
     color: Option<Color>,
+    size: Option<Pixels>,
 }
 
 impl RenderOnce for Key {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
+        let size = self.size.unwrap_or(px(14.));
+        let size_f32: f32 = size.into();
 
         div()
             .py_0()
             .map(|this| {
                 if single_char {
-                    this.w(rems_from_px(14.))
-                        .flex()
-                        .flex_none()
-                        .justify_center()
+                    this.w(size).flex().flex_none().justify_center()
                 } else {
                     this.px_0p5()
                 }
             })
-            .h(rems_from_px(14.))
-            .text_ui(cx)
+            .h(rems_from_px(size_f32))
+            .text_size(size)
             .line_height(relative(1.))
             .text_color(self.color.unwrap_or(Color::Muted).color(cx))
             .child(self.key.clone())
@@ -240,7 +255,13 @@ impl Key {
         Self {
             key: key.into(),
             color,
+            size: None,
         }
+    }
+
+    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+        self.size = size.into();
+        self
     }
 }
 
@@ -248,19 +269,33 @@ impl Key {
 pub struct KeyIcon {
     icon: IconName,
     color: Option<Color>,
+    size: Option<Pixels>,
 }
 
 impl RenderOnce for KeyIcon {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let size = self
+            .size
+            .unwrap_or(IconSize::Small.rems().to_pixels(window.rem_size()));
+
         Icon::new(self.icon)
-            .size(IconSize::XSmall)
+            .size(IconSize::Custom(size))
             .color(self.color.unwrap_or(Color::Muted))
     }
 }
 
 impl KeyIcon {
     pub fn new(icon: IconName, color: Option<Color>) -> Self {
-        Self { icon, color }
+        Self {
+            icon,
+            color,
+            size: None,
+        }
+    }
+
+    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+        self.size = size.into();
+        self
     }
 }
 

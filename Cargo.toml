@@ -32,6 +32,7 @@ members = [
     "crates/db",
     "crates/deepseek",
     "crates/diagnostics",
+    "crates/diff",
     "crates/docs_preprocessor",
     "crates/editor",
     "crates/evals",
@@ -231,6 +232,7 @@ copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
 deepseek = { path = "crates/deepseek" }
 diagnostics = { path = "crates/diagnostics" }
+diff = { path = "crates/diff" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
@@ -558,7 +560,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
-zed_llm_client = "0.1.1"
+zed_llm_client = "0.2"
 zstd = "0.11"
 metal = "0.31"
 

@@ -314,16 +314,16 @@ impl Repository {
         .unwrap_or("".into())
     }
 
-    pub fn activate(&self, cx: &mut App) {
+    pub fn activate(&self, cx: &mut Context<Self>) {
         let Some(git_state) = self.git_state.upgrade() else {
             return;
         };
+        let entity = cx.entity();
         git_state.update(cx, |git_state, cx| {
-            let Some((index, _)) = git_state
+            let Some(index) = git_state
                 .repositories
                 .iter()
-                .enumerate()
-                .find(|(_, handle)| handle.read(cx).id() == self.id())
+                .position(|handle| *handle == entity)
             else {
                 return;
             };

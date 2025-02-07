@@ -4,6 +4,7 @@ use futures::StreamExt as _;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{Anchor, Buffer, BufferSnapshot};
+use project::Project;
 use std::{
     ops::{AddAssign, Range},
     path::Path,
@@ -109,10 +110,6 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
         self.supermaven.read(cx).is_enabled()
     }
@@ -123,6 +120,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         buffer_handle: Entity<Buffer>,
         cursor_position: Anchor,
         debounce: bool,

@@ -2753,6 +2753,7 @@ dependencies = [
  "ctor",
  "dashmap 6.1.0",
  "derive_more",
+ "diff 0.1.0",
  "editor",
  "env_logger 0.11.6",
  "envy",
@@ -3839,6 +3840,24 @@ dependencies = [
 
 [[package]]
 name = "diff"
+version = "0.1.0"
+dependencies = [
+ "futures 0.3.31",
+ "git2",
+ "gpui",
+ "language",
+ "log",
+ "pretty_assertions",
+ "rope",
+ "serde_json",
+ "sum_tree",
+ "text",
+ "unindent",
+ "util",
+]
+
+[[package]]
+name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
@@ -4007,6 +4026,7 @@ dependencies = [
  "convert_case 0.7.1",
  "ctor",
  "db",
+ "diff 0.1.0",
  "emojis",
  "env_logger 0.11.6",
  "file_icons",
@@ -5306,6 +5326,7 @@ dependencies = [
  "anyhow",
  "collections",
  "db",
+ "diff 0.1.0",
  "editor",
  "feature_flags",
  "futures 0.3.31",
@@ -6342,6 +6363,8 @@ dependencies = [
  "file_icons",
  "gpui",
  "project",
+ "schemars",
+ "serde",
  "settings",
  "theme",
  "ui",
@@ -6428,6 +6451,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "language",
+ "project",
 ]
 
 [[package]]
@@ -7909,9 +7933,9 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "diff 0.1.0",
  "env_logger 0.11.6",
  "futures 0.3.31",
- "git",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -9918,7 +9942,7 @@ version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae130e2f271fbc2ac3a40fb1d07180839cdbbe443c7a27e1e3c13c5cac0116d"
 dependencies = [
- "diff",
+ "diff 0.1.13",
  "yansi",
 ]
 
@@ -10014,6 +10038,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "diff 0.1.0",
  "env_logger 0.11.6",
  "fancy-regex 0.14.0",
  "fs",
@@ -10216,7 +10241,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.0",
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.12.1",
  "log",
  "multimap 0.10.0",
@@ -15485,7 +15510,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16730,11 +16755,12 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ab9496dc5c80b2c5fb9654a76d7208d31b53130fb282085fcdde07653831843"
+checksum = "9ea4d8ead1e1158e5ebdd6735df25973781da70de5c8008e3a13595865ca4f31"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -16957,6 +16983,7 @@ dependencies = [
  "log",
  "menu",
  "postage",
+ "project",
  "regex",
  "reqwest_client",
  "rpc",

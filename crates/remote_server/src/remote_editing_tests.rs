@@ -84,18 +84,15 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         })
         .await
         .unwrap();
-    let change_set = project
+    let diff = project
         .update(cx, |project, cx| {
-            project.open_unstaged_changes(buffer.clone(), cx)
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
-    change_set.update(cx, |change_set, _| {
-        assert_eq!(
-            change_set.base_text_string().unwrap(),
-            "fn one() -> usize { 0 }"
-        );
+    diff.update(cx, |diff, _| {
+        assert_eq!(diff.base_text_string().unwrap(), "fn one() -> usize { 0 }");
     });
 
     buffer.update(cx, |buffer, cx| {
@@ -155,9 +152,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[("src/lib2.rs".into(), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    change_set.update(cx, |change_set, _| {
+    diff.update(cx, |diff, _| {
         assert_eq!(
-            change_set.base_text_string().unwrap(),
+            diff.base_text_string().unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
@@ -1239,18 +1236,17 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
         })
         .await
         .unwrap();
-    let change_set = project
+    let diff = project
         .update(cx, |project, cx| {
-            project.open_uncommitted_changes(buffer.clone(), cx)
+            project.open_uncommitted_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
 
-    change_set.read_with(cx, |change_set, cx| {
-        assert_eq!(change_set.base_text_string().unwrap(), text_1);
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string().unwrap(), text_1);
         assert_eq!(
-            change_set
-                .unstaged_change_set
+            diff.unstaged_diff
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -1267,11 +1263,10 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     );
 
     cx.executor().run_until_parked();
-    change_set.read_with(cx, |change_set, cx| {
-        assert_eq!(change_set.base_text_string().unwrap(), text_1);
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string().unwrap(), text_1);
         assert_eq!(
-            change_set
-                .unstaged_change_set
+            diff.unstaged_diff
                 .as_ref()
                 .unwrap()
                 .read(cx)
@@ -1288,11 +1283,10 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     );
 
     cx.executor().run_until_parked();
-    change_set.read_with(cx, |change_set, cx| {
-        assert_eq!(change_set.base_text_string().unwrap(), text_2);
+    diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text_string().unwrap(), text_2);
         assert_eq!(
-            change_set
-                .unstaged_change_set
+            diff.unstaged_diff
                 .as_ref()
                 .unwrap()
                 .read(cx)

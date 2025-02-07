@@ -3,6 +3,7 @@ use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{language_settings::AllLanguageSettings, Buffer, OffsetRangeExt, ToOffset};
+use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -60,10 +61,6 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         false
     }
 
-    fn show_completions_in_normal_mode() -> bool {
-        false
-    }
-
     fn is_refreshing(&self) -> bool {
         self.pending_refresh.is_some()
     }
@@ -79,6 +76,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
 
     fn refresh(
         &mut self,
+        _project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,

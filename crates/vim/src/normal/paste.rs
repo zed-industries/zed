@@ -6,6 +6,8 @@ use serde::Deserialize;
 use std::cmp;
 
 use crate::{
+    motion::Motion,
+    object::Object,
     state::{Mode, Register},
     Vim,
 };
@@ -192,12 +194,85 @@ impl Vim {
         });
         self.switch_mode(Mode::Normal, true, window, cx);
     }
+
+    pub fn replace_with_register_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_recording(cx);
+        let selected_register = self.selected_register.take();
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        object.expand_selection(map, selection, around);
+                    });
+                });
+
+                let Some(Register { text, .. }) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                })
+                .filter(|reg| !reg.text.is_empty()) else {
+                    return;
+                };
+                editor.insert(&text, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                        selection.end = selection.start
+                    })
+                })
+            });
+        });
+    }
+
+    pub fn replace_with_register_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_recording(cx);
+        let selected_register = self.selected_register.take();
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                    });
+                });
+
+                let Some(Register { text, .. }) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                })
+                .filter(|reg| !reg.text.is_empty()) else {
+                    return;
+                };
+                editor.insert(&text, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                        selection.end = selection.start
+                    })
+                })
+            });
+        });
+    }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{
-        state::Mode,
+        state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
         UseSystemClipboard, VimSettings,
     };
@@ -741,5 +816,38 @@ mod test {
                 "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_register(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                   ˇfish one
+                   two three
+                   "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("w");
+        cx.simulate_keystrokes("g r i w");
+        cx.assert_state(
+            indoc! {"
+                fish fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j b g r e");
+        cx.assert_state(
+            indoc! {"
+            fish fish
+            two fisˇh
+            "},
+            Mode::Normal,
+        );
+        let clipboard: Register = cx.read_from_clipboard().unwrap().into();
+        assert_eq!(clipboard.text, "fish");
     }
 }

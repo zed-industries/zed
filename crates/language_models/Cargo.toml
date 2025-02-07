@@ -17,6 +17,7 @@ anyhow.workspace = true
 client.workspace = true
 collections.workspace = true
 copilot = { workspace = true, features = ["schemars"] }
+deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
@@ -25,11 +26,10 @@ google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 http_client.workspace = true
 language_model.workspace = true
+lmstudio = { workspace = true, features = ["schemars"] }
 menu.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
-lmstudio = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
-deepseek = { workspace = true, features = ["schemars"] }
 project.workspace = true
 proto.workspace = true
 schemars.workspace = true

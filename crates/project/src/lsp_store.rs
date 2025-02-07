@@ -168,6 +168,19 @@ pub struct LocalLspStore {
 }
 
 impl LocalLspStore {
+    /// Returns the running language server for the given ID. Note if the language server is starting, it will not be returned.
+    pub fn running_language_server_for_id(
+        &self,
+        id: LanguageServerId,
+    ) -> Option<&Arc<LanguageServer>> {
+        let language_server_state = self.language_servers.get(&id)?;
+
+        match language_server_state {
+            LanguageServerState::Running { server, .. } => Some(server),
+            LanguageServerState::Starting(_) => None,
+        }
+    }
+
     fn start_language_server(
         &mut self,
         worktree_handle: &Entity<Worktree>,
@@ -2024,10 +2037,14 @@ impl LocalLspStore {
             Some(local) => local.abs_path(cx),
             None => return,
         };
-        let Ok(file_url) = lsp::Url::from_file_path(old_path) else {
+
+        let Ok(file_url) = lsp::Url::from_file_path(old_path.as_path()) else {
+            debug_panic!(
+                "`{}` is not parseable as an URI",
+                old_path.to_string_lossy()
+            );
             return;
         };
-
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
     }
 

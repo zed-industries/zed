@@ -1,10 +1,11 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
+use diff::BufferDiff;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
-use project::{buffer_store::BufferChangeSet, Project};
+use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
@@ -106,12 +107,10 @@ impl ProposedChangesEditor {
                                     let buffer = buffer.read(cx);
                                     let base_buffer = buffer.base_buffer()?;
                                     let buffer = buffer.text_snapshot();
-                                    let change_set = this
-                                        .multibuffer
-                                        .read(cx)
-                                        .change_set_for(buffer.remote_id())?;
-                                    Some(change_set.update(cx, |change_set, cx| {
-                                        change_set.set_base_text(base_buffer.clone(), buffer, cx)
+                                    let diff =
+                                        this.multibuffer.read(cx).diff_for(buffer.remote_id())?;
+                                    Some(diff.update(cx, |diff, cx| {
+                                        diff.set_base_text(base_buffer.clone(), buffer, cx)
                                     }))
                                 })
                                 .collect::<Vec<_>>()
@@ -172,7 +171,7 @@ impl ProposedChangesEditor {
         });
 
         let mut buffer_entries = Vec::new();
-        let mut new_change_sets = Vec::new();
+        let mut new_diffs = Vec::new();
         for location in locations {
             let branch_buffer;
             if let Some(ix) = self
@@ -185,14 +184,14 @@ impl ProposedChangesEditor {
                 buffer_entries.push(entry);
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-                new_change_sets.push(cx.new(|cx| {
-                    let mut change_set = BufferChangeSet::new(&branch_buffer, cx);
-                    let _ = change_set.set_base_text(
+                new_diffs.push(cx.new(|cx| {
+                    let mut diff = BufferDiff::new(&branch_buffer, cx);
+                    let _ = diff.set_base_text(
                         location.buffer.clone(),
                         branch_buffer.read(cx).text_snapshot(),
                         cx,
                     );
-                    change_set
+                    diff
                 }));
                 buffer_entries.push(BufferEntry {
                     branch: branch_buffer.clone(),
@@ -217,8 +216,8 @@ impl ProposedChangesEditor {
         self.editor.update(cx, |editor, cx| {
             editor.change_selections(None, window, cx, |selections| selections.refresh());
             editor.buffer.update(cx, |buffer, cx| {
-                for change_set in new_change_sets {
-                    buffer.add_change_set(change_set, cx)
+                for diff in new_diffs {
+                    buffer.add_diff(diff, cx)
                 }
             })
         });

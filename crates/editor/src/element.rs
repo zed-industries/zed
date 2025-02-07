@@ -26,8 +26,9 @@ use crate::{
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
+use diff::DiffHunkStatus;
 use file_icons::FileIcons;
-use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
+use git::{blame::BlameEntry, Oid};
 use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, App, AvailableSpace, Axis, Bounds,
@@ -558,7 +559,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_diff_hunks_in_ranges(vec![hovered_hunk], cx);
+            editor.toggle_diff_hunks_in_ranges_narrow(vec![hovered_hunk], cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(window) {
@@ -1653,7 +1654,7 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept(_),
+                        display_mode: EditDisplayMode::TabAccept,
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
@@ -3109,7 +3110,10 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor.has_active_completions_menu() && editor.show_inline_completions_in_menu(cx) {
+            if editor.inline_completion_visible_in_cursor_popover(
+                editor.has_active_inline_completion(),
+                cx,
+            ) {
                 height_above_menu +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
                 edit_prediction_popover_visible = true;
@@ -3235,8 +3239,6 @@ impl EditorElement {
                             min_width,
                             max_width,
                             cursor_point,
-                            start_row,
-                            &line_layouts,
                             style,
                             accept_keystroke.as_ref()?,
                             window,
@@ -3615,7 +3617,12 @@ impl EditorElement {
         const PADDING_X: Pixels = Pixels(24.);
         const PADDING_Y: Pixels = Pixels(2.);
 
-        let active_inline_completion = self.editor.read(cx).active_inline_completion.as_ref()?;
+        let editor = self.editor.read(cx);
+        let active_inline_completion = editor.active_inline_completion.as_ref()?;
+
+        if editor.inline_completion_visible_in_cursor_popover(true, cx) {
+            return None;
+        }
 
         match &active_inline_completion.completion {
             InlineCompletion::Move { target, .. } => {
@@ -3629,7 +3636,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, window, cx);
@@ -3642,7 +3649,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3658,7 +3665,7 @@ impl EditorElement {
                         self.editor.focus_handle(cx),
                         window,
                         cx,
-                    );
+                    )?;
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3682,7 +3689,7 @@ impl EditorElement {
                 display_mode,
                 snapshot,
             } => {
-                if self.editor.read(cx).has_active_completions_menu() {
+                if self.editor.read(cx).has_visible_completions_menu() {
                     return None;
                 }
 
@@ -3706,8 +3713,7 @@ impl EditorElement {
                 }
 
                 match display_mode {
-                    EditDisplayMode::TabAccept(previewing) => {
-                        let previewing = *previewing;
+                    EditDisplayMode::TabAccept => {
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3715,18 +3721,26 @@ impl EditorElement {
                             target_display_point.row(),
                             editor_snapshot.line_len(target_display_point.row()),
                         );
-                        let origin = self.editor.update(cx, |editor, _cx| {
-                            editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
-                        })?;
+                        let (previewing_inline_completion, origin) =
+                            self.editor.update(cx, |editor, _cx| {
+                                Some((
+                                    editor.previewing_inline_completion,
+                                    editor.display_to_pixel_point(
+                                        target_line_end,
+                                        editor_snapshot,
+                                        window,
+                                    )?,
+                                ))
+                            })?;
 
                         let mut element = inline_completion_accept_indicator(
                             "Accept",
                             None,
-                            previewing,
+                            previewing_inline_completion,
                             self.editor.focus_handle(cx),
                             window,
                             cx,
-                        );
+                        )?;
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
@@ -5728,24 +5742,32 @@ fn inline_completion_accept_indicator(
     focus_handle: FocusHandle,
     window: &Window,
     cx: &App,
-) -> AnyElement {
-    let use_hardcoded_linux_preview_binding;
+) -> Option<AnyElement> {
+    let use_hardcoded_linux_bindings;
 
     #[cfg(target_os = "macos")]
     {
-        use_hardcoded_linux_preview_binding = false;
+        use_hardcoded_linux_bindings = false;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        use_hardcoded_linux_preview_binding = previewing;
+        use_hardcoded_linux_bindings = true;
     }
 
-    let accept_keystroke = if use_hardcoded_linux_preview_binding {
-        Keystroke {
-            modifiers: Default::default(),
-            key: "enter".to_string(),
-            key_char: None,
+    let accept_keystroke = if use_hardcoded_linux_bindings {
+        if previewing {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "enter".to_string(),
+                key_char: None,
+            }
+        } else {
+            Keystroke {
+                modifiers: Default::default(),
+                key: "tab".to_string(),
+                key_char: None,
+            }
         }
     } else {
         let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
@@ -5753,10 +5775,10 @@ fn inline_completion_accept_indicator(
             .last()
             .and_then(|binding| binding.keystrokes().first())
         {
-            // TODO: clone unnecessary once `use_hardcoded_linux_preview_binding` is removed.
+            // TODO: clone unnecessary once `use_hardcoded_linux_bindings` is removed.
             keystroke.clone()
         } else {
-            return div().into_any();
+            return None;
         }
     };
 
@@ -5771,6 +5793,7 @@ fn inline_completion_accept_indicator(
                 &accept_keystroke.modifiers,
                 PlatformStyle::platform(),
                 Some(Color::Default),
+                None,
                 false,
             ))
         })
@@ -5778,26 +5801,28 @@ fn inline_completion_accept_indicator(
 
     let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
 
-    h_flex()
-        .py_0p5()
-        .pl_1()
-        .pr(padding_right)
-        .gap_1()
-        .bg(cx.theme().colors().text_accent.opacity(0.15))
-        .border_1()
-        .border_color(cx.theme().colors().text_accent.opacity(0.8))
-        .rounded_md()
-        .shadow_sm()
-        .child(accept_key)
-        .child(Label::new(label).size(LabelSize::Small))
-        .when_some(icon, |element, icon| {
-            element.child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(icon).size(IconSize::Small)),
-            )
-        })
-        .into_any()
+    Some(
+        h_flex()
+            .py_0p5()
+            .pl_1()
+            .pr(padding_right)
+            .gap_1()
+            .bg(cx.theme().colors().text_accent.opacity(0.15))
+            .border_1()
+            .border_color(cx.theme().colors().text_accent.opacity(0.8))
+            .rounded_md()
+            .shadow_sm()
+            .child(accept_key)
+            .child(Label::new(label).size(LabelSize::Small))
+            .when_some(icon, |element, icon| {
+                element.child(
+                    div()
+                        .mt(px(1.5))
+                        .child(Icon::new(icon).size(IconSize::Small)),
+                )
+            })
+            .into_any(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

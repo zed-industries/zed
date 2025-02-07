@@ -1132,11 +1132,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 size,
                 ..
             } => {
-                assert_eq!(
-                    format,
-                    wl_keyboard::KeymapFormat::XkbV1,
-                    "Unsupported keymap format"
-                );
+                if format != wl_keyboard::KeymapFormat::XkbV1 {
+                    log::error!("Received keymap format {:?}, expected XkbV1", format);
+                    return;
+                }
                 let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 let keymap = unsafe {
                     xkb::Keymap::new_from_fd(
