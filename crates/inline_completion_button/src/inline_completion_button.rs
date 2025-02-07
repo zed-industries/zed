@@ -412,7 +412,7 @@ impl InlineCompletionButton {
         );
         menu = menu.separator().header("Privacy Settings");
 
-        if let Some(provider) = &self.inline_completion_provider {
+        if let Some(provider) = &self.edit_prediction_provider {
             let data_collection = provider.data_collection_state(cx);
             if data_collection.is_supported() {
                 let provider = provider.clone();
@@ -658,7 +658,7 @@ async fn open_disabled_globs_setting_in_editor(
 
             // Ensure that we always have "inline_completions { "disabled_globs": [] }"
             let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                file.inline_completions
+                file.edit_predictions
                     .get_or_insert_with(Default::default)
                     .disabled_globs
                     .get_or_insert_with(Vec::new);
@@ -690,7 +690,7 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_inline_completions = all_language_settings(None, cx).show_inline_completions(None, cx);
+    let show_edit_predictions = all_language_settings(None, cx).show_inline_completions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_edit_predictions = Some(!show_edit_predictions)
     });
@@ -709,7 +709,7 @@ fn toggle_show_inline_completions_for_language(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    let show_inline_completions =
+    let show_edit_predictions =
         all_language_settings(None, cx).show_inline_completions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages

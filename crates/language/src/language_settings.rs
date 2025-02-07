@@ -920,7 +920,7 @@ impl AllLanguageSettings {
 
     /// Returns the edit predictions preview mode for the given language and path.
     pub fn inline_completions_preview_mode(&self) -> InlineCompletionPreviewMode {
-        self.inline_completions.inline_preview
+        self.edit_predictions.inline_preview
     }
 }
 
@@ -1018,9 +1018,9 @@ impl settings::Settings for AllLanguageSettings {
         let mut edit_prediction_provider = default_value
             .features
             .as_ref()
-            .and_then(|f| f.inline_completion_provider);
+            .and_then(|f| f.edit_prediction_provider);
         let mut inline_completions_preview = default_value
-            .inline_completions
+            .edit_predictions
             .as_ref()
             .map(|inline_completions| inline_completions.inline_preview)
             .ok_or_else(Self::missing_default)?;
@@ -1056,7 +1056,7 @@ impl settings::Settings for AllLanguageSettings {
                 edit_prediction_provider = Some(provider);
             }
 
-            if let Some(inline_completions) = user_settings.inline_completions.as_ref() {
+            if let Some(inline_completions) = user_settings.edit_predictions.as_ref() {
                 inline_completions_preview = inline_completions.inline_preview;
 
                 if let Some(disabled_globs) = inline_completions.disabled_globs.as_ref() {

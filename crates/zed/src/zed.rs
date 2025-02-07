@@ -1219,8 +1219,8 @@ fn show_keymap_migration_notification_if_needed(
             MessageNotification::new_from_builder(move |_, _| {
                 gpui::div().text_xs().child(message).into_any()
             })
-            .with_click_message(button_text)
-            .on_click(move |_, cx| {
+            .primary_message(button_text)
+            .primary_on_click(move |_, cx| {
                 let fs = <dyn Fs>::global(cx);
                 cx.spawn(move |weak_notification, mut cx| async move {
                     KeymapFile::migrate_keymap(fs).await.ok();
@@ -1249,8 +1249,8 @@ fn show_settings_migration_notification_if_needed(
             MessageNotification::new_from_builder(move |_, _| {
                 gpui::div().text_xs().child(message).into_any()
             })
-            .with_click_message(button_text)
-            .on_click(move |_, cx| {
+            .primary_message(button_text)
+            .primary_on_click(move |_, cx| {
                 let fs = <dyn Fs>::global(cx);
                 cx.update_global(|store: &mut SettingsStore, _| store.migrate_settings(fs));
                 cx.emit(DismissEvent);

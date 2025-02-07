@@ -4731,7 +4731,7 @@ impl Editor {
                     buffer.file(),
                     cx,
                 )
-                .show_inline_completions
+                .show_edit_predictions
         }
     }
 
@@ -4753,7 +4753,7 @@ impl Editor {
         cx: &App,
     ) -> bool {
         maybe!({
-            let provider = self.inline_completion_provider()?;
+            let provider = self.edit_prediction_provider()?;
             if !provider.is_enabled(&buffer, buffer_position, cx) {
                 return Some(false);
             }
@@ -5064,7 +5064,7 @@ impl Editor {
         cx: &App,
     ) -> bool {
         if self.previewing_inline_completion
-            || !self.show_inline_completions_in_menu(cx)
+            || !self.show_edit_predictions_in_menu(cx)
             || !self.should_show_inline_completions(cx)
         {
             return false;
@@ -14190,9 +14190,9 @@ impl Editor {
             .get("vim_mode")
             == Some(&serde_json::Value::Bool(true));
 
-        let edit_predictions_provider = all_language_settings(file, cx).inline_completions.provider;
+        let edit_predictions_provider = all_language_settings(file, cx).edit_predictions.provider;
         let copilot_enabled = edit_predictions_provider
-            == language::language_settings::InlineCompletionProvider::Copilot;
+            == language::language_settings::EditPredictionProvider::Copilot;
         let copilot_enabled_for_language = self
             .buffer
             .read(cx)

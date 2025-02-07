@@ -5770,7 +5770,7 @@ fn inline_completion_accept_indicator(
             }
         }
     } else {
-        let bindings = window.bindings_for_action_in(&crate::AcceptInlineCompletion, &focus_handle);
+        let bindings = window.bindings_for_action_in(&crate::AcceptEditPrediction, &focus_handle);
         if let Some(keystroke) = bindings
             .last()
             .and_then(|binding| binding.keystrokes().first())
