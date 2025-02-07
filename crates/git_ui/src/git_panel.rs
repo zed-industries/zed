@@ -4,7 +4,6 @@ use crate::ProjectDiff;
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
-use anyhow::Result;
 use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
@@ -14,7 +13,7 @@ use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{Commit, ToggleStaged};
 use gpui::*;
-use language::{Buffer, Capability, File};
+use language::{Buffer, File};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use multi_buffer::ExcerptInfo;
 use panel::PanelHeader;
@@ -28,7 +27,7 @@ use ui::{
     prelude::*, ButtonLike, Checkbox, Divider, DividerColor, ElevationIndex, IndentGuideColors,
     ListHeader, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::Toast;
 use workspace::{
@@ -906,6 +905,13 @@ impl GitPanel {
                 Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
 
             let is_conflict = repo.has_conflict(&entry.repo_path);
+            if entry.status.is_conflicted() && !is_conflict {
+                dbg!(&repo
+                    .repository_entry
+                    .current_merge_conflicts
+                    .iter()
+                    .collect::<Vec<_>>());
+            }
             let is_new = entry.status.is_created();
             let is_staged = entry.status.is_staged();
 
