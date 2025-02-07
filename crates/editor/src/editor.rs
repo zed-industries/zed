@@ -5557,23 +5557,22 @@ impl Editor {
                             .py_1()
                             .elevation_2(cx)
                             .rounded_tl(px(0.))
-                            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                             .gap_2()
+                            .child(
+                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                    Icon::new(IconName::ZedPredictDown)
+                                } else {
+                                    Icon::new(IconName::ZedPredictUp)
+                                },
+                            )
+                            .child(Label::new("Hold"))
                             .children(ui::render_modifiers(
                                 &accept_keystroke.modifiers,
                                 PlatformStyle::platform(),
-                                None,
+                                Some(Color::Default),
                                 None,
                                 true,
                             ))
-                            .child(Label::new("Preview").size(LabelSize::Small))
-                            .child(
-                                if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                                    Icon::new(IconName::ArrowDown)
-                                } else {
-                                    Icon::new(IconName::ArrowUp)
-                                },
-                            )
                             .into_any(),
                     );
                 }
