@@ -38,11 +38,13 @@ impl ComponentPreview {
     }
 
     fn render_sidebar(&self, _window: &Window, _cx: &Context<Self>) -> impl IntoElement {
+        let components = components().all_sorted();
+        let sorted_components = components.clone();
+
         v_flex().gap_px().p_1().children(
-            components()
-                .all()
-                .iter()
-                .map(|component| self.render_sidebar_entry(component, _cx)),
+            sorted_components
+                .into_iter()
+                .map(|component| self.render_sidebar_entry(&component, _cx)),
         )
     }
 
@@ -110,7 +112,7 @@ impl ComponentPreview {
     fn render_previews(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         v_flex().p_2().size_full().children(
             components()
-                .all_previews()
+                .all_previews_sorted()
                 .iter()
                 .map(|component| self.render_preview(component, window, cx)),
         )

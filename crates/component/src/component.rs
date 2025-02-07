@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use collections::HashMap;
 use gpui::{div, prelude::*, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
 use linkme::distributed_slice;
@@ -69,6 +71,7 @@ pub fn register_preview<T: ComponentPreview>() {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ComponentId(pub &'static str);
 
+#[derive(Clone)]
 pub struct ComponentMetadata {
     name: SharedString,
     scope: Option<SharedString>,
@@ -101,22 +104,43 @@ impl AllComponents {
         AllComponents(HashMap::default())
     }
 
-    pub fn add(&mut self, id: ComponentId, metadata: ComponentMetadata) {
-        self.0.insert(id, metadata);
-    }
-
-    pub fn get(&self, id: &ComponentId) -> Option<&ComponentMetadata> {
-        self.0.get(id)
-    }
-
     /// Returns all components with previews
     pub fn all_previews(&self) -> Vec<&ComponentMetadata> {
         self.0.values().filter(|c| c.preview.is_some()).collect()
     }
 
+    /// Returns all components with previews sorted by name
+    pub fn all_previews_sorted(&self) -> Vec<ComponentMetadata> {
+        let mut previews: Vec<ComponentMetadata> =
+            self.all_previews().into_iter().cloned().collect();
+        previews.sort_by(|a, b| a.name().cmp(&b.name()));
+        previews
+    }
+
     /// Returns all components
     pub fn all(&self) -> Vec<&ComponentMetadata> {
         self.0.values().collect()
+    }
+
+    /// Returns all components sorted by name
+    pub fn all_sorted(&self) -> Vec<ComponentMetadata> {
+        let mut components: Vec<ComponentMetadata> = self.all().into_iter().cloned().collect();
+        components.sort_by(|a, b| a.name().cmp(&b.name()));
+        components
+    }
+}
+
+impl Deref for AllComponents {
+    type Target = HashMap<ComponentId, ComponentMetadata>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for AllComponents {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -127,7 +151,7 @@ pub fn components() -> AllComponents {
     for &(scope, name, description) in &data.components {
         let scope = scope.map(Into::into);
         let preview = data.previews.get(name).cloned();
-        all_components.add(
+        all_components.insert(
             ComponentId(name),
             ComponentMetadata {
                 name: name.into(),
