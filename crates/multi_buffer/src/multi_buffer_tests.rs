@@ -1,5 +1,5 @@
 use super::*;
-use diff::DiffHunkStatus;
+use buffer_diff::DiffHunkStatus;
 use gpui::{App, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};

@@ -111,7 +111,7 @@ impl<'a> sum_tree::SeekTarget<'a, DiffHunkSummary, DiffHunkSummary> for Anchor {
         cursor_location: &DiffHunkSummary,
         buffer: &text::BufferSnapshot,
     ) -> cmp::Ordering {
-        self.cmp(&cursor_location.buffer_range.start, buffer)
+        self.cmp(&cursor_location.buffer_range.end, buffer)
     }
 }
 
@@ -213,12 +213,9 @@ impl BufferDiffInner {
                     .cmp(&secondary_cursor.start().buffer_range.start, buffer)
                     .is_gt()
                 {
-                    secondary_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                    secondary_cursor.seek_forward(&end_anchor, Bias::Left, buffer);
                 }
-                // possibilities:
-                // - we hit a hunk that matches exactly
-                // - we hit a hunk that is completely after our target (found_start >= target_end)
-                // - target_start <= found_start < target_end (overlap case)
+
                 if let Some(secondary_hunk) = secondary_cursor.item() {
                     let secondary_range = secondary_hunk.buffer_range.to_point(buffer);
                     if secondary_range == (start_point..end_point) {
@@ -511,14 +508,10 @@ impl BufferDiff {
         diff_base_buffer: Option<language::BufferSnapshot>,
         cx: &App,
     ) -> impl Future<Output = BufferDiffInner> {
-        cx.background_executor().spawn({
-            let buffer = buffer.clone();
-            async move {
-                let hunks = compute_hunks(diff_base, buffer);
-                BufferDiffInner {
-                    hunks,
-                    base_text: diff_base_buffer,
-                }
+        cx.background_executor().spawn(async move {
+            BufferDiffInner {
+                hunks: compute_hunks(diff_base, buffer),
+                base_text: diff_base_buffer,
             }
         })
     }
@@ -585,11 +578,11 @@ impl BufferDiff {
             })?
             .await
         } else {
-            this.read_with(cx, |changes, cx| {
+            this.read_with(cx, |this, cx| {
                 Self::build_with_base_buffer(
                     buffer.clone(),
                     base_text,
-                    changes.base_text().cloned(),
+                    this.base_text().cloned(),
                     cx,
                 )
             })?
@@ -771,14 +764,22 @@ impl BufferDiff {
     }
 }
 
+impl DiffHunk {
+    pub fn status(&self) -> DiffHunkStatus {
+        if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatus::Removed(self.secondary_status)
+        } else if self.diff_base_byte_range.is_empty() {
+            DiffHunkStatus::Added(self.secondary_status)
+        } else {
+            DiffHunkStatus::Modified(self.secondary_status)
+        }
+    }
+}
+
 impl DiffHunkStatus {
     pub fn is_removed(&self) -> bool {
         matches!(self, DiffHunkStatus::Removed(_))
     }
-
-    // pub fn is_added(&self) -> bool {
-    //     matches!(self, DiffHunkStatus::Added(_))
-    // }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn removed() -> Self {
@@ -803,7 +804,7 @@ pub fn assert_hunks<Iter>(
     diff_hunks: Iter,
     buffer: &text::BufferSnapshot,
     diff_base: &str,
-    expected_hunks: &[(Range<u32>, &str, &str)],
+    expected_hunks: &[(Range<u32>, &str, &str, DiffHunkStatus)],
 ) where
     Iter: Iterator<Item = DiffHunk>,
 {
@@ -811,19 +812,20 @@ pub fn assert_hunks<Iter>(
         .map(|hunk| {
             (
                 hunk.row_range.clone(),
-                &diff_base[hunk.diff_base_byte_range],
+                &diff_base[hunk.diff_base_byte_range.clone()],
                 buffer
                     .text_for_range(
                         Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0),
                     )
                     .collect::<String>(),
+                hunk.status(),
             )
         })
         .collect::<Vec<_>>();
 
     let expected_hunks: Vec<_> = expected_hunks
         .iter()
-        .map(|(r, s, h)| (r.clone(), *s, h.to_string()))
+        .map(|(r, s, h, status)| (r.clone(), *s, h.to_string(), *status))
         .collect();
 
     assert_eq!(actual_hunks, expected_hunks);
@@ -860,7 +862,7 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
-            &[(1..2, "two\n", "HELLO\n")],
+            &[(1..2, "two\n", "HELLO\n", DiffHunkStatus::modified())],
         );
 
         buffer.edit([(0..0, "point five\n")]);
@@ -869,7 +871,10 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, None),
             &buffer,
             &diff_base,
-            &[(0..1, "", "point five\n"), (2..3, "two\n", "HELLO\n")],
+            &[
+                (0..1, "", "point five\n", DiffHunkStatus::added()),
+                (2..3, "two\n", "HELLO\n", DiffHunkStatus::modified()),
+            ],
         );
 
         diff = BufferDiff::build_empty(&buffer);
@@ -878,6 +883,88 @@ mod tests {
             &buffer,
             &diff_base,
             &[],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_buffer_diff_with_secondary(cx: &mut gpui::TestAppContext) {
+        let head_text = "
+            zero
+            one
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+        "
+        .unindent();
+
+        let index_text = "
+            zero
+            one
+            TWO
+            three
+            FOUR
+            five
+            six
+            seven
+            eight
+            NINE
+        "
+        .unindent();
+
+        let buffer_text = "
+            zero
+            one
+            TWO
+            three
+            FOUR
+            FIVE
+            six
+            SEVEN
+            eight
+            nine
+        "
+        .unindent();
+
+        let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
+        let unstaged_diff = BufferDiff::build_sync(buffer.clone(), index_text.clone(), cx);
+
+        let uncommitted_diff = BufferDiff::build_sync(buffer.clone(), head_text.clone(), cx);
+
+        let expected_hunks = vec![
+            (
+                2..3,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::None),
+            ),
+            (
+                4..6,
+                "four\nfive\n",
+                "FOUR\nFIVE\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+            ),
+            (
+                7..8,
+                "seven\n",
+                "SEVEN\n",
+                DiffHunkStatus::Modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+            ),
+        ];
+
+        assert_hunks(
+            uncommitted_diff.hunks_intersecting_range(
+                Anchor::MIN..Anchor::MAX,
+                &buffer,
+                Some(&unstaged_diff),
+            ),
+            &buffer,
+            &head_text,
+            &expected_hunks,
         );
     }
 
@@ -941,9 +1028,9 @@ mod tests {
             &buffer,
             &diff_base,
             &[
-                (6..7, "", "HELLO\n"),
-                (9..10, "six\n", "SIXTEEN\n"),
-                (12..13, "", "WORLD\n"),
+                (6..7, "", "HELLO\n", DiffHunkStatus::removed()),
+                (9..10, "six\n", "SIXTEEN\n", DiffHunkStatus::modified()),
+                (12..13, "", "WORLD\n", DiffHunkStatus::added()),
             ],
         );
     }

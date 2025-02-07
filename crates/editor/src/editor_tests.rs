@@ -7,7 +7,7 @@ use crate::{
     },
     JoinLines,
 };
-use diff::{BufferDiff, DiffHunkStatus};
+use buffer_diff::{BufferDiff, DiffHunkStatus};
 use futures::StreamExt;
 use gpui::{
     div, BackgroundExecutor, SemanticVersion, TestAppContext, UpdateGlobal, VisualTestContext,

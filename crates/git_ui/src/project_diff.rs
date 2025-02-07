@@ -1,8 +1,8 @@
 use std::any::{Any, TypeId};
 
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use collections::HashSet;
-use diff::BufferDiff;
 use editor::{scroll::Autoscroll, Editor, EditorEvent};
 use feature_flags::FeatureFlagViewExt;
 use futures::StreamExt;

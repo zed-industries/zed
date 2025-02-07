@@ -2,8 +2,8 @@ use crate::{
     display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
     RowExt,
 };
+use buffer_diff::DiffHunkStatus;
 use collections::BTreeMap;
-use diff::DiffHunkStatus;
 use futures::Future;
 
 use gpui::{

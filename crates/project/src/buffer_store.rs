@@ -6,9 +6,9 @@ use crate::{
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 use anyhow::{anyhow, bail, Context as _, Result};
+use buffer_diff::BufferDiff;
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
-use diff::BufferDiff;
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
 use git::{blame::Blame, repository::RepoPath};

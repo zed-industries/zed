@@ -7,11 +7,11 @@ pub use anchor::{Anchor, AnchorRangeExt, Offset};
 pub use position::{TypedOffset, TypedPoint, TypedRow};
 
 use anyhow::{anyhow, Result};
-use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet};
-use diff::{
+use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffHunkSecondaryStatus, DiffHunkStatus,
 };
+use clock::ReplicaId;
+use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
 use gpui::{App, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
@@ -321,7 +321,7 @@ pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
     pub multibuffer_row: Option<MultiBufferRow>,
-    pub diff_status: Option<diff::DiffHunkStatus>,
+    pub diff_status: Option<buffer_diff::DiffHunkStatus>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].

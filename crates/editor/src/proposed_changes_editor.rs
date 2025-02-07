@@ -1,6 +1,6 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
+use buffer_diff::BufferDiff;
 use collections::HashSet;
-use diff::BufferDiff;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
