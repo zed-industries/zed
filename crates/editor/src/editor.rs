@@ -2588,7 +2588,7 @@ impl Editor {
 
     pub fn dismiss_menus_and_popups(
         &mut self,
-        should_report_inline_completion_event: bool,
+        is_user_requested: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -2612,7 +2612,7 @@ impl Editor {
             return true;
         }
 
-        if self.discard_inline_completion(should_report_inline_completion_event, cx) {
+        if is_user_requested && self.discard_inline_completion(true, cx) {
             return true;
         }
 
