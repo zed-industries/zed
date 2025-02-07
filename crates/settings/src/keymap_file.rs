@@ -5,6 +5,7 @@ use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KeyBinding, KeyBindingContextPredicate,
     NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
 };
+use migrator::migrate_keymap;
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
@@ -16,7 +17,7 @@ use std::rc::Rc;
 use std::{fmt::Write, sync::Arc};
 use util::{asset_str, markdown::MarkdownString};
 
-use crate::{migrator::migrate_keymap, settings_store::parse_json_with_comments, SettingsAssets};
+use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 
 // Note that the doc comments on these are shown by json-language-server when editing the keymap, so
 // they should be considered user-facing documentation. Documentation is not handled well with

@@ -4,6 +4,7 @@ use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
+use migrator::migrate_settings;
 use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -23,7 +24,7 @@ use util::{merge_non_null_json_value_into, ResultExt as _};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
-use crate::{migrator::migrate_settings, SettingsJsonSchemaParams, WorktreeId};
+use crate::{SettingsJsonSchemaParams, WorktreeId};
 
 /// A value that can be defined as a user setting.
 ///
