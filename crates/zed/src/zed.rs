@@ -3103,7 +3103,10 @@ mod tests {
         });
         cx.dispatch_action(
             window.into(),
-            workspace::CloseActiveItem { save_intent: None },
+            workspace::CloseActiveItem {
+                save_intent: None,
+                close_pinned: false,
+            },
         );
 
         cx.background_executor.run_until_parked();
@@ -3116,7 +3119,10 @@ mod tests {
 
         cx.dispatch_action(
             window.into(),
-            workspace::CloseActiveItem { save_intent: None },
+            workspace::CloseActiveItem {
+                save_intent: None,
+                close_pinned: false,
+            },
         );
         cx.background_executor.run_until_parked();
         cx.simulate_prompt_answer(1);
