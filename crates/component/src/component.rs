@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{AnyElement, App, SharedString, Window};
+use gpui::{div, prelude::*, AnyElement, App, IntoElement, RenderOnce, SharedString, Window};
 use linkme::distributed_slice;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
@@ -139,4 +139,139 @@ pub fn components() -> AllComponents {
     }
 
     all_components
+}
+
+/// Which side of the preview to show labels on
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExampleLabelSide {
+    /// Left side
+    Left,
+    /// Right side
+    Right,
+    #[default]
+    /// Top side
+    Top,
+    /// Bottom side
+    Bottom,
+}
+
+/// A single example of a component.
+#[derive(IntoElement)]
+pub struct ComponentExample {
+    variant_name: SharedString,
+    element: AnyElement,
+    label_side: ExampleLabelSide,
+    grow: bool,
+}
+
+impl RenderOnce for ComponentExample {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let base = div().flex();
+
+        let base = match self.label_side {
+            ExampleLabelSide::Right => base.flex_row(),
+            ExampleLabelSide::Left => base.flex_row_reverse(),
+            ExampleLabelSide::Bottom => base.flex_col(),
+            ExampleLabelSide::Top => base.flex_col_reverse(),
+        };
+
+        base.gap_1()
+            .text_sm()
+            .when(self.grow, |this| this.flex_1())
+            .child(self.element)
+            .child(self.variant_name)
+            .into_any_element()
+    }
+}
+
+impl ComponentExample {
+    /// Create a new example with the given variant name and example value.
+    pub fn new(variant_name: impl Into<SharedString>, element: AnyElement) -> Self {
+        Self {
+            variant_name: variant_name.into(),
+            element,
+            label_side: ExampleLabelSide::default(),
+            grow: false,
+        }
+    }
+
+    /// Set the example to grow to fill the available horizontal space.
+    pub fn grow(mut self) -> Self {
+        self.grow = true;
+        self
+    }
+}
+
+/// A group of component examples.
+#[derive(IntoElement)]
+pub struct ComponentExampleGroup {
+    pub title: Option<SharedString>,
+    pub examples: Vec<ComponentExample>,
+    pub grow: bool,
+}
+
+impl RenderOnce for ComponentExampleGroup {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        div()
+            .flex_col()
+            .text_sm()
+            .when(self.grow, |this| this.w_full().flex_1())
+            .when_some(self.title, |this, title| this.gap_6().child(title))
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_6()
+                    .children(self.examples)
+                    .into_any_element(),
+            )
+            .into_any_element()
+    }
+}
+
+impl ComponentExampleGroup {
+    /// Create a new group of examples with the given title.
+    pub fn new(examples: Vec<ComponentExample>) -> Self {
+        Self {
+            title: None,
+            examples,
+            grow: false,
+        }
+    }
+
+    /// Create a new group of examples with the given title.
+    pub fn with_title(title: impl Into<SharedString>, examples: Vec<ComponentExample>) -> Self {
+        Self {
+            title: Some(title.into()),
+            examples,
+            grow: false,
+        }
+    }
+
+    /// Set the group to grow to fill the available horizontal space.
+    pub fn grow(mut self) -> Self {
+        self.grow = true;
+        self
+    }
+}
+
+/// Create a single example
+pub fn single_example(
+    variant_name: impl Into<SharedString>,
+    example: AnyElement,
+) -> ComponentExample {
+    ComponentExample::new(variant_name, example)
+}
+
+/// Create a group of examples without a title
+pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {
+    ComponentExampleGroup::new(examples)
+}
+
+/// Create a group of examples with a title
+pub fn example_group_with_title(
+    title: impl Into<SharedString>,
+    examples: Vec<ComponentExample>,
+) -> ComponentExampleGroup {
+    ComponentExampleGroup::with_title(title, examples)
 }

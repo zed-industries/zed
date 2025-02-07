@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use component::ComponentPreview;
+use component::{example_group, single_example, ComponentPreview};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
 use ui_macros::Component;
@@ -91,64 +91,43 @@ impl RenderOnce for ContentGroup {
 
 impl ComponentPreview for ContentGroup {
     fn preview(_window: &Window, _cx: &App) -> AnyElement {
-        v_flex()
-            .gap_1()
-            .child(
+        example_group(vec![
+            single_example(
+                "Default",
                 ContentGroup::new()
                     .flex_1()
                     .items_center()
                     .justify_center()
                     .h_48()
-                    .child(Label::new("Default ContentBox")),
+                    .child(Label::new("Default ContentBox"))
+                    .into_any_element(),
             )
-            .into_any_element()
+            .grow(),
+            single_example(
+                "Without Border",
+                ContentGroup::new()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .h_48()
+                    .borderless()
+                    .child(Label::new("Borderless ContentBox"))
+                    .into_any_element(),
+            )
+            .grow(),
+            single_example(
+                "Without Fill",
+                ContentGroup::new()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .h_48()
+                    .unfilled()
+                    .child(Label::new("Unfilled ContentBox"))
+                    .into_any_element(),
+            )
+            .grow(),
+        ])
+        .into_any_element()
     }
 }
-
-// impl ComponentPreview for ContentGroup {
-//     fn description() -> impl Into<Option<&'static str>> {
-//         "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
-//     }
-
-//     fn example_label_side() -> ExampleLabelSide {
-//         ExampleLabelSide::Bottom
-//     }
-
-//     fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
-//         vec![example_group(vec![
-//             single_example(
-//                 "Default",
-//                 ContentGroup::new()
-//                     .flex_1()
-//                     .items_center()
-//                     .justify_center()
-//                     .h_48()
-//                     .child(Label::new("Default ContentBox")),
-//             )
-//             .grow(),
-//             single_example(
-//                 "Without Border",
-//                 ContentGroup::new()
-//                     .flex_1()
-//                     .items_center()
-//                     .justify_center()
-//                     .h_48()
-//                     .borderless()
-//                     .child(Label::new("Borderless ContentBox")),
-//             )
-//             .grow(),
-//             single_example(
-//                 "Without Fill",
-//                 ContentGroup::new()
-//                     .flex_1()
-//                     .items_center()
-//                     .justify_center()
-//                     .h_48()
-//                     .unfilled()
-//                     .child(Label::new("Unfilled ContentBox")),
-//             )
-//             .grow(),
-//         ])
-//         .grow()]
-//     }
-// }

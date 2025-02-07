@@ -3,7 +3,7 @@
 //! A view for exploring Zed components.
 
 use component::{components, ComponentMetadata};
-use gpui::{pattern_slash, prelude::*, App, EventEmitter, FocusHandle, Focusable, Window};
+use gpui::{prelude::*, App, EventEmitter, FocusHandle, Focusable, Window};
 use ui::prelude::*;
 
 use workspace::{item::ItemEvent, Item, Workspace, WorkspaceId};
@@ -58,20 +58,62 @@ impl ComponentPreview {
             .child(component.name().clone())
     }
 
-    fn render_preview(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+    fn render_preview(
+        &self,
+        component: &ComponentMetadata,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let name = component.name();
+        let source: Option<SharedString> =
+            name.rsplit_once("::").map(|(s, _)| s.to_string().into());
+        let title: Option<SharedString> = name.rsplit_once("::").map(|(_, t)| t.to_string().into());
+        let description = component.description();
+
         v_flex()
-            .p_2()
-            .bg(pattern_slash(
-                cx.theme().colors().border_variant.opacity(0.5),
-            ))
-            .size_full()
-            .children(components().all_previews().iter().map(|component| {
-                if let Some(preview) = component.preview() {
-                    preview(window, cx)
-                } else {
-                    div().into_any_element()
-                }
-            }))
+            .w_full()
+            .gap_6()
+            .p_4()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_md()
+            .child(
+                v_flex()
+                    .gap_1()
+                    .when_some(title, |this, title| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .text_xl()
+                                .child(div().child(title))
+                                .when_some(source, |this, source| {
+                                    this.child(div().opacity(0.5).child(source))
+                                }),
+                        )
+                    })
+                    .when_some(description, |this, description| {
+                        this.child(
+                            div()
+                                .text_ui_sm(cx)
+                                .text_color(cx.theme().colors().text_muted)
+                                .max_w(px(600.0))
+                                .child(description),
+                        )
+                    }),
+            )
+            .when_some(component.preview(), |this, preview| {
+                this.child(preview(window, cx))
+            })
+            .into_any_element()
+    }
+
+    fn render_previews(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+        v_flex().p_2().size_full().children(
+            components()
+                .all_previews()
+                .iter()
+                .map(|component| self.render_preview(component, window, cx)),
+        )
     }
 }
 
@@ -88,7 +130,7 @@ impl Render for ComponentPreview {
             .px_2()
             .bg(cx.theme().colors().editor_background)
             .child(self.render_sidebar(window, cx))
-            .child(self.render_preview(window, cx))
+            .child(self.render_previews(window, cx))
     }
 }
 
