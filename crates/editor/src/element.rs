@@ -1653,7 +1653,7 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        display_mode: EditDisplayMode::TabAccept(_),
+                        display_mode: EditDisplayMode::TabAccept { .. },
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
@@ -3753,8 +3753,12 @@ impl EditorElement {
                 }
 
                 match display_mode {
-                    EditDisplayMode::TabAccept(previewing) => {
-                        let previewing = *previewing;
+                    EditDisplayMode::TabAccept {
+                        previewing_from_completions_menu,
+                        hidden,
+                    } => {
+                        let previewing = *previewing_from_completions_menu;
+                        let hidden = *hidden;
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3766,8 +3770,9 @@ impl EditorElement {
                             editor.display_to_pixel_point(target_line_end, editor_snapshot, window)
                         })?;
 
+                        let label = if hidden { "Preview" } else { "Accept" };
                         let mut element = inline_completion_accept_indicator(
-                            "Accept",
+                            label,
                             None,
                             previewing,
                             self.editor.focus_handle(cx),

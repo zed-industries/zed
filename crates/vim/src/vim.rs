@@ -23,6 +23,7 @@ use anyhow::Result;
 use collections::HashMap;
 use editor::{
     movement::{self, FindRange},
+    scroll::Autoscroll,
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
@@ -344,7 +345,19 @@ impl Vim {
                 vim.push_count_digit(n.0, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
-                vim.input_ignored(" ".into(), window, cx)
+                let Some(anchor) = vim
+                    .editor()
+                    .and_then(|editor| editor.read(cx).inline_completion_anchor())
+                else {
+                    return;
+                };
+
+                vim.update_editor(window, cx, |_, editor, window, cx| {
+                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                        s.select_anchor_ranges([anchor..anchor])
+                    });
+                });
+                vim.switch_mode(Mode::Insert, true, window, cx);
             });
             Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)

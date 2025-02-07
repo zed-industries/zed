@@ -467,7 +467,10 @@ pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 pub(crate) enum EditDisplayMode {
-    TabAccept(bool),
+    TabAccept {
+        previewing_from_completions_menu: bool,
+        hidden: bool,
+    },
     DiffPopover,
     Inline,
 }
@@ -1896,6 +1899,15 @@ impl Editor {
         self.refresh_inline_completion(false, true, window, cx);
     }
 
+    pub fn inline_completion_anchor(&self) -> Option<Anchor> {
+        let active_completion = self.active_inline_completion.as_ref()?;
+        let result = match &active_completion.completion {
+            InlineCompletion::Edit { edits, .. } => edits.first()?.0.start,
+            InlineCompletion::Move { target, .. } => *target,
+        };
+        Some(result)
+    }
+
     pub fn inline_completions_enabled(&self, cx: &App) -> bool {
         let cursor = self.selections.newest_anchor().head();
         if let Some((buffer, buffer_position)) =
@@ -1913,10 +1925,6 @@ impl Editor {
         buffer_position: language::Anchor,
         cx: &App,
     ) -> bool {
-        if self.inline_completions_hidden_for_vim_mode {
-            return false;
-        }
-
         if !self.snippet_stack.is_empty() {
             return false;
         }
@@ -5101,11 +5109,8 @@ impl Editor {
                 snapshot,
             }
         } else {
-            let show_completions_in_buffer = if show_in_menu && self.has_active_completions_menu() {
-                true
-            } else {
-                !self.inline_completions_hidden_for_vim_mode
-            };
+            let show_completions_in_buffer = (!show_in_menu || !self.has_active_completions_menu())
+                && !self.inline_completions_hidden_for_vim_mode;
             if show_completions_in_buffer {
                 if edits
                     .iter()
@@ -5138,9 +5143,17 @@ impl Editor {
 
             invalidation_row_range = edit_start_row..edit_end_row;
 
-            let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
+            let display_mode = if self.inline_completions_hidden_for_vim_mode {
+                EditDisplayMode::TabAccept {
+                    previewing_from_completions_menu: self.is_previewing_inline_completion(),
+                    hidden: true,
+                }
+            } else if all_edits_insertions_or_deletions(&edits, &multibuffer) {
                 if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept(self.is_previewing_inline_completion())
+                    EditDisplayMode::TabAccept {
+                        previewing_from_completions_menu: self.is_previewing_inline_completion(),
+                        hidden: false,
+                    }
                 } else {
                     EditDisplayMode::Inline
                 }
