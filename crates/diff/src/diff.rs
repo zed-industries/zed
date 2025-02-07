@@ -1,6 +1,6 @@
 use futures::{channel::oneshot, future::OptionFuture};
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
-use gpui::{App, Context, Entity, EventEmitter};
+use gpui::{App, AsyncApp, Context, Entity, EventEmitter};
 use language::{Language, LanguageRegistry};
 use rope::Rope;
 use std::{cmp, future::Future, iter, ops::Range, sync::Arc};
@@ -10,22 +10,21 @@ use util::ResultExt;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
-    snapshot: BufferDiffSnapshot,
+    snapshot: BufferDiffSnapshotPrivate,
     pub unstaged_diff: Option<Entity<BufferDiff>>,
 }
 
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
-    hunks: SumTree<InternalDiffHunk>,
-    pub base_text: Option<language::BufferSnapshot>,
+    snapshot: BufferDiffSnapshotPrivate,
+    pub unstaged_diff: Option<Box<BufferDiffSnapshot>>,
 }
 
-// #[derive(Clone)]
-// pub struct BufferDiffSnapshot_Public {
-//     hunks: SumTree<InternalDiffHunk>,
-//     pub base_text: Option<language::BufferSnapshot>,
-//     pub unstaged_diff: Option<Box<BufferDiffSnapshot_Public>>,
-// }
+#[derive(Clone)]
+struct BufferDiffSnapshotPrivate {
+    hunks: SumTree<InternalDiffHunk>,
+    base_text: Option<language::BufferSnapshot>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DiffHunkStatus {
@@ -83,7 +82,7 @@ impl sum_tree::Summary for DiffHunkSummary {
     }
 }
 
-impl std::fmt::Debug for BufferDiffSnapshot {
+impl std::fmt::Debug for BufferDiffSnapshotPrivate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferDiffSnapshot")
             .field("hunks", &self.hunks)
@@ -92,6 +91,40 @@ impl std::fmt::Debug for BufferDiffSnapshot {
 }
 
 impl BufferDiffSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.snapshot.is_empty()
+    }
+
+    pub fn hunks_in_row_range<'a>(
+        &'a self,
+        range: Range<u32>,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.snapshot.hunks_in_row_range(range, buffer)
+    }
+
+    pub fn hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<Anchor>,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.snapshot.hunks_intersecting_range(range, buffer)
+    }
+
+    pub fn hunks_intersecting_range_rev<'a>(
+        &'a self,
+        range: Range<Anchor>,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        self.snapshot.hunks_intersecting_range_rev(range, buffer)
+    }
+
+    pub fn base_text(&self) -> Option<&language::BufferSnapshot> {
+        self.snapshot.base_text.as_ref()
+    }
+}
+
+impl BufferDiffSnapshotPrivate {
     fn recalculate_hunks(
         diff_base: Option<Arc<String>>,
         buffer: text::BufferSnapshot,
@@ -232,11 +265,7 @@ impl BufferDiffSnapshot {
         })
     }
 
-    pub fn compare(
-        &self,
-        old: &Self,
-        new_snapshot: &text::BufferSnapshot,
-    ) -> Option<Range<Anchor>> {
+    fn compare(&self, old: &Self, new_snapshot: &text::BufferSnapshot) -> Option<Range<Anchor>> {
         let mut new_cursor = self.hunks.cursor::<()>(new_snapshot);
         let mut old_cursor = old.hunks.cursor::<()>(new_snapshot);
         old_cursor.next(new_snapshot);
@@ -417,24 +446,24 @@ pub enum BufferDiffEvent {
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
 
 impl BufferDiff {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn build_sync(
+    #[cfg(test)]
+    fn build_sync(
         buffer: text::BufferSnapshot,
         diff_base: String,
         cx: &mut gpui::TestAppContext,
-    ) -> BufferDiffSnapshot {
+    ) -> BufferDiffSnapshotPrivate {
         let snapshot =
             cx.update(|cx| Self::build(buffer, Some(Arc::new(diff_base)), None, None, cx));
         cx.executor().block(snapshot)
     }
 
-    pub fn build(
+    fn build(
         buffer: text::BufferSnapshot,
         diff_base: Option<Arc<String>>,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
-    ) -> impl Future<Output = BufferDiffSnapshot> {
+    ) -> impl Future<Output = BufferDiffSnapshotPrivate> {
         let base_text_snapshot = diff_base.as_ref().map(|base_text| {
             language::Buffer::build_snapshot(
                 Rope::from(base_text.as_str()),
@@ -449,26 +478,26 @@ impl BufferDiff {
 
         let hunks = cx.background_executor().spawn({
             let buffer = buffer.clone();
-            async move { BufferDiffSnapshot::recalculate_hunks(diff_base, buffer) }
+            async move { BufferDiffSnapshotPrivate::recalculate_hunks(diff_base, buffer) }
         });
 
         async move {
             let (base_text, hunks) = futures::join!(base_text_snapshot, hunks);
-            BufferDiffSnapshot { base_text, hunks }
+            BufferDiffSnapshotPrivate { base_text, hunks }
         }
     }
 
-    pub fn build_with_base_buffer(
+    fn build_with_base_buffer(
         buffer: text::BufferSnapshot,
         diff_base: Option<Arc<String>>,
         diff_base_buffer: Option<language::BufferSnapshot>,
         cx: &App,
-    ) -> impl Future<Output = BufferDiffSnapshot> {
+    ) -> impl Future<Output = BufferDiffSnapshotPrivate> {
         cx.background_executor().spawn({
             let buffer = buffer.clone();
             async move {
-                let hunks = BufferDiffSnapshot::recalculate_hunks(diff_base, buffer);
-                BufferDiffSnapshot {
+                let hunks = BufferDiffSnapshotPrivate::recalculate_hunks(diff_base, buffer);
+                BufferDiffSnapshotPrivate {
                     hunks,
                     base_text: diff_base_buffer,
                 }
@@ -476,8 +505,8 @@ impl BufferDiff {
         })
     }
 
-    fn build_empty(buffer: &text::BufferSnapshot) -> BufferDiffSnapshot {
-        BufferDiffSnapshot {
+    fn build_empty(buffer: &text::BufferSnapshot) -> BufferDiffSnapshotPrivate {
+        BufferDiffSnapshotPrivate {
             hunks: SumTree::new(buffer),
             base_text: None,
         }
@@ -486,20 +515,74 @@ impl BufferDiff {
     pub fn build_with_single_insertion(cx: &mut App) -> BufferDiffSnapshot {
         let base_text = language::Buffer::build_empty_snapshot(cx);
         BufferDiffSnapshot {
-            hunks: SumTree::from_item(
-                InternalDiffHunk {
-                    buffer_range: Anchor::MIN..Anchor::MAX,
-                    diff_base_byte_range: 0..0,
-                },
-                &base_text,
-            ),
-            base_text: Some(base_text),
+            snapshot: BufferDiffSnapshotPrivate {
+                hunks: SumTree::from_item(
+                    InternalDiffHunk {
+                        buffer_range: Anchor::MIN..Anchor::MAX,
+                        diff_base_byte_range: 0..0,
+                    },
+                    &base_text,
+                ),
+                base_text: Some(base_text),
+            },
+            unstaged_diff: None,
         }
     }
 
-    pub fn set_state(
+    pub async fn update_diff(
+        this: Entity<BufferDiff>,
+        buffer: text::BufferSnapshot,
+        base_text: Option<Arc<String>>,
+        base_text_changed: bool,
+        language_changed: bool,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        let snapshot = if base_text_changed || language_changed {
+            cx.update(|cx| {
+                Self::build(
+                    buffer.clone(),
+                    base_text,
+                    language.clone(),
+                    language_registry.clone(),
+                    cx,
+                )
+            })?
+            .await
+        } else {
+            this.read_with(cx, |changes, cx| {
+                Self::build_with_base_buffer(
+                    buffer.clone(),
+                    base_text,
+                    changes.base_text().cloned(),
+                    cx,
+                )
+            })?
+            .await
+        };
+
+        this.update(cx, |this, cx| {
+            this.set_state(snapshot, &buffer, cx);
+            if language_changed {
+                cx.emit(BufferDiffEvent::LanguageChanged);
+            }
+        })
+    }
+
+    pub fn update_diff_from(
         &mut self,
-        snapshot: BufferDiffSnapshot,
+        buffer: &text::BufferSnapshot,
+        other: &Entity<Self>,
+        cx: &mut Context<Self>,
+    ) {
+        let other = other.read(cx).snapshot.clone();
+        self.set_state(other, buffer, cx);
+    }
+
+    fn set_state(
+        &mut self,
+        snapshot: BufferDiffSnapshotPrivate,
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
@@ -527,7 +610,10 @@ impl BufferDiff {
     }
 
     pub fn snapshot(&self) -> BufferDiffSnapshot {
-        self.snapshot.clone()
+        BufferDiffSnapshot {
+            snapshot: self.snapshot.clone(),
+            unstaged_diff: None,
+        }
     }
 
     pub fn diff_hunks_intersecting_range<'a>(

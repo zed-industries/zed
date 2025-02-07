@@ -2160,29 +2160,25 @@ impl MultiBuffer {
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
-        let mut diff = diff.snapshot();
-        if diff.base_text.is_none() && self.all_diff_hunks_expanded {
-            diff = BufferDiff::build_with_single_insertion(cx);
+        let mut new_diff = diff.snapshot();
+        if new_diff.base_text().is_none() && self.all_diff_hunks_expanded {
+            new_diff = BufferDiff::build_with_single_insertion(cx);
         }
 
         let mut snapshot = self.snapshot.borrow_mut();
-        let base_text_changed =
-            snapshot
-                .diffs
-                .get(&buffer_id)
-                .map_or(true, |diff_snapshot| {
-                    match (&diff_snapshot.base_text, &diff.base_text) {
-                        (None, None) => false,
-                        (None, Some(_)) => true,
-                        (Some(_), None) => true,
-                        (Some(old), Some(new)) => {
-                            let (old_id, old_empty) = (old.remote_id(), old.is_empty());
-                            let (new_id, new_empty) = (new.remote_id(), new.is_empty());
-                            new_id != old_id && (!new_empty || !old_empty)
-                        }
-                    }
-                });
-        snapshot.diffs.insert(buffer_id, diff);
+        let base_text_changed = snapshot.diffs.get(&buffer_id).map_or(true, |old_diff| {
+            match (old_diff.base_text(), new_diff.base_text()) {
+                (None, None) => false,
+                (None, Some(_)) => true,
+                (Some(_), None) => true,
+                (Some(old), Some(new)) => {
+                    let (old_id, old_empty) = (old.remote_id(), old.is_empty());
+                    let (new_id, new_empty) = (new.remote_id(), new.is_empty());
+                    new_id != old_id && (!new_empty || !old_empty)
+                }
+            }
+        });
+        snapshot.diffs.insert(buffer_id, new_diff);
 
         let buffers = self.buffers.borrow();
         let Some(buffer_state) = buffers.get(&buffer_id) else {
@@ -2918,7 +2914,7 @@ impl MultiBuffer {
             if let Some((diff, base_text)) = snapshot
                 .diffs
                 .get(&excerpt.buffer_id)
-                .and_then(|diff| Some((diff, diff.base_text.as_ref()?)))
+                .and_then(|diff| Some((diff, diff.base_text()?)))
             {
                 let buffer = &excerpt.buffer;
                 let excerpt_start = *excerpts.start();
@@ -4309,10 +4305,7 @@ impl MultiBufferSnapshot {
             } => {
                 let buffer_start = base_text_byte_range.start + start_overshoot;
                 let mut buffer_end = base_text_byte_range.start + end_overshoot;
-                let Some(base_text) = self
-                    .diffs
-                    .get(buffer_id)
-                    .and_then(|diff| diff.base_text.as_ref())
+                let Some(base_text) = self.diffs.get(buffer_id).and_then(|diff| diff.base_text())
                 else {
                     panic!("{:?} is in non-existent deleted hunk", range.start)
                 };
@@ -4361,10 +4354,7 @@ impl MultiBufferSnapshot {
                 ..
             } => {
                 let buffer_end = base_text_byte_range.start + overshoot;
-                let Some(base_text) = self
-                    .diffs
-                    .get(buffer_id)
-                    .and_then(|diff| diff.base_text.as_ref())
+                let Some(base_text) = self.diffs.get(buffer_id).and_then(|diff| diff.base_text())
                 else {
                     panic!("{:?} is in non-existent deleted hunk", range.end)
                 };
@@ -4469,10 +4459,8 @@ impl MultiBufferSnapshot {
                 }) => {
                     let mut in_deleted_hunk = false;
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor {
-                        if let Some(base_text) = self
-                            .diffs
-                            .get(buffer_id)
-                            .and_then(|diff| diff.base_text.as_ref())
+                        if let Some(base_text) =
+                            self.diffs.get(buffer_id).and_then(|diff| diff.base_text())
                         {
                             if base_text.can_resolve(&diff_base_anchor) {
                                 let base_text_offset = diff_base_anchor.to_offset(&base_text);
@@ -4809,7 +4797,7 @@ impl MultiBufferSnapshot {
             let base_text = self
                 .diffs
                 .get(buffer_id)
-                .and_then(|diff| diff.base_text.as_ref())
+                .and_then(|diff| diff.base_text())
                 .expect("missing diff base");
             if offset_in_transform > base_text_byte_range.len() {
                 debug_assert!(*has_trailing_newline);
@@ -6152,7 +6140,7 @@ where
                 ..
             } => {
                 let diff = self.diffs.get(&buffer_id)?;
-                let buffer = diff.base_text.as_ref()?;
+                let buffer = diff.base_text()?;
                 let mut rope_cursor = buffer.as_rope().cursor(0);
                 let buffer_start = rope_cursor.summary::<D>(base_text_byte_range.start);
                 let buffer_range_len = rope_cursor.summary::<D>(base_text_byte_range.end);
@@ -7194,7 +7182,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     }
                     chunks
                 } else {
-                    let base_buffer = &self.diffs.get(&buffer_id)?.base_text.as_ref()?;
+                    let base_buffer = &self.diffs.get(&buffer_id)?.base_text()?;
                     base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
                 };
 

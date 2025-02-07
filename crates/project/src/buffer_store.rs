@@ -8,7 +8,7 @@ use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegist
 use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
-use diff::{BufferDiff, BufferDiffEvent};
+use diff::BufferDiff;
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
 use git::{blame::Blame, repository::RepoPath};
@@ -205,72 +205,37 @@ impl BufferDiffState {
         };
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
             if let Some(unstaged_diff) = &unstaged_diff {
-                let snapshot = if index_changed || language_changed {
-                    cx.update(|cx| {
-                        BufferDiff::build(
-                            buffer.clone(),
-                            index,
-                            language.clone(),
-                            language_registry.clone(),
-                            cx,
-                        )
-                    })?
-                    .await
-                } else {
-                    unstaged_diff
-                        .read_with(&cx, |changes, cx| {
-                            BufferDiff::build_with_base_buffer(
-                                buffer.clone(),
-                                index,
-                                changes.base_text().cloned(),
-                                cx,
-                            )
-                        })?
-                        .await
-                };
-
-                unstaged_diff.update(&mut cx, |unstaged_diff, cx| {
-                    unstaged_diff.set_state(snapshot, &buffer, cx);
-                    if language_changed {
-                        cx.emit(BufferDiffEvent::LanguageChanged);
-                    }
-                })?;
+                BufferDiff::update_diff(
+                    unstaged_diff.clone(),
+                    buffer.clone(),
+                    index,
+                    index_changed,
+                    language_changed,
+                    language.clone(),
+                    language_registry.clone(),
+                    &mut cx,
+                )
+                .await?;
             }
 
             if let Some(uncommitted_diff) = &uncommitted_diff {
-                let snapshot =
-                    if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
-                        unstaged_diff.read_with(&cx, |diff, _| diff.snapshot())?
-                    } else if head_changed || language_changed {
-                        cx.update(|cx| {
-                            BufferDiff::build(
-                                buffer.clone(),
-                                head,
-                                language.clone(),
-                                language_registry.clone(),
-                                cx,
-                            )
-                        })?
-                        .await
-                    } else {
-                        uncommitted_diff
-                            .read_with(&cx, |changes, cx| {
-                                BufferDiff::build_with_base_buffer(
-                                    buffer.clone(),
-                                    head,
-                                    changes.base_text().cloned(),
-                                    cx,
-                                )
-                            })?
-                            .await
-                    };
-
-                uncommitted_diff.update(&mut cx, |diff, cx| {
-                    diff.set_state(snapshot, &buffer, cx);
-                    if language_changed {
-                        cx.emit(BufferDiffEvent::LanguageChanged);
-                    }
-                })?;
+                if let (Some(unstaged_diff), true) = (&unstaged_diff, index_matches_head) {
+                    uncommitted_diff.update(&mut cx, |uncommitted_diff, cx| {
+                        uncommitted_diff.update_diff_from(&buffer, unstaged_diff, cx);
+                    })?;
+                } else {
+                    BufferDiff::update_diff(
+                        uncommitted_diff.clone(),
+                        buffer,
+                        head,
+                        head_changed,
+                        language_changed,
+                        language.clone(),
+                        language_registry.clone(),
+                        &mut cx,
+                    )
+                    .await?
+                }
             }
 
             if let Some(this) = this.upgrade() {

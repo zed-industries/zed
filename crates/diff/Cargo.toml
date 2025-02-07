@@ -15,6 +15,7 @@ path = "src/diff.rs"
 test-support = []
 
 [dependencies]
+anyhow.workspace = true
 futures.workspace = true
 git2.workspace = true
 gpui.workspace = true

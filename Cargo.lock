@@ -3842,6 +3842,7 @@ dependencies = [
 name = "diff"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "futures 0.3.31",
  "git2",
  "gpui",
