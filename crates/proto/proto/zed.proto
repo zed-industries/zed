@@ -1,20 +1,6 @@
 syntax = "proto3";
 package zed.messages;
 
-// NOTE:
-// Search "// path" to find a path, if a string represents a path,
-// add "// path".
-// To serialize or deserialize a path string, you should always use:
-// ```rust
-// let path = Path::new("/some/path");
-// let proto = proto::SomePathStruct {
-//     path: path.to_proto()
-// };
-// let path = Path::from_proto(proto);
-// let path = PathBuf::from_proto(proto);
-// let path: Arc<Path> = proto.into();
-// ```
-
 // Looking for a number? Search "// current max"
 
 message PeerId {
@@ -570,7 +556,7 @@ message JoinProject {
 
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
-    string path = 2; // path
+    string path = 2;
 }
 
 message ListRemoteDirectoryResponse {
@@ -601,13 +587,13 @@ message UpdateWorktree {
     repeated uint64 removed_repositories = 7;
     uint64 scan_id = 8;
     bool is_last_update = 9;
-    string abs_path = 10; // path
+    string abs_path = 10;
 }
 
 message UpdateWorktreeSettings {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    string path = 3; // path
+    string path = 3;
     optional string content = 4;
     optional LocalSettingsKind kind = 5;
 }
@@ -621,21 +607,21 @@ enum LocalSettingsKind {
 message CreateProjectEntry {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    string path = 3; // path
+    string path = 3;
     bool is_directory = 4;
 }
 
 message RenameProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
-    string new_path = 3; // path
+    string new_path = 3;
 }
 
 message CopyProjectEntry {
     uint64 project_id = 1;
     uint64 entry_id = 2;
-    string new_path = 3; // path
-    optional string relative_worktree_source_path = 4; // path
+    string new_path = 3;
+    optional string relative_worktree_source_path = 4;
 }
 
 message DeleteProjectEntry {
@@ -791,7 +777,7 @@ message Symbol {
     string language_server_name = 3;
     string name = 4;
     int32 kind = 5;
-    string path = 6; // path
+    string path = 6;
     // Cannot use generate anchors for unopened files,
     // so we are forced to use point coords instead
     PointUtf16 start = 7;
@@ -811,7 +797,7 @@ message OpenBufferForSymbolResponse {
 message OpenBufferByPath {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    string path = 3; // path
+    string path = 3;
 }
 
 message OpenBufferById {
@@ -867,7 +853,7 @@ message CloseBuffer {
 
 message ProjectPath {
     uint64 worktree_id = 1;
-    string path = 2; // path
+    string path = 2;
 }
 
 message BufferSaved {
@@ -1283,7 +1269,7 @@ message UpdateDiagnosticSummary {
 }
 
 message DiagnosticSummary {
-    string path = 1; // path
+    string path = 1;
     uint64 language_server_id = 2;
     uint32 error_count = 3;
     uint32 warning_count = 4;
@@ -1789,7 +1775,7 @@ message User {
 message File {
     uint64 worktree_id = 1;
     optional uint64 entry_id = 2;
-    string path = 3; // path
+    string path = 3;
     Timestamp mtime = 4;
     bool is_deleted = 5;
 }
@@ -1797,7 +1783,7 @@ message File {
 message Entry {
     uint64 id = 1;
     bool is_dir = 2;
-    string path = 3; // path
+    string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
     bool is_ignored = 7;
@@ -1813,12 +1799,12 @@ message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
     repeated StatusEntry updated_statuses = 3;
-    repeated string removed_statuses = 4; // path
-    repeated string current_merge_conflicts = 5; // path
+    repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
 }
 
 message StatusEntry {
-    string repo_path = 1; // path
+    string repo_path = 1;
     // Can be removed once collab's min version is >=0.171.0.
     GitStatus simple_status = 2;
     GitFileStatus status = 3;
@@ -2050,7 +2036,7 @@ message WorktreeMetadata {
     uint64 id = 1;
     string root_name = 2;
     bool visible = 3;
-    string abs_path = 4; // path
+    string abs_path = 4;
 }
 
 message UpdateDiffBases {
@@ -2502,24 +2488,24 @@ message RefreshLlmToken {}
 // Remote FS
 
 message AddWorktree {
-    string path = 1; // path
+    string path = 1;
     uint64 project_id = 2;
     bool visible = 3;
 }
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
-    string canonicalized_path = 2; // path
+    string canonicalized_path = 2;
 }
 
 message GetPathMetadata {
     uint64 project_id = 1;
-    string path = 2; // path
+    string path = 2;
 }
 
 message GetPathMetadataResponse {
     bool exists = 1;
-    string path = 2; // path
+    string path = 2;
     bool is_dir = 3;
 }
 
@@ -2586,7 +2572,7 @@ message ListToolchains {
 
 message Toolchain {
     string name = 1;
-    string path = 2; // path
+    string path = 2;
     string raw_json = 3;
 }
 
@@ -2693,14 +2679,14 @@ message Stage {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    repeated string paths = 4; // path
+    repeated string paths = 4;
 }
 
 message Unstage {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
-    repeated string paths = 4; // path
+    repeated string paths = 4;
 }
 
 message Commit {
