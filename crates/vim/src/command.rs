@@ -935,7 +935,7 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             .boxed_clone(),
         )
     } else if query.starts_with("se ") || query.starts_with("set ") {
-        return VimOption::possible_commands(query.splitn(2, " ").skip(1).next().unwrap());
+        return VimOption::possible_commands(query.split_once(" ").unwrap().1);
     } else if query.starts_with('s') {
         let mut substitute = "substitute".chars().peekable();
         let mut query = query.chars().peekable();
