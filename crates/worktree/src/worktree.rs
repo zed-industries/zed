@@ -1395,16 +1395,7 @@ impl LocalWorktree {
                             drop(barrier);
                         }
                         ScanState::RootUpdated { new_path } => {
-                            if let Some(new_path) = new_path {
-                                this.snapshot.git_repositories = Default::default();
-                                this.snapshot.ignores_by_parent_abs_path = Default::default();
-                                let root_name = new_path
-                                    .as_path()
-                                    .file_name()
-                                    .map_or(String::new(), |f| f.to_string_lossy().to_string());
-                                this.snapshot.update_abs_path(new_path, root_name);
-                            }
-                            this.restart_background_scanners(cx);
+                            this.update_abs_path_and_refresh(new_path, cx);
                         }
                     }
                     cx.notify();
@@ -1901,16 +1892,18 @@ impl LocalWorktree {
             rename.await?;
             Ok(this
                 .update(&mut cx, |this, cx| {
+                    let local = this.as_local_mut().unwrap();
                     if is_root_entry {
-                        this.as_local_mut()
-                            .unwrap()
-                            .refresh_entry(old_path, None, cx)
-                    } else {
-                        this.as_local_mut().unwrap().refresh_entry(
-                            new_path.clone(),
-                            Some(old_path),
+                        // We eagerly update `abs_path` and refresh this worktree.
+                        // Otherwise, the FS watcher would do it on the `RootUpdated` event,
+                        // but with a noticeable delay, so we handle it proactively.
+                        local.update_abs_path_and_refresh(
+                            Some(SanitizedPath::from(abs_path.clone())),
                             cx,
-                        )
+                        );
+                        Task::ready(Ok(this.root_entry().cloned()))
+                    } else {
+                        local.refresh_entry(new_path.clone(), Some(old_path), cx)
                     }
                 })?
                 .await?
@@ -2174,6 +2167,23 @@ impl LocalWorktree {
 
     pub fn share_private_files(&mut self, cx: &Context<Worktree>) {
         self.share_private_files = true;
+        self.restart_background_scanners(cx);
+    }
+
+    fn update_abs_path_and_refresh(
+        &mut self,
+        new_path: Option<SanitizedPath>,
+        cx: &Context<Worktree>,
+    ) {
+        if let Some(new_path) = new_path {
+            self.snapshot.git_repositories = Default::default();
+            self.snapshot.ignores_by_parent_abs_path = Default::default();
+            let root_name = new_path
+                .as_path()
+                .file_name()
+                .map_or(String::new(), |f| f.to_string_lossy().to_string());
+            self.snapshot.update_abs_path(new_path, root_name);
+        }
         self.restart_background_scanners(cx);
     }
 }
