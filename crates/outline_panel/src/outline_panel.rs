@@ -5,7 +5,10 @@ use std::{
     hash::Hash,
     ops::Range,
     path::{Path, PathBuf, MAIN_SEPARATOR_STR},
-    sync::{atomic::AtomicBool, Arc, OnceLock},
+    sync::{
+        atomic::{self, AtomicBool},
+        Arc, OnceLock,
+    },
     time::Duration,
     u32,
 };
@@ -103,6 +106,7 @@ pub struct OutlinePanel {
     active_item: Option<ActiveItem>,
     _subscriptions: Vec<Subscription>,
     updating_fs_entries: bool,
+    updating_cached_entries: bool,
     new_entries_for_fs_update: HashSet<ExcerptId>,
     fs_entries_update_task: Task<()>,
     cached_entries_update_task: Task<()>,
@@ -777,7 +781,10 @@ impl OutlinePanel {
                                 excerpt.invalidate_outlines();
                             }
                         }
-                        outline_panel.update_non_fs_items(window, cx);
+                        let update_cached_items = outline_panel.update_non_fs_items(window, cx);
+                        if update_cached_items {
+                            outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                        }
                     } else if &outline_panel_settings != new_settings {
                         outline_panel_settings = *new_settings;
                         cx.notify();
@@ -814,6 +821,7 @@ impl OutlinePanel {
                 active_item: None,
                 pending_serialization: Task::ready(None),
                 updating_fs_entries: false,
+                updating_cached_entries: false,
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
                 fs_entries_update_task: Task::ready(()),
@@ -2896,8 +2904,8 @@ impl OutlinePanel {
                     outline_panel.fs_entries = new_fs_entries;
                     outline_panel.fs_entries_depth = new_depth_map;
                     outline_panel.fs_children_count = new_children_count;
-                    outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                     outline_panel.update_non_fs_items(window, cx);
+                    outline_panel.update_cached_entries(debounce, window, cx);
 
                     cx.notify();
                 })
@@ -2922,7 +2930,11 @@ impl OutlinePanel {
              window: &mut Window,
              cx: &mut Context<Self>| {
                 if matches!(e, SearchEvent::MatchesInvalidated) {
-                    outline_panel.update_search_matches(window, cx);
+                    let update_cached_items = outline_panel.update_search_matches(window, cx);
+                    if update_cached_items {
+                        outline_panel.selected_entry.invalidate();
+                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                    }
                 };
                 outline_panel.autoscroll(cx);
             },
@@ -3188,10 +3200,12 @@ impl OutlinePanel {
         }
 
         let syntax_theme = cx.theme().syntax().clone();
+        let first_update = Arc::new(AtomicBool::new(true));
         for (buffer_id, (buffer_snapshot, excerpt_ranges)) in excerpt_fetch_ranges {
             for (excerpt_id, excerpt_range) in excerpt_ranges {
                 let syntax_theme = syntax_theme.clone();
                 let buffer_snapshot = buffer_snapshot.clone();
+                let first_update = first_update.clone();
                 self.outline_fetch_tasks.insert(
                     (buffer_id, excerpt_id),
                     cx.spawn_in(window, |outline_panel, mut cx| async move {
@@ -3215,13 +3229,16 @@ impl OutlinePanel {
                                     .or_default()
                                     .get_mut(&excerpt_id)
                                 {
+                                    let debounce = if first_update
+                                        .fetch_and(false, atomic::Ordering::AcqRel)
+                                    {
+                                        None
+                                    } else {
+                                        Some(UPDATE_DEBOUNCE)
+                                    };
                                     excerpt.outlines = ExcerptOutlines::Outlines(fetched_outlines);
+                                    outline_panel.update_cached_entries(debounce, window, cx);
                                 }
-                                outline_panel.update_cached_entries(
-                                    Some(UPDATE_DEBOUNCE),
-                                    window,
-                                    cx,
-                                );
                             })
                             .ok();
                     }),
@@ -3376,6 +3393,7 @@ impl OutlinePanel {
 
         let is_singleton = self.is_singleton_active(cx);
         let query = self.query(cx);
+        self.updating_cached_entries = true;
         self.cached_entries_update_task = cx.spawn_in(window, |outline_panel, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -3410,6 +3428,7 @@ impl OutlinePanel {
                     }
 
                     outline_panel.autoscroll(cx);
+                    outline_panel.updating_cached_entries = false;
                     cx.notify();
                 })
                 .ok();
@@ -3915,19 +3934,27 @@ impl OutlinePanel {
         !self.collapsed_entries.contains(&entry_to_check)
     }
 
-    fn update_non_fs_items(&mut self, window: &mut Window, cx: &mut Context<OutlinePanel>) {
+    fn update_non_fs_items(&mut self, window: &mut Window, cx: &mut Context<OutlinePanel>) -> bool {
         if !self.active {
-            return;
+            return false;
         }
 
-        self.update_search_matches(window, cx);
+        let mut update_cached_items = false;
+        update_cached_items |= self.update_search_matches(window, cx);
         self.fetch_outdated_outlines(window, cx);
-        self.autoscroll(cx);
+        if update_cached_items {
+            self.selected_entry.invalidate();
+        }
+        update_cached_items
     }
 
-    fn update_search_matches(&mut self, window: &mut Window, cx: &mut Context<OutlinePanel>) {
+    fn update_search_matches(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<OutlinePanel>,
+    ) -> bool {
         if !self.active {
-            return;
+            return false;
         }
 
         let project_search = self
@@ -4010,10 +4037,7 @@ impl OutlinePanel {
                 cx,
             ));
         }
-        if update_cached_entries {
-            self.selected_entry.invalidate();
-            self.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-        }
+        update_cached_entries
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4426,41 +4450,42 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> Div {
         let contents = if self.cached_entries.is_empty() {
-            let header = if self.updating_fs_entries {
-                "Loading outlines"
+            let header = if self.updating_fs_entries || self.updating_cached_entries {
+                None
             } else if query.is_some() {
-                "No matches for query"
+                Some("No matches for query")
             } else {
-                "No outlines available"
+                Some("No outlines available")
             };
 
             v_flex()
                 .flex_1()
                 .justify_center()
                 .size_full()
-                .child(h_flex().justify_center().child(Label::new(header)))
-                .when_some(query.clone(), |panel, query| {
-                    panel.child(h_flex().justify_center().child(Label::new(query)))
+                .when_some(header, |panel, header| {
+                    panel
+                        .child(h_flex().justify_center().child(Label::new(header)))
+                        .when_some(query.clone(), |panel, query| {
+                            panel.child(h_flex().justify_center().child(Label::new(query)))
+                        })
+                        .child(
+                            h_flex()
+                                .pt(DynamicSpacing::Base04.rems(cx))
+                                .justify_center()
+                                .child({
+                                    let keystroke =
+                                        match self.position(window, cx) {
+                                            DockPosition::Left => window
+                                                .keystroke_text_for(&workspace::ToggleLeftDock),
+                                            DockPosition::Bottom => window
+                                                .keystroke_text_for(&workspace::ToggleBottomDock),
+                                            DockPosition::Right => window
+                                                .keystroke_text_for(&workspace::ToggleRightDock),
+                                        };
+                                    Label::new(format!("Toggle this panel with {keystroke}"))
+                                }),
+                        )
                 })
-                .child(
-                    h_flex()
-                        .pt(DynamicSpacing::Base04.rems(cx))
-                        .justify_center()
-                        .child({
-                            let keystroke = match self.position(window, cx) {
-                                DockPosition::Left => {
-                                    window.keystroke_text_for(&workspace::ToggleLeftDock)
-                                }
-                                DockPosition::Bottom => {
-                                    window.keystroke_text_for(&workspace::ToggleBottomDock)
-                                }
-                                DockPosition::Right => {
-                                    window.keystroke_text_for(&workspace::ToggleRightDock)
-                                }
-                            };
-                            Label::new(format!("Toggle this panel with {keystroke}"))
-                        }),
-                )
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
@@ -4995,11 +5020,17 @@ fn subscribe_for_editor_events(
                 }
                 EditorEvent::ExcerptsExpanded { ids } => {
                     outline_panel.invalidate_outlines(ids);
-                    outline_panel.update_non_fs_items(window, cx);
+                    let update_cached_items = outline_panel.update_non_fs_items(window, cx);
+                    if update_cached_items {
+                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                    }
                 }
                 EditorEvent::ExcerptsEdited { ids } => {
                     outline_panel.invalidate_outlines(ids);
-                    outline_panel.update_non_fs_items(window, cx);
+                    let update_cached_items = outline_panel.update_non_fs_items(window, cx);
+                    if update_cached_items {
+                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                    }
                 }
                 EditorEvent::BufferFoldToggled { ids, .. } => {
                     outline_panel.invalidate_outlines(ids);
@@ -5073,7 +5104,10 @@ fn subscribe_for_editor_events(
                             excerpt.invalidate_outlines();
                         }
                     }
-                    outline_panel.update_non_fs_items(window, cx);
+                    let update_cached_items = outline_panel.update_non_fs_items(window, cx);
+                    if update_cached_items {
+                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                    }
                 }
                 _ => {}
             }
