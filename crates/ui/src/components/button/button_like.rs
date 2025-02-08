@@ -1,4 +1,5 @@
 #![allow(missing_docs)]
+
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
@@ -134,7 +135,7 @@ pub enum ButtonStyle {
     /// TODO: Better docs for this.
     Transparent,
 
-    /// Highlight the border and apply
+    /// When this is `active`, highlight the border and apply inner style.
     HighlightBorder(Box<Self>),
 }
 
@@ -199,9 +200,7 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => style
-                .enabled(elevation, cx)
-                .with_border_color(cx.theme().status().error_border),
+            ButtonStyle::HighlightBorder(inner) => inner.enabled(elevation, cx),
         }
     }
 
@@ -241,9 +240,7 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => style
-                .hovered(elevation, cx)
-                .with_border_color(cx.theme().status().error_border),
+            ButtonStyle::HighlightBorder(inner) => inner.hovered(elevation, cx),
         }
     }
 
@@ -270,9 +267,9 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => style
+            ButtonStyle::HighlightBorder(inner) => inner
                 .active(cx)
-                .with_border_color(cx.theme().status().error_border),
+                .with_border_color(cx.theme().colors().editor_foreground),
         }
     }
 
@@ -298,9 +295,7 @@ impl ButtonStyle {
                 label_color: Color::Accent.color(cx),
                 icon_color: Color::Accent.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => style
-                .focused(cx)
-                .with_border_color(cx.theme().status().error_border),
+            ButtonStyle::HighlightBorder(inner) => inner.focused(cx),
         }
     }
 
@@ -326,9 +321,7 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => style
-                .disabled(cx)
-                .with_border_color(cx.theme().status().error_border),
+            ButtonStyle::HighlightBorder(style) => style.disabled(cx),
         }
     }
 }
@@ -549,8 +542,8 @@ impl RenderOnce for ButtonLike {
             .bg(style.enabled(self.layer, cx).background)
             .when(self.bordered, |this| this.border_1())
             .when(self.selected, |this| {
-                this.border_color(style.active(cx).label_color)
-                    .bg(style.active(cx).background)
+                let active = style.active(cx);
+                this.bg(active.background).border_color(active.border_color)
             })
             .when(self.disabled, |this| this.cursor_not_allowed())
             .when(!self.disabled, |this| {
