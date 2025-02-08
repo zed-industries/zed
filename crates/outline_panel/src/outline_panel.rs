@@ -3393,13 +3393,13 @@ impl OutlinePanel {
 
         let is_singleton = self.is_singleton_active(cx);
         let query = self.query(cx);
+        self.updating_cached_entries = true;
         self.cached_entries_update_task = cx.spawn_in(window, |outline_panel, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
             let Some(new_cached_entries) = outline_panel
                 .update_in(&mut cx, |outline_panel, window, cx| {
-                    outline_panel.updating_cached_entries = true;
                     outline_panel.generate_cached_entries(is_singleton, query, window, cx)
                 })
                 .ok()
@@ -4451,40 +4451,41 @@ impl OutlinePanel {
     ) -> Div {
         let contents = if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries || self.updating_cached_entries {
-                "Loading outlines"
+                None
             } else if query.is_some() {
-                "No matches for query"
+                Some("No matches for query")
             } else {
-                "No outlines available"
+                Some("No outlines available")
             };
 
             v_flex()
                 .flex_1()
                 .justify_center()
                 .size_full()
-                .child(h_flex().justify_center().child(Label::new(header)))
-                .when_some(query.clone(), |panel, query| {
-                    panel.child(h_flex().justify_center().child(Label::new(query)))
+                .when_some(header, |panel, header| {
+                    panel
+                        .child(h_flex().justify_center().child(Label::new(header)))
+                        .when_some(query.clone(), |panel, query| {
+                            panel.child(h_flex().justify_center().child(Label::new(query)))
+                        })
+                        .child(
+                            h_flex()
+                                .pt(DynamicSpacing::Base04.rems(cx))
+                                .justify_center()
+                                .child({
+                                    let keystroke =
+                                        match self.position(window, cx) {
+                                            DockPosition::Left => window
+                                                .keystroke_text_for(&workspace::ToggleLeftDock),
+                                            DockPosition::Bottom => window
+                                                .keystroke_text_for(&workspace::ToggleBottomDock),
+                                            DockPosition::Right => window
+                                                .keystroke_text_for(&workspace::ToggleRightDock),
+                                        };
+                                    Label::new(format!("Toggle this panel with {keystroke}"))
+                                }),
+                        )
                 })
-                .child(
-                    h_flex()
-                        .pt(DynamicSpacing::Base04.rems(cx))
-                        .justify_center()
-                        .child({
-                            let keystroke = match self.position(window, cx) {
-                                DockPosition::Left => {
-                                    window.keystroke_text_for(&workspace::ToggleLeftDock)
-                                }
-                                DockPosition::Bottom => {
-                                    window.keystroke_text_for(&workspace::ToggleBottomDock)
-                                }
-                                DockPosition::Right => {
-                                    window.keystroke_text_for(&workspace::ToggleRightDock)
-                                }
-                            };
-                            Label::new(format!("Toggle this panel with {keystroke}"))
-                        }),
-                )
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
