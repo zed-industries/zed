@@ -43,7 +43,7 @@ impl Tooltip {
         let action = action.boxed_clone();
         move |window, cx| {
             cx.new(|_| Self {
-                title: title.clone().into(),
+                title: title.clone(),
                 meta: None,
                 key_binding: KeyBinding::for_action(action.as_ref(), window),
             })
