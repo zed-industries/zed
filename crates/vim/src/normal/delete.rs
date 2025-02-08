@@ -1,4 +1,4 @@
-use crate::{motion::Motion, object::Object, Vim};
+use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
@@ -90,15 +90,29 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
+        let target_mode = object.target_visual_mode(self.mode, around);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 // Emulates behavior in vim where if we expanded backwards to include a newline
                 // the cursor gets set back to the start of the line
                 let mut should_move_to_start: HashSet<_> = Default::default();
+                let text_layout_details = editor.text_layout_details(window);
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        // Use the object's target visual mode to determine selection behavior
+                        if target_mode == Mode::VisualLine {
+                            object.expand_selection(map, selection, around);
+                            Motion::CurrentLine.expand_selection(
+                                map,
+                                selection,
+                                None,
+                                false,
+                                &text_layout_details,
+                            );
+                        } else {
+                            object.expand_selection(map, selection, around);
+                        }
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
@@ -148,7 +162,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, false, cx);
+                vim.copy_selections_content(editor, target_mode == Mode::VisualLine, cx);
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
