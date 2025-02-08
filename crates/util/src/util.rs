@@ -28,6 +28,7 @@ use unicase::UniCase;
 use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
+#[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{separator, uri};
 
 #[macro_export]
