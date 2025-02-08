@@ -1212,43 +1212,27 @@ impl LocalLspStore {
                     }
                 }
             };
-            for formatter in formatters {
-                let should_continue = Self::perform_format(
-                    lsp_store.clone(),
-                    formatter,
-                    buffer,
-                    &settings,
-                    &adapters_and_servers,
-                    push_to_history,
-                    whitespace_transaction_id,
-                    &mut project_transaction,
-                    &mut cx,
-                )
-                .await?;
-                if !should_continue {
-                    break;
-                }
-            }
-
-            buffer.handle.update(&mut cx, |b, _cx| {
-                if let Some(transaction) = b.finalize_last_transaction().cloned() {
-                    if !push_to_history {
-                        b.forget_transaction(transaction.id);
-                        project_transaction
-                            .0
-                            .insert(buffer.handle.clone(), transaction);
-                    }
-                }
-            })?;
+            Self::execute_formatters(
+                lsp_store.clone(),
+                formatters,
+                buffer,
+                &settings,
+                &adapters_and_servers,
+                push_to_history,
+                whitespace_transaction_id,
+                &mut project_transaction,
+                &mut cx,
+            )
+            .await?;
         }
 
         Ok(project_transaction)
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn perform_format(
+    async fn execute_formatters(
         lsp_store: WeakEntity<LspStore>,
-        formatter: &Formatter,
+        formatters: &[Formatter],
         buffer: &FormattableBuffer,
         settings: &LanguageSettings,
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
@@ -1256,139 +1240,156 @@ impl LocalLspStore {
         whitespace_transaction_id: Option<TransactionId>,
         project_transaction: &mut ProjectTransaction,
         cx: &mut AsyncApp,
-    ) -> anyhow::Result<bool> {
-        let operation = match formatter {
-            Formatter::LanguageServer { name } => {
-                let Some(language_server) = lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store
-                        .as_local()
-                        .unwrap()
-                        .primary_language_server_for_buffer(buffer.handle.read(cx), cx)
-                        .map(|(_, lsp)| lsp.clone())
-                })?
-                else {
-                    return Ok(true);
-                };
-                let Some(buffer_abs_path) = buffer.abs_path.as_ref() else {
-                    return Ok(true);
-                };
+    ) -> anyhow::Result<()> {
+        for formatter in formatters {
+            let operation = match formatter {
+                Formatter::LanguageServer { name } => {
+                    let Some(language_server) = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store
+                            .as_local()
+                            .unwrap()
+                            .primary_language_server_for_buffer(buffer.handle.read(cx), cx)
+                            .map(|(_, lsp)| lsp.clone())
+                    })?
+                    else {
+                        continue;
+                    };
+                    let Some(buffer_abs_path) = buffer.abs_path.as_ref() else {
+                        continue;
+                    };
 
-                let language_server = if let Some(name) = name {
-                    adapters_and_servers
-                        .iter()
-                        .find_map(|(adapter, server)| {
-                            adapter
-                                .name
-                                .0
-                                .as_ref()
-                                .eq(name.as_str())
-                                .then_some(server.clone())
-                        })
-                        .unwrap_or(language_server)
-                } else {
-                    language_server
-                };
+                    let language_server = if let Some(name) = name {
+                        adapters_and_servers
+                            .iter()
+                            .find_map(|(adapter, server)| {
+                                adapter
+                                    .name
+                                    .0
+                                    .as_ref()
+                                    .eq(name.as_str())
+                                    .then_some(server.clone())
+                            })
+                            .unwrap_or(language_server)
+                    } else {
+                        language_server
+                    };
 
-                let result = if let Some(ranges) = &buffer.ranges {
-                    Self::format_ranges_via_lsp(
-                        &lsp_store,
-                        &buffer.handle,
-                        ranges,
-                        buffer_abs_path,
-                        &language_server,
-                        settings,
-                        cx,
-                    )
-                    .await
-                    .context("failed to format ranges via language server")?
-                } else {
-                    Self::format_via_lsp(
-                        &lsp_store,
-                        &buffer.handle,
-                        buffer_abs_path,
-                        &language_server,
-                        settings,
-                        cx,
-                    )
-                    .await
-                    .context("failed to format via language server")?
-                };
+                    let result = if let Some(ranges) = &buffer.ranges {
+                        Self::format_ranges_via_lsp(
+                            &lsp_store,
+                            &buffer.handle,
+                            ranges,
+                            buffer_abs_path,
+                            &language_server,
+                            settings,
+                            cx,
+                        )
+                        .await
+                        .context("failed to format ranges via language server")?
+                    } else {
+                        Self::format_via_lsp(
+                            &lsp_store,
+                            &buffer.handle,
+                            buffer_abs_path,
+                            &language_server,
+                            settings,
+                            cx,
+                        )
+                        .await
+                        .context("failed to format via language server")?
+                    };
 
-                Some(FormatOperation::Lsp(result))
-            }
-            Formatter::Prettier => {
-                let prettier = lsp_store.update(cx, |lsp_store, _cx| {
-                    lsp_store.prettier_store().unwrap().downgrade()
-                })?;
-                prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
-                    .await
-                    .transpose()?
-            }
-            Formatter::External { command, arguments } => {
-                Self::format_via_external_command(buffer, command, arguments.as_deref(), cx)
-                    .await
-                    .context(format!(
-                        "failed to format via external command {:?}",
-                        command
-                    ))?
-                    .map(FormatOperation::External)
-            }
-            Formatter::CodeActions(code_actions) => {
-                let code_actions = deserialize_code_actions(code_actions);
-                if !code_actions.is_empty() {
-                    Self::execute_code_actions_on_servers(
-                        &lsp_store,
-                        adapters_and_servers,
-                        code_actions,
-                        &buffer.handle,
-                        push_to_history,
-                        project_transaction,
-                        cx,
-                    )
-                    .await?;
+                    Some(FormatOperation::Lsp(result))
                 }
-                None
-            }
-        };
-        let Some(operation) = operation else {
-            return anyhow::Ok(true);
-        };
-
-        return buffer.handle.update(cx, |b, cx| {
-            // If the buffer had its whitespace formatted and was edited while the language-specific
-            // formatting was being computed, avoid applying the language-specific formatting, because
-            // it can't be grouped with the whitespace formatting in the undo history.
-            let should_continue_formatting = match whitespace_transaction_id {
-                Some(transaction_id) => b
-                    .peek_undo_stack()
-                    .map_or(false, |e| e.transaction_id() == transaction_id),
-                None => true,
+                Formatter::Prettier => {
+                    let prettier = lsp_store.update(cx, |lsp_store, _cx| {
+                        lsp_store.prettier_store().unwrap().downgrade()
+                    })?;
+                    prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
+                        .await
+                        .transpose()?
+                }
+                Formatter::External { command, arguments } => {
+                    Self::format_via_external_command(buffer, command, arguments.as_deref(), cx)
+                        .await
+                        .context(format!(
+                            "failed to format via external command {:?}",
+                            command
+                        ))?
+                        .map(FormatOperation::External)
+                }
+                Formatter::CodeActions(code_actions) => {
+                    let code_actions = deserialize_code_actions(code_actions);
+                    if !code_actions.is_empty() {
+                        Self::execute_code_actions_on_servers(
+                            &lsp_store,
+                            adapters_and_servers,
+                            code_actions,
+                            &buffer.handle,
+                            push_to_history,
+                            project_transaction,
+                            cx,
+                        )
+                        .await?;
+                    }
+                    None
+                }
+            };
+            let Some(operation) = operation else {
+                continue;
             };
 
-            if should_continue_formatting {
-                // Apply any language-specific formatting, and group the two formatting operations
-                // in the buffer's undo history.
-                match operation {
-                    FormatOperation::Lsp(edits) => {
-                        b.edit(edits, None, cx);
-                    }
-                    FormatOperation::External(diff) => {
-                        b.apply_diff(diff, cx);
-                    }
-                    FormatOperation::Prettier(diff) => {
-                        b.apply_diff(diff, cx);
+            let should_continue_formatting = buffer.handle.update(cx, |b, cx| {
+                // If the buffer had its whitespace formatted and was edited while the language-specific
+                // formatting was being computed, avoid applying the language-specific formatting, because
+                // it can't be grouped with the whitespace formatting in the undo history.
+                let should_continue_formatting = match whitespace_transaction_id {
+                    Some(transaction_id) => b
+                        .peek_undo_stack()
+                        .map_or(false, |e| e.transaction_id() == transaction_id),
+                    None => true,
+                };
+
+                if should_continue_formatting {
+                    // Apply any language-specific formatting, and group the two formatting operations
+                    // in the buffer's undo history.
+                    match operation {
+                        FormatOperation::Lsp(edits) => {
+                            b.edit(edits, None, cx);
+                        }
+                        FormatOperation::External(diff) => {
+                            b.apply_diff(diff, cx);
+                        }
+                        FormatOperation::Prettier(diff) => {
+                            b.apply_diff(diff, cx);
+                        }
                     }
                 }
-            }
 
-            if let Some(transaction_id) = whitespace_transaction_id {
-                b.group_until_transaction(transaction_id);
-            } else if let Some(transaction) = project_transaction.0.get(&buffer.handle) {
-                b.group_until_transaction(transaction.id)
-            }
+                if let Some(transaction_id) = whitespace_transaction_id {
+                    b.group_until_transaction(transaction_id);
+                } else if let Some(transaction) = project_transaction.0.get(&buffer.handle) {
+                    b.group_until_transaction(transaction.id)
+                }
 
-            return should_continue_formatting;
-        });
+                return should_continue_formatting;
+            })?;
+            if !should_continue_formatting {
+                break;
+            }
+        }
+
+        buffer.handle.update(cx, |b, _cx| {
+            if let Some(transaction) = b.finalize_last_transaction().cloned() {
+                if !push_to_history {
+                    b.forget_transaction(transaction.id);
+                    project_transaction
+                        .0
+                        .insert(buffer.handle.clone(), transaction);
+                }
+            }
+        })?;
+        return Ok(());
     }
 
     pub async fn format_ranges_via_lsp(
