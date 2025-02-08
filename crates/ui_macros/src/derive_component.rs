@@ -1,3 +1,4 @@
+use convert_case::{Case, Casing};
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Lit, Meta, MetaList, MetaNameValue, NestedMeta};
@@ -55,6 +56,21 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let register_component_name = syn::Ident::new(
+        &format!(
+            "__register_component_{}",
+            Casing::to_case(&name.to_string(), Case::Snake)
+        ),
+        name.span(),
+    );
+    let register_preview_name = syn::Ident::new(
+        &format!(
+            "__register_preview_{}",
+            Casing::to_case(&name.to_string(), Case::Snake)
+        ),
+        name.span(),
+    );
+
     let expanded = quote! {
         impl component::Component for #name {
             #scope_impl
@@ -67,12 +83,12 @@ pub fn derive_into_component(input: TokenStream) -> TokenStream {
         }
 
         #[linkme::distributed_slice(component::__ALL_COMPONENTS)]
-        fn __register_component() {
+        fn #register_component_name() {
             component::register_component::<#name>();
         }
 
         #[linkme::distributed_slice(component::__ALL_PREVIEWS)]
-        fn __register_preview() {
+        fn #register_preview_name() {
             component::register_preview::<#name>();
         }
     };

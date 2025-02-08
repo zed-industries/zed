@@ -110,12 +110,17 @@ impl ComponentPreview {
     }
 
     fn render_previews(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
-        v_flex().p_2().size_full().children(
-            components()
-                .all_previews_sorted()
-                .iter()
-                .map(|component| self.render_preview(component, window, cx)),
-        )
+        v_flex()
+            .id("component-previews")
+            .size_full()
+            .overflow_y_scroll()
+            .p_2()
+            .children(
+                components()
+                    .all_previews_sorted()
+                    .iter()
+                    .map(|component| self.render_preview(component, window, cx)),
+            )
     }
 }
 
