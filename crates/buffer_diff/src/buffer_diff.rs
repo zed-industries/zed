@@ -280,7 +280,8 @@ impl BufferDiffInner {
                 row_range: range.start.row..end_row,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
-                secondary_status: DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk, // FIXME
+                // The secondary status is not used by callers of this method.
+                secondary_status: DiffHunkSecondaryStatus::None,
             })
         })
     }
