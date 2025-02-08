@@ -242,6 +242,7 @@ impl BufferDiffState {
                 this.update(&mut cx, |this, _| {
                     this.index_changed = false;
                     this.head_changed = false;
+                    this.language_changed = false;
                     for tx in this.diff_updated_futures.drain(..) {
                         tx.send(()).ok();
                     }
