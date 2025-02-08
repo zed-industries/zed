@@ -156,6 +156,13 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
+impl ButtonLikeStyles {
+    pub fn with_border_color(mut self, border_color: Hsla) -> Self {
+        self.border_color = border_color;
+        self
+    }
+}
+
 fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut App) -> Hsla {
     match elevation {
         Some(ElevationIndex::Background) => cx.theme().colors().element_background,
@@ -192,11 +199,9 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => {
-                let mut style = style.enabled(elevation, cx);
-                style.border_color = cx.theme().status().error_border;
-                style
-            }
+            ButtonStyle::HighlightBorder(style) => style
+                .enabled(elevation, cx)
+                .with_border_color(cx.theme().status().error_border),
         }
     }
 
@@ -236,11 +241,9 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => {
-                let mut style = style.hovered(elevation, cx);
-                style.border_color = cx.theme().status().error_border;
-                style
-            }
+            ButtonStyle::HighlightBorder(style) => style
+                .hovered(elevation, cx)
+                .with_border_color(cx.theme().status().error_border),
         }
     }
 
@@ -267,11 +270,9 @@ impl ButtonStyle {
                 // TODO: These are not great
                 icon_color: Color::Muted.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => {
-                let mut style = style.active(cx);
-                style.border_color = cx.theme().status().error_border;
-                style
-            }
+            ButtonStyle::HighlightBorder(style) => style
+                .active(cx)
+                .with_border_color(cx.theme().status().error_border),
         }
     }
 
@@ -297,11 +298,9 @@ impl ButtonStyle {
                 label_color: Color::Accent.color(cx),
                 icon_color: Color::Accent.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => {
-                let mut style = style.focused(cx);
-                style.border_color = cx.theme().status().error_border;
-                style
-            }
+            ButtonStyle::HighlightBorder(style) => style
+                .focused(cx)
+                .with_border_color(cx.theme().status().error_border),
         }
     }
 
@@ -327,11 +326,9 @@ impl ButtonStyle {
                 label_color: Color::Disabled.color(cx),
                 icon_color: Color::Disabled.color(cx),
             },
-            ButtonStyle::HighlightBorder(style) => {
-                let mut style = style.disabled(cx);
-                style.border_color = cx.theme().status().error_border;
-                style
-            }
+            ButtonStyle::HighlightBorder(style) => style
+                .disabled(cx)
+                .with_border_color(cx.theme().status().error_border),
         }
     }
 }
