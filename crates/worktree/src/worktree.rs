@@ -1835,6 +1835,10 @@ impl LocalWorktree {
         }))
     }
 
+    /// Rename an entry.
+    ///
+    /// `new_path` is the new relative path to the worktree root.
+    /// If the root entry is renamed then `new_path` is the new root name instead.
     fn rename_entry(
         &self,
         entry_id: ProjectEntryId,

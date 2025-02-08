@@ -7281,6 +7281,83 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "dir1": {
+                    "file1.txt": "content 1",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "root1/dir1", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1", "    v dir1  <== selected", "          file1.txt",],
+            "Initial state with worktrees"
+        );
+
+        select_path(&panel, "root1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root1  <== selected", "    v dir1", "          file1.txt",],
+        );
+
+        // Rename root1 to new_root1
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v [EDITOR: 'root1']  <== selected",
+                "    v dir1",
+                "          file1.txt",
+            ],
+        );
+
+        let confirm = panel.update_in(cx, |panel, window, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("new_root1", window, cx));
+            panel.confirm_edit(window, cx).unwrap()
+        });
+        confirm.await.unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v new_root1  <== selected",
+                "    v dir1",
+                "          file1.txt",
+            ],
+            "Should update worktree name"
+        );
+
+        // Ensure internal paths have been updated
+        select_path(&panel, "new_root1/dir1/file1.txt", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v new_root1",
+                "    v dir1",
+                "          file1.txt  <== selected",
+            ],
+            "Files in renamed worktree are selectable"
+        );
+    }
+
+    #[gpui::test]
     async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
         let fs = FakeFs::new(cx.executor().clone());
