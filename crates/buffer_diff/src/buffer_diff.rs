@@ -588,6 +588,7 @@ impl BufferDiff {
         Some(self.secondary_diff.as_ref()?.0.clone())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_diff(
         this: Entity<BufferDiff>,
         buffer: text::BufferSnapshot,
