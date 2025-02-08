@@ -5,7 +5,7 @@ use super::{
 };
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{Chunk, Point};
-use multi_buffer::{MultiBufferSnapshot, RowInfo};
+use multibuffer::{MultibufferSnapshot, RowInfo};
 use smol::future::yield_now;
 use std::sync::LazyLock;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
@@ -327,7 +327,7 @@ impl WrapSnapshot {
         }
     }
 
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+    pub fn buffer_snapshot(&self) -> &MultibufferSnapshot {
         self.tab_snapshot.buffer_snapshot()
     }
 
@@ -1170,7 +1170,7 @@ mod tests {
     use crate::{
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         test::test_font,
-        MultiBuffer,
+        Multibuffer,
     };
     use gpui::{px, test::observe};
     use rand::prelude::*;
@@ -1207,13 +1207,13 @@ mod tests {
 
         let buffer = cx.update(|cx| {
             if rng.gen() {
-                MultiBuffer::build_random(&mut rng, cx)
+                Multibuffer::build_random(&mut rng, cx)
             } else {
                 let len = rng.gen_range(0..10);
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
                     .collect::<String>();
-                MultiBuffer::build_simple(&text, cx)
+                Multibuffer::build_simple(&text, cx)
             }
         });
         let mut buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));

@@ -49,8 +49,8 @@ use language::{
     ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow,
+use multibuffer::{
+    Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultibufferPoint, MultibufferRow,
     RowInfo, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
@@ -88,7 +88,7 @@ enum DisplayDiffHunk {
     Unfolded {
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
-        multi_buffer_range: Range<Anchor>,
+        multibuffer_range: Range<Anchor>,
         status: DiffHunkStatus,
     },
 }
@@ -545,7 +545,7 @@ impl EditorElement {
         event: &MouseDownEvent,
         hovered_hunk: Option<Range<Anchor>>,
         position_map: &PositionMap,
-        line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
+        line_numbers: &HashMap<MultibufferRow, LineNumberLayout>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
@@ -587,7 +587,7 @@ impl EditorElement {
                             + position_map.scroll_pixel_position.y)
                             / position_map.line_height)
                             as u32;
-                        let multi_buffer_row = position_map
+                        let multibuffer_row = position_map
                             .snapshot
                             .display_point_to_point(
                                 DisplayPoint::new(DisplayRow(display_row), 0),
@@ -597,8 +597,8 @@ impl EditorElement {
                         let line_offset_from_top = display_row - scroll_position_row as u32;
                         // if double click is made without alt, open the corresponding excerp
                         editor.open_excerpts_common(
-                            Some(JumpData::MultiBufferRow {
-                                row: MultiBufferRow(multi_buffer_row),
+                            Some(JumpData::MultibufferRow {
+                                row: MultibufferRow(multibuffer_row),
                                 line_offset_from_top,
                             }),
                             false,
@@ -655,12 +655,12 @@ impl EditorElement {
             let display_row = (((event.position - gutter_hitbox.bounds.origin).y
                 + position_map.scroll_pixel_position.y)
                 / position_map.line_height) as u32;
-            let multi_buffer_row = position_map
+            let multibuffer_row = position_map
                 .snapshot
                 .display_point_to_point(DisplayPoint::new(DisplayRow(display_row), 0), Bias::Right)
                 .row;
             if line_numbers
-                .get(&MultiBufferRow(multi_buffer_row))
+                .get(&MultibufferRow(multibuffer_row))
                 .and_then(|line_number| line_number.hitbox.as_ref())
                 .is_some_and(|hitbox| hitbox.contains(&event.position))
             {
@@ -669,8 +669,8 @@ impl EditorElement {
                 let line_offset_from_top = display_row - scroll_position_row as u32;
 
                 editor.open_excerpts_common(
-                    Some(JumpData::MultiBufferRow {
-                        row: MultiBufferRow(multi_buffer_row),
+                    Some(JumpData::MultibufferRow {
+                        row: MultibufferRow(multibuffer_row),
                         line_offset_from_top,
                     }),
                     modifiers.alt,
@@ -1587,7 +1587,7 @@ impl EditorElement {
                     status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                     display_row_range: hunk_display_start.row()..end_row,
-                    multi_buffer_range: Anchor::range_in_buffer(
+                    multibuffer_range: Anchor::range_in_buffer(
                         hunk.excerpt_id,
                         hunk.buffer_id,
                         hunk.buffer_range,
@@ -1776,7 +1776,7 @@ impl EditorElement {
         &self,
         content_origin: gpui::Point<Pixels>,
         text_origin: gpui::Point<Pixels>,
-        visible_buffer_range: Range<MultiBufferRow>,
+        visible_buffer_range: Range<MultibufferRow>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         snapshot: &DisplaySnapshot,
@@ -1828,7 +1828,7 @@ impl EditorElement {
     }
 
     fn calculate_indent_guide_bounds(
-        row_range: Range<MultiBufferRow>,
+        row_range: Range<MultibufferRow>,
         line_height: Pixels,
         snapshot: &DisplaySnapshot,
     ) -> (gpui::Pixels, gpui::Pixels) {
@@ -1934,7 +1934,7 @@ impl EditorElement {
                         return None;
                     }
                     let multibuffer_point = tasks.offset.0.to_point(&snapshot.buffer_snapshot);
-                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
+                    let multibuffer_row = MultibufferRow(multibuffer_point.row);
                     let buffer_folded = snapshot
                         .buffer_snapshot
                         .buffer_line_for_row(multibuffer_row)
@@ -1951,7 +1951,7 @@ impl EditorElement {
                             .0
                             .checked_sub(1)
                             .map_or(false, |previous_row| {
-                                snapshot.is_line_folded(MultiBufferRow(previous_row))
+                                snapshot.is_line_folded(MultibufferRow(previous_row))
                             })
                         {
                             return None;
@@ -2094,7 +2094,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
-    ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
+    ) -> Arc<HashMap<MultibufferRow, LineNumberLayout>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
@@ -2168,14 +2168,14 @@ impl EditorElement {
                     None
                 };
 
-                let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
-                let multi_buffer_row = MultiBufferRow(multi_buffer_row);
+                let multibuffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
+                let multibuffer_row = MultibufferRow(multibuffer_row);
                 let line_number = LineNumberLayout {
                     shaped_line,
                     hitbox,
                     display_row,
                 };
-                Some((multi_buffer_row, line_number))
+                Some((multibuffer_row, line_number))
             })
             .collect();
         Arc::new(line_numbers)
@@ -4071,7 +4071,7 @@ impl EditorElement {
         for (hunk, _) in display_hunks {
             if let DisplayDiffHunk::Unfolded {
                 display_row_range,
-                multi_buffer_range,
+                multibuffer_range,
                 status,
                 ..
             } = &hunk
@@ -4101,7 +4101,7 @@ impl EditorElement {
 
                     let mut element = diff_hunk_controls(
                         display_row_range.start.0,
-                        multi_buffer_range.clone(),
+                        multibuffer_range.clone(),
                         line_height,
                         &editor,
                         cx,
@@ -5195,11 +5195,11 @@ impl EditorElement {
                                 let marker_row_ranges =
                                     snapshot.buffer_snapshot.diff_hunks().map(|hunk| {
                                         let start_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.start.0, 0)
+                                            MultibufferPoint::new(hunk.row_range.start.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         let mut end_display_row =
-                                            MultiBufferPoint::new(hunk.row_range.end.0, 0)
+                                            MultibufferPoint::new(hunk.row_range.end.0, 0)
                                                 .to_display_point(&snapshot.display_snapshot)
                                                 .row();
                                         if end_display_row != start_display_row {
@@ -5514,21 +5514,21 @@ impl EditorElement {
         window.on_mouse_event({
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
-            let multi_buffer_range =
+            let multibuffer_range =
                 layout
                     .display_hunks
                     .iter()
                     .find_map(|(hunk, hunk_hitbox)| match hunk {
                         DisplayDiffHunk::Folded { .. } => None,
                         DisplayDiffHunk::Unfolded {
-                            multi_buffer_range, ..
+                            multibuffer_range, ..
                         } => {
                             if hunk_hitbox
                                 .as_ref()
                                 .map(|hitbox| hitbox.is_hovered(window))
                                 .unwrap_or(false)
                             {
-                                Some(multi_buffer_range.clone())
+                                Some(multibuffer_range.clone())
                             } else {
                                 None
                             }
@@ -5550,7 +5550,7 @@ impl EditorElement {
                             Self::mouse_left_down(
                                 editor,
                                 event,
-                                multi_buffer_range.clone(),
+                                multibuffer_range.clone(),
                                 &position_map,
                                 line_numbers.as_ref(),
                                 window,
@@ -5727,7 +5727,7 @@ fn header_jump_data(
                 .y as u32,
         );
 
-    JumpData::MultiBufferPoint {
+    JumpData::MultibufferPoint {
         excerpt_id: for_excerpt.id,
         anchor: jump_anchor,
         position: jump_position,
@@ -7099,9 +7099,9 @@ impl Element for EditorElement {
                     });
 
                     let start_buffer_row =
-                        MultiBufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
+                        MultibufferRow(start_anchor.to_point(&snapshot.buffer_snapshot).row);
                     let end_buffer_row =
-                        MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
+                        MultibufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
                         ((scroll_width - scrollbar_bounds.size.width) / em_width).max(0.0),
@@ -7328,10 +7328,10 @@ impl Element for EditorElement {
                                 let newest_selection_point =
                                     newest_selection_head.to_point(&snapshot.display_snapshot);
                                 if !snapshot
-                                    .is_line_folded(MultiBufferRow(newest_selection_point.row))
+                                    .is_line_folded(MultibufferRow(newest_selection_point.row))
                                 {
                                     let buffer = snapshot.buffer_snapshot.buffer_line_for_row(
-                                        MultiBufferRow(newest_selection_point.row),
+                                        MultibufferRow(newest_selection_point.row),
                                     );
                                     if let Some((buffer, range)) = buffer {
                                         let buffer_id = buffer.remote_id();
@@ -7706,7 +7706,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
+    line_numbers: Arc<HashMap<MultibufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
@@ -8339,7 +8339,7 @@ mod tests {
     use crate::{
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
-        Editor, MultiBuffer,
+        Editor, Multibuffer,
     };
     use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
@@ -8352,7 +8352,7 @@ mod tests {
     fn test_shape_line_numbers(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+            let buffer = Multibuffer::build_simple(&sample_text(6, 6, 'a'), cx);
             Editor::new(EditorMode::Full, buffer, None, true, window, cx)
         });
 
@@ -8452,7 +8452,7 @@ mod tests {
         init_test(cx, |_| {});
 
         let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
+            let buffer = Multibuffer::build_simple(&(sample_text(6, 6, 'a') + "\n"), cx);
             Editor::new(EditorMode::Full, buffer, None, true, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -8541,7 +8541,7 @@ mod tests {
         // 19: dddddd
         // 20: [[footer]]
         let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_multi(
+            let buffer = Multibuffer::build_multi(
                 [
                     (
                         &(sample_text(8, 6, 'a') + "\n"),
@@ -8607,7 +8607,7 @@ mod tests {
         init_test(cx, |_| {});
 
         let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple("", cx);
+            let buffer = Multibuffer::build_simple("", cx);
             Editor::new(EditorMode::Full, buffer, None, true, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
@@ -8643,7 +8643,7 @@ mod tests {
         assert_eq!(
             state
                 .line_numbers
-                .get(&MultiBufferRow(0))
+                .get(&MultibufferRow(0))
                 .and_then(|line_number| line_number.shaped_line.text.as_str()),
             Some("1")
         );
@@ -8833,7 +8833,7 @@ mod tests {
             editor_width.0
         );
         let window = cx.add_window(|window, cx| {
-            let buffer = MultiBuffer::build_simple(input_text, cx);
+            let buffer = Multibuffer::build_simple(input_text, cx);
             Editor::new(editor_mode, buffer, None, true, window, cx)
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);

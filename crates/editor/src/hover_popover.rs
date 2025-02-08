@@ -15,7 +15,7 @@ use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
-use multi_buffer::ToOffset;
+use multibuffer::ToOffset;
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::rc::Rc;

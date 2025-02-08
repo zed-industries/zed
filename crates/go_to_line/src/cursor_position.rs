@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot};
+use editor::{Editor, MultibufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ pub struct UserCaretPosition {
 }
 
 impl UserCaretPosition {
-    pub fn at_selection_end(selection: &Selection<Point>, snapshot: &MultiBufferSnapshot) -> Self {
+    pub fn at_selection_end(selection: &Selection<Point>, snapshot: &MultibufferSnapshot) -> Self {
         let selection_end = selection.head();
         let line_start = Point::new(selection_end.row, 0);
         let chars_to_last_position = snapshot

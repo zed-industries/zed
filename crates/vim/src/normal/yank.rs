@@ -11,7 +11,7 @@ use editor::{ClipboardSelection, Editor};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use settings::Settings;
 
 struct HighlightOnYank;
@@ -167,7 +167,7 @@ impl Vim {
                     && end.row == max_point.row
                     && max_point.column > 0
                     && start.row < max_point.row
-                    && start == Point::new(start.row, buffer.line_len(MultiBufferRow(start.row)));
+                    && start == Point::new(start.row, buffer.line_len(MultibufferRow(start.row)));
                 let should_add_newline =
                     should_adjust_start || (end == max_point && max_point.column > 0 && linewise);
 
@@ -188,7 +188,7 @@ impl Vim {
                 clipboard_selections.push(ClipboardSelection {
                     len: text.len() - initial_len,
                     is_entire_line: linewise,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                    first_line_indent: buffer.indent_size_for_line(MultibufferRow(start.row)).len,
                 });
             }
         }

@@ -8,7 +8,7 @@ use editor::{
 };
 use gpui::{actions, impl_actions, px, Context, Window};
 use language::{CharKind, Point, Selection, SelectionGoal};
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ops::Range;
@@ -1200,7 +1200,7 @@ impl Motion {
                     ignore_punctuation: _,
                 } = self
                 {
-                    let start_row = MultiBufferRow(selection.start.to_point(map).row);
+                    let start_row = MultibufferRow(selection.start.to_point(map).row);
                     if selection.end.to_point(map).row > start_row.0 {
                         selection.end =
                             Point::new(start_row.0, map.buffer_snapshot.line_len(start_row))
@@ -1567,7 +1567,7 @@ fn previous_word_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+    if point.column < map.buffer_snapshot.line_len(MultibufferRow(point.row)) {
         point.column += 1;
     }
     for _ in 0..times {
@@ -1740,7 +1740,7 @@ fn previous_subword_end(
         .ignore_punctuation(ignore_punctuation);
     let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+    if point.column < map.buffer_snapshot.line_len(MultibufferRow(point.row)) {
         point.column += 1;
     }
     for _ in 0..times {
@@ -2762,7 +2762,7 @@ mod test {
     use editor::display_map::Inlay;
     use indoc::indoc;
     use language::Point;
-    use multi_buffer::MultiBufferRow;
+    use multibuffer::MultibufferRow;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -3470,7 +3470,7 @@ mod test {
         cx.update_editor(|editor, _window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let end_of_line =
-                snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
+                snapshot.anchor_after(Point::new(0, snapshot.line_len(MultibufferRow(0))));
             let inlay_text = " hint";
             let inlay = Inlay::inline_completion(1, end_of_line, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);

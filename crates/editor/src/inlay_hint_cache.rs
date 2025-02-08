@@ -14,7 +14,7 @@ use std::{
 };
 
 use crate::{
-    display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, MultiBuffer, MultiBufferSnapshot,
+    display_map::Inlay, Anchor, Editor, ExcerptId, InlayId, Multibuffer, MultibufferSnapshot,
 };
 use anyhow::Context as _;
 use clock::Global;
@@ -281,7 +281,7 @@ impl InlayHintCache {
     /// Does not update inlay hint cache state on disabling or inlay hint kinds change: only reenabling forces new LSP queries.
     pub(super) fn update_settings(
         &mut self,
-        multi_buffer: &Entity<MultiBuffer>,
+        multibuffer: &Entity<Multibuffer>,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
         cx: &mut Context<Editor>,
@@ -310,7 +310,7 @@ impl InlayHintCache {
                     ControlFlow::Break(None)
                 } else {
                     let new_splice = self.new_allowed_hint_kinds_splice(
-                        multi_buffer,
+                        multibuffer,
                         &visible_hints,
                         &new_allowed_hint_kinds,
                         cx,
@@ -411,7 +411,7 @@ impl InlayHintCache {
 
     fn new_allowed_hint_kinds_splice(
         &self,
-        multi_buffer: &Entity<MultiBuffer>,
+        multibuffer: &Entity<Multibuffer>,
         visible_hints: &[Inlay],
         new_kinds: &HashSet<Option<InlayHintKind>>,
         cx: &mut Context<Editor>,
@@ -434,8 +434,8 @@ impl InlayHintCache {
             },
         );
 
-        let multi_buffer = multi_buffer.read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let multibuffer = multibuffer.read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
 
         for (excerpt_id, excerpt_cached_hints) in &self.hints {
             let shown_excerpt_hints_to_remove =
@@ -445,7 +445,7 @@ impl InlayHintCache {
             shown_excerpt_hints_to_remove.retain(|(shown_anchor, shown_hint_id)| {
                 let Some(buffer) = shown_anchor
                     .buffer_id
-                    .and_then(|buffer_id| multi_buffer.buffer(buffer_id))
+                    .and_then(|buffer_id| multibuffer.buffer(buffer_id))
                 else {
                     return false;
                 };
@@ -467,7 +467,7 @@ impl InlayHintCache {
                                     if !old_kinds.contains(&cached_hint.kind)
                                         && new_kinds.contains(&cached_hint.kind)
                                     {
-                                        if let Some(anchor) = multi_buffer_snapshot
+                                        if let Some(anchor) = multibuffer_snapshot
                                             .anchor_in_excerpt(*excerpt_id, cached_hint.position)
                                         {
                                             to_insert.push(Inlay::hint(
@@ -491,7 +491,7 @@ impl InlayHintCache {
                 let maybe_missed_cached_hint = &excerpt_cached_hints.hints_by_id[cached_hint_id];
                 let cached_hint_kind = maybe_missed_cached_hint.kind;
                 if !old_kinds.contains(&cached_hint_kind) && new_kinds.contains(&cached_hint_kind) {
-                    if let Some(anchor) = multi_buffer_snapshot
+                    if let Some(anchor) = multibuffer_snapshot
                         .anchor_in_excerpt(*excerpt_id, maybe_missed_cached_hint.position)
                     {
                         to_insert.push(Inlay::hint(
@@ -672,9 +672,9 @@ fn spawn_new_update_tasks(
             }
         };
 
-        let Some(query_ranges) = editor.buffer.update(cx, |multi_buffer, cx| {
+        let Some(query_ranges) = editor.buffer.update(cx, |multibuffer, cx| {
             determine_query_ranges(
-                multi_buffer,
+                multibuffer,
                 excerpt_id,
                 &excerpt_buffer,
                 excerpt_visible_range,
@@ -737,14 +737,14 @@ impl QueryRanges {
 }
 
 fn determine_query_ranges(
-    multi_buffer: &mut MultiBuffer,
+    multibuffer: &mut Multibuffer,
     excerpt_id: ExcerptId,
     excerpt_buffer: &Entity<Buffer>,
     excerpt_visible_range: Range<usize>,
-    cx: &mut Context<'_, MultiBuffer>,
+    cx: &mut Context<'_, Multibuffer>,
 ) -> Option<QueryRanges> {
     let buffer = excerpt_buffer.read(cx);
-    let full_excerpt_range = multi_buffer
+    let full_excerpt_range = multibuffer
         .excerpts_for_buffer(buffer.remote_id(), cx)
         .into_iter()
         .find(|(id, _)| id == &excerpt_id)
@@ -901,12 +901,12 @@ fn fetch_and_update_hints(
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(|editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let (lsp_request_limiter, multi_buffer_snapshot) =
+        let (lsp_request_limiter, multibuffer_snapshot) =
             editor.update(&mut cx, |editor, cx| {
-                let multi_buffer_snapshot =
+                let multibuffer_snapshot =
                     editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
                 let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
-                (lsp_request_limiter, multi_buffer_snapshot)
+                (lsp_request_limiter, multibuffer_snapshot)
             })?;
 
         let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
@@ -1026,7 +1026,7 @@ fn fetch_and_update_hints(
                         query,
                         invalidate,
                         buffer_snapshot,
-                        multi_buffer_snapshot,
+                        multibuffer_snapshot,
                         cx,
                     );
                 })
@@ -1142,7 +1142,7 @@ fn apply_hint_update(
     query: ExcerptQuery,
     invalidate: bool,
     buffer_snapshot: BufferSnapshot,
-    multi_buffer_snapshot: MultiBufferSnapshot,
+    multibuffer_snapshot: MultibufferSnapshot,
     cx: &mut Context<Editor>,
 ) {
     let cached_excerpt_hints = editor
@@ -1199,7 +1199,7 @@ fn apply_hint_update(
             .contains(&new_hint.kind)
         {
             if let Some(new_hint_position) =
-                multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
+                multibuffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
             {
                 splice
                     .to_insert
@@ -2511,7 +2511,7 @@ pub mod tests {
             .await
             .unwrap();
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            let mut multibuffer = Multibuffer::new(Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
@@ -2853,7 +2853,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|_| Multibuffer::new(Capability::ReadWrite));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),

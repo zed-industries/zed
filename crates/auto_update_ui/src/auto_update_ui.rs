@@ -1,7 +1,7 @@
 mod update_notification;
 
 use auto_update::AutoUpdater;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, Multibuffer};
 use gpui::{actions, prelude::*, App, Context, Entity, SharedString, Window};
 use http_client::HttpClient;
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
@@ -91,7 +91,7 @@ fn view_release_notes_locally(
                             });
                             let language_registry = project.read(cx).languages().clone();
 
-                            let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                            let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
                             let editor = cx.new(|cx| {

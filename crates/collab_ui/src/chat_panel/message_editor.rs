@@ -467,7 +467,7 @@ impl MessageEditor {
             let mut text = String::new();
 
             this.editor.update(cx, |editor, cx| {
-                let multi_buffer = editor.buffer().read(cx).snapshot(cx);
+                let multibuffer = editor.buffer().read(cx).snapshot(cx);
                 for range in ranges {
                     text.clear();
                     text.extend(buffer.text_for_range(range.clone()));
@@ -477,8 +477,8 @@ impl MessageEditor {
                             .read(cx)
                             .cached_user_by_github_login(username)
                         {
-                            let start = multi_buffer.anchor_after(range.start);
-                            let end = multi_buffer.anchor_after(range.end);
+                            let start = multibuffer.anchor_after(range.start);
+                            let end = multibuffer.anchor_after(range.end);
 
                             mentioned_user_ids.push(user.id);
                             anchor_ranges.push(start..end);

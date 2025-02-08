@@ -13,7 +13,7 @@ use editor::{
         ToDisplayPoint,
     },
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
+    EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, Multibuffer, MultibufferSnapshot,
     ToOffset as _, ToPoint,
 };
 use feature_flags::{
@@ -37,7 +37,7 @@ use language_model::{
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
 use prompt_library::PromptBuilder;
@@ -247,7 +247,7 @@ impl InlineAssistant {
                 if selection.end.column == 0 {
                     selection.end.row -= 1;
                 }
-                selection.end.column = snapshot.line_len(MultiBufferRow(selection.end.row));
+                selection.end.column = snapshot.line_len(MultibufferRow(selection.end.row));
             }
 
             if let Some(prev_selection) = selections.last_mut() {
@@ -297,7 +297,7 @@ impl InlineAssistant {
 
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
-        let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
+        let prompt_buffer = cx.new(|cx| Multibuffer::singleton(prompt_buffer, cx));
 
         let mut assists = Vec::new();
         let mut assist_to_focus = None;
@@ -402,7 +402,7 @@ impl InlineAssistant {
     ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new(|cx| Buffer::local(&initial_prompt, cx));
-        let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
+        let prompt_buffer = cx.new(|cx| Multibuffer::singleton(prompt_buffer, cx));
 
         let assist_id = self.next_assist_id.post_inc();
 
@@ -1229,15 +1229,15 @@ impl InlineAssistant {
                 let (_, buffer_end) = old_snapshot
                     .point_to_buffer_offset(Point::new(
                         *old_row_range.end(),
-                        old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
+                        old_snapshot.line_len(MultibufferRow(*old_row_range.end())),
                     ))
                     .unwrap();
 
                 let deleted_lines_editor = cx.new(|cx| {
-                    let multi_buffer =
-                        cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
-                    multi_buffer.update(cx, |multi_buffer, cx| {
-                        multi_buffer.push_excerpts(
+                    let multibuffer =
+                        cx.new(|_| Multibuffer::without_headers(language::Capability::ReadOnly));
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.push_excerpts(
                             old_buffer.clone(),
                             Some(ExcerptRange {
                                 context: buffer_start..buffer_end,
@@ -1248,7 +1248,7 @@ impl InlineAssistant {
                     });
 
                     enum DeletedLines {}
-                    let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
+                    let mut editor = Editor::for_multibuffer(multibuffer, None, true, window, cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
@@ -1679,7 +1679,7 @@ impl PromptEditor {
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
-        prompt_buffer: Entity<MultiBuffer>,
+        prompt_buffer: Entity<Multibuffer>,
         codegen: Entity<Codegen>,
         parent_editor: &Entity<Editor>,
         assistant_panel: Option<&Entity<AssistantPanel>>,
@@ -2486,7 +2486,7 @@ pub struct Codegen {
     active_alternative: usize,
     seen_alternatives: HashSet<usize>,
     subscriptions: Vec<Subscription>,
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
     telemetry: Arc<Telemetry>,
@@ -2496,7 +2496,7 @@ pub struct Codegen {
 
 impl Codegen {
     pub fn new(
-        buffer: Entity<MultiBuffer>,
+        buffer: Entity<Multibuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
         telemetry: Arc<Telemetry>,
@@ -2656,7 +2656,7 @@ impl Codegen {
             .count_tokens(user_prompt, assistant_panel_context, cx)
     }
 
-    pub fn buffer(&self, cx: &App) -> Entity<MultiBuffer> {
+    pub fn buffer(&self, cx: &App) -> Entity<Multibuffer> {
         self.active_alternative().read(cx).buffer.clone()
     }
 
@@ -2664,7 +2664,7 @@ impl Codegen {
         self.active_alternative().read(cx).old_buffer.clone()
     }
 
-    pub fn snapshot(&self, cx: &App) -> MultiBufferSnapshot {
+    pub fn snapshot(&self, cx: &App) -> MultibufferSnapshot {
         self.active_alternative().read(cx).snapshot.clone()
     }
 
@@ -2684,9 +2684,9 @@ impl Codegen {
 impl EventEmitter<CodegenEvent> for Codegen {}
 
 pub struct CodegenAlternative {
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     old_buffer: Entity<Buffer>,
-    snapshot: MultiBufferSnapshot,
+    snapshot: MultibufferSnapshot,
     edit_position: Option<Anchor>,
     range: Range<Anchor>,
     last_equal_ranges: Vec<Range<Anchor>>,
@@ -2729,14 +2729,14 @@ impl EventEmitter<CodegenEvent> for CodegenAlternative {}
 
 impl CodegenAlternative {
     pub fn new(
-        multi_buffer: Entity<MultiBuffer>,
+        multibuffer: Entity<Multibuffer>,
         range: Range<Anchor>,
         active: bool,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = multi_buffer.read(cx).snapshot(cx);
+        let snapshot = multibuffer.read(cx).snapshot(cx);
 
         let (buffer, _, _) = snapshot
             .range_to_buffer_ranges(range.clone())
@@ -2746,7 +2746,7 @@ impl CodegenAlternative {
             let text = buffer.as_rope().clone();
             let line_ending = buffer.line_ending();
             let language = buffer.language().cloned();
-            let language_registry = multi_buffer
+            let language_registry = multibuffer
                 .read(cx)
                 .buffer(buffer.remote_id())
                 .unwrap()
@@ -2762,7 +2762,7 @@ impl CodegenAlternative {
         });
 
         Self {
-            buffer: multi_buffer.clone(),
+            buffer: multibuffer.clone(),
             old_buffer,
             edit_position: None,
             message_id: None,
@@ -2773,7 +2773,7 @@ impl CodegenAlternative {
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
-            _subscription: cx.subscribe(&multi_buffer, Self::handle_buffer_event),
+            _subscription: cx.subscribe(&multibuffer, Self::handle_buffer_event),
             builder,
             active,
             edits: Vec::new(),
@@ -2809,11 +2809,11 @@ impl CodegenAlternative {
 
     fn handle_buffer_event(
         &mut self,
-        _buffer: Entity<MultiBuffer>,
-        event: &multi_buffer::Event,
+        _buffer: Entity<Multibuffer>,
+        event: &multibuffer::Event,
         cx: &mut Context<Self>,
     ) {
-        if let multi_buffer::Event::TransactionUndone { transaction_id } = event {
+        if let multibuffer::Event::TransactionUndone { transaction_id } = event {
             if self.transformation_transaction_id == Some(*transaction_id) {
                 self.transformation_transaction_id = None;
                 self.generation = Task::ready(());
@@ -2966,12 +2966,12 @@ impl CodegenAlternative {
             .suggested_indents(selection_start.row..=selection_start.row, cx)
             .into_values()
             .next()
-            .unwrap_or_else(|| snapshot.indent_size_for_line(MultiBufferRow(selection_start.row)));
+            .unwrap_or_else(|| snapshot.indent_size_for_line(MultibufferRow(selection_start.row)));
 
         // If the first line in the selection does not have indentation, check the following lines
         if suggested_line_indent.len == 0 && suggested_line_indent.kind == IndentKind::Space {
             for row in selection_start.row..=self.range.end.to_point(&snapshot).row {
-                let line_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
+                let line_indent = snapshot.indent_size_for_line(MultibufferRow(row));
                 // Prefer tabs if a line in the selection uses tabs as indentation
                 if line_indent.kind == IndentKind::Tab {
                     suggested_line_indent.kind = IndentKind::Tab;
@@ -3305,7 +3305,7 @@ impl CodegenAlternative {
                     let start = new_snapshot.anchor_before(Point::new(new_row, 0));
                     let end = new_snapshot.anchor_before(Point::new(
                         new_end_row,
-                        new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                        new_snapshot.line_len(MultibufferRow(new_end_row)),
                     ));
                     self.diff.inserted_row_ranges.push(start..end);
                     new_row += lines;
@@ -3331,7 +3331,7 @@ impl CodegenAlternative {
                             Point::new(old_range.start.row, 0)
                                 ..Point::new(
                                     old_range.end.row,
-                                    old_snapshot.line_len(MultiBufferRow(old_range.end.row)),
+                                    old_snapshot.line_len(MultibufferRow(old_range.end.row)),
                                 ),
                         )
                         .collect::<String>();
@@ -3340,7 +3340,7 @@ impl CodegenAlternative {
                             Point::new(new_range.start.row, 0)
                                 ..Point::new(
                                     new_range.end.row,
-                                    new_snapshot.line_len(MultiBufferRow(new_range.end.row)),
+                                    new_snapshot.line_len(MultibufferRow(new_range.end.row)),
                                 ),
                         )
                         .collect::<String>();
@@ -3383,7 +3383,7 @@ impl CodegenAlternative {
                                 let start = new_snapshot.anchor_before(Point::new(new_row, 0));
                                 let end = new_snapshot.anchor_before(Point::new(
                                     new_end_row,
-                                    new_snapshot.line_len(MultiBufferRow(new_end_row)),
+                                    new_snapshot.line_len(MultibufferRow(new_end_row)),
                                 ));
                                 inserted_row_ranges.push(start..end);
                                 new_row += line_count;
@@ -3677,7 +3677,7 @@ fn prefixes(text: &str) -> impl Iterator<Item = &str> {
     (0..text.len() - 1).map(|ix| &text[..ix + 1])
 }
 
-fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
+fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultibufferSnapshot) {
     ranges.sort_unstable_by(|a, b| {
         a.start
             .cmp(&b.start, buffer)
@@ -3735,7 +3735,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(4, 5))
@@ -3798,7 +3798,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 6))..snapshot.anchor_after(Point::new(1, 6))
@@ -3864,7 +3864,7 @@ mod tests {
             "}\n" //
         );
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 2))..snapshot.anchor_after(Point::new(1, 2))
@@ -3930,7 +3930,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(0, 0))..snapshot.anchor_after(Point::new(4, 2))
@@ -3984,7 +3984,7 @@ mod tests {
             }
         "};
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let range = buffer.read_with(cx, |buffer, cx| {
             let snapshot = buffer.snapshot(cx);
             snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 14))

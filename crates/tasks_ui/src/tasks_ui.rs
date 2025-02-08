@@ -236,12 +236,12 @@ fn active_item_selection_properties(
         .and_then(|editor| {
             editor.update(cx, |editor, cx| {
                 let selection = editor.selections.newest_anchor();
-                let multi_buffer = editor.buffer().clone();
-                let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                let multibuffer = editor.buffer().clone();
+                let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
                 let (buffer_snapshot, buffer_offset) =
-                    multi_buffer_snapshot.point_to_buffer_offset(selection.head())?;
+                    multibuffer_snapshot.point_to_buffer_offset(selection.head())?;
                 let buffer_anchor = buffer_snapshot.anchor_before(buffer_offset);
-                let buffer = multi_buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
+                let buffer = multibuffer.read(cx).buffer(buffer_snapshot.remote_id())?;
                 Some(Location {
                     buffer,
                     range: buffer_anchor..buffer_anchor,

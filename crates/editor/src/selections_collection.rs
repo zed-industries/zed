@@ -14,7 +14,7 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
-    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, Multibuffer, MultibufferSnapshot, SelectMode,
     ToOffset, ToPoint,
 };
 
@@ -27,7 +27,7 @@ pub struct PendingSelection {
 #[derive(Debug, Clone)]
 pub struct SelectionsCollection {
     display_map: Entity<DisplayMap>,
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     pub next_selection_id: usize,
     pub line_mode: bool,
     /// The non-pending, non-overlapping selections.
@@ -38,7 +38,7 @@ pub struct SelectionsCollection {
 }
 
 impl SelectionsCollection {
-    pub fn new(display_map: Entity<DisplayMap>, buffer: Entity<MultiBuffer>) -> Self {
+    pub fn new(display_map: Entity<DisplayMap>, buffer: Entity<Multibuffer>) -> Self {
         Self {
             display_map,
             buffer,
@@ -62,7 +62,7 @@ impl SelectionsCollection {
         self.display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
-    fn buffer<'a>(&self, cx: &'a App) -> Ref<'a, MultiBufferSnapshot> {
+    fn buffer<'a>(&self, cx: &'a App) -> Ref<'a, MultibufferSnapshot> {
         self.buffer.read(cx).read(cx)
     }
 
@@ -407,7 +407,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    pub fn buffer(&self) -> Ref<MultiBufferSnapshot> {
+    pub fn buffer(&self) -> Ref<MultibufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
@@ -682,7 +682,7 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn move_offsets_with(
         &mut self,
-        mut move_selection: impl FnMut(&MultiBufferSnapshot, &mut Selection<usize>),
+        mut move_selection: impl FnMut(&MultibufferSnapshot, &mut Selection<usize>),
     ) {
         let mut changed = false;
         let snapshot = self.buffer().clone();

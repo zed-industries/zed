@@ -102,14 +102,14 @@ pub struct ToggleComments {
 #[serde(deny_unknown_fields)]
 pub struct FoldAt {
     #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
+    pub buffer_row: MultibufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UnfoldAt {
     #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
+    pub buffer_row: MultibufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]

@@ -13,7 +13,7 @@ use editor::{
         RenderBlock,
     },
     scroll::Autoscroll,
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
+    Anchor, AnchorRangeExt as _, Editor, Multibuffer, ToPoint,
 };
 use futures::FutureExt as _;
 use gpui::{
@@ -314,11 +314,11 @@ impl Session {
 
     fn on_buffer_event(
         &mut self,
-        buffer: Entity<MultiBuffer>,
-        event: &multi_buffer::Event,
+        buffer: Entity<Multibuffer>,
+        event: &multibuffer::Event,
         cx: &mut Context<Self>,
     ) {
-        if let multi_buffer::Event::Edited { .. } = event {
+        if let multibuffer::Event::Edited { .. } = event {
             let snapshot = buffer.read(cx).snapshot(cx);
 
             let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();

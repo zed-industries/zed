@@ -7,7 +7,7 @@ use gpui::{App, Entity};
 use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
-use multi_buffer::Anchor;
+use multibuffer::Anchor;
 
 pub(crate) fn find_specific_language_server_in_selection<F>(
     editor: &Editor,

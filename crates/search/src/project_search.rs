@@ -6,7 +6,7 @@ use crate::{
 use collections::{HashMap, HashSet};
 use editor::{
     actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor,
-    EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
+    EditorElement, EditorEvent, EditorSettings, EditorStyle, Multibuffer, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
@@ -131,7 +131,7 @@ fn is_contains_uppercase(str: &str) -> bool {
 
 pub struct ProjectSearch {
     project: Entity<Project>,
-    excerpts: Entity<MultiBuffer>,
+    excerpts: Entity<Multibuffer>,
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
     active_query: Option<SearchQuery>,
@@ -187,7 +187,7 @@ impl ProjectSearch {
 
         Self {
             project,
-            excerpts: cx.new(|_| MultiBuffer::new(capability)),
+            excerpts: cx.new(|_| Multibuffer::new(capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,

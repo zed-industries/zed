@@ -11,7 +11,7 @@ use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
     actions::{MoveDown, MoveUp},
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, MultiBuffer,
+    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, GutterDimensions, Multibuffer,
 };
 use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
@@ -826,7 +826,7 @@ impl PromptEditor<BufferCodegen> {
         id: InlineAssistId,
         gutter_dimensions: Arc<Mutex<GutterDimensions>>,
         prompt_history: VecDeque<String>,
-        prompt_buffer: Entity<MultiBuffer>,
+        prompt_buffer: Entity<Multibuffer>,
         codegen: Entity<BufferCodegen>,
         fs: Arc<dyn Fs>,
         context_store: Entity<ContextStore>,
@@ -986,7 +986,7 @@ impl PromptEditor<TerminalCodegen> {
     pub fn new_terminal(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
-        prompt_buffer: Entity<MultiBuffer>,
+        prompt_buffer: Entity<Multibuffer>,
         codegen: Entity<TerminalCodegen>,
         fs: Arc<dyn Fs>,
         context_store: Entity<ContextStore>,

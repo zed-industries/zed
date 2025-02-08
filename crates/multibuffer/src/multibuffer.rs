@@ -1,6 +1,6 @@
 mod anchor;
 #[cfg(test)]
-mod multi_buffer_tests;
+mod multibuffer_tests;
 mod position;
 
 pub use anchor::{Anchor, AnchorRangeExt, Offset};
@@ -60,10 +60,10 @@ pub struct ExcerptId(usize);
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
 /// See <https://zed.dev/features#multi-buffers>
-pub struct MultiBuffer {
-    /// A snapshot of the [`Excerpt`]s in the MultiBuffer.
-    /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.
-    snapshot: RefCell<MultiBufferSnapshot>,
+pub struct Multibuffer {
+    /// A snapshot of the [`Excerpt`]s in the Multibuffer.
+    /// Use [`Multibuffer::snapshot`] to get a up-to-date snapshot.
+    snapshot: RefCell<MultibufferSnapshot>,
     /// Contains the state of the buffers being edited
     buffers: RefCell<HashMap<BufferId, BufferState>>,
     // only used by consumers using `set_excerpts_for_buffer`
@@ -118,9 +118,9 @@ pub enum Event {
 
 /// A diff hunk, representing a range of consequent lines in a multibuffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MultiBufferDiffHunk {
+pub struct MultibufferDiffHunk {
     /// The row range in the multibuffer where this diff hunk appears.
-    pub row_range: Range<MultiBufferRow>,
+    pub row_range: Range<MultibufferRow>,
     /// The buffer ID that this hunk belongs to.
     pub buffer_id: BufferId,
     /// The range of the underlying buffer that this hunk corresponds to.
@@ -131,7 +131,7 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
 }
 
-impl MultiBufferDiffHunk {
+impl MultibufferDiffHunk {
     pub fn status(&self) -> DiffHunkStatus {
         if self.buffer_range.start == self.buffer_range.end {
             DiffHunkStatus::Removed
@@ -152,24 +152,24 @@ impl PathKey {
     }
 }
 
-pub type MultiBufferPoint = Point;
+pub type MultibufferPoint = Point;
 type ExcerptOffset = TypedOffset<Excerpt>;
 type ExcerptPoint = TypedPoint<Excerpt>;
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, Hash, serde::Deserialize)]
 #[serde(transparent)]
-pub struct MultiBufferRow(pub u32);
+pub struct MultibufferRow(pub u32);
 
-impl MultiBufferRow {
+impl MultibufferRow {
     pub const MIN: Self = Self(0);
     pub const MAX: Self = Self(u32::MAX);
 }
 
-impl std::ops::Add<usize> for MultiBufferRow {
+impl std::ops::Add<usize> for MultibufferRow {
     type Output = Self;
 
     fn add(self, rhs: usize) -> Self::Output {
-        MultiBufferRow(self.0 + rhs as u32)
+        MultibufferRow(self.0 + rhs as u32)
     }
 }
 
@@ -192,19 +192,19 @@ struct Transaction {
 }
 
 pub trait ToOffset: 'static + fmt::Debug {
-    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
+    fn to_offset(&self, snapshot: &MultibufferSnapshot) -> usize;
 }
 
 pub trait ToOffsetUtf16: 'static + fmt::Debug {
-    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16;
+    fn to_offset_utf16(&self, snapshot: &MultibufferSnapshot) -> OffsetUtf16;
 }
 
 pub trait ToPoint: 'static + fmt::Debug {
-    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
+    fn to_point(&self, snapshot: &MultibufferSnapshot) -> Point;
 }
 
 pub trait ToPointUtf16: 'static + fmt::Debug {
-    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16;
+    fn to_point_utf16(&self, snapshot: &MultibufferSnapshot) -> PointUtf16;
 }
 
 struct BufferState {
@@ -221,7 +221,7 @@ struct DiffState {
 }
 
 impl DiffState {
-    fn new(diff: Entity<BufferDiff>, cx: &mut Context<MultiBuffer>) -> Self {
+    fn new(diff: Entity<BufferDiff>, cx: &mut Context<Multibuffer>) -> Self {
         DiffState {
             _subscription: cx.subscribe(&diff, |this, diff, event, cx| match event {
                 BufferDiffEvent::DiffChanged { changed_range } => {
@@ -234,9 +234,9 @@ impl DiffState {
     }
 }
 
-/// The contents of a [`MultiBuffer`] at a single point in time.
+/// The contents of a [`Multibuffer`] at a single point in time.
 #[derive(Clone, Default)]
-pub struct MultiBufferSnapshot {
+pub struct MultibufferSnapshot {
     singleton: bool,
     excerpts: SumTree<Excerpt>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
@@ -272,7 +272,7 @@ pub struct ExcerptInfo {
     pub buffer: BufferSnapshot,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
-    pub end_row: MultiBufferRow,
+    pub end_row: MultibufferRow,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -286,13 +286,13 @@ impl std::fmt::Debug for ExcerptInfo {
     }
 }
 
-/// A boundary between `Excerpt`s in a [`MultiBuffer`]
+/// A boundary between `Excerpt`s in a [`Multibuffer`]
 #[derive(Debug)]
 pub struct ExcerptBoundary {
     pub prev: Option<ExcerptInfo>,
     pub next: Option<ExcerptInfo>,
-    /// The row in the `MultiBuffer` where the boundary is located
-    pub row: MultiBufferRow,
+    /// The row in the `Multibuffer` where the boundary is located
+    pub row: MultibufferRow,
 }
 
 impl ExcerptBoundary {
@@ -309,16 +309,16 @@ impl ExcerptBoundary {
 pub struct RowInfo {
     pub buffer_id: Option<BufferId>,
     pub buffer_row: Option<u32>,
-    pub multibuffer_row: Option<MultiBufferRow>,
+    pub multibuffer_row: Option<MultibufferRow>,
     pub diff_status: Option<diff::DiffHunkStatus>,
 }
 
-/// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
+/// A slice into a [`Buffer`] that is being edited in a [`Multibuffer`].
 #[derive(Clone)]
 struct Excerpt {
     /// The unique identifier for this excerpt
     id: ExcerptId,
-    /// The location of the excerpt in the [`MultiBuffer`]
+    /// The location of the excerpt in the [`Multibuffer`]
     locator: Locator,
     /// The buffer being excerpted
     buffer_id: BufferId,
@@ -333,12 +333,12 @@ struct Excerpt {
     has_trailing_newline: bool,
 }
 
-/// A public view into an `Excerpt` in a [`MultiBuffer`].
+/// A public view into an `Excerpt` in a [`Multibuffer`].
 ///
 /// Contains methods for getting the [`Buffer`] of the excerpt,
 /// as well as mapping offsets to/from buffer and multibuffer coordinates.
 #[derive(Clone)]
-pub struct MultiBufferExcerpt<'a> {
+pub struct MultibufferExcerpt<'a> {
     excerpt: &'a Excerpt,
     diff_transforms:
         sum_tree::Cursor<'a, DiffTransform, (OutputDimension<usize>, ExcerptDimension<usize>)>,
@@ -380,13 +380,13 @@ pub struct DiffTransformSummary {
 }
 
 #[derive(Clone)]
-pub struct MultiBufferRows<'a> {
+pub struct MultibufferRows<'a> {
     point: Point,
     is_empty: bool,
-    cursor: MultiBufferCursor<'a, Point>,
+    cursor: MultibufferCursor<'a, Point>,
 }
 
-pub struct MultiBufferChunks<'a> {
+pub struct MultibufferChunks<'a> {
     excerpts: Cursor<'a, Excerpt, ExcerptOffset>,
     diff_transforms: Cursor<'a, DiffTransform, (usize, ExcerptOffset)>,
     diffs: &'a TreeMap<BufferId, BufferDiffSnapshot>,
@@ -398,37 +398,37 @@ pub struct MultiBufferChunks<'a> {
     language_aware: bool,
 }
 
-pub struct ReversedMultiBufferChunks<'a> {
-    cursor: MultiBufferCursor<'a, usize>,
+pub struct ReversedMultibufferChunks<'a> {
+    cursor: MultibufferCursor<'a, usize>,
     current_chunks: Option<rope::Chunks<'a>>,
     start: usize,
     offset: usize,
 }
 
-pub struct MultiBufferBytes<'a> {
+pub struct MultibufferBytes<'a> {
     range: Range<usize>,
-    cursor: MultiBufferCursor<'a, usize>,
+    cursor: MultibufferCursor<'a, usize>,
     excerpt_bytes: Option<text::Bytes<'a>>,
     has_trailing_newline: bool,
     chunk: &'a [u8],
 }
 
-pub struct ReversedMultiBufferBytes<'a> {
+pub struct ReversedMultibufferBytes<'a> {
     range: Range<usize>,
-    chunks: ReversedMultiBufferChunks<'a>,
+    chunks: ReversedMultibufferChunks<'a>,
     chunk: &'a [u8],
 }
 
 #[derive(Clone)]
-struct MultiBufferCursor<'a, D: TextDimension> {
+struct MultibufferCursor<'a, D: TextDimension> {
     excerpts: Cursor<'a, Excerpt, ExcerptDimension<D>>,
     diff_transforms: Cursor<'a, DiffTransform, (OutputDimension<D>, ExcerptDimension<D>)>,
     diffs: &'a TreeMap<BufferId, BufferDiffSnapshot>,
-    cached_region: Option<MultiBufferRegion<'a, D>>,
+    cached_region: Option<MultibufferRegion<'a, D>>,
 }
 
 #[derive(Clone)]
-struct MultiBufferRegion<'a, D: TextDimension> {
+struct MultibufferRegion<'a, D: TextDimension> {
     buffer: &'a BufferSnapshot,
     is_main_buffer: bool,
     is_inserted_hunk: bool,
@@ -488,8 +488,8 @@ impl ExpandExcerptDirection {
 #[derive(Clone, Debug, PartialEq)]
 pub struct IndentGuide {
     pub buffer_id: BufferId,
-    pub start_row: MultiBufferRow,
-    pub end_row: MultiBufferRow,
+    pub start_row: MultibufferRow,
+    pub end_row: MultibufferRow,
     pub depth: u32,
     pub tab_size: u32,
     pub settings: IndentGuideSettings,
@@ -501,12 +501,12 @@ impl IndentGuide {
     }
 }
 
-impl MultiBuffer {
+impl Multibuffer {
     pub fn new(capability: Capability) -> Self {
         Self {
-            snapshot: RefCell::new(MultiBufferSnapshot {
+            snapshot: RefCell::new(MultibufferSnapshot {
                 show_headers: true,
-                ..MultiBufferSnapshot::default()
+                ..MultibufferSnapshot::default()
             }),
             buffers: RefCell::default(),
             diffs: HashMap::default(),
@@ -606,13 +606,13 @@ impl MultiBuffer {
         this
     }
 
-    /// Returns an up-to-date snapshot of the MultiBuffer.
-    pub fn snapshot(&self, cx: &App) -> MultiBufferSnapshot {
+    /// Returns an up-to-date snapshot of the Multibuffer.
+    pub fn snapshot(&self, cx: &App) -> MultibufferSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
     }
 
-    pub fn read(&self, cx: &App) -> Ref<MultiBufferSnapshot> {
+    pub fn read(&self, cx: &App) -> Ref<MultibufferSnapshot> {
         self.sync(cx);
         self.snapshot.borrow()
     }
@@ -698,11 +698,11 @@ impl MultiBuffer {
 
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn edit_internal(
-            this: &MultiBuffer,
-            snapshot: Ref<MultiBufferSnapshot>,
+            this: &Multibuffer,
+            snapshot: Ref<MultibufferSnapshot>,
             edits: Vec<(Range<usize>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
-            cx: &mut Context<MultiBuffer>,
+            cx: &mut Context<Multibuffer>,
         ) {
             if this.read_only() || this.buffers.borrow().is_empty() {
                 return;
@@ -804,7 +804,7 @@ impl MultiBuffer {
     fn convert_edits_to_buffer_edits(
         &self,
         edits: Vec<(Range<usize>, Arc<str>)>,
-        snapshot: &MultiBufferSnapshot,
+        snapshot: &MultibufferSnapshot,
         original_indent_columns: &[u32],
     ) -> (HashMap<BufferId, Vec<BufferEdit>>, Vec<ExcerptId>) {
         let mut buffer_edits: HashMap<BufferId, Vec<BufferEdit>> = Default::default();
@@ -943,10 +943,10 @@ impl MultiBuffer {
         return autoindent_ranges_internal(self, snapshot, edits, cx);
 
         fn autoindent_ranges_internal(
-            this: &MultiBuffer,
-            snapshot: Ref<MultiBufferSnapshot>,
+            this: &Multibuffer,
+            snapshot: Ref<MultibufferSnapshot>,
             edits: Vec<(Range<usize>, Arc<str>)>,
-            cx: &mut Context<MultiBuffer>,
+            cx: &mut Context<Multibuffer>,
         ) {
             if this.read_only() || this.buffers.borrow().is_empty() {
                 return;
@@ -1568,7 +1568,7 @@ impl MultiBuffer {
                     .insert(buffer_id, (buffer, ranges, excerpt_ranges, range_counts));
             }
 
-            let mut multi_buffer_ranges = Vec::default();
+            let mut multibuffer_ranges = Vec::default();
             'outer: for buffer_id in buffer_ids {
                 let Some((buffer, ranges, excerpt_ranges, range_counts)) =
                     results_by_buffer_id.remove(&buffer_id)
@@ -1602,13 +1602,13 @@ impl MultiBuffer {
                                 text_anchor: range.end,
                                 diff_base_anchor: None,
                             };
-                            multi_buffer_ranges.push(start..end);
+                            multibuffer_ranges.push(start..end);
                         }
                     }
                 }
             }
 
-            multi_buffer_ranges
+            multibuffer_ranges
         })
     }
 
@@ -2736,7 +2736,7 @@ impl MultiBuffer {
 
     fn sync_diff_transforms(
         &self,
-        snapshot: &mut MultiBufferSnapshot,
+        snapshot: &mut MultibufferSnapshot,
         excerpt_edits: Vec<text::Edit<ExcerptOffset>>,
         change_kind: DiffChangeKind,
     ) {
@@ -2878,7 +2878,7 @@ impl MultiBuffer {
         new_diff_transforms: &mut SumTree<DiffTransform>,
         end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, ExcerptId, text::Anchor)>,
         old_expanded_hunks: &mut HashSet<(ExcerptId, text::Anchor)>,
-        snapshot: &MultiBufferSnapshot,
+        snapshot: &MultibufferSnapshot,
         change_kind: DiffChangeKind,
     ) -> bool {
         log::trace!(
@@ -3084,7 +3084,7 @@ impl MultiBuffer {
 
     fn push_buffer_content_transform(
         &self,
-        old_snapshot: &MultiBufferSnapshot,
+        old_snapshot: &MultibufferSnapshot,
         new_transforms: &mut SumTree<DiffTransform>,
         end_offset: ExcerptOffset,
         current_inserted_hunk: Option<(ExcerptOffset, ExcerptId, text::Anchor)>,
@@ -3151,7 +3151,7 @@ impl MultiBuffer {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl MultiBuffer {
+impl Multibuffer {
     pub fn build_simple(text: &str, cx: &mut gpui::App) -> Entity<Self> {
         let buffer = cx.new(|cx| Buffer::local(text, cx));
         cx.new(|cx| Self::singleton(buffer, cx))
@@ -3182,7 +3182,7 @@ impl MultiBuffer {
 
     pub fn build_random(rng: &mut impl rand::Rng, cx: &mut gpui::App) -> Entity<Self> {
         cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            let mut multibuffer = Multibuffer::new(Capability::ReadWrite);
             let mutation_count = rng.gen_range(1..=5);
             multibuffer.randomly_edit_excerpts(rng, mutation_count, cx);
             multibuffer
@@ -3367,9 +3367,9 @@ impl MultiBuffer {
     }
 }
 
-impl EventEmitter<Event> for MultiBuffer {}
+impl EventEmitter<Event> for Multibuffer {}
 
-impl MultiBufferSnapshot {
+impl MultibufferSnapshot {
     pub fn text(&self) -> String {
         self.chunks(0..self.len(), false)
             .map(|chunk| chunk.text)
@@ -3381,7 +3381,7 @@ impl MultiBufferSnapshot {
             .flat_map(|c| c.chars().rev())
     }
 
-    fn reversed_chunks_in_range(&self, range: Range<usize>) -> ReversedMultiBufferChunks {
+    fn reversed_chunks_in_range(&self, range: Range<usize>) -> ReversedMultibufferChunks {
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.end);
         let current_chunks = cursor.region().as_ref().map(|region| {
@@ -3391,7 +3391,7 @@ impl MultiBufferSnapshot {
             let start = region.buffer_range.start + start_overshoot;
             region.buffer.reversed_chunks_in_range(start..end)
         });
-        ReversedMultiBufferChunks {
+        ReversedMultibufferChunks {
             cursor,
             current_chunks,
             start: range.start,
@@ -3409,7 +3409,7 @@ impl MultiBufferSnapshot {
         self.chunks(range, false).map(|chunk| chunk.text)
     }
 
-    pub fn is_line_blank(&self, row: MultiBufferRow) -> bool {
+    pub fn is_line_blank(&self, row: MultibufferRow) -> bool {
         self.text_for_range(Point::new(row.0, 0)..Point::new(row.0, self.line_len(row)))
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
@@ -3428,14 +3428,14 @@ impl MultiBufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    pub fn diff_hunks(&self) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
+    pub fn diff_hunks(&self) -> impl Iterator<Item = MultibufferDiffHunk> + '_ {
         self.diff_hunks_in_range(Anchor::min()..Anchor::max())
     }
 
     pub fn diff_hunks_in_range<T: ToPoint>(
         &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
+    ) -> impl Iterator<Item = MultibufferDiffHunk> + '_ {
         let query_range = range.start.to_point(self)..range.end.to_point(self);
         self.lift_buffer_metadata(query_range.clone(), move |buffer, buffer_range| {
             let diff = self.diffs.get(&buffer.remote_id())?;
@@ -3463,8 +3463,8 @@ impl MultiBufferSnapshot {
             } else {
                 range.end.row + 1
             };
-            Some(MultiBufferDiffHunk {
-                row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
+            Some(MultibufferDiffHunk {
+                row_range: MultibufferRow(range.start.row)..MultibufferRow(end_row),
                 buffer_id: excerpt.buffer_id,
                 excerpt_id: excerpt.id,
                 buffer_range: hunk.buffer_range.clone(),
@@ -3746,7 +3746,7 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn diff_hunk_before<T: ToOffset>(&self, position: T) -> Option<MultiBufferDiffHunk> {
+    pub fn diff_hunk_before<T: ToOffset>(&self, position: T) -> Option<MultibufferDiffHunk> {
         let offset = position.to_offset(self);
 
         // Go to the region containing the given offset.
@@ -3831,8 +3831,8 @@ impl MultiBufferSnapshot {
                         self.max_point()
                     };
 
-                    return Some(MultiBufferDiffHunk {
-                        row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
+                    return Some(MultibufferDiffHunk {
+                        row_range: MultibufferRow(start.row)..MultibufferRow(end.row),
                         buffer_id: excerpt.buffer_id,
                         excerpt_id: excerpt.id,
                         buffer_range: hunk.buffer_range.clone(),
@@ -3915,7 +3915,7 @@ impl MultiBufferSnapshot {
         self.excerpts.summary().widest_line_number + 1
     }
 
-    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultiBufferBytes {
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> MultibufferBytes {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpts = self.cursor::<usize>();
         excerpts.seek(&range.start);
@@ -3942,7 +3942,7 @@ impl MultiBufferSnapshot {
             has_trailing_newline = false;
         };
 
-        MultiBufferBytes {
+        MultibufferBytes {
             range,
             cursor: excerpts,
             excerpt_bytes,
@@ -3954,21 +3954,21 @@ impl MultiBufferSnapshot {
     pub fn reversed_bytes_in_range<T: ToOffset>(
         &self,
         range: Range<T>,
-    ) -> ReversedMultiBufferBytes {
+    ) -> ReversedMultibufferBytes {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut chunks = self.reversed_chunks_in_range(range.clone());
         let chunk = chunks.next().map_or(&[][..], |c| c.as_bytes());
-        ReversedMultiBufferBytes {
+        ReversedMultibufferBytes {
             range,
             chunks,
             chunk,
         }
     }
 
-    pub fn row_infos(&self, start_row: MultiBufferRow) -> MultiBufferRows {
+    pub fn row_infos(&self, start_row: MultibufferRow) -> MultibufferRows {
         let mut cursor = self.cursor::<Point>();
         cursor.seek(&Point::new(start_row.0, 0));
-        let mut result = MultiBufferRows {
+        let mut result = MultibufferRows {
             point: Point::new(0, 0),
             is_empty: self.excerpts.is_empty(),
             cursor,
@@ -3977,8 +3977,8 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> MultiBufferChunks {
-        let mut chunks = MultiBufferChunks {
+    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> MultibufferChunks {
+        let mut chunks = MultibufferChunks {
             excerpt_offset_range: ExcerptOffset::new(0)..ExcerptOffset::new(0),
             range: 0..0,
             excerpts: self.excerpts.cursor(&()),
@@ -4124,7 +4124,7 @@ impl MultiBufferSnapshot {
         &self,
         rows: impl IntoIterator<Item = u32>,
         cx: &App,
-    ) -> BTreeMap<MultiBufferRow, IndentSize> {
+    ) -> BTreeMap<MultibufferRow, IndentSize> {
         let mut result = BTreeMap::new();
 
         let mut rows_for_excerpt = Vec::new();
@@ -4172,7 +4172,7 @@ impl MultiBufferSnapshot {
                 .suggested_indents(buffer_rows, single_indent_size);
             let multibuffer_indents = buffer_indents.into_iter().map(|(row, indent)| {
                 (
-                    MultiBufferRow(start_multibuffer_row + row - start_buffer_row),
+                    MultibufferRow(start_multibuffer_row + row - start_buffer_row),
                     indent,
                 )
             });
@@ -4182,7 +4182,7 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn indent_size_for_line(&self, row: MultiBufferRow) -> IndentSize {
+    pub fn indent_size_for_line(&self, row: MultibufferRow) -> IndentSize {
         if let Some((buffer, range)) = self.buffer_line_for_row(row) {
             let mut size = buffer.indent_size_for_line(range.start.row);
             size.len = size
@@ -4195,7 +4195,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn line_indent_for_row(&self, row: MultiBufferRow) -> LineIndent {
+    pub fn line_indent_for_row(&self, row: MultibufferRow) -> LineIndent {
         if let Some((buffer, range)) = self.buffer_line_for_row(row) {
             LineIndent::from_iter(buffer.text_for_range(range).flat_map(|s| s.chars()))
         } else {
@@ -4203,7 +4203,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &App) -> String {
+    pub fn indent_and_comment_for_line(&self, row: MultibufferRow, cx: &App) -> String {
         let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
 
         if self.settings_at(0, cx).extend_comment_on_newline {
@@ -4227,7 +4227,7 @@ impl MultiBufferSnapshot {
         indent
     }
 
-    pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
+    pub fn prev_non_blank_row(&self, mut row: MultibufferRow) -> Option<MultibufferRow> {
         while row.0 > 0 {
             row.0 -= 1;
             if !self.is_line_blank(row) {
@@ -4237,7 +4237,7 @@ impl MultiBufferSnapshot {
         None
     }
 
-    pub fn line_len(&self, row: MultiBufferRow) -> u32 {
+    pub fn line_len(&self, row: MultibufferRow) -> u32 {
         if let Some((_, range)) = self.buffer_line_for_row(row) {
             range.end.column - range.start.column
         } else {
@@ -4247,7 +4247,7 @@ impl MultiBufferSnapshot {
 
     pub fn buffer_line_for_row(
         &self,
-        row: MultiBufferRow,
+        row: MultibufferRow,
     ) -> Option<(&BufferSnapshot, Range<Point>)> {
         let mut cursor = self.cursor::<Point>();
         let point = Point::new(row.0, 0);
@@ -4268,8 +4268,8 @@ impl MultiBufferSnapshot {
         self.text_summary().lines
     }
 
-    pub fn max_row(&self) -> MultiBufferRow {
-        MultiBufferRow(self.text_summary().lines.row)
+    pub fn max_row(&self) -> MultibufferRow {
+        MultibufferRow(self.text_summary().lines.row)
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -4910,10 +4910,10 @@ impl MultiBufferSnapshot {
             .map(|excerpt| (excerpt.id, &excerpt.buffer, excerpt.range.clone()))
     }
 
-    fn cursor<D: TextDimension + Default>(&self) -> MultiBufferCursor<D> {
+    fn cursor<D: TextDimension + Default>(&self) -> MultibufferCursor<D> {
         let excerpts = self.excerpts.cursor(&());
         let diff_transforms = self.diff_transforms.cursor(&());
-        MultiBufferCursor {
+        MultibufferCursor {
             excerpts,
             diff_transforms,
             diffs: &self.diffs,
@@ -4921,7 +4921,7 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn excerpt_before(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
+    pub fn excerpt_before(&self, id: ExcerptId) -> Option<MultibufferExcerpt<'_>> {
         let start_locator = self.excerpt_locator_for_id(id);
         let mut excerpts = self
             .excerpts
@@ -4938,7 +4938,7 @@ impl MultiBufferSnapshot {
         }
 
         let excerpt = excerpts.item()?;
-        Some(MultiBufferExcerpt {
+        Some(MultibufferExcerpt {
             excerpt,
             offset: diff_transforms.start().0 .0,
             buffer_offset: excerpt.range.context.start.to_offset(&excerpt.buffer),
@@ -5026,7 +5026,7 @@ impl MultiBufferSnapshot {
                 buffer: region.excerpt.buffer.clone(),
                 buffer_id: region.excerpt.buffer_id,
                 range: region.excerpt.range.clone(),
-                end_row: MultiBufferRow(next_region_start.row),
+                end_row: MultibufferRow(next_region_start.row),
             });
 
             let next = next_region.as_ref().map(|region| ExcerptInfo {
@@ -5035,9 +5035,9 @@ impl MultiBufferSnapshot {
                 buffer_id: region.excerpt.buffer_id,
                 range: region.excerpt.range.clone(),
                 end_row: if region.excerpt.has_trailing_newline {
-                    MultiBufferRow(next_region_end.row - 1)
+                    MultibufferRow(next_region_end.row - 1)
                 } else {
-                    MultiBufferRow(next_region_end.row)
+                    MultibufferRow(next_region_end.row)
                 },
             });
 
@@ -5049,7 +5049,7 @@ impl MultiBufferSnapshot {
                 }
             }
 
-            let row = MultiBufferRow(next_region_start.row);
+            let row = MultibufferRow(next_region_start.row);
 
             prev_region = next_region;
 
@@ -5216,9 +5216,9 @@ impl MultiBufferSnapshot {
 
     pub fn line_indents(
         &self,
-        start_row: MultiBufferRow,
+        start_row: MultibufferRow,
         buffer_filter: impl Fn(&BufferSnapshot) -> bool,
-    ) -> impl Iterator<Item = (MultiBufferRow, LineIndent, &BufferSnapshot)> {
+    ) -> impl Iterator<Item = (MultibufferRow, LineIndent, &BufferSnapshot)> {
         let max_point = self.max_point();
         let mut cursor = self.cursor::<Point>();
         cursor.seek(&Point::new(start_row.0, 0));
@@ -5246,7 +5246,7 @@ impl MultiBufferSnapshot {
             cursor.next();
             return Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
-                (MultiBufferRow(row), indent, &region.excerpt.buffer)
+                (MultibufferRow(row), indent, &region.excerpt.buffer)
             }));
         })
         .flatten()
@@ -5254,9 +5254,9 @@ impl MultiBufferSnapshot {
 
     pub fn reversed_line_indents(
         &self,
-        end_row: MultiBufferRow,
+        end_row: MultibufferRow,
         buffer_filter: impl Fn(&BufferSnapshot) -> bool,
-    ) -> impl Iterator<Item = (MultiBufferRow, LineIndent, &BufferSnapshot)> {
+    ) -> impl Iterator<Item = (MultibufferRow, LineIndent, &BufferSnapshot)> {
         let max_point = self.max_point();
         let mut cursor = self.cursor::<Point>();
         cursor.seek(&Point::new(end_row.0, 0));
@@ -5286,7 +5286,7 @@ impl MultiBufferSnapshot {
             cursor.prev();
             return Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
-                (MultiBufferRow(row), indent, &region.excerpt.buffer)
+                (MultibufferRow(row), indent, &region.excerpt.buffer)
             }));
         })
         .flatten()
@@ -5294,9 +5294,9 @@ impl MultiBufferSnapshot {
 
     pub async fn enclosing_indent(
         &self,
-        mut target_row: MultiBufferRow,
-    ) -> Option<(Range<MultiBufferRow>, LineIndent)> {
-        let max_row = MultiBufferRow(self.max_point().row);
+        mut target_row: MultibufferRow,
+    ) -> Option<(Range<MultibufferRow>, LineIndent)> {
+        let max_row = MultibufferRow(self.max_point().row);
         if target_row >= max_row {
             return None;
         }
@@ -5306,7 +5306,7 @@ impl MultiBufferSnapshot {
         // If the current row is at the start of an indented block, we want to return this
         // block as the enclosing indent.
         if !target_indent.is_line_empty() && target_row < max_row {
-            let next_line_indent = self.line_indent_for_row(MultiBufferRow(target_row.0 + 1));
+            let next_line_indent = self.line_indent_for_row(MultibufferRow(target_row.0 + 1));
             if !next_line_indent.is_line_empty()
                 && target_indent.raw_len() < next_line_indent.raw_len()
             {
@@ -5323,9 +5323,9 @@ impl MultiBufferSnapshot {
 
         // If there is a blank line at the current row, search for the next non indented lines
         if target_indent.is_line_empty() {
-            let start = MultiBufferRow(target_row.0.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT));
+            let start = MultibufferRow(target_row.0.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT));
             let end =
-                MultiBufferRow((max_row.0 + 1).min(target_row.0 + SEARCH_WHITESPACE_ROW_LIMIT));
+                MultibufferRow((max_row.0 + 1).min(target_row.0 + SEARCH_WHITESPACE_ROW_LIMIT));
 
             let mut non_empty_line_above = None;
             for (row, indent, _) in self.reversed_line_indents(target_row, |_| true) {
@@ -5376,8 +5376,8 @@ impl MultiBufferSnapshot {
             target_row = row;
         }
 
-        let start = MultiBufferRow(target_row.0.saturating_sub(SEARCH_ROW_LIMIT));
-        let end = MultiBufferRow((max_row.0 + 1).min(target_row.0 + SEARCH_ROW_LIMIT));
+        let start = MultibufferRow(target_row.0.saturating_sub(SEARCH_ROW_LIMIT));
+        let end = MultibufferRow((max_row.0 + 1).min(target_row.0 + SEARCH_ROW_LIMIT));
 
         let mut start_indent = None;
         for (row, indent, _) in self.reversed_line_indents(target_row, |_| true) {
@@ -5407,7 +5407,7 @@ impl MultiBufferSnapshot {
                 yield_now().await;
             }
             if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
-                end_indent = (MultiBufferRow(row.0.saturating_sub(1)), Some(indent));
+                end_indent = (MultibufferRow(row.0.saturating_sub(1)), Some(indent));
                 break;
             }
         }
@@ -5433,8 +5433,8 @@ impl MultiBufferSnapshot {
         cx: &App,
     ) -> impl Iterator<Item = IndentGuide> {
         let range = range.start.to_point(self)..range.end.to_point(self);
-        let start_row = MultiBufferRow(range.start.row);
-        let end_row = MultiBufferRow(range.end.row);
+        let start_row = MultibufferRow(range.start.row);
+        let end_row = MultibufferRow(range.end.row);
 
         let mut row_indents = self.line_indents(start_row, |buffer| {
             let settings =
@@ -5465,7 +5465,7 @@ impl MultiBufferSnapshot {
                         break;
                     };
                     const TRAILING_ROW_SEARCH_LIMIT: u32 = 25;
-                    if target_row > MultiBufferRow(end_row.0 + TRAILING_ROW_SEARCH_LIMIT) {
+                    if target_row > MultibufferRow(end_row.0 + TRAILING_ROW_SEARCH_LIMIT) {
                         break;
                     }
 
@@ -5498,7 +5498,7 @@ impl MultiBufferSnapshot {
                             // This means that the last display row must
                             // be on line that ends this indent range, so we
                             // should display the range up to the first non-empty line
-                            indent.end_row = MultiBufferRow(first_row.0.saturating_sub(1));
+                            indent.end_row = MultibufferRow(first_row.0.saturating_sub(1));
                         }
 
                         result.push(indent)
@@ -5830,7 +5830,7 @@ impl MultiBufferSnapshot {
     }
 
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
-    pub fn excerpt_containing<T: ToOffset>(&self, range: Range<T>) -> Option<MultiBufferExcerpt> {
+    pub fn excerpt_containing<T: ToOffset>(&self, range: Range<T>) -> Option<MultibufferExcerpt> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.start);
@@ -5848,7 +5848,7 @@ impl MultiBufferSnapshot {
         let offset = region.range.start;
         let buffer_offset = region.buffer_range.start;
         let excerpt_offset = cursor.excerpts.start().clone();
-        Some(MultiBufferExcerpt {
+        Some(MultibufferExcerpt {
             diff_transforms: cursor.diff_transforms,
             excerpt: start_excerpt,
             offset,
@@ -5924,7 +5924,7 @@ impl MultiBufferSnapshot {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl MultiBufferSnapshot {
+impl MultibufferSnapshot {
     pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
         let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
         let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
@@ -5992,7 +5992,7 @@ impl MultiBufferSnapshot {
     }
 }
 
-impl<'a, D> MultiBufferCursor<'a, D>
+impl<'a, D> MultibufferCursor<'a, D>
 where
     D: TextDimension + Ord + Sub<D, Output = D>,
 {
@@ -6107,7 +6107,7 @@ where
         }
     }
 
-    fn region(&mut self) -> Option<MultiBufferRegion<'a, D>> {
+    fn region(&mut self) -> Option<MultibufferRegion<'a, D>> {
         if self.cached_region.is_none() {
             self.cached_region = self.build_region();
         }
@@ -6142,7 +6142,7 @@ where
         Some(buffer_start)
     }
 
-    fn build_region(&self) -> Option<MultiBufferRegion<'a, D>> {
+    fn build_region(&self) -> Option<MultibufferRegion<'a, D>> {
         let excerpt = self.excerpts.item()?;
         match self.diff_transforms.item()? {
             DiffTransform::DeletedHunk {
@@ -6160,7 +6160,7 @@ where
                 buffer_end.add_assign(&buffer_range_len);
                 let start = self.diff_transforms.start().0 .0;
                 let end = self.diff_transforms.end(&()).0 .0;
-                return Some(MultiBufferRegion {
+                return Some(MultibufferRegion {
                     buffer,
                     excerpt,
                     has_trailing_newline: *has_trailing_newline,
@@ -6204,7 +6204,7 @@ where
                     has_trailing_newline = excerpt.has_trailing_newline;
                 };
 
-                Some(MultiBufferRegion {
+                Some(MultibufferRegion {
                     buffer,
                     excerpt,
                     has_trailing_newline,
@@ -6272,7 +6272,7 @@ impl History {
         &mut self,
         buffer_transactions: T,
         now: Instant,
-        cx: &Context<MultiBuffer>,
+        cx: &Context<Multibuffer>,
     ) where
         T: IntoIterator<Item = (&'a Entity<Buffer>, &'a language::Transaction)>,
     {
@@ -6527,7 +6527,7 @@ impl Excerpt {
     }
 }
 
-impl<'a> MultiBufferExcerpt<'a> {
+impl<'a> MultibufferExcerpt<'a> {
     pub fn id(&self) -> ExcerptId {
         self.excerpt.id
     }
@@ -6572,12 +6572,12 @@ impl<'a> MultiBufferExcerpt<'a> {
         self.offset
     }
 
-    /// Maps an offset within the [`MultiBuffer`] to an offset within the [`Buffer`]
+    /// Maps an offset within the [`Multibuffer`] to an offset within the [`Buffer`]
     pub fn map_offset_to_buffer(&mut self, offset: usize) -> usize {
         self.map_range_to_buffer(offset..offset).start
     }
 
-    /// Maps a range within the [`MultiBuffer`] to a range within the [`Buffer`]
+    /// Maps a range within the [`Multibuffer`] to a range within the [`Buffer`]
     pub fn map_range_to_buffer(&mut self, range: Range<usize>) -> Range<usize> {
         self.diff_transforms
             .seek(&OutputDimension(range.start), Bias::Right, &());
@@ -6601,13 +6601,13 @@ impl<'a> MultiBufferExcerpt<'a> {
         self.buffer_offset + offset_in_excerpt
     }
 
-    /// Map an offset within the [`Buffer`] to an offset within the [`MultiBuffer`]
+    /// Map an offset within the [`Buffer`] to an offset within the [`Multibuffer`]
     pub fn map_offset_from_buffer(&mut self, buffer_offset: usize) -> usize {
         self.map_range_from_buffer(buffer_offset..buffer_offset)
             .start
     }
 
-    /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
+    /// Map a range within the [`Buffer`] to a range within the [`Multibuffer`]
     pub fn map_range_from_buffer(&mut self, buffer_range: Range<usize>) -> Range<usize> {
         let overshoot = buffer_range.start - self.buffer_offset;
         let excerpt_offset = ExcerptDimension(self.excerpt_offset.0 + overshoot);
@@ -6657,7 +6657,7 @@ impl ExcerptId {
         Self(proto as _)
     }
 
-    pub fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> cmp::Ordering {
+    pub fn cmp(&self, other: &Self, snapshot: &MultibufferSnapshot) -> cmp::Ordering {
         let a = snapshot.excerpt_locator_for_id(*self);
         let b = snapshot.excerpt_locator_for_id(*other);
         a.cmp(b).then_with(|| self.0.cmp(&other.0))
@@ -6961,14 +6961,14 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for Point {
     }
 }
 
-impl<'a> MultiBufferRows<'a> {
-    pub fn seek(&mut self, MultiBufferRow(row): MultiBufferRow) {
+impl<'a> MultibufferRows<'a> {
+    pub fn seek(&mut self, MultibufferRow(row): MultibufferRow) {
         self.point = Point::new(row, 0);
         self.cursor.seek(&self.point);
     }
 }
 
-impl<'a> Iterator for MultiBufferRows<'a> {
+impl<'a> Iterator for MultibufferRows<'a> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -6977,7 +6977,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             return Some(RowInfo {
                 buffer_id: None,
                 buffer_row: Some(0),
-                multibuffer_row: Some(MultiBufferRow(0)),
+                multibuffer_row: Some(MultibufferRow(0)),
                 diff_status: None,
             });
         }
@@ -6989,7 +6989,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 region = next_region;
             } else {
                 if self.point == self.cursor.diff_transforms.end(&()).0 .0 {
-                    let multibuffer_row = MultiBufferRow(self.point.row);
+                    let multibuffer_row = MultibufferRow(self.point.row);
                     self.point += Point::new(1, 0);
                     let last_excerpt = self
                         .cursor
@@ -7019,7 +7019,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
-            multibuffer_row: Some(MultiBufferRow(self.point.row)),
+            multibuffer_row: Some(MultibufferRow(self.point.row)),
             diff_status: if region.is_inserted_hunk && self.point < region.range.end {
                 Some(DiffHunkStatus::Added)
             } else if !region.is_main_buffer {
@@ -7033,7 +7033,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
     }
 }
 
-impl<'a> MultiBufferChunks<'a> {
+impl<'a> MultibufferChunks<'a> {
     pub fn offset(&self) -> usize {
         self.range.start
     }
@@ -7104,7 +7104,7 @@ impl<'a> MultiBufferChunks<'a> {
     }
 }
 
-impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
+impl<'a> Iterator for ReversedMultibufferChunks<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -7129,7 +7129,7 @@ impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
     }
 }
 
-impl<'a> Iterator for MultiBufferChunks<'a> {
+impl<'a> Iterator for MultibufferChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Chunk<'a>> {
@@ -7216,7 +7216,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
     }
 }
 
-impl<'a> MultiBufferBytes<'a> {
+impl<'a> MultibufferBytes<'a> {
     fn consume(&mut self, len: usize) {
         self.range.start += len;
         self.chunk = &self.chunk[len..];
@@ -7249,7 +7249,7 @@ impl<'a> MultiBufferBytes<'a> {
     }
 }
 
-impl<'a> Iterator for MultiBufferBytes<'a> {
+impl<'a> Iterator for MultibufferBytes<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -7263,7 +7263,7 @@ impl<'a> Iterator for MultiBufferBytes<'a> {
     }
 }
 
-impl<'a> io::Read for MultiBufferBytes<'a> {
+impl<'a> io::Read for MultibufferBytes<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = cmp::min(buf.len(), self.chunk.len());
         buf[..len].copy_from_slice(&self.chunk[..len]);
@@ -7274,7 +7274,7 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     }
 }
 
-impl<'a> io::Read for ReversedMultiBufferBytes<'a> {
+impl<'a> io::Read for ReversedMultibufferBytes<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = cmp::min(buf.len(), self.chunk.len());
         buf[..len].copy_from_slice(&self.chunk[..len]);
@@ -7314,68 +7314,68 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultibufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultibufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset is out of range");
         *self
     }
 }
 
 impl ToOffset for OffsetUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultibufferSnapshot) -> usize {
         snapshot.offset_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultibufferSnapshot) -> usize {
         snapshot.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffsetUtf16 for OffsetUtf16 {
-    fn to_offset_utf16(&self, _snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+    fn to_offset_utf16(&self, _snapshot: &MultibufferSnapshot) -> OffsetUtf16 {
         *self
     }
 }
 
 impl ToOffsetUtf16 for usize {
-    fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> OffsetUtf16 {
+    fn to_offset_utf16(&self, snapshot: &MultibufferSnapshot) -> OffsetUtf16 {
         snapshot.offset_to_offset_utf16(*self)
     }
 }
 
 impl ToPoint for usize {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+    fn to_point<'a>(&self, snapshot: &MultibufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
 }
 
 impl ToPoint for Point {
-    fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
+    fn to_point<'a>(&self, _: &MultibufferSnapshot) -> Point {
         *self
     }
 }
 
 impl ToPointUtf16 for usize {
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16<'a>(&self, snapshot: &MultibufferSnapshot) -> PointUtf16 {
         snapshot.offset_to_point_utf16(*self)
     }
 }
 
 impl ToPointUtf16 for Point {
-    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16<'a>(&self, snapshot: &MultibufferSnapshot) -> PointUtf16 {
         snapshot.point_to_point_utf16(*self)
     }
 }
 
 impl ToPointUtf16 for PointUtf16 {
-    fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
+    fn to_point_utf16<'a>(&self, _: &MultibufferSnapshot) -> PointUtf16 {
         *self
     }
 }

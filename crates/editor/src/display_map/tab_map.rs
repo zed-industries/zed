@@ -3,7 +3,7 @@ use super::{
     Highlights,
 };
 use language::{Chunk, Point};
-use multi_buffer::MultiBufferSnapshot;
+use multibuffer::MultibufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -163,7 +163,7 @@ pub struct TabSnapshot {
 }
 
 impl TabSnapshot {
-    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+    pub fn buffer_snapshot(&self) -> &MultibufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }
 
@@ -603,13 +603,13 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, inlay_map::InlayMap},
-        MultiBuffer,
+        Multibuffer,
     };
     use rand::{prelude::StdRng, Rng};
 
     #[gpui::test]
     fn test_expand_tabs(cx: &mut gpui::App) {
-        let buffer = MultiBuffer::build_simple("", cx);
+        let buffer = Multibuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -626,7 +626,7 @@ mod tests {
         let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
         let output = "A   BC  DEF G   HI J K L M";
 
-        let buffer = MultiBuffer::build_simple(input, cx);
+        let buffer = Multibuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -673,7 +673,7 @@ mod tests {
         let max_expansion_column = 8;
         let input = "abcdefg⋯hij";
 
-        let buffer = MultiBuffer::build_simple(input, cx);
+        let buffer = Multibuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -687,7 +687,7 @@ mod tests {
     fn test_marking_tabs(cx: &mut gpui::App) {
         let input = "\t \thello";
 
-        let buffer = MultiBuffer::build_simple(input, cx);
+        let buffer = Multibuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -742,9 +742,9 @@ mod tests {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
-            MultiBuffer::build_simple(&text, cx)
+            Multibuffer::build_simple(&text, cx)
         } else {
-            MultiBuffer::build_random(&mut rng, cx)
+            Multibuffer::build_random(&mut rng, cx)
         };
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());

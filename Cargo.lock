@@ -400,7 +400,7 @@ dependencies = [
  "log",
  "lsp",
  "menu",
- "multi_buffer",
+ "multibuffer",
  "parking_lot",
  "paths",
  "pretty_assertions",
@@ -469,7 +469,7 @@ dependencies = [
  "lsp",
  "markdown",
  "menu",
- "multi_buffer",
+ "multibuffer",
  "parking_lot",
  "paths",
  "picker",
@@ -523,7 +523,7 @@ dependencies = [
  "language_models",
  "languages",
  "log",
- "multi_buffer",
+ "multibuffer",
  "open_ai",
  "parking_lot",
  "paths",
@@ -2778,7 +2778,7 @@ dependencies = [
  "log",
  "lsp",
  "menu",
- "multi_buffer",
+ "multibuffer",
  "nanoid",
  "node_runtime",
  "notifications",
@@ -4044,7 +4044,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
- "multi_buffer",
+ "multibuffer",
  "ordered-float 2.10.1",
  "parking_lot",
  "pretty_assertions",
@@ -5334,7 +5334,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
- "multi_buffer",
+ "multibuffer",
  "panel",
  "picker",
  "postage",
@@ -7937,7 +7937,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "multi_buffer"
+name = "multibuffer"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -10917,7 +10917,7 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
- "multi_buffer",
+ "multibuffer",
  "nbformat",
  "picker",
  "project",
@@ -14665,7 +14665,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
- "multi_buffer",
+ "multibuffer",
  "nvim-rs",
  "parking_lot",
  "project_panel",

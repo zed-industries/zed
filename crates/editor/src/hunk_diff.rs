@@ -5,9 +5,9 @@ use gpui::{
     Subscription, Task,
 };
 use language::{Buffer, BufferId, Point};
-use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+use multibuffer::{
+    Anchor, AnchorRangeExt, ExcerptRange, Multibuffer, MultibufferDiffHunk, MultibufferRow,
+    MultibufferSnapshot, ToOffset, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
 use std::{ops::Range, sync::Arc};
@@ -29,7 +29,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub(super) struct HoveredHunk {
-    pub multi_buffer_range: Range<Anchor>,
+    pub multibuffer_range: Range<Anchor>,
     pub status: DiffHunkStatus,
     pub diff_base_byte_range: Range<usize>,
 }
@@ -70,7 +70,7 @@ pub enum DisplayDiffHunk {
     Unfolded {
         diff_base_byte_range: Range<usize>,
         display_row_range: Range<DisplayRow>,
-        multi_buffer_range: Range<Anchor>,
+        multibuffer_range: Range<Anchor>,
         status: DiffHunkStatus,
     },
 }
@@ -122,16 +122,16 @@ impl DiffMapSnapshot {
 
     pub fn diff_hunks<'a>(
         &'a self,
-        buffer_snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        buffer_snapshot: &'a MultibufferSnapshot,
+    ) -> impl Iterator<Item = MultibufferDiffHunk> + 'a {
         self.diff_hunks_in_range(0..buffer_snapshot.len(), buffer_snapshot)
     }
 
     pub fn diff_hunks_in_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
-        buffer_snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        buffer_snapshot: &'a MultibufferSnapshot,
+    ) -> impl Iterator<Item = MultibufferDiffHunk> + 'a {
         let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
         buffer_snapshot
             .excerpts_for_range(range.clone())
@@ -149,8 +149,8 @@ impl DiffMapSnapshot {
                                 excerpt.map_point_from_buffer(Point::new(hunk.row_range.start, 0));
                             let end =
                                 excerpt.map_point_from_buffer(Point::new(hunk.row_range.end, 0));
-                            MultiBufferDiffHunk {
-                                row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
+                            MultibufferDiffHunk {
+                                row_range: MultibufferRow(start.row)..MultibufferRow(end.row),
                                 buffer_id,
                                 buffer_range: hunk.buffer_range.clone(),
                                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
@@ -164,8 +164,8 @@ impl DiffMapSnapshot {
     pub fn diff_hunks_in_range_rev<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
-        buffer_snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        buffer_snapshot: &'a MultibufferSnapshot,
+    ) -> impl Iterator<Item = MultibufferDiffHunk> + 'a {
         let range = range.start.to_offset(buffer_snapshot)..range.end.to_offset(buffer_snapshot);
         buffer_snapshot
             .excerpts_for_range_rev(range.clone())
@@ -185,8 +185,8 @@ impl DiffMapSnapshot {
                             let end_row = excerpt
                                 .map_point_from_buffer(Point::new(hunk.row_range.end, 0))
                                 .row;
-                            MultiBufferDiffHunk {
-                                row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
+                            MultibufferDiffHunk {
+                                row_range: MultibufferRow(start_row)..MultibufferRow(end_row),
                                 buffer_id,
                                 buffer_range: hunk.buffer_range.clone(),
                                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
@@ -269,7 +269,7 @@ impl Editor {
 
     fn toggle_hunks_expanded(
         &mut self,
-        hunks_to_toggle: Vec<MultiBufferDiffHunk>,
+        hunks_to_toggle: Vec<MultibufferDiffHunk>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -314,7 +314,7 @@ impl Editor {
                                 DisplayDiffHunk::Unfolded {
                                     diff_base_byte_range,
                                     display_row_range,
-                                    multi_buffer_range,
+                                    multibuffer_range,
                                     status,
                                 } => {
                                     let hunk_to_toggle_row_range = display_row_range;
@@ -331,7 +331,7 @@ impl Editor {
                                     } else {
                                         hunks_to_expand.push(HoveredHunk {
                                             status,
-                                            multi_buffer_range,
+                                            multibuffer_range,
                                             diff_base_byte_range,
                                         });
                                         hunks_to_toggle.next();
@@ -355,7 +355,7 @@ impl Editor {
                             .unwrap();
                         hunks_to_expand.push(HoveredHunk {
                             status: hunk_status(&hunk),
-                            multi_buffer_range: hunk_start..hunk_end,
+                            multibuffer_range: hunk_start..hunk_end,
                             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         });
                     }
@@ -383,8 +383,8 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<()> {
         let buffer = self.buffer.clone();
-        let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
-        let hunk_range = hunk.multi_buffer_range.clone();
+        let multibuffer_snapshot = buffer.read(cx).snapshot(cx);
+        let hunk_range = hunk.multibuffer_range.clone();
         let buffer_id = hunk_range.start.buffer_id?;
         let diff_base_buffer = diff_base_buffer.or_else(|| {
             self.diff_map
@@ -410,7 +410,7 @@ impl Editor {
                 probe
                     .hunk_range
                     .start
-                    .cmp(&hunk_range.start, &multi_buffer_snapshot)
+                    .cmp(&hunk_range.start, &multibuffer_snapshot)
             })
             .err()?;
 
@@ -484,14 +484,14 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<()> {
-        let multi_buffer = self.buffer.read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let (excerpt, range) = multi_buffer_snapshot
+        let multibuffer = self.buffer.read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
+        let (excerpt, range) = multibuffer_snapshot
             .range_to_buffer_ranges(range)
             .into_iter()
             .next()?;
 
-        multi_buffer
+        multibuffer
             .buffer(excerpt.buffer_id())
             .unwrap()
             .update(cx, |branch_buffer, cx| {
@@ -568,7 +568,7 @@ impl Editor {
         let is_branch_buffer = self
             .buffer
             .read(cx)
-            .point_to_buffer_offset(hunk.multi_buffer_range.start, cx)
+            .point_to_buffer_offset(hunk.multibuffer_range.start, cx)
             .map_or(false, |(buffer, _, _)| {
                 buffer.read(cx).base_buffer().is_some()
             });
@@ -582,7 +582,7 @@ impl Editor {
         };
 
         BlockProperties {
-            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
+            placement: BlockPlacement::Above(hunk.multibuffer_range.start),
             height: 1,
             style: BlockStyle::Sticky,
             priority: 0,
@@ -654,7 +654,7 @@ impl Editor {
                                                         move |_event, window, cx| {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_subsequent_hunk(
-                                                                    hunk.multi_buffer_range.end,
+                                                                    hunk.multibuffer_range.end,
                                                                     window,
                                                                     cx,
                                                                 );
@@ -685,7 +685,7 @@ impl Editor {
                                                         move |_event, window, cx| {
                                                             editor.update(cx, |editor, cx| {
                                                                 editor.go_to_preceding_hunk(
-                                                                    hunk.multi_buffer_range.start,
+                                                                    hunk.multibuffer_range.start,
                                                                     window,
                                                                     cx,
                                                                 );
@@ -750,7 +750,7 @@ impl Editor {
                                                                 editor.update(cx, |editor, cx| {
                                                                     editor
                                                                         .apply_diff_hunks_in_range(
-                                                                            hunk.multi_buffer_range
+                                                                            hunk.multibuffer_range
                                                                                 .clone(),
                                                                             window,
                                                                             cx,
@@ -865,7 +865,7 @@ impl Editor {
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
         BlockProperties {
-            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
+            placement: BlockPlacement::Above(hunk.multibuffer_range.start),
             height,
             style: BlockStyle::Flex,
             priority: 0,
@@ -1009,7 +1009,7 @@ impl Editor {
                                     DisplayDiffHunk::Unfolded {
                                         diff_base_byte_range,
                                         display_row_range,
-                                        multi_buffer_range,
+                                        multibuffer_range,
                                         status,
                                     } => {
                                         let hunk_display_range = display_row_range;
@@ -1021,7 +1021,7 @@ impl Editor {
                                             if editor.diff_map.expand_all {
                                                 hunks_to_reexpand.push(HoveredHunk {
                                                     status,
-                                                    multi_buffer_range,
+                                                    multibuffer_range,
                                                     diff_base_byte_range,
                                                 });
                                             }
@@ -1045,7 +1045,7 @@ impl Editor {
                                         } else {
                                             hunks_to_reexpand.push(HoveredHunk {
                                                 status,
-                                                multi_buffer_range,
+                                                multibuffer_range,
                                                 diff_base_byte_range,
                                             });
                                         }
@@ -1067,13 +1067,13 @@ impl Editor {
                                 DisplayDiffHunk::Folded { .. } => {}
                                 DisplayDiffHunk::Unfolded {
                                     diff_base_byte_range,
-                                    multi_buffer_range,
+                                    multibuffer_range,
                                     status,
                                     ..
                                 } => {
                                     hunks_to_reexpand.push(HoveredHunk {
                                         status,
-                                        multi_buffer_range,
+                                        multibuffer_range,
                                         diff_base_byte_range,
                                     });
                                 }
@@ -1115,16 +1115,16 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let position = position.to_point(&snapshot.buffer_snapshot);
         if let Some(hunk) = self.go_to_hunk_after_position(&snapshot, position, window, cx) {
-            let multi_buffer_start = snapshot
+            let multibuffer_start = snapshot
                 .buffer_snapshot
                 .anchor_before(Point::new(hunk.row_range.start.0, 0));
-            let multi_buffer_end = snapshot
+            let multibuffer_end = snapshot
                 .buffer_snapshot
                 .anchor_after(Point::new(hunk.row_range.end.0, 0));
             self.expand_diff_hunk(
                 None,
                 &HoveredHunk {
-                    multi_buffer_range: multi_buffer_start..multi_buffer_end,
+                    multibuffer_range: multibuffer_start..multibuffer_end,
                     status: hunk_status(&hunk),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                 },
@@ -1144,16 +1144,16 @@ impl Editor {
         let position = position.to_point(&snapshot.buffer_snapshot);
         let hunk = self.go_to_hunk_before_position(&snapshot, position, window, cx);
         if let Some(hunk) = hunk {
-            let multi_buffer_start = snapshot
+            let multibuffer_start = snapshot
                 .buffer_snapshot
                 .anchor_before(Point::new(hunk.row_range.start.0, 0));
-            let multi_buffer_end = snapshot
+            let multibuffer_end = snapshot
                 .buffer_snapshot
                 .anchor_after(Point::new(hunk.row_range.end.0, 0));
             self.expand_diff_hunk(
                 None,
                 &HoveredHunk {
-                    multi_buffer_range: multi_buffer_start..multi_buffer_end,
+                    multibuffer_range: multibuffer_start..multibuffer_end,
                     status: hunk_status(&hunk),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                 },
@@ -1166,20 +1166,20 @@ impl Editor {
 
 pub(crate) fn to_diff_hunk(
     hovered_hunk: &HoveredHunk,
-    multi_buffer_snapshot: &MultiBufferSnapshot,
-) -> Option<MultiBufferDiffHunk> {
+    multibuffer_snapshot: &MultibufferSnapshot,
+) -> Option<MultibufferDiffHunk> {
     let buffer_id = hovered_hunk
-        .multi_buffer_range
+        .multibuffer_range
         .start
         .buffer_id
-        .or(hovered_hunk.multi_buffer_range.end.buffer_id)?;
-    let buffer_range = hovered_hunk.multi_buffer_range.start.text_anchor
-        ..hovered_hunk.multi_buffer_range.end.text_anchor;
+        .or(hovered_hunk.multibuffer_range.end.buffer_id)?;
+    let buffer_range = hovered_hunk.multibuffer_range.start.text_anchor
+        ..hovered_hunk.multibuffer_range.end.text_anchor;
     let point_range = hovered_hunk
-        .multi_buffer_range
-        .to_point(multi_buffer_snapshot);
-    Some(MultiBufferDiffHunk {
-        row_range: MultiBufferRow(point_range.start.row)..MultiBufferRow(point_range.end.row),
+        .multibuffer_range
+        .to_point(multibuffer_snapshot);
+    Some(MultibufferDiffHunk {
+        row_range: MultibufferRow(point_range.start.row)..MultibufferRow(point_range.end.row),
         buffer_id,
         buffer_range,
         diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
@@ -1207,9 +1207,9 @@ fn editor_with_deleted_text(
 ) -> (u32, Model<Editor>) {
     let parent_editor = cx.entity().downgrade();
     let editor = cx.new(|cx| {
-        let multi_buffer = cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
-        multi_buffer.update(cx, |multi_buffer, cx| {
-            multi_buffer.push_excerpts(
+        let multibuffer = cx.new(|_| Multibuffer::without_headers(language::Capability::ReadOnly));
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.push_excerpts(
                 diff_base_buffer,
                 Some(ExcerptRange {
                     context: hunk.diff_base_byte_range.clone(),
@@ -1219,7 +1219,7 @@ fn editor_with_deleted_text(
             );
         });
 
-        let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
+        let mut editor = Editor::for_multibuffer(multibuffer, None, true, window, cx);
         editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
         editor.set_show_wrap_guides(false, cx);
         editor.set_show_gutter(false, cx);
@@ -1306,7 +1306,7 @@ impl DisplayDiffHunk {
 }
 
 pub fn diff_hunk_to_display(
-    hunk: &MultiBufferDiffHunk,
+    hunk: &MultibufferDiffHunk,
     snapshot: &DisplaySnapshot,
 ) -> DisplayDiffHunk {
     let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
@@ -1347,16 +1347,16 @@ pub fn diff_hunk_to_display(
         let hunk_end_row = hunk.row_range.end.max(hunk.row_range.start);
         let hunk_end_point = Point::new(hunk_end_row.0, 0);
 
-        let multi_buffer_start = snapshot.buffer_snapshot.anchor_before(hunk_start_point);
-        let multi_buffer_end = snapshot
+        let multibuffer_start = snapshot.buffer_snapshot.anchor_before(hunk_start_point);
+        let multibuffer_end = snapshot
             .buffer_snapshot
-            .anchor_in_excerpt(multi_buffer_start.excerpt_id, hunk.buffer_range.end)
+            .anchor_in_excerpt(multibuffer_start.excerpt_id, hunk.buffer_range.end)
             .unwrap();
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {
             display_row_range: start..end,
-            multi_buffer_range: multi_buffer_start..multi_buffer_end,
+            multibuffer_range: multibuffer_start..multibuffer_end,
             status,
             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         }
@@ -1369,7 +1369,7 @@ mod tests {
     use crate::{editor_tests::init_test, hunk_status};
     use gpui::{Context, TestAppContext};
     use language::Capability::ReadWrite;
-    use multi_buffer::{ExcerptRange, MultiBuffer, MultiBufferRow};
+    use multibuffer::{ExcerptRange, Multibuffer, MultibufferRow};
     use project::{FakeFs, Project};
     use unindent::Unindent as _;
 
@@ -1435,7 +1435,7 @@ mod tests {
         });
 
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(ReadWrite);
+            let mut multibuffer = Multibuffer::new(ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
@@ -1527,24 +1527,24 @@ mod tests {
         let expected = [
             (
                 DiffHunkStatus::Modified,
-                MultiBufferRow(1)..MultiBufferRow(2),
+                MultibufferRow(1)..MultibufferRow(2),
             ),
             (
                 DiffHunkStatus::Modified,
-                MultiBufferRow(2)..MultiBufferRow(3),
+                MultibufferRow(2)..MultibufferRow(3),
             ),
             //TODO: Define better when and where removed hunks show up at range extremities
             (
                 DiffHunkStatus::Removed,
-                MultiBufferRow(6)..MultiBufferRow(6),
+                MultibufferRow(6)..MultibufferRow(6),
             ),
             (
                 DiffHunkStatus::Removed,
-                MultiBufferRow(8)..MultiBufferRow(8),
+                MultibufferRow(8)..MultibufferRow(8),
             ),
             (
                 DiffHunkStatus::Added,
-                MultiBufferRow(10)..MultiBufferRow(11),
+                MultibufferRow(10)..MultibufferRow(11),
             ),
         ];
 

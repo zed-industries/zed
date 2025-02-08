@@ -15,7 +15,7 @@ use editor::{
         ToDisplayPoint,
     },
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    GutterDimensions, Multibuffer, MultibufferSnapshot, ToOffset as _, ToPoint,
 };
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
@@ -26,7 +26,7 @@ use gpui::{
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::LanguageModelRegistry;
 use language_models::report_assistant_event;
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
 use prompt_library::PromptBuilder;
@@ -334,7 +334,7 @@ impl InlineAssistant {
                 if selection.end.column == 0 {
                     selection.end.row -= 1;
                 }
-                selection.end.column = snapshot.line_len(MultiBufferRow(selection.end.row));
+                selection.end.column = snapshot.line_len(MultibufferRow(selection.end.row));
             }
 
             if let Some(prev_selection) = selections.last_mut() {
@@ -383,7 +383,7 @@ impl InlineAssistant {
 
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer =
-            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
+            cx.new(|cx| Multibuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
 
         let mut assists = Vec::new();
         let mut assist_to_focus = None;
@@ -491,7 +491,7 @@ impl InlineAssistant {
     ) -> InlineAssistId {
         let assist_group_id = self.next_assist_group_id.post_inc();
         let prompt_buffer = cx.new(|cx| Buffer::local(&initial_prompt, cx));
-        let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
+        let prompt_buffer = cx.new(|cx| Multibuffer::singleton(prompt_buffer, cx));
 
         let assist_id = self.next_assist_id.post_inc();
 
@@ -1319,15 +1319,15 @@ impl InlineAssistant {
                 let (_, buffer_end) = old_snapshot
                     .point_to_buffer_offset(Point::new(
                         *old_row_range.end(),
-                        old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
+                        old_snapshot.line_len(MultibufferRow(*old_row_range.end())),
                     ))
                     .unwrap();
 
                 let deleted_lines_editor = cx.new(|cx| {
-                    let multi_buffer =
-                        cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
-                    multi_buffer.update(cx, |multi_buffer, cx| {
-                        multi_buffer.push_excerpts(
+                    let multibuffer =
+                        cx.new(|_| Multibuffer::without_headers(language::Capability::ReadOnly));
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.push_excerpts(
                             old_buffer.clone(),
                             Some(ExcerptRange {
                                 context: buffer_start..buffer_end,
@@ -1338,7 +1338,7 @@ impl InlineAssistant {
                     });
 
                     enum DeletedLines {}
-                    let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
+                    let mut editor = Editor::for_multibuffer(multibuffer, None, true, window, cx);
                     editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
@@ -1791,7 +1791,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
     }
 }
 
-fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
+fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultibufferSnapshot) {
     ranges.sort_unstable_by(|a, b| {
         a.start
             .cmp(&b.start, buffer)

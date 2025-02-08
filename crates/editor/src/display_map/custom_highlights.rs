@@ -1,7 +1,7 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
 use language::Chunk;
-use multi_buffer::{Anchor, MultiBufferChunks, MultiBufferSnapshot, ToOffset as _};
+use multibuffer::{Anchor, MultibufferChunks, MultibufferSnapshot, ToOffset as _};
 use std::{
     any::TypeId,
     cmp,
@@ -13,10 +13,10 @@ use std::{
 use sum_tree::TreeMap;
 
 pub struct CustomHighlightsChunks<'a> {
-    buffer_chunks: MultiBufferChunks<'a>,
+    buffer_chunks: MultibufferChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     offset: usize,
-    multibuffer_snapshot: &'a MultiBufferSnapshot,
+    multibuffer_snapshot: &'a MultibufferSnapshot,
 
     highlight_endpoints: Peekable<vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<TypeId, HighlightStyle>,
@@ -36,7 +36,7 @@ impl<'a> CustomHighlightsChunks<'a> {
         range: Range<usize>,
         language_aware: bool,
         text_highlights: Option<&'a TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
-        multibuffer_snapshot: &'a MultiBufferSnapshot,
+        multibuffer_snapshot: &'a MultibufferSnapshot,
     ) -> Self {
         Self {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
@@ -67,7 +67,7 @@ impl<'a> CustomHighlightsChunks<'a> {
 fn create_highlight_endpoints(
     range: &Range<usize>,
     text_highlights: Option<&TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>>,
-    buffer: &MultiBufferSnapshot,
+    buffer: &MultibufferSnapshot,
 ) -> iter::Peekable<vec::IntoIter<HighlightEndpoint>> {
     let mut highlight_endpoints = Vec::new();
     if let Some(text_highlights) = text_highlights {

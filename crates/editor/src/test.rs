@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
-    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
+    DisplayPoint, Editor, EditorMode, FoldPlaceholder, Multibuffer,
 };
 use gpui::{
     font, AppContext as _, Context, Entity, Font, FontFeatures, FontStyle, FontWeight, Pixels,
@@ -54,7 +54,7 @@ pub fn marked_display_snapshot(
     };
     let font_size: Pixels = 14usize.into();
 
-    let buffer = MultiBuffer::build_simple(&unmarked_text, cx);
+    let buffer = Multibuffer::build_simple(&unmarked_text, cx);
     let display_map = cx.new(|cx| {
         DisplayMap::new(
             buffer,
@@ -104,7 +104,7 @@ pub fn assert_text_with_selections(
 #[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
@@ -113,7 +113,7 @@ pub(crate) fn build_editor(
 
 pub(crate) fn build_editor_with_project(
     project: Entity<Project>,
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {

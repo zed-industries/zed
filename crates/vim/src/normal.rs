@@ -32,7 +32,7 @@ use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{actions, Context, Window};
 use language::{Point, SelectionGoal, ToPoint};
 use log::error;
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 
 actions!(
     vim,
@@ -367,7 +367,7 @@ impl Vim {
                     .into_iter()
                     .map(|row| {
                         let indent = snapshot
-                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
+                            .indent_and_comment_for_line(MultibufferRow(row), cx)
                             .chars()
                             .collect::<String>();
 
@@ -409,11 +409,11 @@ impl Vim {
                     .into_iter()
                     .map(|row| {
                         let indent = snapshot
-                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
+                            .indent_and_comment_for_line(MultibufferRow(row), cx)
                             .chars()
                             .collect::<String>();
 
-                        let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                        let end_of_line = Point::new(row, snapshot.line_len(MultibufferRow(row)));
                         (end_of_line..end_of_line, "\n".to_string() + &indent)
                     })
                     .collect::<Vec<_>>();

@@ -119,12 +119,12 @@ use lsp::{
 
 use language::BufferSnapshot;
 use movement::TextLayoutDetails;
-pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, RowInfo,
+pub use multibuffer::{
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, Multibuffer, MultibufferSnapshot, RowInfo,
     ToOffset, ToPoint,
 };
-use multi_buffer::{
-    ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+use multibuffer::{
+    ExcerptInfo, ExpandExcerptDirection, MultibufferDiffHunk, MultibufferPoint, MultibufferRow,
     ToOffsetUtf16,
 };
 use project::{
@@ -537,7 +537,7 @@ impl ScrollbarMarkerState {
 #[derive(Clone, Debug)]
 struct RunnableTasks {
     templates: Vec<(TaskSourceKind, TaskTemplate)>,
-    offset: MultiBufferOffset,
+    offset: MultibufferOffset,
     // We need the column at which the task context evaluation should take place (when we're spawning it via gutter).
     column: u32,
     // Values of all named captures, including those starting with '_'
@@ -565,7 +565,7 @@ struct ResolvedTasks {
     position: Anchor,
 }
 #[derive(Copy, Clone, Debug)]
-struct MultiBufferOffset(usize);
+struct MultibufferOffset(usize);
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 struct BufferOffset(usize);
 
@@ -591,14 +591,14 @@ pub enum IsVimMode {
     No,
 }
 
-/// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
+/// Zed's primary implementation of text input, allowing users to edit a [`Multibuffer`].
 ///
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
     focus_handle: FocusHandle,
     last_focused_descendant: Option<WeakFocusHandle>,
     /// The text buffer being edited
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     /// Map of how text in the buffer should be displayed.
     /// Handles soft wraps, folds, fake inlay text insertions, etc.
     pub display_map: Entity<DisplayMap>,
@@ -1022,7 +1022,7 @@ impl InlayHintRefreshReason {
 
 pub enum FormatTarget {
     Buffers,
-    Ranges(Vec<Range<MultiBufferPoint>>),
+    Ranges(Vec<Range<MultibufferPoint>>),
 }
 
 pub(crate) struct FocusedBlock {
@@ -1032,11 +1032,11 @@ pub(crate) struct FocusedBlock {
 
 #[derive(Clone)]
 enum JumpData {
-    MultiBufferRow {
-        row: MultiBufferRow,
+    MultibufferRow {
+        row: MultibufferRow,
         line_offset_from_top: u32,
     },
-    MultiBufferPoint {
+    MultibufferPoint {
         excerpt_id: ExcerptId,
         position: Point,
         anchor: text::Anchor,
@@ -1052,7 +1052,7 @@ pub enum MultibufferSelectionMode {
 impl Editor {
     pub fn single_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         Self::new(
             EditorMode::SingleLine { auto_width: false },
             buffer,
@@ -1065,13 +1065,13 @@ impl Editor {
 
     pub fn multi_line(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, None, false, window, cx)
     }
 
     pub fn auto_width(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         Self::new(
             EditorMode::SingleLine { auto_width: true },
             buffer,
@@ -1084,7 +1084,7 @@ impl Editor {
 
     pub fn auto_height(max_lines: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let buffer = cx.new(|cx| Buffer::local("", cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         Self::new(
             EditorMode::AutoHeight { max_lines },
             buffer,
@@ -1101,12 +1101,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         Self::new(EditorMode::Full, buffer, project, false, window, cx)
     }
 
     pub fn for_multibuffer(
-        buffer: Entity<MultiBuffer>,
+        buffer: Entity<Multibuffer>,
         project: Option<Entity<Project>>,
         show_excerpt_controls: bool,
         window: &mut Window,
@@ -1146,7 +1146,7 @@ impl Editor {
 
     pub fn new(
         mode: EditorMode,
-        buffer: Entity<MultiBuffer>,
+        buffer: Entity<Multibuffer>,
         project: Option<Entity<Project>>,
         show_excerpt_controls: bool,
         window: &mut Window,
@@ -1634,7 +1634,7 @@ impl Editor {
         self.leader_peer_id
     }
 
-    pub fn buffer(&self) -> &Entity<MultiBuffer> {
+    pub fn buffer(&self) -> &Entity<Multibuffer> {
         &self.buffer
     }
 
@@ -3024,7 +3024,7 @@ impl Editor {
     }
 
     fn find_possible_emoji_shortcode_at_position(
-        snapshot: &MultiBufferSnapshot,
+        snapshot: &MultibufferSnapshot,
         position: Point,
     ) -> Option<String> {
         let mut chars = Vec::new();
@@ -3074,14 +3074,14 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             let (edits, selection_fixup_info): (Vec<_>, Vec<_>) = {
                 let selections = this.selections.all::<usize>(cx);
-                let multi_buffer = this.buffer.read(cx);
-                let buffer = multi_buffer.snapshot(cx);
+                let multibuffer = this.buffer.read(cx);
+                let buffer = multibuffer.snapshot(cx);
                 selections
                     .iter()
                     .map(|selection| {
                         let start_point = selection.start.to_point(&buffer);
                         let mut indent =
-                            buffer.indent_size_for_line(MultiBufferRow(start_point.row));
+                            buffer.indent_size_for_line(MultibufferRow(start_point.row));
                         indent.len = cmp::min(indent.len, start_point.column);
                         let start = selection.start;
                         let end = selection.end;
@@ -3126,7 +3126,7 @@ impl Editor {
                                     return None;
                                 }
 
-                                if !multi_buffer.settings_at(0, cx).extend_comment_on_newline {
+                                if !multibuffer.settings_at(0, cx).extend_comment_on_newline {
                                     return None;
                                 }
 
@@ -3134,7 +3134,7 @@ impl Editor {
                                 let max_len_of_delimiter =
                                     delimiters.iter().map(|delimiter| delimiter.len()).max()?;
                                 let (snapshot, range) =
-                                    buffer.buffer_line_for_row(MultiBufferRow(start_point.row))?;
+                                    buffer.buffer_line_for_row(MultibufferRow(start_point.row))?;
 
                                 let mut index_of_first_non_whitespace = 0;
                                 let comment_candidate = snapshot
@@ -3198,7 +3198,7 @@ impl Editor {
                     let mut cursor = new_selection.end.to_point(&buffer);
                     if extra_newline_inserted {
                         cursor.row -= 1;
-                        cursor.column = buffer.line_len(MultiBufferRow(cursor.row));
+                        cursor.column = buffer.line_len(MultibufferRow(cursor.row));
                     }
                     new_selection.map(|_| cursor)
                 })
@@ -3499,7 +3499,7 @@ impl Editor {
     fn selections_with_autoclose_regions<'a, D: ToOffset + Clone>(
         &'a self,
         selections: impl IntoIterator<Item = Selection<D>>,
-        buffer: &'a MultiBufferSnapshot,
+        buffer: &'a MultibufferSnapshot,
     ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
         let mut i = 0;
         let mut regions = self.autoclose_regions.as_slice();
@@ -3529,7 +3529,7 @@ impl Editor {
     fn invalidate_autoclose_regions(
         &mut self,
         mut selections: &[Selection<Anchor>],
-        buffer: &MultiBufferSnapshot,
+        buffer: &MultibufferSnapshot,
     ) {
         self.autoclose_regions.retain(|state| {
             let mut i = 0;
@@ -3551,7 +3551,7 @@ impl Editor {
         });
     }
 
-    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+    fn completion_query(buffer: &MultibufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset, true);
         if offset > word_range.start && kind == Some(CharKind::Word) {
@@ -3681,21 +3681,21 @@ impl Editor {
             return HashMap::default();
         };
         let project = project.read(cx);
-        let multi_buffer = self.buffer().read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let multi_buffer_visible_start = self
+        let multibuffer = self.buffer().read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
+        let multibuffer_visible_start = self
             .scroll_manager
             .anchor()
             .anchor
-            .to_point(&multi_buffer_snapshot);
-        let multi_buffer_visible_end = multi_buffer_snapshot.clip_point(
-            multi_buffer_visible_start
+            .to_point(&multibuffer_snapshot);
+        let multibuffer_visible_end = multibuffer_snapshot.clip_point(
+            multibuffer_visible_start
                 + Point::new(self.visible_line_count().unwrap_or(0.).ceil() as u32, 0),
             Bias::Left,
         );
-        let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
-        multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_range)
+        let multibuffer_visible_range = multibuffer_visible_start..multibuffer_visible_end;
+        multibuffer_snapshot
+            .range_to_buffer_ranges(multibuffer_visible_range)
             .into_iter()
             .filter(|(_, excerpt_visible_range, _)| !excerpt_visible_range.is_empty())
             .filter_map(|(buffer, excerpt_visible_range, excerpt_id)| {
@@ -3717,7 +3717,7 @@ impl Editor {
                 Some((
                     excerpt_id,
                     (
-                        multi_buffer.buffer(buffer.remote_id()).unwrap(),
+                        multibuffer.buffer(buffer.remote_id()).unwrap(),
                         buffer.version().clone(),
                         excerpt_visible_range,
                     ),
@@ -4188,7 +4188,7 @@ impl Editor {
                         .unwrap_or_else(|| editor.selections.newest::<Point>(cx).head());
                     let (buffer, buffer_row) = snapshot
                         .buffer_snapshot
-                        .buffer_line_for_row(MultiBufferRow(multibuffer_point.row))
+                        .buffer_line_for_row(MultibufferRow(multibuffer_point.row))
                         .and_then(|(buffer_snapshot, range)| {
                             editor
                                 .buffer
@@ -4397,7 +4397,7 @@ impl Editor {
 
         let mut ranges_to_highlight = Vec::new();
         let excerpt_buffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite).with_title(title);
+            let mut multibuffer = Multibuffer::new(Capability::ReadWrite).with_title(title);
             for (buffer_handle, transaction) in &entries {
                 let buffer = buffer_handle.read(cx);
                 ranges_to_highlight.extend(
@@ -4873,9 +4873,9 @@ impl Editor {
         let snapshot = buffer.snapshot(cx);
         let selection = self.selections.newest_adjusted(cx);
         let cursor = selection.head();
-        let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+        let current_indent = snapshot.indent_size_for_line(MultibufferRow(cursor.row));
         let suggested_indents = snapshot.suggested_indents([cursor.row], cx);
-        if let Some(suggested_indent) = suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
+        if let Some(suggested_indent) = suggested_indents.get(&MultibufferRow(cursor.row)).copied()
         {
             if cursor.column < suggested_indent.len
                 && cursor.column <= current_indent.len
@@ -5258,7 +5258,7 @@ impl Editor {
             .anchor_before(Point::new(invalidation_row_range.start, 0))
             ..multibuffer.anchor_after(Point::new(
                 invalidation_row_range.end,
-                multibuffer.line_len(MultiBufferRow(invalidation_row_range.end)),
+                multibuffer.line_len(MultibufferRow(invalidation_row_range.end)),
             ));
 
         self.stale_inline_completion_in_menu = None;
@@ -6146,7 +6146,7 @@ impl Editor {
             this.select_autoclose_pair(window, cx);
             let mut linked_ranges = HashMap::<_, Vec<_>>::default();
             if !this.linked_edit_ranges.is_empty() {
-                let selections = this.selections.all::<MultiBufferPoint>(cx);
+                let selections = this.selections.all::<MultibufferPoint>(cx);
                 let snapshot = this.buffer.read(cx).snapshot(cx);
 
                 for selection in selections.iter() {
@@ -6165,7 +6165,7 @@ impl Editor {
                 }
             }
 
-            let mut selections = this.selections.all::<MultiBufferPoint>(cx);
+            let mut selections = this.selections.all::<MultibufferPoint>(cx);
             if !this.selections.line_mode {
                 let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
                 for selection in &mut selections {
@@ -6176,7 +6176,7 @@ impl Editor {
                                 .to_point(&display_map);
                         if let Some((buffer, line_buffer_range)) = display_map
                             .buffer_snapshot
-                            .buffer_line_for_row(MultiBufferRow(old_head.row))
+                            .buffer_line_for_row(MultibufferRow(old_head.row))
                         {
                             let indent_size =
                                 buffer.indent_size_for_line(line_buffer_range.start.row);
@@ -6190,7 +6190,7 @@ impl Editor {
                                 let indent_len = indent_len.get();
                                 new_head = cmp::min(
                                     new_head,
-                                    MultiBufferPoint::new(
+                                    MultibufferPoint::new(
                                         old_head.row,
                                         ((old_head.column - 1) / indent_len) * indent_len,
                                     ),
@@ -6295,9 +6295,9 @@ impl Editor {
             // If the selection is empty and the cursor is in the leading whitespace before the
             // suggested indentation, then auto-indent the line.
             let cursor = selection.head();
-            let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+            let current_indent = snapshot.indent_size_for_line(MultibufferRow(cursor.row));
             if let Some(suggested_indent) =
-                suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
+                suggested_indents.get(&MultibufferRow(cursor.row)).copied()
             {
                 if cursor.column < suggested_indent.len
                     && cursor.column <= current_indent.len
@@ -6375,8 +6375,8 @@ impl Editor {
     }
 
     fn indent_selection(
-        buffer: &MultiBuffer,
-        snapshot: &MultiBufferSnapshot,
+        buffer: &Multibuffer,
+        snapshot: &MultibufferSnapshot,
         selection: &mut Selection<Point>,
         edits: &mut Vec<(Range<Point>, String)>,
         delta_for_start_row: u32,
@@ -6412,7 +6412,7 @@ impl Editor {
         let mut delta_for_end_row = 0;
         let has_multiple_rows = start_row + 1 != end_row;
         for row in start_row..end_row {
-            let current_indent = snapshot.indent_size_for_line(MultiBufferRow(row));
+            let current_indent = snapshot.indent_size_for_line(MultibufferRow(row));
             let indent_delta = match (current_indent.kind, indent_kind) {
                 (IndentKind::Space, IndentKind::Space) => {
                     let columns_to_next_tab_stop = tab_size - (current_indent.len % tab_size);
@@ -6635,15 +6635,15 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        let mut row_ranges = Vec::<Range<MultiBufferRow>>::new();
+        let mut row_ranges = Vec::<Range<MultibufferRow>>::new();
         for selection in self.selections.all::<Point>(cx) {
-            let start = MultiBufferRow(selection.start.row);
+            let start = MultibufferRow(selection.start.row);
             // Treat single line selections as if they include the next line. Otherwise this action
             // would do nothing for single line selections individual cursors.
             let end = if selection.start.row == selection.end.row {
-                MultiBufferRow(selection.start.row + 1)
+                MultibufferRow(selection.start.row + 1)
             } else {
-                MultiBufferRow(selection.end.row)
+                MultibufferRow(selection.end.row)
             };
 
             if let Some(last_row_range) = row_ranges.last_mut() {
@@ -6816,7 +6816,7 @@ impl Editor {
     pub fn prepare_revert_change(
         &self,
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
-        hunk: &MultiBufferDiffHunk,
+        hunk: &MultibufferDiffHunk,
         cx: &mut App,
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
@@ -6901,8 +6901,8 @@ impl Editor {
 
             // Selections must change based on added and removed line count
             let start_row =
-                MultiBufferRow(start_point.row + added_lines as u32 - removed_lines as u32);
-            let end_row = MultiBufferRow(start_row.0 + lines_after.saturating_sub(1) as u32);
+                MultibufferRow(start_point.row + added_lines as u32 - removed_lines as u32);
+            let end_row = MultibufferRow(start_row.0 + lines_after.saturating_sub(1) as u32);
             new_selections.push(Selection {
                 id: selection.id,
                 start: start_row,
@@ -7313,9 +7313,9 @@ impl Editor {
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row.0 <= buffer.max_point().row {
                 let range_to_move =
-                    MultiBufferPoint::new(start_row.0, 0)..MultiBufferPoint::new(end_row.0, 0);
+                    MultibufferPoint::new(start_row.0, 0)..MultibufferPoint::new(end_row.0, 0);
                 let insertion_point = display_map
-                    .next_line_boundary(MultiBufferPoint::new(end_row.0, 0))
+                    .next_line_boundary(MultibufferPoint::new(end_row.0, 0))
                     .0;
 
                 // Don't move lines across excerpt boundaries
@@ -7484,7 +7484,7 @@ impl Editor {
                 let mut rows_by_indent_size = HashMap::<IndentSize, Vec<u32>>::default();
 
                 for row in start_row..=end_row {
-                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                    let indent = buffer.indent_size_for_line(MultibufferRow(row));
                     rows_by_indent_size.entry(indent).or_default().push(row);
                     *indent_size_occurrences.entry(indent).or_insert(0) += 1;
                 }
@@ -7525,7 +7525,7 @@ impl Editor {
                 'expand_upwards: while start_row > 0 {
                     let prev_row = start_row - 1;
                     if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                        && buffer.line_len(MultibufferRow(prev_row)) as usize > line_prefix.len()
                     {
                         start_row = prev_row;
                     } else {
@@ -7536,7 +7536,7 @@ impl Editor {
                 'expand_downwards: while end_row < buffer.max_point().row {
                     let next_row = end_row + 1;
                     if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                        && buffer.line_len(MultibufferRow(next_row)) as usize > line_prefix.len()
                     {
                         end_row = next_row;
                     } else {
@@ -7546,7 +7546,7 @@ impl Editor {
             }
 
             let start = Point::new(start_row, 0);
-            let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
+            let end = Point::new(end_row, buffer.line_len(MultibufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
             let Some(lines_without_prefixes) = selection_text
                 .lines()
@@ -7655,7 +7655,7 @@ impl Editor {
                     len,
                     is_entire_line,
                     first_line_indent: buffer
-                        .indent_size_for_line(MultiBufferRow(selection.start.row))
+                        .indent_size_for_line(MultibufferRow(selection.start.row))
                         .len,
                 });
             }
@@ -7735,7 +7735,7 @@ impl Editor {
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
-                    first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
+                    first_line_indent: buffer.indent_size_for_line(MultibufferRow(start.row)).len,
                 });
             }
         }
@@ -8870,7 +8870,7 @@ impl Editor {
             let buffer = self.buffer.read(cx).read(cx);
             for selection in selections {
                 for row in selection.start.row..selection.end.row {
-                    let cursor = Point::new(row, buffer.line_len(MultiBufferRow(row)));
+                    let cursor = Point::new(row, buffer.line_len(MultibufferRow(row)));
                     new_selection_ranges.push(cursor..cursor);
                 }
                 new_selection_ranges.push(selection.end..selection.end);
@@ -9433,7 +9433,7 @@ impl Editor {
         }
         let text_layout_details = &self.text_layout_details(window);
         self.transact(window, cx, |this, window, cx| {
-            let mut selections = this.selections.all::<MultiBufferPoint>(cx);
+            let mut selections = this.selections.all::<MultibufferPoint>(cx);
             let mut edits = Vec::new();
             let mut selection_edit_ranges = Vec::new();
             let mut last_toggled_row = None;
@@ -9443,8 +9443,8 @@ impl Editor {
             let ignore_indent = action.ignore_indent;
 
             fn comment_prefix_range(
-                snapshot: &MultiBufferSnapshot,
-                row: MultiBufferRow,
+                snapshot: &MultibufferSnapshot,
+                row: MultibufferRow,
                 comment_prefix: &str,
                 comment_prefix_whitespace: &str,
                 ignore_indent: bool,
@@ -9485,8 +9485,8 @@ impl Editor {
             }
 
             fn comment_suffix_range(
-                snapshot: &MultiBufferSnapshot,
-                row: MultiBufferRow,
+                snapshot: &MultibufferSnapshot,
+                row: MultibufferRow,
                 comment_suffix: &str,
                 comment_suffix_has_leading_space: bool,
             ) -> Range<Point> {
@@ -9520,7 +9520,7 @@ impl Editor {
             // TODO: Handle selections that cross excerpts
             for selection in &mut selections {
                 let start_column = snapshot
-                    .indent_size_for_line(MultiBufferRow(selection.start.row))
+                    .indent_size_for_line(MultibufferRow(selection.start.row))
                     .len;
                 let language = if let Some(language) =
                     snapshot.language_scope_at(Point::new(selection.start.row, start_column))
@@ -9534,15 +9534,15 @@ impl Editor {
 
                 // If multiple selections contain a given row, avoid processing that
                 // row more than once.
-                let mut start_row = MultiBufferRow(selection.start.row);
+                let mut start_row = MultibufferRow(selection.start.row);
                 if last_toggled_row == Some(start_row) {
                     start_row = start_row.next_row();
                 }
                 let end_row =
                     if selection.end.row > selection.start.row && selection.end.column == 0 {
-                        MultiBufferRow(selection.end.row - 1)
+                        MultibufferRow(selection.end.row - 1)
                     } else {
-                        MultiBufferRow(selection.end.row)
+                        MultibufferRow(selection.end.row)
                     };
                 last_toggled_row = Some(end_row);
 
@@ -9573,7 +9573,7 @@ impl Editor {
                     let mut all_selection_lines_are_comments = true;
 
                     for row in start_row.0..=end_row.0 {
-                        let row = MultiBufferRow(row);
+                        let row = MultibufferRow(row);
                         if start_row < end_row && snapshot.is_line_blank(row) {
                             continue;
                         }
@@ -9665,7 +9665,7 @@ impl Editor {
             let snapshot = this.buffer.read(cx).read(cx);
             for selection in &mut selections {
                 while let Some((row, suffix_len)) = suffixes_inserted.peek().copied() {
-                    match row.cmp(&MultiBufferRow(selection.end.row)) {
+                    match row.cmp(&MultibufferRow(selection.end.row)) {
                         Ordering::Less => {
                             suffixes_inserted.next();
                             continue;
@@ -9735,7 +9735,7 @@ impl Editor {
 
         fn update_selection(
             selection: &Selection<usize>,
-            buffer_snap: &MultiBufferSnapshot,
+            buffer_snap: &MultibufferSnapshot,
         ) -> Option<Selection<usize>> {
             let cursor = selection.head();
             let (_buffer_id, symbols) = buffer_snap.symbols_containing(cursor, None)?;
@@ -9925,7 +9925,7 @@ impl Editor {
 
                 let row = snapshot
                     .buffer_snapshot
-                    .buffer_line_for_row(MultiBufferRow(point.row))?
+                    .buffer_line_for_row(MultibufferRow(point.row))?
                     .1
                     .start
                     .row;
@@ -9936,7 +9936,7 @@ impl Editor {
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
-                        offset: MultiBufferOffset(runnable.run_range.start),
+                        offset: MultibufferOffset(runnable.run_range.start),
                         context_range,
                         column: point.column,
                         extra_variables: runnable.extra_captures,
@@ -10370,7 +10370,7 @@ impl Editor {
         position: Point,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<MultiBufferDiffHunk> {
+    ) -> Option<MultibufferDiffHunk> {
         let mut hunk = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
@@ -10404,7 +10404,7 @@ impl Editor {
         position: Point,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Option<MultiBufferDiffHunk> {
+    ) -> Option<MultibufferDiffHunk> {
         let mut hunk = snapshot.buffer_snapshot.diff_hunk_before(position);
         if hunk.is_none() {
             hunk = snapshot.buffer_snapshot.diff_hunk_before(Point::MAX);
@@ -10849,11 +10849,11 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<Navigated>>> {
         let selection = self.selections.newest::<usize>(cx);
-        let multi_buffer = self.buffer.read(cx);
+        let multibuffer = self.buffer.read(cx);
         let head = selection.head();
 
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let head_anchor = multi_buffer_snapshot.anchor_at(
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
+        let head_anchor = multibuffer_snapshot.anchor_at(
             head,
             if head < selection.tail() {
                 Bias::Right
@@ -10864,7 +10864,7 @@ impl Editor {
 
         match self
             .find_all_references_task_sources
-            .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multi_buffer_snapshot))
+            .binary_search_by(|anchor| anchor.cmp(&head_anchor, &multibuffer_snapshot))
         {
             Ok(_) => {
                 log::info!(
@@ -10877,7 +10877,7 @@ impl Editor {
             }
         }
 
-        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let (buffer, head) = multibuffer.text_anchor_for_position(head, cx)?;
         let workspace = self.workspace()?;
         let project = workspace.read(cx).project().clone();
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
@@ -10890,7 +10890,7 @@ impl Editor {
                             editor
                                 .find_all_references_task_sources
                                 .binary_search_by(|anchor| {
-                                    anchor.cmp(&head_anchor, &multi_buffer_snapshot)
+                                    anchor.cmp(&head_anchor, &multibuffer_snapshot)
                                 })
                         {
                             editor.find_all_references_task_sources.remove(i);
@@ -10949,7 +10949,7 @@ impl Editor {
         let capability = workspace.project().read(cx).capability();
 
         let excerpt_buffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(capability);
+            let mut multibuffer = Multibuffer::new(capability);
             while let Some(location) = locations.next() {
                 let buffer = location.buffer.read(cx);
                 let mut ranges_for_buffer = Vec::new();
@@ -11382,8 +11382,8 @@ impl Editor {
                 (buffers, LspFormatTarget::Buffers)
             }
             FormatTarget::Ranges(selection_ranges) => {
-                let multi_buffer = buffer.read(cx);
-                let snapshot = multi_buffer.read(cx);
+                let multibuffer = buffer.read(cx);
+                let snapshot = multibuffer.read(cx);
                 let mut buffers = HashSet::default();
                 let mut buffer_id_to_ranges: BTreeMap<BufferId, Vec<Range<text::Anchor>>> =
                     BTreeMap::new();
@@ -11394,7 +11394,7 @@ impl Editor {
                         let buffer_id = buffer.remote_id();
                         let start = buffer.anchor_before(buffer_range.start);
                         let end = buffer.anchor_after(buffer_range.end);
-                        buffers.insert(multi_buffer.buffer(buffer_id).unwrap());
+                        buffers.insert(multibuffer.buffer(buffer_id).unwrap());
                         buffer_id_to_ranges
                             .entry(buffer_id)
                             .and_modify(|buffer_ranges| buffer_ranges.push(start..end))
@@ -11442,9 +11442,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(project) = self.project.clone() {
-            self.buffer.update(cx, |multi_buffer, cx| {
+            self.buffer.update(cx, |multibuffer, cx| {
                 project.update(cx, |project, cx| {
-                    project.restart_language_servers_for_buffers(multi_buffer.all_buffers(), cx);
+                    project.restart_language_servers_for_buffers(multibuffer.all_buffers(), cx);
                 });
             })
         }
@@ -11526,9 +11526,9 @@ impl Editor {
                 .filter_map(|entry| {
                     let start = entry.range.start;
                     let end = entry.range.end;
-                    if snapshot.is_line_folded(MultiBufferRow(start.row))
+                    if snapshot.is_line_folded(MultibufferRow(start.row))
                         && (start.row == end.row
-                            || snapshot.is_line_folded(MultiBufferRow(end.row)))
+                            || snapshot.is_line_folded(MultibufferRow(end.row)))
                     {
                         return None;
                     }
@@ -11719,8 +11719,8 @@ impl Editor {
                 self.fold(&Default::default(), window, cx)
             }
         } else {
-            let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-            let buffer_ids: HashSet<_> = multi_buffer_snapshot
+            let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+            let buffer_ids: HashSet<_> = multibuffer_snapshot
                 .ranges_to_buffer_ranges(self.selections.disjoint_anchor_ranges())
                 .map(|(snapshot, _, _)| snapshot.remote_id())
                 .collect();
@@ -11774,7 +11774,7 @@ impl Editor {
                     let mut found = false;
                     let mut row = range.start.row;
                     while row <= range.end.row {
-                        if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row))
+                        if let Some(crease) = display_map.crease_for_buffer_row(MultibufferRow(row))
                         {
                             found = true;
                             row = crease.range().end.row + 1;
@@ -11789,7 +11789,7 @@ impl Editor {
                 }
 
                 for row in (0..=range.start.row).rev() {
-                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                    if let Some(crease) = display_map.crease_for_buffer_row(MultibufferRow(row)) {
                         if crease.range().end.row >= buffer_start_row {
                             to_fold.push(crease);
                             if row <= range.start.row {
@@ -11802,9 +11802,9 @@ impl Editor {
 
             self.fold_creases(to_fold, true, window, cx);
         } else {
-            let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+            let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
-            let buffer_ids: HashSet<_> = multi_buffer_snapshot
+            let buffer_ids: HashSet<_> = multibuffer_snapshot
                 .ranges_to_buffer_ranges(self.selections.disjoint_anchor_ranges())
                 .map(|(snapshot, _, _)| snapshot.remote_id())
                 .collect();
@@ -11833,7 +11833,7 @@ impl Editor {
             while start_row < end_row {
                 match self
                     .snapshot(window, cx)
-                    .crease_for_buffer_row(MultiBufferRow(start_row))
+                    .crease_for_buffer_row(MultibufferRow(start_row))
                 {
                     Some(crease) => {
                         let nested_start_row = crease.range().start.row + 1;
@@ -11863,7 +11863,7 @@ impl Editor {
             for row in 0..snapshot.max_row().0 {
                 if let Some(foldable_range) = self
                     .snapshot(window, cx)
-                    .crease_for_buffer_row(MultiBufferRow(row))
+                    .crease_for_buffer_row(MultibufferRow(row))
                 {
                     fold_ranges.push(foldable_range);
                 }
@@ -11921,7 +11921,7 @@ impl Editor {
             if range.start.row != range.end.row {
                 let mut found = false;
                 for row in range.start.row..=range.end.row {
-                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                    if let Some(crease) = display_map.crease_for_buffer_row(MultibufferRow(row)) {
                         found = true;
                         to_fold.push(crease);
                     }
@@ -11932,7 +11932,7 @@ impl Editor {
             }
 
             for row in (0..=range.start.row).rev() {
-                if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                if let Some(crease) = display_map.crease_for_buffer_row(MultibufferRow(row)) {
                     if crease.range().end.row >= buffer_start_row {
                         to_fold.push(crease);
                     } else {
@@ -11972,15 +11972,15 @@ impl Editor {
                     let mut start = range.start.to_point(&display_map);
                     let mut end = range.end.to_point(&display_map);
                     start.column = 0;
-                    end.column = buffer.line_len(MultiBufferRow(end.row));
+                    end.column = buffer.line_len(MultibufferRow(end.row));
                     start..end
                 })
                 .collect::<Vec<_>>();
 
             self.unfold_ranges(&ranges, true, true, cx);
         } else {
-            let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-            let buffer_ids: HashSet<_> = multi_buffer_snapshot
+            let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+            let buffer_ids: HashSet<_> = multibuffer_snapshot
                 .ranges_to_buffer_ranges(self.selections.disjoint_anchor_ranges())
                 .map(|(snapshot, _, _)| snapshot.remote_id())
                 .collect();
@@ -12076,7 +12076,7 @@ impl Editor {
                         s.end.row,
                         display_map
                             .buffer_snapshot
-                            .line_len(MultiBufferRow(s.end.row)),
+                            .line_len(MultibufferRow(s.end.row)),
                     );
                     Crease::simple(start..end, display_map.fold_placeholder.clone())
                 } else {
@@ -12114,10 +12114,10 @@ impl Editor {
         }
 
         let mut buffers_affected = HashSet::default();
-        let multi_buffer = self.buffer().read(cx);
+        let multibuffer = self.buffer().read(cx);
         for crease in &creases {
             if let Some((_, buffer, _)) =
-                multi_buffer.excerpt_containing(crease.range().start.clone(), cx)
+                multibuffer.excerpt_containing(crease.range().start.clone(), cx)
             {
                 buffers_affected.insert(buffer.read(cx).remote_id());
             };
@@ -12221,9 +12221,9 @@ impl Editor {
         }
 
         let mut buffers_affected = HashSet::default();
-        let multi_buffer = self.buffer().read(cx);
+        let multibuffer = self.buffer().read(cx);
         for range in ranges {
-            if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
+            if let Some((_, buffer, _)) = multibuffer.excerpt_containing(range.start.clone(), cx) {
                 buffers_affected.insert(buffer.read(cx).remote_id());
             };
         }
@@ -12936,7 +12936,7 @@ impl Editor {
         let cursor_anchor = self.selections.newest_anchor().head();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_row = MultiBufferRow(cursor_anchor.to_point(&snapshot).row);
+        let buffer_row = MultibufferRow(cursor_anchor.to_point(&snapshot).row);
 
         snapshot.line_len(buffer_row) == 0
     }
@@ -12946,9 +12946,9 @@ impl Editor {
             let selection = self.selections.newest::<Point>(cx);
             let selection_range = selection.range();
 
-            let multi_buffer = self.buffer().read(cx);
-            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-            let buffer_ranges = multi_buffer_snapshot.range_to_buffer_ranges(selection_range);
+            let multibuffer = self.buffer().read(cx);
+            let multibuffer_snapshot = multibuffer.snapshot(cx);
+            let buffer_ranges = multibuffer_snapshot.range_to_buffer_ranges(selection_range);
 
             let (buffer, range, _) = if selection.reversed {
                 buffer_ranges.first()
@@ -12959,7 +12959,7 @@ impl Editor {
             let selection = text::ToPoint::to_point(&range.start, &buffer).row
                 ..text::ToPoint::to_point(&range.end, &buffer).row;
             Some((
-                multi_buffer.buffer(buffer.remote_id()).unwrap().clone(),
+                multibuffer.buffer(buffer.remote_id()).unwrap().clone(),
                 selection,
             ))
         });
@@ -13434,7 +13434,7 @@ impl Editor {
     fn document_highlights_for_position<'a>(
         &'a self,
         position: Anchor,
-        buffer: &'a MultiBufferSnapshot,
+        buffer: &'a MultibufferSnapshot,
     ) -> impl 'a + Iterator<Item = &'a Range<Anchor>> {
         let read_highlights = self
             .background_highlights
@@ -13711,19 +13711,19 @@ impl Editor {
             .map(|project| project.read(cx).lsp_store())
     }
 
-    fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
+    fn on_buffer_changed(&mut self, _: Entity<Multibuffer>, cx: &mut Context<Self>) {
         cx.notify();
     }
 
     fn on_buffer_event(
         &mut self,
-        multibuffer: &Entity<MultiBuffer>,
-        event: &multi_buffer::Event,
+        multibuffer: &Entity<Multibuffer>,
+        event: &multibuffer::Event,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            multi_buffer::Event::Edited {
+            multibuffer::Event::Edited {
                 singleton_buffer_edited,
                 edited_buffer: buffer_edited,
             } => {
@@ -13792,7 +13792,7 @@ impl Editor {
                 refresh_linked_ranges(self, window, cx);
                 telemetry.log_edit_event("editor", is_via_ssh);
             }
-            multi_buffer::Event::ExcerptsAdded {
+            multibuffer::Event::ExcerptsAdded {
                 buffer,
                 predecessor,
                 excerpts,
@@ -13816,45 +13816,45 @@ impl Editor {
                 });
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
             }
-            multi_buffer::Event::ExcerptsRemoved { ids } => {
+            multibuffer::Event::ExcerptsRemoved { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::ExcerptsRemoved(ids.clone()), cx);
                 let buffer = self.buffer.read(cx);
                 self.registered_buffers
                     .retain(|buffer_id, _| buffer.buffer(*buffer_id).is_some());
                 cx.emit(EditorEvent::ExcerptsRemoved { ids: ids.clone() })
             }
-            multi_buffer::Event::ExcerptsEdited { ids } => {
+            multibuffer::Event::ExcerptsEdited { ids } => {
                 cx.emit(EditorEvent::ExcerptsEdited { ids: ids.clone() })
             }
-            multi_buffer::Event::ExcerptsExpanded { ids } => {
+            multibuffer::Event::ExcerptsExpanded { ids } => {
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
-            multi_buffer::Event::Reparsed(buffer_id) => {
+            multibuffer::Event::Reparsed(buffer_id) => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }
-            multi_buffer::Event::DiffHunksToggled => {
+            multibuffer::Event::DiffHunksToggled => {
                 self.tasks_update_task = Some(self.refresh_runnables(window, cx));
             }
-            multi_buffer::Event::LanguageChanged(buffer_id) => {
+            multibuffer::Event::LanguageChanged(buffer_id) => {
                 linked_editing_ranges::refresh_linked_ranges(self, window, cx);
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
                 cx.notify();
             }
-            multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
-            multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
-            multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
+            multibuffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
+            multibuffer::Event::Saved => cx.emit(EditorEvent::Saved),
+            multibuffer::Event::FileHandleChanged | multibuffer::Event::Reloaded => {
                 cx.emit(EditorEvent::TitleChanged)
             }
-            // multi_buffer::Event::DiffBaseChanged => {
+            // multibuffer::Event::DiffBaseChanged => {
             //     self.scrollbar_marker_state.dirty = true;
             //     cx.emit(EditorEvent::DiffBaseChanged);
             //     cx.notify();
             // }
-            multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
-            multi_buffer::Event::DiagnosticsUpdated => {
+            multibuffer::Event::Closed => cx.emit(EditorEvent::Closed),
+            multibuffer::Event::DiagnosticsUpdated => {
                 self.refresh_active_diagnostics(cx);
                 self.scrollbar_marker_state.dirty = true;
                 cx.notify();
@@ -13930,18 +13930,18 @@ impl Editor {
         };
 
         let selections = self.selections.all::<usize>(cx);
-        let multi_buffer = self.buffer.read(cx);
-        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let multibuffer = self.buffer.read(cx);
+        let multibuffer_snapshot = multibuffer.snapshot(cx);
         let mut new_selections_by_buffer = HashMap::default();
         for selection in selections {
             for (buffer, range, _) in
-                multi_buffer_snapshot.range_to_buffer_ranges(selection.start..selection.end)
+                multibuffer_snapshot.range_to_buffer_ranges(selection.start..selection.end)
             {
                 let mut range = range.to_point(buffer);
                 range.start.column = 0;
                 range.end.column = buffer.line_len(range.end.row);
                 new_selections_by_buffer
-                    .entry(multi_buffer.buffer(buffer.remote_id()).unwrap())
+                    .entry(multibuffer.buffer(buffer.remote_id()).unwrap())
                     .or_insert(Vec::new())
                     .push(range)
             }
@@ -14009,14 +14009,14 @@ impl Editor {
 
         let mut new_selections_by_buffer = HashMap::default();
         match &jump_data {
-            Some(JumpData::MultiBufferPoint {
+            Some(JumpData::MultibufferPoint {
                 excerpt_id,
                 position,
                 anchor,
                 line_offset_from_top,
             }) => {
-                let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-                if let Some(buffer) = multi_buffer_snapshot
+                let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+                if let Some(buffer) = multibuffer_snapshot
                     .buffer_id_for_excerpt(*excerpt_id)
                     .and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id))
                 {
@@ -14036,11 +14036,11 @@ impl Editor {
                     );
                 }
             }
-            Some(JumpData::MultiBufferRow {
+            Some(JumpData::MultibufferRow {
                 row,
                 line_offset_from_top,
             }) => {
-                let point = MultiBufferPoint::new(row.0, 0);
+                let point = MultibufferPoint::new(row.0, 0);
                 if let Some((buffer, buffer_point, _)) =
                     self.buffer.read(cx).point_to_buffer_point(point, cx)
                 {
@@ -14054,15 +14054,15 @@ impl Editor {
             }
             None => {
                 let selections = self.selections.all::<usize>(cx);
-                let multi_buffer = self.buffer.read(cx);
+                let multibuffer = self.buffer.read(cx);
                 for selection in selections {
-                    for (buffer, mut range, _) in multi_buffer
+                    for (buffer, mut range, _) in multibuffer
                         .snapshot(cx)
                         .range_to_buffer_ranges(selection.range())
                     {
                         // When editing branch buffers, jump to the corresponding location
                         // in their base buffer.
-                        let mut buffer_handle = multi_buffer.buffer(buffer.remote_id()).unwrap();
+                        let mut buffer_handle = multibuffer.buffer(buffer.remote_id()).unwrap();
                         let buffer = buffer_handle.read(cx);
                         if let Some(base_buffer) = buffer.base_buffer() {
                             range = buffer.range_to_version(range, &base_buffer.read(cx).version());
@@ -14476,9 +14476,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.buffer().update(cx, |multi_buffer, cx| {
+        self.buffer().update(cx, |multibuffer, cx| {
             for (buffer_id, changes) in revert_changes {
-                if let Some(buffer) = multi_buffer.buffer(buffer_id) {
+                if let Some(buffer) = multibuffer.buffer(buffer_id) {
                     buffer.update(cx, |buffer, cx| {
                         buffer.edit(
                             changes.into_iter().map(|(range, text)| {
@@ -14496,7 +14496,7 @@ impl Editor {
 
     pub fn to_pixel_point(
         &self,
-        source: multi_buffer::Anchor,
+        source: multibuffer::Anchor,
         editor_snapshot: &EditorSnapshot,
         window: &mut Window,
     ) -> Option<gpui::Point<Pixels>> {
@@ -14563,7 +14563,7 @@ impl Editor {
 fn get_uncommitted_diff_for_buffer(
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     cx: &mut App,
 ) {
     let mut tasks = Vec::new();
@@ -15392,7 +15392,7 @@ impl SemanticsProvider for Entity<Project> {
 
 fn inlay_hint_settings(
     location: Anchor,
-    snapshot: &MultiBufferSnapshot,
+    snapshot: &MultibufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
@@ -15405,9 +15405,9 @@ fn consume_contiguous_rows(
     selection: &Selection<Point>,
     display_map: &DisplaySnapshot,
     selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
-) -> (MultiBufferRow, MultiBufferRow) {
+) -> (MultibufferRow, MultibufferRow) {
     contiguous_row_selections.push(selection.clone());
-    let start_row = MultiBufferRow(selection.start.row);
+    let start_row = MultibufferRow(selection.start.row);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
@@ -15421,11 +15421,11 @@ fn consume_contiguous_rows(
     (start_row, end_row)
 }
 
-fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
+fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultibufferRow {
     if next_selection.end.column > 0 || next_selection.is_empty() {
-        MultiBufferRow(display_map.next_line_boundary(next_selection.end).0.row + 1)
+        MultibufferRow(display_map.next_line_boundary(next_selection.end).0.row + 1)
     } else {
-        MultiBufferRow(next_selection.end.row)
+        MultibufferRow(next_selection.end.row)
     }
 }
 
@@ -15464,13 +15464,13 @@ impl EditorSnapshot {
     pub fn hunks_for_ranges(
         &self,
         ranges: impl Iterator<Item = Range<Point>>,
-    ) -> Vec<MultiBufferDiffHunk> {
+    ) -> Vec<MultibufferDiffHunk> {
         let mut hunks = Vec::new();
         let mut processed_buffer_rows: HashMap<BufferId, HashSet<Range<text::Anchor>>> =
             HashMap::default();
         for query_range in ranges {
             let query_rows =
-                MultiBufferRow(query_range.start.row)..MultiBufferRow(query_range.end.row + 1);
+                MultibufferRow(query_range.start.row)..MultibufferRow(query_range.end.row + 1);
             for hunk in self.buffer_snapshot.diff_hunks_in_range(
                 Point::new(query_rows.start.0, 0)..Point::new(query_rows.end.0, 0),
             ) {
@@ -15604,7 +15604,7 @@ impl EditorSnapshot {
 
     pub fn render_crease_toggle(
         &self,
-        buffer_row: MultiBufferRow,
+        buffer_row: MultibufferRow,
         row_contains_cursor: bool,
         editor: Entity<Editor>,
         window: &mut Window,
@@ -15671,7 +15671,7 @@ impl EditorSnapshot {
 
     pub fn render_crease_trailer(
         &self,
-        buffer_row: MultiBufferRow,
+        buffer_row: MultibufferRow,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
@@ -16108,7 +16108,7 @@ trait SelectionExt {
         &self,
         include_end_if_at_line_start: bool,
         map: &DisplaySnapshot,
-    ) -> Range<MultiBufferRow>;
+    ) -> Range<MultibufferRow>;
 }
 
 impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
@@ -16132,7 +16132,7 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
         &self,
         include_end_if_at_line_start: bool,
         map: &DisplaySnapshot,
-    ) -> Range<MultiBufferRow> {
+    ) -> Range<MultibufferRow> {
         let start = self.start.to_point(&map.buffer_snapshot);
         let mut end = self.end.to_point(&map.buffer_snapshot);
         if !include_end_if_at_line_start && start.row != end.row && end.column == 0 {
@@ -16141,12 +16141,12 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
 
         let buffer_start = map.prev_line_boundary(start).0;
         let buffer_end = map.next_line_boundary(end).0;
-        MultiBufferRow(buffer_start.row)..MultiBufferRow(buffer_end.row + 1)
+        MultibufferRow(buffer_start.row)..MultibufferRow(buffer_end.row + 1)
     }
 }
 
 impl<T: InvalidationRegion> InvalidationStack<T> {
-    fn invalidate<S>(&mut self, selections: &[Selection<S>], buffer: &MultiBufferSnapshot)
+    fn invalidate<S>(&mut self, selections: &[Selection<S>], buffer: &MultibufferSnapshot)
     where
         S: Clone + ToOffset,
     {
@@ -16460,7 +16460,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
 }
 
 pub trait RangeToAnchorExt: Sized {
-    fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
+    fn to_anchors(self, snapshot: &MultibufferSnapshot) -> Range<Anchor>;
 
     fn to_display_points(self, snapshot: &EditorSnapshot) -> Range<DisplayPoint> {
         let anchor_range = self.to_anchors(&snapshot.buffer_snapshot);
@@ -16469,7 +16469,7 @@ pub trait RangeToAnchorExt: Sized {
 }
 
 impl<T: ToOffset> RangeToAnchorExt for Range<T> {
-    fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor> {
+    fn to_anchors(self, snapshot: &MultibufferSnapshot) -> Range<Anchor> {
         let start_offset = self.start.to_offset(snapshot);
         let end_offset = self.end.to_offset(snapshot);
         if start_offset == end_offset {
@@ -16508,7 +16508,7 @@ impl RowExt for DisplayRow {
     }
 }
 
-impl RowExt for MultiBufferRow {
+impl RowExt for MultibufferRow {
     fn as_f32(&self) -> f32 {
         self.0 as f32
     }
@@ -16534,15 +16534,15 @@ trait RowRangeExt {
     fn iter_rows(&self) -> impl DoubleEndedIterator<Item = Self::Row>;
 }
 
-impl RowRangeExt for Range<MultiBufferRow> {
-    type Row = MultiBufferRow;
+impl RowRangeExt for Range<MultibufferRow> {
+    type Row = MultibufferRow;
 
     fn len(&self) -> usize {
         (self.end.0 - self.start.0) as usize
     }
 
-    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = MultiBufferRow> {
-        (self.start.0..self.end.0).map(MultiBufferRow)
+    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = MultibufferRow> {
+        (self.start.0..self.end.0).map(MultibufferRow)
     }
 }
 
@@ -16574,7 +16574,7 @@ const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 fn all_edits_insertions_or_deletions(
     edits: &Vec<(Range<Anchor>, String)>,
-    snapshot: &MultiBufferSnapshot,
+    snapshot: &MultibufferSnapshot,
 ) -> bool {
     let mut all_insertions = true;
     let mut all_deletions = true;

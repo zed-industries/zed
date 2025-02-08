@@ -6,7 +6,7 @@ use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
 use gpui::{App, Context, Window};
 use language::markdown::parse_markdown;
 use language::BufferSnapshot;
-use multi_buffer::{Anchor, ToOffset};
+use multibuffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
 

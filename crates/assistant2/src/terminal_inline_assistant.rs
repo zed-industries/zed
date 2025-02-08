@@ -8,7 +8,7 @@ use crate::thread_store::ThreadStore;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
-use editor::{actions::SelectAll, MultiBuffer};
+use editor::{actions::SelectAll, Multibuffer};
 use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, UpdateGlobal, WeakEntity};
 use language::Buffer;
@@ -74,7 +74,7 @@ impl TerminalInlineAssistant {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer =
-            cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
+            cx.new(|cx| Multibuffer::singleton(cx.new(|cx| Buffer::local(String::new(), cx)), cx));
         let context_store = cx.new(|_cx| ContextStore::new(workspace.clone()));
         let codegen = cx.new(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 

@@ -3,21 +3,21 @@ use std::{ops::Range, time::Duration};
 use collections::HashSet;
 use gpui::{App, Context, Task, Window};
 use language::language_settings::language_settings;
-use multi_buffer::{IndentGuide, MultiBufferRow};
+use multibuffer::{IndentGuide, MultibufferRow};
 use text::{LineIndent, Point};
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
 
 struct ActiveIndentedRange {
-    row_range: Range<MultiBufferRow>,
+    row_range: Range<MultibufferRow>,
     indent: LineIndent,
 }
 
 #[derive(Default)]
 pub struct ActiveIndentGuidesState {
     pub dirty: bool,
-    cursor_row: MultiBufferRow,
+    cursor_row: MultibufferRow,
     pending_refresh: Option<Task<()>>,
     active_indent_range: Option<ActiveIndentedRange>,
 }
@@ -31,7 +31,7 @@ impl ActiveIndentGuidesState {
 impl Editor {
     pub fn indent_guides(
         &self,
-        visible_buffer_range: Range<MultiBufferRow>,
+        visible_buffer_range: Range<MultibufferRow>,
         snapshot: &DisplaySnapshot,
         cx: &mut Context<Editor>,
     ) -> Option<Vec<IndentGuide>> {
@@ -70,7 +70,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<HashSet<usize>> {
         let selection = self.selections.newest::<Point>(cx);
-        let cursor_row = MultiBufferRow(selection.head().row);
+        let cursor_row = MultibufferRow(selection.head().row);
 
         let state = &mut self.active_indent_guides_state;
 
@@ -152,7 +152,7 @@ impl Editor {
 
 pub fn indent_guides_in_range(
     editor: &Editor,
-    visible_buffer_range: Range<MultiBufferRow>,
+    visible_buffer_range: Range<MultibufferRow>,
     ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
     cx: &App,
@@ -172,7 +172,7 @@ pub fn indent_guides_in_range(
                 return false;
             }
 
-            let start = MultiBufferRow(indent_guide.start_row.0.saturating_sub(1));
+            let start = MultibufferRow(indent_guide.start_row.0.saturating_sub(1));
             // Filter out indent guides that are inside a fold
             // All indent guides that are starting "offscreen" have a start value of the first visible row minus one
             // Therefore checking if a line is folded at first visible row minus one causes the other indent guides that are not related to the fold to disappear as well
@@ -187,7 +187,7 @@ pub fn indent_guides_in_range(
 
 async fn resolve_indented_range(
     snapshot: DisplaySnapshot,
-    buffer_row: MultiBufferRow,
+    buffer_row: MultibufferRow,
 ) -> Option<ActiveIndentedRange> {
     snapshot
         .buffer_snapshot
@@ -197,8 +197,8 @@ async fn resolve_indented_range(
 }
 
 fn should_recalculate_indented_range(
-    prev_row: MultiBufferRow,
-    new_row: MultiBufferRow,
+    prev_row: MultibufferRow,
+    new_row: MultibufferRow,
     current_indent_range: &ActiveIndentedRange,
     snapshot: &DisplaySnapshot,
 ) -> bool {

@@ -7,7 +7,7 @@ use gpui::{
 use language::Buffer;
 use language::{CodeLabel, CompletionDocumentation};
 use lsp::LanguageServerId;
-use multi_buffer::{Anchor, ExcerptId};
+use multibuffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
 

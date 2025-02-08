@@ -18,7 +18,7 @@ use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
-use editor::{scroll::Autoscroll, Editor, MultiBuffer};
+use editor::{scroll::Autoscroll, Editor, Multibuffer};
 use feature_flags::{FeatureFlagAppExt, FeatureFlagViewExt, GitUiFeatureFlag};
 use fs::Fs;
 use futures::{channel::mpsc, select_biased, StreamExt};
@@ -1067,7 +1067,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         });
 
                         let buffer = cx
-                            .new(|cx| MultiBuffer::singleton(buffer, cx).with_title("Log".into()));
+                            .new(|cx| Multibuffer::singleton(buffer, cx).with_title("Log".into()));
                         let editor = cx.new(|cx| {
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx);
@@ -1080,10 +1080,10 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         });
 
                         editor.update(cx, |editor, cx| {
-                            let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
+                            let last_multibuffer_offset = editor.buffer().read(cx).len(cx);
                             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                                 s.select_ranges(Some(
-                                    last_multi_buffer_offset..last_multi_buffer_offset,
+                                    last_multibuffer_offset..last_multibuffer_offset,
                                 ));
                             })
                         });
@@ -1527,7 +1527,7 @@ fn open_telemetry_log_file(
                 let project = workspace.project().clone();
                 let buffer = project.update(cx, |project, cx| project.create_local_buffer(&content, json, cx));
                 let buffer = cx.new(|cx| {
-                    MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
+                    Multibuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
                     Box::new(cx.new(|cx| {
@@ -1566,7 +1566,7 @@ fn open_bundled_file(
                         project.create_local_buffer(text.as_ref(), language, cx)
                     });
                     let buffer =
-                        cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.into()));
+                        cx.new(|cx| Multibuffer::singleton(buffer, cx).with_title(title.into()));
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new(|cx| {
                             let mut editor = Editor::for_multibuffer(

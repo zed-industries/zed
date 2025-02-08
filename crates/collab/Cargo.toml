@@ -105,7 +105,7 @@ language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 menu.workspace = true
-multi_buffer = { workspace = true, features = ["test-support"] }
+multibuffer = { workspace = true, features = ["test-support"] }
 node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true

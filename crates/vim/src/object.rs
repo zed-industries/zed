@@ -13,7 +13,7 @@ use editor::{
 use gpui::{actions, impl_actions, Window};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use ui::Context;
@@ -925,12 +925,12 @@ fn indent(
     let point = relative_to.to_point(map);
     let row = point.row;
 
-    let desired_indent = map.line_indent_for_buffer_row(MultiBufferRow(row));
+    let desired_indent = map.line_indent_for_buffer_row(MultibufferRow(row));
 
     // Loop backwards until we find a non-blank line with less indent
     let mut start_row = row;
     for prev_row in (0..row).rev() {
-        let indent = map.line_indent_for_buffer_row(MultiBufferRow(prev_row));
+        let indent = map.line_indent_for_buffer_row(MultibufferRow(prev_row));
         if indent.is_line_empty() {
             continue;
         }
@@ -948,7 +948,7 @@ fn indent(
     let mut end_row = row;
     let max_rows = map.buffer_snapshot.max_row().0;
     for next_row in (row + 1)..=max_rows {
-        let indent = map.line_indent_for_buffer_row(MultiBufferRow(next_row));
+        let indent = map.line_indent_for_buffer_row(MultibufferRow(next_row));
         if indent.is_line_empty() {
             continue;
         }
@@ -962,7 +962,7 @@ fn indent(
         end_row = next_row;
     }
 
-    let end_len = map.buffer_snapshot.line_len(MultiBufferRow(end_row));
+    let end_len = map.buffer_snapshot.line_len(MultibufferRow(end_row));
     let start = map.point_to_display_point(Point::new(start_row, 0), Bias::Right);
     let end = map.point_to_display_point(Point::new(end_row, end_len), Bias::Left);
     Some(start..end)
@@ -1131,7 +1131,7 @@ fn paragraph(
     let paragraph_end_row = paragraph_end.row();
     let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
     let point = relative_to.to_point(map);
-    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultibufferRow(point.row));
 
     if around {
         if paragraph_ends_with_eof {
@@ -1163,10 +1163,10 @@ pub fn start_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) ->
         return DisplayPoint::zero();
     }
 
-    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultibufferRow(point.row));
 
     for row in (0..point.row).rev() {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+        let blank = map.buffer_snapshot.is_line_blank(MultibufferRow(row));
         if blank != is_current_line_blank {
             return Point::new(row + 1, 0).to_display_point(map);
         }
@@ -1184,15 +1184,15 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
         return map.max_point();
     }
 
-    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    let is_current_line_blank = map.buffer_snapshot.is_line_blank(MultibufferRow(point.row));
 
     for row in point.row + 1..map.buffer_snapshot.max_row().0 + 1 {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+        let blank = map.buffer_snapshot.is_line_blank(MultibufferRow(row));
         if blank != is_current_line_blank {
             let previous_row = row - 1;
             return Point::new(
                 previous_row,
-                map.buffer_snapshot.line_len(MultiBufferRow(previous_row)),
+                map.buffer_snapshot.line_len(MultibufferRow(previous_row)),
             )
             .to_display_point(map);
         }

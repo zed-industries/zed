@@ -1436,7 +1436,7 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use editor::{display_map::DisplayRow, DisplayPoint, Editor, MultiBuffer, SearchSettings};
+    use editor::{display_map::DisplayRow, DisplayPoint, Editor, Multibuffer, SearchSettings};
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
@@ -2579,7 +2579,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let editor = cx.new_window_entity(|window, cx| {
-            let multibuffer = MultiBuffer::build_multi(
+            let multibuffer = Multibuffer::build_multi(
                 [
                     (
                         &text,

@@ -1,4 +1,4 @@
-use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
+use editor::{scroll::Autoscroll, Editor, MultibufferSnapshot, ToOffset, ToPoint};
 use gpui::{impl_actions, Context, Window};
 use language::{Bias, Point};
 use schemars::JsonSchema;
@@ -177,7 +177,7 @@ fn increment_binary_string(num: &str, delta: i64) -> String {
 }
 
 fn find_number(
-    snapshot: &MultiBufferSnapshot,
+    snapshot: &MultibufferSnapshot,
     start: Point,
 ) -> Option<(Range<Point>, String, u32)> {
     let mut offset = start.to_offset(snapshot);

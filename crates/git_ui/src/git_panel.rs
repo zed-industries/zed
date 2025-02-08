@@ -8,14 +8,14 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
-use editor::{Editor, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar};
+use editor::{Editor, EditorMode, EditorSettings, Multibuffer, ShowScrollbar};
 use git::repository::RepoPath;
 use git::status::FileStatus;
 use git::{Commit, ToggleStaged};
 use gpui::*;
 use language::{Buffer, File};
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use multi_buffer::ExcerptInfo;
+use multibuffer::ExcerptInfo;
 use panel::PanelHeader;
 use project::git::{GitEvent, Repository};
 use project::{Fs, Project, ProjectPath};
@@ -195,7 +195,7 @@ fn commit_message_editor(
     text_style.refine(&refinement);
 
     let mut commit_editor = if let Some(commit_message_buffer) = commit_message_buffer {
-        let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(commit_message_buffer, cx));
         Editor::new(
             EditorMode::AutoHeight { max_lines: 10 },
             buffer,

@@ -146,12 +146,12 @@ impl SyntaxTreeView {
             .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor.selections.last::<usize>(cx).range();
-            let multi_buffer = editor.buffer().read(cx);
+            let multibuffer = editor.buffer().read(cx);
             let (buffer, range, excerpt_id) = snapshot
                 .buffer_snapshot
                 .range_to_buffer_ranges(selection_range)
                 .pop()?;
-            let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap().clone();
+            let buffer = multibuffer.buffer(buffer.remote_id()).unwrap().clone();
             Some((buffer, range, excerpt_id))
         })?;
 

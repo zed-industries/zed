@@ -9,7 +9,7 @@ use editor::{
 };
 use gpui::{actions, Context, Window};
 use language::{Point, Selection, SelectionGoal};
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use search::BufferSearchBar;
 use util::ResultExt;
 use workspace::searchable::Direction;
@@ -388,7 +388,7 @@ impl Vim {
                                 let row_of_selection_end_line = selection.end.to_point(map).row;
                                 let new_selection_end = if map
                                     .buffer_snapshot
-                                    .line_len(MultiBufferRow(row_of_selection_end_line))
+                                    .line_len(MultibufferRow(row_of_selection_end_line))
                                     == 0
                                 {
                                     Point::new(row_of_selection_end_line + 1, 0)

@@ -6,7 +6,7 @@ use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
+    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, Multibuffer,
 };
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
@@ -96,7 +96,7 @@ impl TerminalInlineAssistant {
         let terminal = terminal_view.read(cx).terminal().clone();
         let assist_id = self.next_assist_id.post_inc();
         let prompt_buffer = cx.new(|cx| Buffer::local(initial_prompt.unwrap_or_default(), cx));
-        let prompt_buffer = cx.new(|cx| MultiBuffer::singleton(prompt_buffer, cx));
+        let prompt_buffer = cx.new(|cx| Multibuffer::singleton(prompt_buffer, cx));
         let codegen = cx.new(|_| Codegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new(|cx| {
@@ -705,7 +705,7 @@ impl PromptEditor {
     fn new(
         id: TerminalInlineAssistId,
         prompt_history: VecDeque<String>,
-        prompt_buffer: Entity<MultiBuffer>,
+        prompt_buffer: Entity<Multibuffer>,
         codegen: Entity<Codegen>,
         assistant_panel: Option<&Entity<AssistantPanel>>,
         workspace: Option<WeakEntity<Workspace>>,

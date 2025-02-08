@@ -17,7 +17,7 @@ use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
 };
 use lsp::{notification, request};
-use multi_buffer::ToPointUtf16;
+use multibuffer::ToPointUtf16;
 use project::Project;
 use smol::stream::StreamExt;
 use workspace::{AppState, Workspace, WorkspaceHandle};

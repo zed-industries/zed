@@ -1,7 +1,7 @@
 #![allow(unused, dead_code)]
 use std::sync::Arc;
 
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{Editor, EditorMode, Multibuffer};
 use futures::future::Shared;
 use gpui::{prelude::*, App, Entity, Hsla, Task, TextStyleRefinement};
 use language::{Buffer, Language, LanguageRegistry};
@@ -171,12 +171,12 @@ impl Cell {
                 let text = source.join("");
 
                 let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
-                let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+                let multibuffer = cx.new(|cx| Multibuffer::singleton(buffer.clone(), cx));
 
                 let editor_view = cx.new(|cx| {
                     let mut editor = Editor::new(
                         EditorMode::AutoHeight { max_lines: 1024 },
-                        multi_buffer,
+                        multibuffer,
                         None,
                         false,
                         window,

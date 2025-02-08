@@ -6,8 +6,8 @@ use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
 use language::{Chunk, Patch, Point};
-use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
+use multibuffer::{
+    Anchor, ExcerptId, ExcerptInfo, Multibuffer, MultibufferRow, MultibufferSnapshot, RowInfo,
     ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
@@ -126,7 +126,7 @@ impl<T> BlockPlacement<T> {
 }
 
 impl BlockPlacement<Anchor> {
-    fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
+    fn cmp(&self, other: &Self, buffer: &MultibufferSnapshot) -> Ordering {
         match (self, other) {
             (BlockPlacement::Above(anchor_a), BlockPlacement::Above(anchor_b))
             | (BlockPlacement::Below(anchor_a), BlockPlacement::Below(anchor_b)) => {
@@ -168,7 +168,7 @@ impl BlockPlacement<Anchor> {
             }
             BlockPlacement::Below(position) => {
                 let mut position = position.to_point(buffer_snapshot);
-                position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
+                position.column = buffer_snapshot.line_len(MultibufferRow(position.row));
                 let wrap_row = WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
                 Some(BlockPlacement::Below(wrap_row))
             }
@@ -181,7 +181,7 @@ impl BlockPlacement<Anchor> {
                     start.column = 0;
                     let start_wrap_row =
                         WrapRow(wrap_snapshot.make_wrap_point(start, Bias::Left).row());
-                    end.column = buffer_snapshot.line_len(MultiBufferRow(end.row));
+                    end.column = buffer_snapshot.line_len(MultibufferRow(end.row));
                     let end_wrap_row =
                         WrapRow(wrap_snapshot.make_wrap_point(end, Bias::Left).row());
                     Some(BlockPlacement::Replace(start_wrap_row..=end_wrap_row))
@@ -729,14 +729,14 @@ impl BlockMap {
         excerpt_footer_height: u32,
         buffer_header_height: u32,
         excerpt_header_height: u32,
-        buffer: &'a multi_buffer::MultiBufferSnapshot,
+        buffer: &'a multibuffer::MultibufferSnapshot,
         folded_buffers: &'a HashSet<BufferId>,
         range: R,
         wrap_snapshot: &'a WrapSnapshot,
     ) -> impl Iterator<Item = (BlockPlacement<WrapRow>, Block)> + 'a
     where
         R: RangeBounds<T>,
-        T: multi_buffer::ToOffset,
+        T: multibuffer::ToOffset,
     {
         let mut boundaries = buffer.excerpt_boundaries_in_range(range).peekable();
 
@@ -1236,26 +1236,26 @@ impl<'a> BlockMapWriter<'a> {
         self.remove(blocks_to_remove);
     }
 
-    pub fn fold_buffer(&mut self, buffer_id: BufferId, multi_buffer: &MultiBuffer, cx: &App) {
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, multibuffer: &Multibuffer, cx: &App) {
         self.0.folded_buffers.insert(buffer_id);
-        self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
+        self.recompute_blocks_for_buffer(buffer_id, multibuffer, cx);
     }
 
-    pub fn unfold_buffer(&mut self, buffer_id: BufferId, multi_buffer: &MultiBuffer, cx: &App) {
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, multibuffer: &Multibuffer, cx: &App) {
         self.0.folded_buffers.remove(&buffer_id);
-        self.recompute_blocks_for_buffer(buffer_id, multi_buffer, cx);
+        self.recompute_blocks_for_buffer(buffer_id, multibuffer, cx);
     }
 
     fn recompute_blocks_for_buffer(
         &mut self,
         buffer_id: BufferId,
-        multi_buffer: &MultiBuffer,
+        multibuffer: &Multibuffer,
         cx: &App,
     ) {
         let wrap_snapshot = self.0.wrap_snapshot.borrow().clone();
 
         let mut edits = Patch::default();
-        for range in multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx) {
+        for range in multibuffer.excerpt_ranges_for_buffer(buffer_id, cx) {
             let last_edit_row = cmp::min(
                 wrap_snapshot.make_wrap_point(range.end, Bias::Right).row() + 1,
                 wrap_snapshot.max_point().row(),
@@ -1596,7 +1596,7 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
-    pub(super) fn is_line_replaced(&self, row: MultiBufferRow) -> bool {
+    pub(super) fn is_line_replaced(&self, row: MultibufferRow) -> bool {
         let wrap_point = self
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
@@ -1999,7 +1999,7 @@ mod tests {
     use gpui::{div, font, px, App, AppContext as _, Element};
     use itertools::Itertools;
     use language::{Buffer, Capability};
-    use multi_buffer::{ExcerptRange, MultiBuffer};
+    use multibuffer::{ExcerptRange, Multibuffer};
     use rand::prelude::*;
     use settings::SettingsStore;
     use std::env;
@@ -2025,7 +2025,7 @@ mod tests {
 
         let text = "aaa\nbbb\nccc\nddd";
 
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer = cx.update(|cx| Multibuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -2198,9 +2198,9 @@ mod tests {
         let buffer3 = cx.new(|cx| Buffer::local("Buffer 3", cx));
 
         let mut excerpt_ids = Vec::new();
-        let multi_buffer = cx.new(|cx| {
-            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = Multibuffer::new(Capability::ReadWrite);
+            excerpt_ids.extend(multibuffer.push_excerpts(
                 buffer1.clone(),
                 [ExcerptRange {
                     context: 0..buffer1.read(cx).len(),
@@ -2208,7 +2208,7 @@ mod tests {
                 }],
                 cx,
             ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            excerpt_ids.extend(multibuffer.push_excerpts(
                 buffer2.clone(),
                 [ExcerptRange {
                     context: 0..buffer2.read(cx).len(),
@@ -2216,7 +2216,7 @@ mod tests {
                 }],
                 cx,
             ));
-            excerpt_ids.extend(multi_buffer.push_excerpts(
+            excerpt_ids.extend(multibuffer.push_excerpts(
                 buffer3.clone(),
                 [ExcerptRange {
                     context: 0..buffer3.read(cx).len(),
@@ -2225,7 +2225,7 @@ mod tests {
                 cx,
             ));
 
-            multi_buffer
+            multibuffer
         });
 
         let font = test_font();
@@ -2240,8 +2240,8 @@ mod tests {
                 .width;
         }
 
-        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-        let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
+        let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(multibuffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
@@ -2276,7 +2276,7 @@ mod tests {
 
         let text = "aaa\nbbb\nccc\nddd";
 
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer = cx.update(|cx| Multibuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let _subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -2379,7 +2379,7 @@ mod tests {
 
         let text = "one two three\nfour five six\nseven eight";
 
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer = cx.update(|cx| Multibuffer::build_simple(text, cx));
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
@@ -2422,7 +2422,7 @@ mod tests {
 
         let text = "line1\nline2\nline3\nline4\nline5";
 
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer = cx.update(|cx| Multibuffer::build_simple(text, cx));
         let buffer_subscription = buffer.update(cx, |buffer, _cx| buffer.subscribe());
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -2560,7 +2560,7 @@ mod tests {
         let text = "111\n222\n333\n444\n555\n666";
 
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
+            Multibuffer::build_multi(
                 [
                     (text, vec![Point::new(0, 0)..Point::new(0, 3)]),
                     (
@@ -2971,7 +2971,7 @@ mod tests {
         let text = "111";
 
         let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(0, 3)])], cx)
+            Multibuffer::build_multi([(text, vec![Point::new(0, 0)..Point::new(0, 3)])], cx)
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
@@ -3054,10 +3054,10 @@ mod tests {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial singleton buffer text: {:?}", text);
-            cx.update(|cx| MultiBuffer::build_simple(&text, cx))
+            cx.update(|cx| Multibuffer::build_simple(&text, cx))
         } else {
             cx.update(|cx| {
-                let multibuffer = MultiBuffer::build_random(&mut rng, cx);
+                let multibuffer = Multibuffer::build_random(&mut rng, cx);
                 log::info!(
                     "initial multi-buffer text: {:?}",
                     multibuffer.read(cx).read(cx).text()
@@ -3320,7 +3320,7 @@ mod tests {
             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
             let input_buffer_rows = buffer_snapshot
-                .row_infos(MultiBufferRow(0))
+                .row_infos(MultibufferRow(0))
                 .map(|row| row.buffer_row)
                 .collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
@@ -3401,7 +3401,7 @@ mod tests {
                 }
 
                 if is_in_replace_block {
-                    expected_replaced_buffer_rows.insert(MultiBufferRow(multibuffer_row));
+                    expected_replaced_buffer_rows.insert(MultibufferRow(multibuffer_row));
                 } else {
                     let buffer_row = input_buffer_rows[multibuffer_row as usize];
                     let soft_wrapped = wraps_snapshot
@@ -3638,7 +3638,7 @@ mod tests {
             }
 
             for buffer_row in 0..=buffer_snapshot.max_point().row {
-                let buffer_row = MultiBufferRow(buffer_row);
+                let buffer_row = MultibufferRow(buffer_row);
                 assert_eq!(
                     blocks_snapshot.is_line_replaced(buffer_row),
                     expected_replaced_buffer_rows.contains(&buffer_row),

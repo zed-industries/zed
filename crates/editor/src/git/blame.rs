@@ -7,7 +7,7 @@ use git::{
 use gpui::{App, Context, Entity, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
-use multi_buffer::RowInfo;
+use multibuffer::RowInfo;
 use project::{Project, ProjectItem};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
@@ -566,7 +566,7 @@ mod tests {
     //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
     //         assert_eq!(
     //             $blame
-    //                 .blame_for_rows($rows.map(MultiBufferRow).map(Some), $cx)
+    //                 .blame_for_rows($rows.map(MultibufferRow).map(Some), $cx)
     //                 .collect::<Vec<_>>(),
     //             $expected
     //         );

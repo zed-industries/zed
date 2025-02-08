@@ -11,7 +11,7 @@ use gpui::{
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, Capability, OffsetRangeExt, Point};
-use multi_buffer::{MultiBuffer, PathKey};
+use multibuffer::{Multibuffer, PathKey};
 use project::{git::GitState, Project, ProjectPath};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -27,7 +27,7 @@ use crate::git_panel::{GitPanel, GitPanelAddon, GitStatusEntry};
 actions!(git, [Diff]);
 
 pub(crate) struct ProjectDiff {
-    multibuffer: Entity<MultiBuffer>,
+    multibuffer: Entity<Multibuffer>,
     editor: Entity<Editor>,
     project: Entity<Project>,
     git_panel: Entity<GitPanel>,
@@ -116,7 +116,7 @@ impl ProjectDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|_| Multibuffer::new(Capability::ReadWrite));
 
         let editor = cx.new(|cx| {
             let mut diff_display_editor = Editor::for_multibuffer(

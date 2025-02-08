@@ -6,7 +6,7 @@ use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
-use editor::{Editor, ExcerptRange, MultiBuffer};
+use editor::{Editor, ExcerptRange, Multibuffer};
 use gpui::{
     point, AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString,
     TestAppContext, VisualTestContext,
@@ -293,7 +293,7 @@ async fn test_basic_following(
                 .get_open_buffer(&(worktree_id, "2.txt").into(), cx)
                 .unwrap()
         });
-        let mut result = MultiBuffer::new(Capability::ReadWrite);
+        let mut result = Multibuffer::new(Capability::ReadWrite);
         result.push_excerpts(
             buffer_a1,
             [ExcerptRange {

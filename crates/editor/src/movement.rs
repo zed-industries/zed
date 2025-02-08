@@ -5,7 +5,7 @@ use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multibuffer::{MultibufferRow, MultibufferSnapshot};
 use serde::Deserialize;
 
 use std::{ops::Range, sync::Arc};
@@ -219,7 +219,7 @@ pub fn indented_line_beginning(
     let indent_start = Point::new(
         point.row,
         map.buffer_snapshot
-            .indent_size_for_line(MultiBufferRow(point.row))
+            .indent_size_for_line(MultibufferRow(point.row))
             .len,
     )
     .to_display_point(map);
@@ -359,7 +359,7 @@ pub fn start_of_paragraph(
 
     let mut found_non_blank_line = false;
     for row in (0..point.row + 1).rev() {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+        let blank = map.buffer_snapshot.is_line_blank(MultibufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
@@ -388,7 +388,7 @@ pub fn end_of_paragraph(
 
     let mut found_non_blank_line = false;
     for row in point.row..=map.buffer_snapshot.max_row().0 {
-        let blank = map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+        let blank = map.buffer_snapshot.is_line_blank(MultibufferRow(row));
         if found_non_blank_line && blank {
             if count <= 1 {
                 return Point::new(row, 0).to_display_point(map);
@@ -408,7 +408,7 @@ pub fn end_of_paragraph(
 /// The predicate is called with the character to the left and right of the candidate boundary location.
 /// If FindRange::SingleLine is specified and no boundary is found before the start of the current line, the start of the current line will be returned.
 pub fn find_preceding_boundary_point(
-    buffer_snapshot: &MultiBufferSnapshot,
+    buffer_snapshot: &MultibufferSnapshot,
     from: Point,
     find_range: FindRange,
     mut is_boundary: impl FnMut(char, char) -> bool,
@@ -701,7 +701,7 @@ mod tests {
     use crate::{
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, Multibuffer,
     };
     use gpui::{font, px, AppContext as _};
     use language::Capability;
@@ -817,7 +817,7 @@ mod tests {
         let input_text = "abcdefghijklmnopqrstuvwxys";
         let font = font("Helvetica");
         let font_size = px(14.0);
-        let buffer = MultiBuffer::build_simple(input_text, cx);
+        let buffer = Multibuffer::build_simple(input_text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
 
         let display_map = cx.new(|cx| {
@@ -1020,7 +1020,7 @@ mod tests {
 
             let buffer = cx.new(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
             let multibuffer = cx.new(|cx| {
-                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+                let mut multibuffer = Multibuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
                     [

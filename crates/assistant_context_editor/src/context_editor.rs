@@ -35,7 +35,7 @@ use language_model::{
     Role,
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use picker::Picker;
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
@@ -927,7 +927,7 @@ impl ContextEditor {
                 let end = buffer
                     .anchor_in_excerpt(excerpt_id, section.range.end)
                     .unwrap();
-                let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                let buffer_row = MultibufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
                 creases.push(
                     Crease::inline(
@@ -1681,7 +1681,7 @@ impl ContextEditor {
             editor.insert("\n", window, cx);
             for (text, crease_title) in creases {
                 let point = editor.selections.newest::<Point>(cx).head();
-                let start_row = MultiBufferRow(point.row);
+                let start_row = MultibufferRow(point.row);
 
                 editor.insert(&text, window, cx);
 
@@ -1779,8 +1779,8 @@ impl ContextEditor {
                         .snapshot(cx)
                         .crease_snapshot
                         .creases_in_range(
-                            MultiBufferRow(selection.start.row)
-                                ..MultiBufferRow(selection.end.row + 1),
+                            MultibufferRow(selection.start.row)
+                                ..MultibufferRow(selection.end.row + 1),
                             &snapshot,
                         )
                         .filter_map(|crease| {
@@ -1890,7 +1890,7 @@ impl ContextEditor {
                                 paste_position + metadata.range_relative_to_selection.end,
                             );
 
-                            let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
+                            let buffer_row = MultibufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
                             Crease::inline(
                                 start..end,
@@ -2607,7 +2607,7 @@ fn render_fold_icon_button(
                         let buffer_start = fold_range
                             .start
                             .to_point(&editor.buffer().read(cx).read(cx));
-                        let buffer_row = MultiBufferRow(buffer_start.row);
+                        let buffer_row = MultibufferRow(buffer_start.row);
                         editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
                     })
                     .ok();
@@ -2619,7 +2619,7 @@ fn render_fold_icon_button(
 type ToggleFold = Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>;
 
 fn render_slash_command_output_toggle(
-    row: MultiBufferRow,
+    row: MultibufferRow,
     is_folded: bool,
     fold: ToggleFold,
     _window: &mut Window,
@@ -2637,7 +2637,7 @@ fn render_slash_command_output_toggle(
 pub fn fold_toggle(
     name: &'static str,
 ) -> impl Fn(
-    MultiBufferRow,
+    MultibufferRow,
     bool,
     Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>,
     &mut Window,
@@ -2667,7 +2667,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -
                                 let buffer_start = fold_range
                                     .start
                                     .to_point(&editor.buffer().read(cx).read(cx));
-                                let buffer_row = MultiBufferRow(buffer_start.row);
+                                let buffer_row = MultibufferRow(buffer_start.row);
                                 editor.unfold_at(&UnfoldAt { buffer_row }, window, cx);
                             })
                             .ok();
@@ -2681,7 +2681,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakEntity<Editor>) -
 }
 
 fn render_quote_selection_output_toggle(
-    row: MultiBufferRow,
+    row: MultibufferRow,
     is_folded: bool,
     fold: ToggleFold,
     _window: &mut Window,
@@ -2694,7 +2694,7 @@ fn render_quote_selection_output_toggle(
 }
 
 fn render_pending_slash_command_gutter_decoration(
-    row: MultiBufferRow,
+    row: MultibufferRow,
     status: &PendingSlashCommandStatus,
     confirm_command: Arc<dyn Fn(&mut Window, &mut App)>,
 ) -> AnyElement {
@@ -2720,7 +2720,7 @@ fn render_pending_slash_command_gutter_decoration(
 }
 
 fn render_docs_slash_command_trailer(
-    row: MultiBufferRow,
+    row: MultibufferRow,
     command: ParsedSlashCommand,
     cx: &mut App,
 ) -> AnyElement {

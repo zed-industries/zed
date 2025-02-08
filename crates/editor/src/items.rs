@@ -3,7 +3,7 @@ use crate::{
     persistence::{SerializedEditor, DB},
     scroll::ScrollAnchor,
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    Multibuffer, MultibufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
@@ -92,9 +92,9 @@ impl FollowableItem for Editor {
                 let multibuffer = cx.new(|cx| {
                     let mut multibuffer;
                     if state.singleton && buffers.len() == 1 {
-                        multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
+                        multibuffer = Multibuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
-                        multibuffer = MultiBuffer::new(project.read(cx).capability());
+                        multibuffer = Multibuffer::new(project.read(cx).capability());
                         let mut excerpts = state.excerpts.into_iter().peekable();
                         while let Some(excerpt) = excerpts.peek() {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
@@ -525,7 +525,7 @@ fn deserialize_excerpt_range(excerpt: proto::Excerpt) -> Option<ExcerptRange<lan
 }
 
 fn deserialize_selection(
-    buffer: &MultiBufferSnapshot,
+    buffer: &MultibufferSnapshot,
     selection: proto::Selection,
 ) -> Option<Selection<Anchor>> {
     Some(Selection {
@@ -537,7 +537,7 @@ fn deserialize_selection(
     })
 }
 
-fn deserialize_anchor(buffer: &MultiBufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
+fn deserialize_anchor(buffer: &MultibufferSnapshot, anchor: proto::EditorAnchor) -> Option<Anchor> {
     let excerpt_id = ExcerptId::from_proto(anchor.excerpt_id);
     Some(Anchor {
         excerpt_id,
@@ -1596,7 +1596,7 @@ impl SearchableItem for Editor {
 pub fn active_match_index(
     ranges: &[Range<Anchor>],
     cursor: &Anchor,
-    buffer: &MultiBufferSnapshot,
+    buffer: &MultibufferSnapshot,
 ) -> Option<usize> {
     if ranges.is_empty() {
         None
@@ -1659,7 +1659,7 @@ pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, select
 }
 
 fn path_for_buffer<'a>(
-    buffer: &Entity<MultiBuffer>,
+    buffer: &Entity<Multibuffer>,
     height: usize,
     include_filename: bool,
     cx: &'a App,

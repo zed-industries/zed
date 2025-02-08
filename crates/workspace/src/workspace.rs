@@ -8064,7 +8064,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_save_prompt_when_multi_buffer_dirty_items_closed(cx: &mut TestAppContext) {
+    async fn test_no_save_prompt_when_multibuffer_dirty_items_closed(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -8085,7 +8085,7 @@ mod tests {
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let dirty_multi_buffer_with_both = cx.new(|cx| {
+        let dirty_multibuffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8095,7 +8095,7 @@ mod tests {
                     dirty_regular_buffer_2.read(cx).project_items[0].clone(),
                 ])
         });
-        let multi_buffer_with_both_files_id = dirty_multi_buffer_with_both.item_id();
+        let multibuffer_with_both_files_id = dirty_multibuffer_with_both.item_id();
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item(
                 pane.clone(),
@@ -8117,7 +8117,7 @@ mod tests {
             );
             workspace.add_item(
                 pane.clone(),
-                Box::new(dirty_multi_buffer_with_both.clone()),
+                Box::new(dirty_multibuffer_with_both.clone()),
                 None,
                 false,
                 false,
@@ -8130,11 +8130,11 @@ mod tests {
             pane.activate_item(2, true, true, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
-                multi_buffer_with_both_files_id,
+                multibuffer_with_both_files_id,
                 "Should select the multi buffer in the pane"
             );
         });
-        let close_all_but_multi_buffer_task = pane
+        let close_all_but_multibuffer_task = pane
             .update_in(cx, |pane, window, cx| {
                 pane.close_inactive_items(
                     &CloseInactiveItems {
@@ -8151,26 +8151,26 @@ mod tests {
             !cx.has_pending_prompt(),
             "Multi buffer still has the unsaved buffer inside, so no save prompt should be shown"
         );
-        close_all_but_multi_buffer_task
+        close_all_but_multibuffer_task
             .await
             .expect("Closing all buffers but the multi buffer failed");
         pane.update(cx, |pane, cx| {
             assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
-            assert_eq!(dirty_multi_buffer_with_both.read(cx).save_count, 0);
+            assert_eq!(dirty_multibuffer_with_both.read(cx).save_count, 0);
             assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
             assert_eq!(pane.items_len(), 1);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
-                multi_buffer_with_both_files_id,
+                multibuffer_with_both_files_id,
                 "Should have only the multi buffer left in the pane"
             );
             assert!(
-                dirty_multi_buffer_with_both.read(cx).is_dirty,
+                dirty_multibuffer_with_both.read(cx).is_dirty,
                 "The multi buffer containing the unsaved buffer should still be dirty"
             );
         });
 
-        let close_multi_buffer_task = pane
+        let close_multibuffer_task = pane
             .update_in(cx, |pane, window, cx| {
                 pane.close_active_item(
                     &CloseActiveItem {
@@ -8189,12 +8189,12 @@ mod tests {
         );
         cx.simulate_prompt_answer(0);
         cx.background_executor.run_until_parked();
-        close_multi_buffer_task
+        close_multibuffer_task
             .await
             .expect("Closing the multi buffer failed");
         pane.update(cx, |pane, cx| {
             assert_eq!(
-                dirty_multi_buffer_with_both.read(cx).save_count,
+                dirty_multibuffer_with_both.read(cx).save_count,
                 1,
                 "Multi buffer item should get be saved"
             );
@@ -8209,7 +8209,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_save_prompt_when_dirty_singleton_buffer_closed_with_a_multi_buffer_containing_it_present_in_the_pane(
+    async fn test_no_save_prompt_when_dirty_singleton_buffer_closed_with_a_multibuffer_containing_it_present_in_the_pane(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -8238,7 +8238,7 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new(|cx| {
+        let dirty_multibuffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8261,7 +8261,7 @@ mod tests {
             );
             workspace.add_item(
                 pane.clone(),
-                Box::new(dirty_multi_buffer_with_both.clone()),
+                Box::new(dirty_multibuffer_with_both.clone()),
                 None,
                 false,
                 false,
@@ -8302,7 +8302,7 @@ mod tests {
         pane.update(cx, |pane, cx| {
             assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
             assert_eq!(
-                dirty_multi_buffer_with_both.read(cx).save_count,
+                dirty_multibuffer_with_both.read(cx).save_count,
                 0,
                 "Multi buffer itself should not be saved"
             );
@@ -8314,14 +8314,14 @@ mod tests {
             );
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
-                dirty_multi_buffer_with_both.item_id(),
+                dirty_multibuffer_with_both.item_id(),
                 "Should activate the only remaining item in the pane"
             );
         });
     }
 
     #[gpui::test]
-    async fn test_save_prompt_when_dirty_multi_buffer_closed_with_some_of_its_dirty_items_not_present_in_the_pane(
+    async fn test_save_prompt_when_dirty_multibuffer_closed_with_some_of_its_dirty_items_not_present_in_the_pane(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -8350,7 +8350,7 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new(|cx| {
+        let dirty_multibuffer_with_both = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8361,7 +8361,7 @@ mod tests {
                     clear_regular_buffer.read(cx).project_items[0].clone(),
                 ])
         });
-        let multi_buffer_with_both_files_id = dirty_multi_buffer_with_both.item_id();
+        let multibuffer_with_both_files_id = dirty_multibuffer_with_both.item_id();
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item(
                 pane.clone(),
@@ -8374,7 +8374,7 @@ mod tests {
             );
             workspace.add_item(
                 pane.clone(),
-                Box::new(dirty_multi_buffer_with_both.clone()),
+                Box::new(dirty_multibuffer_with_both.clone()),
                 None,
                 false,
                 false,
@@ -8387,11 +8387,11 @@ mod tests {
             pane.activate_item(1, true, true, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
-                multi_buffer_with_both_files_id,
+                multibuffer_with_both_files_id,
                 "Should select the multi buffer in the pane"
             );
         });
-        let _close_multi_buffer_task = pane
+        let _close_multibuffer_task = pane
             .update_in(cx, |pane, window, cx| {
                 pane.close_active_item(
                     &CloseActiveItem {
@@ -8411,7 +8411,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_no_save_prompt_when_dirty_multi_buffer_closed_with_all_of_its_dirty_items_present_in_the_pane(
+    async fn test_no_save_prompt_when_dirty_multibuffer_closed_with_all_of_its_dirty_items_present_in_the_pane(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -8440,7 +8440,7 @@ mod tests {
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer = cx.new(|cx| {
+        let dirty_multibuffer = cx.new(|cx| {
             TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8472,7 +8472,7 @@ mod tests {
             );
             workspace.add_item(
                 pane.clone(),
-                Box::new(dirty_multi_buffer.clone()),
+                Box::new(dirty_multibuffer.clone()),
                 None,
                 false,
                 false,
@@ -8485,11 +8485,11 @@ mod tests {
             pane.activate_item(2, true, true, window, cx);
             assert_eq!(
                 pane.active_item().unwrap().item_id(),
-                dirty_multi_buffer.item_id(),
+                dirty_multibuffer.item_id(),
                 "Should select the multi buffer in the pane"
             );
         });
-        let close_multi_buffer_task = pane
+        let close_multibuffer_task = pane
             .update_in(cx, |pane, window, cx| {
                 pane.close_active_item(
                     &CloseActiveItem {
@@ -8506,12 +8506,12 @@ mod tests {
             !cx.has_pending_prompt(),
             "All dirty items from the multi buffer are in the pane still, no save prompts should be shown"
         );
-        close_multi_buffer_task
+        close_multibuffer_task
             .await
             .expect("Closing multi buffer failed");
         pane.update(cx, |pane, cx| {
             assert_eq!(dirty_regular_buffer.read(cx).save_count, 0);
-            assert_eq!(dirty_multi_buffer.read(cx).save_count, 0);
+            assert_eq!(dirty_multibuffer.read(cx).save_count, 0);
             assert_eq!(dirty_regular_buffer_2.read(cx).save_count, 0);
             assert_eq!(
                 pane.items()

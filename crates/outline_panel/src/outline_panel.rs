@@ -18,7 +18,7 @@ use editor::{
     items::{entry_git_aware_label_color, entry_label_color},
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
+    ExcerptRange, MultibufferSnapshot, RangeToAnchorExt, ShowScrollbar,
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -137,7 +137,7 @@ struct SearchState {
 }
 
 struct HighlightArguments {
-    multi_buffer_snapshot: MultiBufferSnapshot,
+    multibuffer_snapshot: MultibufferSnapshot,
     match_range: Range<editor::Anchor>,
     search_data: Arc<OnceLock<SearchData>>,
 }
@@ -174,7 +174,7 @@ impl SearchState {
                     let search_data = highlight_arguments.search_data.get_or_init(|| {
                         SearchData::new(
                             &highlight_arguments.match_range,
-                            &highlight_arguments.multi_buffer_snapshot,
+                            &highlight_arguments.multibuffer_snapshot,
                         )
                     });
                     if needs_init {
@@ -189,12 +189,12 @@ impl SearchState {
                     let mut non_whitespace_symbol_occurred = false;
                     let context_offset_range = search_data
                         .context_range
-                        .to_offset(&highlight_arguments.multi_buffer_snapshot);
+                        .to_offset(&highlight_arguments.multibuffer_snapshot);
                     let mut offset = context_offset_range.start;
                     let mut context_text = String::new();
                     let mut highlight_ranges = Vec::new();
                     for mut chunk in highlight_arguments
-                        .multi_buffer_snapshot
+                        .multibuffer_snapshot
                         .chunks(context_offset_range.start..context_offset_range.end, true)
                     {
                         if !non_whitespace_symbol_occurred {
@@ -427,10 +427,10 @@ const TRUNCATED_CONTEXT_MARK: &str = "…";
 impl SearchData {
     fn new(
         match_range: &Range<editor::Anchor>,
-        multi_buffer_snapshot: &MultiBufferSnapshot,
+        multibuffer_snapshot: &MultibufferSnapshot,
     ) -> Self {
-        let match_point_range = match_range.to_point(multi_buffer_snapshot);
-        let context_left_border = multi_buffer_snapshot.clip_point(
+        let match_point_range = match_range.to_point(multibuffer_snapshot);
+        let context_left_border = multibuffer_snapshot.clip_point(
             language::Point::new(
                 match_point_range.start.row,
                 match_point_range
@@ -440,7 +440,7 @@ impl SearchData {
             ),
             Bias::Left,
         );
-        let context_right_border = multi_buffer_snapshot.clip_point(
+        let context_right_border = multibuffer_snapshot.clip_point(
             language::Point::new(
                 match_point_range.end.row,
                 match_point_range.end.column + SEARCH_MATCH_CONTEXT_SIZE,
@@ -449,22 +449,22 @@ impl SearchData {
         );
 
         let context_anchor_range =
-            (context_left_border..context_right_border).to_anchors(multi_buffer_snapshot);
-        let context_offset_range = context_anchor_range.to_offset(multi_buffer_snapshot);
-        let match_offset_range = match_range.to_offset(multi_buffer_snapshot);
+            (context_left_border..context_right_border).to_anchors(multibuffer_snapshot);
+        let context_offset_range = context_anchor_range.to_offset(multibuffer_snapshot);
+        let match_offset_range = match_range.to_offset(multibuffer_snapshot);
 
         let mut search_match_indices = vec![
-            multi_buffer_snapshot.clip_offset(
+            multibuffer_snapshot.clip_offset(
                 match_offset_range.start - context_offset_range.start,
                 Bias::Left,
             )
-                ..multi_buffer_snapshot.clip_offset(
+                ..multibuffer_snapshot.clip_offset(
                     match_offset_range.end - context_offset_range.start,
                     Bias::Right,
                 ),
         ];
 
-        let entire_context_text = multi_buffer_snapshot
+        let entire_context_text = multibuffer_snapshot
             .text_for_range(context_offset_range.clone())
             .collect::<String>();
         let left_whitespaces_offset = entire_context_text
@@ -476,15 +476,15 @@ impl SearchData {
         let mut extended_context_left_border = context_left_border;
         extended_context_left_border.column = extended_context_left_border.column.saturating_sub(1);
         let extended_context_left_border =
-            multi_buffer_snapshot.clip_point(extended_context_left_border, Bias::Left);
+            multibuffer_snapshot.clip_point(extended_context_left_border, Bias::Left);
         let mut extended_context_right_border = context_right_border;
         extended_context_right_border.column += 1;
         let extended_context_right_border =
-            multi_buffer_snapshot.clip_point(extended_context_right_border, Bias::Right);
+            multibuffer_snapshot.clip_point(extended_context_right_border, Bias::Right);
 
         let truncated_left = left_whitespaces_offset == 0
             && extended_context_left_border < context_left_border
-            && multi_buffer_snapshot
+            && multibuffer_snapshot
                 .chars_at(extended_context_left_border)
                 .last()
                 .map_or(false, |c| !c.is_whitespace());
@@ -493,16 +493,16 @@ impl SearchData {
             .last()
             .map_or(true, |c| !c.is_whitespace())
             && extended_context_right_border > context_right_border
-            && multi_buffer_snapshot
+            && multibuffer_snapshot
                 .chars_at(extended_context_right_border)
                 .next()
                 .map_or(false, |c| !c.is_whitespace());
         search_match_indices.iter_mut().for_each(|range| {
-            range.start = multi_buffer_snapshot.clip_offset(
+            range.start = multibuffer_snapshot.clip_offset(
                 range.start.saturating_sub(left_whitespaces_offset),
                 Bias::Left,
             );
-            range.end = multi_buffer_snapshot.clip_offset(
+            range.end = multibuffer_snapshot.clip_offset(
                 range.end.saturating_sub(left_whitespaces_offset),
                 Bias::Right,
             );
@@ -514,7 +514,7 @@ impl SearchData {
         Self {
             highlights_data: Arc::default(),
             search_match_indices,
-            context_range: trimmed_row_offset_range.to_anchors(multi_buffer_snapshot),
+            context_range: trimmed_row_offset_range.to_anchors(multibuffer_snapshot),
             context_text: trimmed_text,
             truncated_left,
             truncated_right,
@@ -984,8 +984,8 @@ impl OutlinePanel {
         let Some(active_editor) = self.active_editor() else {
             return;
         };
-        let active_multi_buffer = active_editor.read(cx).buffer().clone();
-        let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
+        let active_multibuffer = active_editor.read(cx).buffer().clone();
+        let multibuffer_snapshot = active_multibuffer.read(cx).snapshot(cx);
         let mut change_selection = prefer_selection_change;
         let mut scroll_to_buffer = None;
         let scroll_target = match entry {
@@ -993,10 +993,10 @@ impl OutlinePanel {
             PanelEntry::Fs(FsEntry::ExternalFile(file)) => {
                 change_selection = false;
                 scroll_to_buffer = Some(file.buffer_id);
-                multi_buffer_snapshot.excerpts().find_map(
+                multibuffer_snapshot.excerpts().find_map(
                     |(excerpt_id, buffer_snapshot, excerpt_range)| {
                         if buffer_snapshot.remote_id() == file.buffer_id {
-                            multi_buffer_snapshot
+                            multibuffer_snapshot
                                 .anchor_in_excerpt(excerpt_id, excerpt_range.context.start)
                         } else {
                             None
@@ -1015,25 +1015,25 @@ impl OutlinePanel {
                             .and_then(|path| project.get_open_buffer(&path, cx))
                     })
                     .map(|buffer| {
-                        active_multi_buffer
+                        active_multibuffer
                             .read(cx)
                             .excerpts_for_buffer(buffer.read(cx).remote_id(), cx)
                     })
                     .and_then(|excerpts| {
                         let (excerpt_id, excerpt_range) = excerpts.first()?;
-                        multi_buffer_snapshot
+                        multibuffer_snapshot
                             .anchor_in_excerpt(*excerpt_id, excerpt_range.context.start)
                     })
             }
-            PanelEntry::Outline(OutlineEntry::Outline(outline)) => multi_buffer_snapshot
+            PanelEntry::Outline(OutlineEntry::Outline(outline)) => multibuffer_snapshot
                 .anchor_in_excerpt(outline.excerpt_id, outline.outline.range.start)
                 .or_else(|| {
-                    multi_buffer_snapshot
+                    multibuffer_snapshot
                         .anchor_in_excerpt(outline.excerpt_id, outline.outline.range.end)
                 }),
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => {
                 change_selection = false;
-                multi_buffer_snapshot.anchor_in_excerpt(excerpt.id, excerpt.range.context.start)
+                multibuffer_snapshot.anchor_in_excerpt(excerpt.id, excerpt.range.context.start)
             }
             PanelEntry::Search(search_entry) => Some(search_entry.match_range.start),
         };
@@ -1098,7 +1098,7 @@ impl OutlinePanel {
                                 }
                             }
                         } else {
-                            if multi_buffer_snapshot.as_singleton().is_none() {
+                            if multibuffer_snapshot.as_singleton().is_none() {
                                 offset.y = -(active_editor.read(cx).file_header_size() as f32);
                             }
                             if show_excerpt_controls {
@@ -2340,7 +2340,7 @@ impl OutlinePanel {
     #[allow(clippy::too_many_arguments)]
     fn render_search_match(
         &mut self,
-        multi_buffer_snapshot: Option<&MultiBufferSnapshot>,
+        multibuffer_snapshot: Option<&MultibufferSnapshot>,
         match_range: &Range<editor::Anchor>,
         render_data: &Arc<OnceLock<SearchData>>,
         kind: SearchKind,
@@ -2353,11 +2353,11 @@ impl OutlinePanel {
             Some(search_data) => search_data,
             None => {
                 if let ItemsDisplayMode::Search(search_state) = &mut self.mode {
-                    if let Some(multi_buffer_snapshot) = multi_buffer_snapshot {
+                    if let Some(multibuffer_snapshot) = multibuffer_snapshot {
                         search_state
                             .highlight_search_match_tx
                             .try_send(HighlightArguments {
-                                multi_buffer_snapshot: multi_buffer_snapshot.clone(),
+                                multibuffer_snapshot: multibuffer_snapshot.clone(),
                                 match_range: match_range.clone(),
                                 search_data: Arc::clone(render_data),
                             })
@@ -2541,7 +2541,7 @@ impl OutlinePanel {
         }
 
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let active_multi_buffer = active_editor.read(cx).buffer().clone();
+        let active_multibuffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn_in(window, |outline_panel, mut cx| async move {
@@ -2556,8 +2556,8 @@ impl OutlinePanel {
             let Ok(buffer_excerpts) = outline_panel.update(&mut cx, |outline_panel, cx| {
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
-                let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-                let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
+                let multibuffer_snapshot = active_multibuffer.read(cx).snapshot(cx);
+                let buffer_excerpts = multibuffer_snapshot.excerpts().fold(
                     HashMap::default(),
                     |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
                         let buffer_id = buffer_snapshot.remote_id();
@@ -2969,8 +2969,8 @@ impl OutlinePanel {
             editor.selections.newest::<language::Point>(cx).head()
         });
         let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-        let multi_buffer = editor.read(cx).buffer();
-        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+        let multibuffer = editor.read(cx).buffer();
+        let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
         let (excerpt_id, buffer, _) = editor
             .read(cx)
             .buffer()
@@ -3037,7 +3037,7 @@ impl OutlinePanel {
             ItemsDisplayMode::Outline => self.outline_location(
                 buffer_id,
                 excerpt_id,
-                multi_buffer_snapshot,
+                multibuffer_snapshot,
                 editor_snapshot,
                 selection_display_point,
             ),
@@ -3048,7 +3048,7 @@ impl OutlinePanel {
         &self,
         buffer_id: BufferId,
         excerpt_id: ExcerptId,
-        multi_buffer_snapshot: editor::MultiBufferSnapshot,
+        multibuffer_snapshot: editor::MultibufferSnapshot,
         editor_snapshot: editor::EditorSnapshot,
         selection_display_point: DisplayPoint,
     ) -> Option<PanelEntry> {
@@ -3059,10 +3059,10 @@ impl OutlinePanel {
             .into_iter()
             .flat_map(|excerpt| excerpt.iter_outlines())
             .flat_map(|outline| {
-                let start = multi_buffer_snapshot
+                let start = multibuffer_snapshot
                     .anchor_in_excerpt(excerpt_id, outline.range.start)?
                     .to_display_point(&editor_snapshot);
-                let end = multi_buffer_snapshot
+                let end = multibuffer_snapshot
                     .anchor_in_excerpt(excerpt_id, outline.range.end)?
                     .to_display_point(&editor_snapshot);
                 Some((start..end, outline))
@@ -4464,7 +4464,7 @@ impl OutlinePanel {
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
-                let multi_buffer_snapshot = self
+                let multibuffer_snapshot = self
                     .active_editor()
                     .map(|editor| editor.read(cx).buffer().read(cx).snapshot(cx));
                 uniform_list(cx.entity().clone(), "entries", items_len, {
@@ -4514,7 +4514,7 @@ impl OutlinePanel {
                                     kind,
                                     ..
                                 }) => outline_panel.render_search_match(
-                                    multi_buffer_snapshot.as_ref(),
+                                    multibuffer_snapshot.as_ref(),
                                     &match_range,
                                     &render_data,
                                     kind,
@@ -6255,7 +6255,7 @@ outline: struct OutlineEntryExcerpt
     }
 
     fn display_entries(
-        multi_buffer_snapshot: &MultiBufferSnapshot,
+        multibuffer_snapshot: &MultibufferSnapshot,
         cached_entries: &[CachedEntry],
         selected_entry: Option<&PanelEntry>,
     ) -> String {
@@ -6307,7 +6307,7 @@ outline: struct OutlineEntryExcerpt
                             .render_data
                             .get_or_init(|| SearchData::new(
                                 &search_entry.match_range,
-                                &multi_buffer_snapshot
+                                &multibuffer_snapshot
                             ))
                             .context_text
                     )
@@ -6554,7 +6554,7 @@ outline: struct OutlineEntryExcerpt
         .unwrap()
     }
 
-    fn snapshot(outline_panel: &OutlinePanel, cx: &App) -> MultiBufferSnapshot {
+    fn snapshot(outline_panel: &OutlinePanel, cx: &App) -> MultibufferSnapshot {
         outline_panel
             .active_editor()
             .unwrap()
@@ -6569,10 +6569,10 @@ outline: struct OutlineEntryExcerpt
                 let selections = editor.selections.all::<language::Point>(cx);
                 assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");
                 let selection = selections.first().unwrap();
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                 let line_start = language::Point::new(selection.start.row, 0);
-                let line_end = multi_buffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
-                multi_buffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
+                let line_end = multibuffer_snapshot.clip_point(language::Point::new(selection.end.row, u32::MAX), language::Bias::Right);
+                multibuffer_snapshot.text_for_range(line_start..line_end).collect::<String>().trim().to_owned()
         })
     }
 }

@@ -35,7 +35,7 @@
 
 use std::time::Duration;
 
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, Multibuffer};
 use gpui::{
     percentage, Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation,
     WeakEntity,
@@ -178,11 +178,11 @@ impl Output {
                                     let buffer = buffer_content.clone();
                                     let editor = Box::new(cx.new(|cx| {
                                         let multibuffer = cx.new(|cx| {
-                                            let mut multi_buffer =
-                                                MultiBuffer::singleton(buffer.clone(), cx);
+                                            let mut multibuffer =
+                                                Multibuffer::singleton(buffer.clone(), cx);
 
-                                            multi_buffer.set_title("REPL Output".to_string(), cx);
-                                            multi_buffer
+                                            multibuffer.set_title("REPL Output".to_string(), cx);
+                                            multibuffer
                                         });
 
                                         Editor::for_multibuffer(

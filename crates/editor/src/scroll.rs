@@ -8,7 +8,7 @@ use crate::{
     hover_popover::hide_hover,
     persistence::DB,
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
+    InlayHintRefreshReason, MultibufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
@@ -56,7 +56,7 @@ impl ScrollAnchor {
         scroll_position
     }
 
-    pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
+    pub fn top_row(&self, buffer: &MultibufferSnapshot) -> u32 {
         self.anchor.to_point(buffer).row
     }
 }

@@ -264,7 +264,7 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 mod tests {
     use super::*;
     use editor::{
-        test::editor_lsp_test_context::EditorLspTestContext, Editor, ExcerptRange, MultiBuffer,
+        test::editor_lsp_test_context::EditorLspTestContext, Editor, ExcerptRange, Multibuffer,
     };
     use fs::FakeFs;
     use futures::StreamExt;
@@ -711,7 +711,7 @@ mod tests {
         let buffer_1 = cx.new(|cx| Buffer::local("a = 1\nb = 2\n", cx));
         let buffer_2 = cx.new(|cx| Buffer::local("c = 3\nd = 4\n", cx));
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            let mut multibuffer = Multibuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [ExcerptRange {
@@ -963,7 +963,7 @@ mod tests {
             .unwrap();
 
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            let mut multibuffer = Multibuffer::new(language::Capability::ReadWrite);
             multibuffer.push_excerpts(
                 private_buffer.clone(),
                 [ExcerptRange {

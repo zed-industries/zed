@@ -2,7 +2,7 @@ use gpui::{prelude::*, Entity};
 use indoc::indoc;
 use inline_completion::EditPredictionProvider;
 use language::{Language, LanguageConfig};
-use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
+use multibuffer::{Anchor, MultibufferSnapshot, ToPoint};
 use project::Project;
 use std::{num::NonZeroU32, ops::Range, sync::Arc};
 use text::{Point, ToOffset};
@@ -279,7 +279,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
 
 fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
+    assert: impl FnOnce(MultibufferSnapshot, &Vec<(Range<Anchor>, String)>),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
@@ -297,7 +297,7 @@ fn assert_editor_active_edit_completion(
 
 fn assert_editor_active_move_completion(
     cx: &mut EditorTestContext,
-    assert: impl FnOnce(MultiBufferSnapshot, Anchor),
+    assert: impl FnOnce(MultibufferSnapshot, Anchor),
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor

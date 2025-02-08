@@ -1,5 +1,5 @@
 use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, Multibuffer,
     RowExt,
 };
 use collections::BTreeMap;
@@ -12,7 +12,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::{ExcerptRange, MultiBufferRow};
+use multibuffer::{ExcerptRange, MultibufferRow};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -60,7 +60,7 @@ impl EditorTestContext {
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor_with_project(
                 project,
-                MultiBuffer::build_from_buffer(buffer, cx),
+                Multibuffer::build_from_buffer(buffer, cx),
                 window,
                 cx,
             );
@@ -103,7 +103,7 @@ impl EditorTestContext {
         cx: &mut gpui::TestAppContext,
         excerpts: [&str; COUNT],
     ) -> EditorTestContext {
-        let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+        let mut multibuffer = Multibuffer::new(language::Capability::ReadWrite);
         let buffer = cx.new(|cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
@@ -163,14 +163,14 @@ impl EditorTestContext {
 
     pub fn multibuffer<F, T>(&mut self, read: F) -> T
     where
-        F: FnOnce(&MultiBuffer, &App) -> T,
+        F: FnOnce(&Multibuffer, &App) -> T,
     {
         self.editor(|editor, _, cx| read(editor.buffer().read(cx), cx))
     }
 
     pub fn update_multibuffer<F, T>(&mut self, update: F) -> T
     where
-        F: FnOnce(&mut MultiBuffer, &mut Context<MultiBuffer>) -> T,
+        F: FnOnce(&mut Multibuffer, &mut Context<Multibuffer>) -> T,
     {
         self.update_editor(|editor, _, cx| editor.buffer().update(cx, update))
     }
@@ -452,7 +452,7 @@ pub fn assert_state_with_diff(
     let actual_marked_text = generate_marked_text(&snapshot.text(), &selections, true);
 
     // Read the actual diff.
-    let line_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+    let line_infos = snapshot.row_infos(MultibufferRow(0)).collect::<Vec<_>>();
     let has_diff = line_infos.iter().any(|info| info.diff_status.is_some());
     let actual_diff = actual_marked_text
         .split('\n')

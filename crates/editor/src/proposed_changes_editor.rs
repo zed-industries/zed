@@ -4,7 +4,7 @@ use diff::BufferDiff;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{App, Entity, EventEmitter, Focusable, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
-use multi_buffer::{ExcerptRange, MultiBuffer};
+use multibuffer::{ExcerptRange, Multibuffer};
 use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
@@ -17,7 +17,7 @@ use workspace::{
 
 pub struct ProposedChangesEditor {
     editor: Entity<Editor>,
-    multibuffer: Entity<MultiBuffer>,
+    multibuffer: Entity<Multibuffer>,
     title: SharedString,
     buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
@@ -58,7 +58,7 @@ impl ProposedChangesEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer = cx.new(|_| Multibuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
             editor: cx.new(|cx| {

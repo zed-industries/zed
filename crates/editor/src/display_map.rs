@@ -49,8 +49,8 @@ use language::{
     Subscription as BufferSubscription,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
+use multibuffer::{
+    Anchor, AnchorRangeExt, Multibuffer, MultibufferPoint, MultibufferRow, MultibufferSnapshot,
     RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
@@ -83,13 +83,13 @@ pub trait ToDisplayPoint {
 type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
-/// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
+/// Decides how text in a [`Multibuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
 ///
 /// See the [module level documentation](self) for more information.
 pub struct DisplayMap {
     /// The buffer that we are displaying.
-    buffer: Entity<MultiBuffer>,
+    buffer: Entity<Multibuffer>,
     buffer_subscription: BufferSubscription,
     /// Decides where the [`Inlay`]s should be displayed.
     inlay_map: InlayMap,
@@ -115,7 +115,7 @@ pub struct DisplayMap {
 impl DisplayMap {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        buffer: Entity<MultiBuffer>,
+        buffer: Entity<Multibuffer>,
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
@@ -535,7 +535,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
+    fn tab_size(buffer: &Entity<Multibuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
             .and_then(|buffer| buffer.language())
@@ -683,7 +683,7 @@ impl<'a> HighlightedChunk<'a> {
 
 #[derive(Clone)]
 pub struct DisplaySnapshot {
-    pub buffer_snapshot: MultiBufferSnapshot,
+    pub buffer_snapshot: MultibufferSnapshot,
     pub fold_snapshot: FoldSnapshot,
     pub crease_snapshot: CreaseSnapshot,
     inlay_snapshot: InlaySnapshot,
@@ -715,7 +715,7 @@ impl DisplaySnapshot {
         self.buffer_snapshot.widest_line_number()
     }
 
-    pub fn prev_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
+    pub fn prev_line_boundary(&self, mut point: MultibufferPoint) -> (Point, DisplayPoint) {
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Left);
@@ -735,8 +735,8 @@ impl DisplaySnapshot {
 
     pub fn next_line_boundary(
         &self,
-        mut point: MultiBufferPoint,
-    ) -> (MultiBufferPoint, DisplayPoint) {
+        mut point: MultibufferPoint,
+    ) -> (MultibufferPoint, DisplayPoint) {
         let original_point = point;
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
@@ -759,12 +759,12 @@ impl DisplaySnapshot {
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let max_row = self.buffer_snapshot.max_row().0;
         let new_start = if range.start.row == 0 {
-            MultiBufferPoint::new(0, 0)
+            MultibufferPoint::new(0, 0)
         } else if range.start.row == max_row || (range.end.column > 0 && range.end.row == max_row) {
-            MultiBufferPoint::new(
+            MultibufferPoint::new(
                 range.start.row - 1,
                 self.buffer_snapshot
-                    .line_len(MultiBufferRow(range.start.row - 1)),
+                    .line_len(MultibufferRow(range.start.row - 1)),
             )
         } else {
             self.prev_line_boundary(range.start).0
@@ -774,7 +774,7 @@ impl DisplaySnapshot {
             range.end
         } else if range.end.row < max_row {
             self.buffer_snapshot
-                .clip_point(MultiBufferPoint::new(range.end.row + 1, 0), Bias::Left)
+                .clip_point(MultibufferPoint::new(range.end.row + 1, 0), Bias::Left)
         } else {
             self.buffer_snapshot.max_point()
         };
@@ -782,7 +782,7 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
-    pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
+    pub fn point_to_display_point(&self, point: MultibufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
@@ -1071,7 +1071,7 @@ impl DisplaySnapshot {
     pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
         let mut point = self.display_point_to_point(display_point, Bias::Left);
 
-        if point.column != self.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+        if point.column != self.buffer_snapshot.line_len(MultibufferRow(point.row)) {
             return display_point;
         }
         point.column = point.column.saturating_sub(1);
@@ -1107,7 +1107,7 @@ impl DisplaySnapshot {
         self.fold_snapshot.intersects_fold(offset)
     }
 
-    pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
+    pub fn is_line_folded(&self, buffer_row: MultibufferRow) -> bool {
         self.block_snapshot.is_line_replaced(buffer_row)
             || self.fold_snapshot.is_line_folded(buffer_row)
     }
@@ -1141,7 +1141,7 @@ impl DisplaySnapshot {
         result
     }
 
-    pub fn line_indent_for_buffer_row(&self, buffer_row: MultiBufferRow) -> LineIndent {
+    pub fn line_indent_for_buffer_row(&self, buffer_row: MultibufferRow) -> LineIndent {
         self.buffer_snapshot.line_indent_for_row(buffer_row)
     }
 
@@ -1159,7 +1159,7 @@ impl DisplaySnapshot {
         DisplayRow(longest_row.0)
     }
 
-    pub fn starts_indent(&self, buffer_row: MultiBufferRow) -> bool {
+    pub fn starts_indent(&self, buffer_row: MultibufferRow) -> bool {
         let max_row = self.buffer_snapshot.max_row();
         if buffer_row >= max_row {
             return false;
@@ -1172,7 +1172,7 @@ impl DisplaySnapshot {
 
         (buffer_row.0 + 1..=max_row.0)
             .find_map(|next_row| {
-                let next_line_indent = self.line_indent_for_buffer_row(MultiBufferRow(next_row));
+                let next_line_indent = self.line_indent_for_buffer_row(MultibufferRow(next_row));
                 if next_line_indent.raw_len() > line_indent.raw_len() {
                     Some(true)
                 } else if !next_line_indent.is_line_blank() {
@@ -1184,8 +1184,8 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
-    pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
-        let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
+    pub fn crease_for_buffer_row(&self, buffer_row: MultibufferRow) -> Option<Crease<Point>> {
+        let start = MultibufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
         if let Some(crease) = self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
@@ -1220,22 +1220,22 @@ impl DisplaySnapshot {
                     render_toggle: render_toggle.clone(),
                 }),
             }
-        } else if self.starts_indent(MultiBufferRow(start.row))
-            && !self.is_line_folded(MultiBufferRow(start.row))
+        } else if self.starts_indent(MultibufferRow(start.row))
+            && !self.is_line_folded(MultibufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
             let max_point = self.buffer_snapshot.max_point();
             let mut end = None;
 
             for row in (buffer_row.0 + 1)..=max_point.row {
-                let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
+                let line_indent = self.line_indent_for_buffer_row(MultibufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
                     let prev_row = row - 1;
                     end = Some(Point::new(
                         prev_row,
-                        self.buffer_snapshot.line_len(MultiBufferRow(prev_row)),
+                        self.buffer_snapshot.line_len(MultibufferRow(prev_row)),
                     ));
                     break;
                 }
@@ -1245,7 +1245,7 @@ impl DisplaySnapshot {
             while row_before_line_breaks.row > start.row
                 && self
                     .buffer_snapshot
-                    .is_line_blank(MultiBufferRow(row_before_line_breaks.row))
+                    .is_line_blank(MultibufferRow(row_before_line_breaks.row))
             {
                 row_before_line_breaks.row -= 1;
             }
@@ -1253,7 +1253,7 @@ impl DisplaySnapshot {
             row_before_line_breaks = Point::new(
                 row_before_line_breaks.row,
                 self.buffer_snapshot
-                    .line_len(MultiBufferRow(row_before_line_breaks.row)),
+                    .line_len(MultibufferRow(row_before_line_breaks.row)),
             );
 
             Some(Crease::Inline {
@@ -1489,9 +1489,9 @@ pub mod tests {
                 let text = util::RandomCharIter::new(&mut rng)
                     .take(len)
                     .collect::<String>();
-                MultiBuffer::build_simple(&text, cx)
+                Multibuffer::build_simple(&text, cx)
             } else {
-                MultiBuffer::build_random(&mut rng, cx)
+                Multibuffer::build_random(&mut rng, cx)
             }
         });
 
@@ -1642,7 +1642,7 @@ pub mod tests {
             let buffer = &snapshot.buffer_snapshot;
             for _ in 0..5 {
                 let row = rng.gen_range(0..=buffer.max_point().row);
-                let column = rng.gen_range(0..=buffer.line_len(MultiBufferRow(row)));
+                let column = rng.gen_range(0..=buffer.line_len(MultibufferRow(row)));
                 let point = buffer.clip_point(Point::new(row, column), Left);
 
                 let (prev_buffer_bound, prev_display_bound) = snapshot.prev_line_boundary(point);
@@ -1745,7 +1745,7 @@ pub mod tests {
             let wrap_width = Some(px(64.));
 
             let text = "one two three four five\nsix seven eight";
-            let buffer = MultiBuffer::build_simple(text, cx);
+            let buffer = Multibuffer::build_simple(text, cx);
             let map = cx.new(|cx| {
                 DisplayMap::new(
                     buffer.clone(),
@@ -1854,7 +1854,7 @@ pub mod tests {
         init_test(cx, |_| {});
 
         let text = sample_text(6, 6, 'a');
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = Multibuffer::build_simple(&text, cx);
 
         let font_size = px(14.0);
         let map = cx.new(|cx| {
@@ -1876,15 +1876,15 @@ pub mod tests {
             buffer.edit(
                 vec![
                     (
-                        MultiBufferPoint::new(1, 0)..MultiBufferPoint::new(1, 0),
+                        MultibufferPoint::new(1, 0)..MultibufferPoint::new(1, 0),
                         "\t",
                     ),
                     (
-                        MultiBufferPoint::new(1, 1)..MultiBufferPoint::new(1, 1),
+                        MultibufferPoint::new(1, 1)..MultibufferPoint::new(1, 1),
                         "\t",
                     ),
                     (
-                        MultiBufferPoint::new(2, 1)..MultiBufferPoint::new(2, 1),
+                        MultibufferPoint::new(2, 1)..MultibufferPoint::new(2, 1),
                         "\t",
                     ),
                 ],
@@ -1949,7 +1949,7 @@ pub mod tests {
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
 
         let font_size = px(14.0);
 
@@ -1990,7 +1990,7 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.fold(
                 vec![Crease::simple(
-                    MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
+                    MultibufferPoint::new(0, 6)..MultibufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],
                 cx,
@@ -2052,7 +2052,7 @@ pub mod tests {
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let map = cx.new(|cx| {
@@ -2145,7 +2145,7 @@ pub mod tests {
             )
         });
 
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let map = cx.new(|cx| {
@@ -2235,7 +2235,7 @@ pub mod tests {
 
         cx.update(|cx| init_test(cx, |_| {}));
 
-        let buffer = cx.update(|cx| MultiBuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
+        let buffer = cx.update(|cx| Multibuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
         let map = cx.new(|cx| {
             DisplayMap::new(
@@ -2377,7 +2377,7 @@ pub mod tests {
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
 
         let font_size = px(16.0);
 
@@ -2411,7 +2411,7 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.fold(
                 vec![Crease::simple(
-                    MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
+                    MultibufferPoint::new(0, 6)..MultibufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],
                 cx,
@@ -2461,7 +2461,7 @@ pub mod tests {
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
 
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer = cx.new(|cx| Multibuffer::singleton(buffer, cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
 
         let font_size = px(16.0);
@@ -2589,7 +2589,7 @@ pub mod tests {
         init_test(cx, |_| {});
 
         let text = "aaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\nkkk\nlll";
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = Multibuffer::build_simple(text, cx);
         let font_size = px(14.0);
         cx.new(|cx| {
             let mut map = DisplayMap::new(
@@ -2627,7 +2627,7 @@ pub mod tests {
         init_test(cx, |_| {});
 
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
-        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer = Multibuffer::build_simple(text, cx);
         let font_size = px(14.0);
 
         let map = cx.new(|cx| {
@@ -2659,17 +2659,17 @@ pub mod tests {
             "🏀β      γ"
         );
 
-        let point = MultiBufferPoint::new(0, "✅\t\t".len() as u32);
+        let point = MultibufferPoint::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(DisplayRow(0), "✅       ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point);
 
-        let point = MultiBufferPoint::new(1, "β\t".len() as u32);
+        let point = MultibufferPoint::new(1, "β\t".len() as u32);
         let display_point = DisplayPoint::new(DisplayRow(1), "β   ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point,);
 
-        let point = MultiBufferPoint::new(2, "🏀β\t\t".len() as u32);
+        let point = MultibufferPoint::new(2, "🏀β\t\t".len() as u32);
         let display_point = DisplayPoint::new(DisplayRow(2), "🏀β      ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point,);
@@ -2677,11 +2677,11 @@ pub mod tests {
         // Display points inside of expanded tabs
         assert_eq!(
             DisplayPoint::new(DisplayRow(0), "✅      ".len() as u32).to_point(&map),
-            MultiBufferPoint::new(0, "✅\t".len() as u32),
+            MultibufferPoint::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
             DisplayPoint::new(DisplayRow(0), "✅ ".len() as u32).to_point(&map),
-            MultiBufferPoint::new(0, "✅".len() as u32),
+            MultibufferPoint::new(0, "✅".len() as u32),
         );
 
         // Clipping display points inside of multi-byte characters
@@ -2705,7 +2705,7 @@ pub mod tests {
     fn test_max_point(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
-        let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
+        let buffer = Multibuffer::build_simple("aaa\n\t\tbbb", cx);
         let font_size = px(14.0);
         let map = cx.new(|cx| {
             DisplayMap::new(

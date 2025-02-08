@@ -12,7 +12,7 @@ use editor::{
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
-    Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
+    Editor, EditorEvent, ExcerptId, ExcerptRange, Multibuffer, ToOffset,
 };
 use gpui::{
     actions, div, svg, AnyElement, AnyView, App, Context, Entity, EventEmitter, FocusHandle,
@@ -62,7 +62,7 @@ struct ProjectDiagnosticsEditor {
     focus_handle: FocusHandle,
     editor: Entity<Editor>,
     summary: DiagnosticSummary,
-    excerpts: Entity<MultiBuffer>,
+    excerpts: Entity<Multibuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<(ProjectPath, Option<LanguageServerId>)>,
     include_warnings: bool,
@@ -168,7 +168,7 @@ impl ProjectDiagnosticsEditor {
         })
         .detach();
 
-        let excerpts = cx.new(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
+        let excerpts = cx.new(|cx| Multibuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(
                 excerpts.clone(),

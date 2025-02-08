@@ -19,7 +19,7 @@ pub enum MenuPosition {
     /// When the editor is scrolled, the context menu follows the position it is associated with.
     /// Disappears when the position is no longer visible.
     PinnedToEditor {
-        source: multi_buffer::Anchor,
+        source: multibuffer::Anchor,
         offset: Point<Pixels>,
     },
 }
@@ -42,7 +42,7 @@ impl std::fmt::Debug for MouseContextMenu {
 impl MouseContextMenu {
     pub(crate) fn pinned_to_editor(
         editor: &mut Editor,
-        source: multi_buffer::Anchor,
+        source: multibuffer::Anchor,
         position: Point<Pixels>,
         context_menu: Entity<ui::ContextMenu>,
         window: &mut Window,

@@ -9,7 +9,7 @@ use editor::{
 };
 use gpui::{actions, impl_internal_actions, Action, App, Context, Global, Window};
 use language::Point;
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
@@ -463,7 +463,7 @@ impl Position {
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<MultiBufferRow> {
+    ) -> Result<MultibufferRow> {
         let snapshot = editor.snapshot(window, cx);
         let target = match self {
             Position::Line { row, offset } => {
@@ -504,7 +504,7 @@ impl Position {
                 .saturating_add_signed(*offset),
         };
 
-        Ok(MultiBufferRow(target).min(snapshot.buffer_snapshot.max_row()))
+        Ok(MultibufferRow(target).min(snapshot.buffer_snapshot.max_row()))
     }
 }
 
@@ -525,7 +525,7 @@ impl CommandRange {
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut App,
-    ) -> Result<Range<MultiBufferRow>> {
+    ) -> Result<Range<MultibufferRow>> {
         let start = self.start.buffer_row(vim, editor, window, cx)?;
         let end = if let Some(end) = self.end.as_ref() {
             end.buffer_row(vim, editor, window, cx)?

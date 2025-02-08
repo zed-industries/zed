@@ -4,8 +4,8 @@ use super::{
 };
 use gpui::{AnyElement, App, ElementId, Window};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
-use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset,
+use multibuffer::{
+    Anchor, AnchorRangeExt, MultibufferRow, MultibufferSnapshot, RowInfo, ToOffset,
 };
 use std::{
     any::TypeId,
@@ -580,7 +580,7 @@ pub struct FoldSnapshot {
 }
 
 impl FoldSnapshot {
-    pub fn buffer(&self) -> &MultiBufferSnapshot {
+    pub fn buffer(&self) -> &MultibufferSnapshot {
         &self.inlay_snapshot.buffer
     }
 
@@ -733,7 +733,7 @@ impl FoldSnapshot {
         cursor.item().map_or(false, |t| t.placeholder.is_some())
     }
 
-    pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
+    pub fn is_line_folded(&self, buffer_row: MultibufferRow) -> bool {
         let mut inlay_point = self
             .inlay_snapshot
             .to_inlay_point(Point::new(buffer_row.0, 0));
@@ -1050,7 +1050,7 @@ impl Default for FoldRange {
 impl sum_tree::Item for Fold {
     type Summary = FoldSummary;
 
-    fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
+    fn summary(&self, _cx: &MultibufferSnapshot) -> Self::Summary {
         FoldSummary {
             start: self.range.start,
             end: self.range.end,
@@ -1083,9 +1083,9 @@ impl Default for FoldSummary {
 }
 
 impl sum_tree::Summary for FoldSummary {
-    type Context = MultiBufferSnapshot;
+    type Context = MultibufferSnapshot;
 
-    fn zero(_cx: &MultiBufferSnapshot) -> Self {
+    fn zero(_cx: &MultibufferSnapshot) -> Self {
         Default::default()
     }
 
@@ -1113,28 +1113,28 @@ impl sum_tree::Summary for FoldSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for FoldRange {
-    fn zero(_cx: &MultiBufferSnapshot) -> Self {
+    fn zero(_cx: &MultibufferSnapshot) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
+    fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultibufferSnapshot) {
         self.0.start = summary.start;
         self.0.end = summary.end;
     }
 }
 
 impl<'a> sum_tree::SeekTarget<'a, FoldSummary, FoldRange> for FoldRange {
-    fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
+    fn cmp(&self, other: &Self, buffer: &MultibufferSnapshot) -> Ordering {
         AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
-    fn zero(_cx: &MultiBufferSnapshot) -> Self {
+    fn zero(_cx: &MultibufferSnapshot) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
+    fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultibufferSnapshot) {
         *self += summary.count;
     }
 }
@@ -1386,7 +1386,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{display_map::inlay_map::InlayMap, MultiBuffer, ToPoint};
+    use crate::{display_map::inlay_map::InlayMap, Multibuffer, ToPoint};
     use collections::HashSet;
     use rand::prelude::*;
     use settings::SettingsStore;
@@ -1399,7 +1399,7 @@ mod tests {
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::App) {
         init_test(cx);
-        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let buffer = Multibuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1478,7 +1478,7 @@ mod tests {
     #[gpui::test]
     fn test_adjacent_folds(cx: &mut gpui::App) {
         init_test(cx);
-        let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
+        let buffer = Multibuffer::build_simple("abcdefghijkl", cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1536,7 +1536,7 @@ mod tests {
 
     #[gpui::test]
     fn test_overlapping_folds(cx: &mut gpui::App) {
-        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let buffer = Multibuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
@@ -1554,7 +1554,7 @@ mod tests {
     #[gpui::test]
     fn test_merging_folds_via_edit(cx: &mut gpui::App) {
         init_test(cx);
-        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let buffer = Multibuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1580,7 +1580,7 @@ mod tests {
 
     #[gpui::test]
     fn test_folds_in_range(cx: &mut gpui::App) {
-        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let buffer = Multibuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let mut map = FoldMap::new(inlay_snapshot.clone()).0;
@@ -1619,9 +1619,9 @@ mod tests {
         let len = rng.gen_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
         let buffer = if rng.gen() {
-            MultiBuffer::build_simple(&text, cx)
+            Multibuffer::build_simple(&text, cx)
         } else {
-            MultiBuffer::build_random(&mut rng, cx)
+            Multibuffer::build_random(&mut rng, cx)
         };
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1806,7 +1806,7 @@ mod tests {
                 .collect::<HashSet<_>>();
             for row in 0..=buffer_snapshot.max_point().row {
                 assert_eq!(
-                    snapshot.is_line_folded(MultiBufferRow(row)),
+                    snapshot.is_line_folded(MultibufferRow(row)),
                     folded_buffer_rows.contains(&row),
                     "expected buffer row {}{} to be folded",
                     row,
@@ -1883,7 +1883,7 @@ mod tests {
     #[gpui::test]
     fn test_buffer_rows(cx: &mut gpui::App) {
         let text = sample_text(6, 6, 'a') + "\n";
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = Multibuffer::build_simple(&text, cx);
 
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);

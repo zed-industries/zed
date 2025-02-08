@@ -14,7 +14,7 @@ use gpui::{
     AnyElement, App, DismissEvent, Empty, Entity, FocusHandle, Focusable, Stateful, Task,
     WeakEntity,
 };
-use multi_buffer::{MultiBufferPoint, MultiBufferRow};
+use multibuffer::{MultibufferPoint, MultibufferRow};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
@@ -246,12 +246,12 @@ impl PickerDelegate for FileContextPickerDelegate {
             editor.transact(window, cx, |editor, window, cx| {
                 // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
                 {
-                    let mut selections = editor.selections.all::<MultiBufferPoint>(cx);
+                    let mut selections = editor.selections.all::<MultibufferPoint>(cx);
 
                     for selection in selections.iter_mut() {
                         if selection.is_empty() {
                             let old_head = selection.head();
-                            let new_head = MultiBufferPoint::new(
+                            let new_head = MultibufferPoint::new(
                                 old_head.row,
                                 old_head.column.saturating_sub(1),
                             );
@@ -302,7 +302,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                     .into_iter()
                     .zip(end_anchors)
                     .map(|(start, end)| {
-                        rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
+                        rows_to_fold.insert(MultibufferRow(start.to_point(&buffer).row));
 
                         Crease::inline(
                             start..end,
@@ -475,7 +475,7 @@ fn render_fold_icon_button(
 fn fold_toggle(
     name: &'static str,
 ) -> impl Fn(
-    MultiBufferRow,
+    MultibufferRow,
     bool,
     Arc<dyn Fn(bool, &mut Window, &mut App) + Send + Sync>,
     &mut Window,

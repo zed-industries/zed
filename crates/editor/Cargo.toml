@@ -17,7 +17,7 @@ test-support = [
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
-    "multi_buffer/test-support",
+    "multibuffer/test-support",
     "project/test-support",
     "theme/test-support",
     "util/test-support",
@@ -55,7 +55,7 @@ linkify.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
-multi_buffer.workspace = true
+multibuffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
 pretty_assertions.workspace = true
@@ -96,7 +96,7 @@ env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
-multi_buffer = { workspace = true, features = ["test-support"] }
+multibuffer = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rand.workspace = true

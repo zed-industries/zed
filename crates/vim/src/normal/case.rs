@@ -2,7 +2,7 @@ use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
 use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 
 use crate::{
     motion::Motion,
@@ -152,7 +152,7 @@ impl Vim {
                         let start = Point::new(selection.start.row, 0);
                         let end = Point::new(
                             selection.end.row,
-                            snapshot.line_len(MultiBufferRow(selection.end.row)),
+                            snapshot.line_len(MultibufferRow(selection.end.row)),
                         );
                         ranges.push(start..end);
                         cursor_positions.push(start..start);
@@ -177,7 +177,7 @@ impl Vim {
                         }
                         ranges.push(start..end);
 
-                        if end.column == snapshot.line_len(MultiBufferRow(end.row)) {
+                        if end.column == snapshot.line_len(MultibufferRow(end.row)) {
                             end = snapshot.clip_point(end - Point::new(0, 1), Bias::Left);
                         }
                         cursor_positions.push(end..end)

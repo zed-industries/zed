@@ -1,8 +1,8 @@
 use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{
-    Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
+use multibuffer::{
+    Anchor, MultibufferRow, MultibufferRows, MultibufferSnapshot, RowInfo, ToOffset,
 };
 use std::{
     cmp,
@@ -23,7 +23,7 @@ pub struct InlayMap {
 
 #[derive(Clone)]
 pub struct InlaySnapshot {
-    pub buffer: MultiBufferSnapshot,
+    pub buffer: MultibufferSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
 }
@@ -197,9 +197,9 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
     transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
-    buffer_rows: MultiBufferRows<'a>,
+    buffer_rows: MultibufferRows<'a>,
     inlay_row: u32,
-    max_buffer_row: MultiBufferRow,
+    max_buffer_row: MultibufferRow,
 }
 
 pub struct InlayChunks<'a> {
@@ -347,7 +347,7 @@ impl<'a> InlayBufferRows<'a> {
         self.transforms.seek(&inlay_point, Bias::Left, &());
 
         let mut buffer_point = self.transforms.start().1;
-        let buffer_row = MultiBufferRow(if row == 0 {
+        let buffer_row = MultibufferRow(if row == 0 {
             0
         } else {
             match self.transforms.item() {
@@ -395,7 +395,7 @@ impl InlayPoint {
 }
 
 impl InlayMap {
-    pub fn new(buffer: MultiBufferSnapshot) -> (Self, InlaySnapshot) {
+    pub fn new(buffer: MultibufferSnapshot) -> (Self, InlaySnapshot) {
         let version = 0;
         let snapshot = InlaySnapshot {
             buffer: buffer.clone(),
@@ -414,7 +414,7 @@ impl InlayMap {
 
     pub fn sync(
         &mut self,
-        buffer_snapshot: MultiBufferSnapshot,
+        buffer_snapshot: MultibufferSnapshot,
         mut buffer_edits: Vec<text::Edit<usize>>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
         let snapshot = &mut self.snapshot;
@@ -955,14 +955,14 @@ impl InlaySnapshot {
         let max_buffer_row = self.buffer.max_row();
         let mut buffer_point = cursor.start().1;
         let buffer_row = if row == 0 {
-            MultiBufferRow(0)
+            MultibufferRow(0)
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     buffer_point += inlay_point.0 - cursor.start().0 .0;
-                    MultiBufferRow(buffer_point.row)
+                    MultibufferRow(buffer_point.row)
                 }
-                _ => cmp::min(MultiBufferRow(buffer_point.row + 1), max_buffer_row),
+                _ => cmp::min(MultibufferRow(buffer_point.row + 1), max_buffer_row),
             }
         };
 
@@ -1068,7 +1068,7 @@ mod tests {
     use crate::{
         display_map::{InlayHighlights, TextHighlights},
         hover_links::InlayHighlight,
-        InlayId, MultiBuffer,
+        InlayId, Multibuffer,
     };
     use gpui::{App, HighlightStyle};
     use project::{InlayHint, InlayHintLabel, ResolveState};
@@ -1164,7 +1164,7 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_inlays(cx: &mut App) {
-        let buffer = MultiBuffer::build_simple("abcdefghi", cx);
+        let buffer = Multibuffer::build_simple("abcdefghi", cx);
         let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abcdefghi");
@@ -1456,7 +1456,7 @@ mod tests {
 
     #[gpui::test]
     fn test_inlay_buffer_rows(cx: &mut App) {
-        let buffer = MultiBuffer::build_simple("abc\ndef\nghi", cx);
+        let buffer = Multibuffer::build_simple("abc\ndef\nghi", cx);
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
         assert_eq!(inlay_snapshot.text(), "abc\ndef\nghi");
         let mut next_inlay_id = 0;
@@ -1504,9 +1504,9 @@ mod tests {
             let text = util::RandomCharIter::new(&mut rng)
                 .take(len)
                 .collect::<String>();
-            MultiBuffer::build_simple(&text, cx)
+            Multibuffer::build_simple(&text, cx)
         } else {
-            MultiBuffer::build_random(&mut rng, cx)
+            Multibuffer::build_random(&mut rng, cx)
         };
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut next_inlay_id = 0;

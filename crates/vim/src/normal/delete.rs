@@ -7,7 +7,7 @@ use editor::{
 };
 use gpui::{Context, Window};
 use language::{Point, Selection};
-use multi_buffer::MultiBufferRow;
+use multibuffer::MultibufferRow;
 
 impl Vim {
     pub fn delete_motion(
@@ -40,7 +40,7 @@ impl Vim {
                                 if selection.is_empty()
                                     && map
                                         .buffer_snapshot
-                                        .line_len(MultiBufferRow(start_point.row))
+                                        .line_len(MultibufferRow(start_point.row))
                                         == 0 =>
                             {
                                 selection.end = next_line
