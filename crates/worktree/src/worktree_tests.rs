@@ -2775,7 +2775,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         assert_eq!(snapshot.repositories().iter().count(), 1);
         let repo = snapshot.repositories().iter().next().unwrap();
         assert_eq!(
-            repo.work_directory,
+            repo.work_directory.canonicalize(),
             WorkDirectory::AboveProject {
                 absolute_path: Arc::from(root.path().join("my-repo").canonicalize().unwrap()),
                 location_in_repo: Arc::from(Path::new(util::separator!(

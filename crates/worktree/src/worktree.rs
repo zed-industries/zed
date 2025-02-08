@@ -339,6 +339,22 @@ impl WorkDirectory {
         }
     }
 
+    #[cfg(test)]
+    fn canonicalize(&self) -> Self {
+        match self {
+            WorkDirectory::InProject { relative_path } => WorkDirectory::InProject {
+                relative_path: relative_path.clone(),
+            },
+            WorkDirectory::AboveProject {
+                absolute_path,
+                location_in_repo,
+            } => WorkDirectory::AboveProject {
+                absolute_path: absolute_path.canonicalize().unwrap().into(),
+                location_in_repo: location_in_repo.clone(),
+            },
+        }
+    }
+
     pub fn is_above_project(&self) -> bool {
         match self {
             WorkDirectory::InProject { .. } => false,
