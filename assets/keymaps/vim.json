@@ -382,9 +382,9 @@
     }
   },
   {
-    "context": "Editor && vim_mode == waiting",
+    "context": "Editor && vim_mode == waiting && (vim_operator == ys || vim_operator == cs)",
     "bindings": {
-        "escape": "vim::SwitchToNormalMode"
+      "escape": "vim::SwitchToNormalMode"
     }
   },
   {
