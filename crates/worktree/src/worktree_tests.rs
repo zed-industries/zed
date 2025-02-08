@@ -2774,10 +2774,16 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(snapshot.repositories().iter().count(), 1);
         let repo = snapshot.repositories().iter().next().unwrap();
+        let root_path = root.path().join("my-repo");
+        let root_path = if let Ok(path) = root_path.strip_prefix("\\\\\\\\?") {
+            path.to_path_buf()
+        } else {
+            root_path
+        };
         assert_eq!(
             repo.work_directory,
             WorkDirectory::AboveProject {
-                absolute_path: Arc::from(root.path().join("my-repo")),
+                absolute_path: Arc::from(root_path),
                 location_in_repo: Arc::from(Path::new("sub-folder-1/sub-folder-2"))
             }
         );
