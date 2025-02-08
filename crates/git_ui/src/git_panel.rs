@@ -1110,33 +1110,43 @@ impl GitPanel {
             .git_state()
             .read(cx)
             .all_repositories();
-        let entry_count = self
+
+        let branch = self
             .active_repository
             .as_ref()
-            .map_or(0, |repo| repo.read(cx).entry_count());
+            .and_then(|repository| repository.read(cx).branch())
+            .unwrap_or_else(|| "(no current branch)".into());
 
-        let changes_string = match entry_count {
-            0 => "No changes".to_string(),
-            1 => "1 change".to_string(),
-            n => format!("{} changes", n),
-        };
+        let has_repo_above = all_repositories.iter().any(|repo| {
+            repo.read(cx)
+                .repository_entry
+                .work_directory
+                .is_above_project()
+        });
+
+        let icon_button = Button::new("branch-selector", branch)
+            .color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .icon(IconName::GitBranch)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::Compact)
+            .icon_position(IconPosition::Start)
+            .tooltip(Tooltip::for_action_title(
+                "Switch Branch",
+                &zed_actions::git::Branch,
+            ))
+            .on_click(cx.listener(|_, _, window, cx| {
+                window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+            }))
+            .style(ButtonStyle::Transparent);
 
         self.panel_header_container(window, cx)
-            .child(h_flex().gap_2().child(if all_repositories.len() <= 1 {
-                div()
-                    .id("changes-label")
-                    .text_buffer(cx)
-                    .text_ui_sm(cx)
-                    .child(
-                        Label::new(changes_string)
-                            .single_line()
-                            .size(LabelSize::Small),
-                    )
-                    .into_any_element()
-            } else {
-                self.render_repository_selector(cx).into_any_element()
-            }))
+            .child(h_flex().pl_1().child(icon_button))
             .child(div().flex_grow())
+            .when(all_repositories.len() > 1 || has_repo_above, |el| {
+                el.child(self.render_repository_selector(cx))
+            })
     }
 
     pub fn render_repository_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1146,35 +1156,11 @@ impl GitPanel {
             .map(|repo| repo.read(cx).display_name(self.project.read(cx), cx))
             .unwrap_or_default();
 
-        let entry_count = self.entries.len();
-
         RepositorySelectorPopoverMenu::new(
             self.repository_selector.clone(),
             ButtonLike::new("active-repository")
                 .style(ButtonStyle::Subtle)
-                .child(
-                    h_flex().w_full().gap_0p5().child(
-                        div()
-                            .overflow_x_hidden()
-                            .flex_grow()
-                            .whitespace_nowrap()
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Label::new(repository_display_name).size(LabelSize::Small),
-                                    )
-                                    .when(entry_count > 0, |flex| {
-                                        flex.child(
-                                            Label::new(format!("({})", entry_count))
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                    })
-                                    .into_any_element(),
-                            ),
-                    ),
-                ),
+                .child(Label::new(repository_display_name).size(LabelSize::Small)),
         )
     }
 

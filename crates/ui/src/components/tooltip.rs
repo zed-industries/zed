@@ -35,6 +35,22 @@ impl Tooltip {
         }
     }
 
+    pub fn for_action_title(
+        title: impl Into<SharedString>,
+        action: &dyn Action,
+    ) -> impl Fn(&mut Window, &mut App) -> AnyView {
+        let title = title.into();
+        let action = action.boxed_clone();
+        move |window, cx| {
+            cx.new(|_| Self {
+                title: title.clone(),
+                meta: None,
+                key_binding: KeyBinding::for_action(action.as_ref(), window),
+            })
+            .into()
+        }
+    }
+
     pub fn for_action(
         title: impl Into<SharedString>,
         action: &dyn Action,

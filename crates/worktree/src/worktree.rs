@@ -213,12 +213,6 @@ impl Deref for RepositoryEntry {
     }
 }
 
-impl AsRef<Path> for RepositoryEntry {
-    fn as_ref(&self) -> &Path {
-        &self.path
-    }
-}
-
 impl RepositoryEntry {
     pub fn branch(&self) -> Option<Arc<str>> {
         self.branch.clone()
@@ -326,33 +320,53 @@ impl RepositoryEntry {
 /// But if a sub-folder of a git repository is opened, this corresponds to the
 /// project root and the .git folder is located in a parent directory.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub struct WorkDirectory {
-    path: Arc<Path>,
-
-    /// If location_in_repo is set, it means the .git folder is external
-    /// and in a parent folder of the project root.
-    /// In that case, the work_directory field will point to the
-    /// project-root and location_in_repo contains the location of the
-    /// project-root in the repository.
-    ///
-    /// Example:
-    ///
-    ///     my_root_folder/          <-- repository root
-    ///       .git
-    ///       my_sub_folder_1/
-    ///         project_root/        <-- Project root, Zed opened here
-    ///           ...
-    ///
-    /// For this setup, the attributes will have the following values:
-    ///
-    ///     work_directory: pointing to "" entry
-    ///     location_in_repo: Some("my_sub_folder_1/project_root")
-    pub(crate) location_in_repo: Option<Arc<Path>>,
+pub enum WorkDirectory {
+    InProject {
+        relative_path: Arc<Path>,
+    },
+    AboveProject {
+        absolute_path: Arc<Path>,
+        location_in_repo: Arc<Path>,
+    },
 }
 
 impl WorkDirectory {
-    pub fn path_key(&self) -> PathKey {
-        PathKey(self.path.clone())
+    #[cfg(test)]
+    fn in_project(path: &str) -> Self {
+        let path = Path::new(path);
+        Self::InProject {
+            relative_path: path.into(),
+        }
+    }
+
+    #[cfg(test)]
+    fn canonicalize(&self) -> Self {
+        match self {
+            WorkDirectory::InProject { relative_path } => WorkDirectory::InProject {
+                relative_path: relative_path.clone(),
+            },
+            WorkDirectory::AboveProject {
+                absolute_path,
+                location_in_repo,
+            } => WorkDirectory::AboveProject {
+                absolute_path: absolute_path.canonicalize().unwrap().into(),
+                location_in_repo: location_in_repo.clone(),
+            },
+        }
+    }
+
+    pub fn is_above_project(&self) -> bool {
+        match self {
+            WorkDirectory::InProject { .. } => false,
+            WorkDirectory::AboveProject { .. } => true,
+        }
+    }
+
+    fn path_key(&self) -> PathKey {
+        match self {
+            WorkDirectory::InProject { relative_path } => PathKey(relative_path.clone()),
+            WorkDirectory::AboveProject { .. } => PathKey(Path::new("").into()),
+        }
     }
 
     /// Returns true if the given path is a child of the work directory.
@@ -360,9 +374,14 @@ impl WorkDirectory {
     /// Note that the path may not be a member of this repository, if there
     /// is a repository in a directory between these two paths
     /// external .git folder in a parent folder of the project root.
+    #[track_caller]
     pub fn directory_contains(&self, path: impl AsRef<Path>) -> bool {
         let path = path.as_ref();
-        path.starts_with(&self.path)
+        debug_assert!(path.is_relative());
+        match self {
+            WorkDirectory::InProject { relative_path } => path.starts_with(relative_path),
+            WorkDirectory::AboveProject { .. } => true,
+        }
     }
 
     /// relativize returns the given project path relative to the root folder of the
@@ -371,53 +390,71 @@ impl WorkDirectory {
     /// of the project root folder, then the returned RepoPath is relative to the root
     /// of the repository and not a valid path inside the project.
     pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
-        let repo_path = if let Some(location_in_repo) = &self.location_in_repo {
-            // Avoid joining a `/` to location_in_repo in the case of a single-file worktree.
-            if path == Path::new("") {
-                RepoPath(location_in_repo.clone())
-            } else {
-                location_in_repo.join(path).into()
+        // path is assumed to be relative to worktree root.
+        debug_assert!(path.is_relative());
+        match self {
+            WorkDirectory::InProject { relative_path } => Ok(path
+                .strip_prefix(relative_path)
+                .map_err(|_| {
+                    anyhow!(
+                        "could not relativize {:?} against {:?}",
+                        path,
+                        relative_path
+                    )
+                })?
+                .into()),
+            WorkDirectory::AboveProject {
+                location_in_repo, ..
+            } => {
+                // Avoid joining a `/` to location_in_repo in the case of a single-file worktree.
+                if path == Path::new("") {
+                    Ok(RepoPath(location_in_repo.clone()))
+                } else {
+                    Ok(location_in_repo.join(path).into())
+                }
             }
-        } else {
-            path.strip_prefix(&self.path)
-                .map_err(|_| anyhow!("could not relativize {:?} against {:?}", path, self.path))?
-                .into()
-        };
-        Ok(repo_path)
+        }
     }
 
     /// This is the opposite operation to `relativize` above
     pub fn unrelativize(&self, path: &RepoPath) -> Option<Arc<Path>> {
-        if let Some(location) = &self.location_in_repo {
-            // If we fail to strip the prefix, that means this status entry is
-            // external to this worktree, and we definitely won't have an entry_id
-            path.strip_prefix(location).ok().map(Into::into)
-        } else {
-            Some(self.path.join(path).into())
+        match self {
+            WorkDirectory::InProject { relative_path } => Some(relative_path.join(path).into()),
+            WorkDirectory::AboveProject {
+                location_in_repo, ..
+            } => {
+                // If we fail to strip the prefix, that means this status entry is
+                // external to this worktree, and we definitely won't have an entry_id
+                path.strip_prefix(location_in_repo).ok().map(Into::into)
+            }
+        }
+    }
+
+    pub fn display_name(&self) -> String {
+        match self {
+            WorkDirectory::InProject { relative_path } => relative_path.display().to_string(),
+            WorkDirectory::AboveProject {
+                absolute_path,
+                location_in_repo,
+            } => {
+                let num_of_dots = location_in_repo.components().count();
+
+                "../".repeat(num_of_dots)
+                    + &absolute_path
+                        .file_name()
+                        .map(|s| s.to_string_lossy())
+                        .unwrap_or_default()
+                    + "/"
+            }
         }
     }
 }
 
 impl Default for WorkDirectory {
     fn default() -> Self {
-        Self {
-            path: Arc::from(Path::new("")),
-            location_in_repo: None,
+        Self::InProject {
+            relative_path: Arc::from(Path::new("")),
         }
-    }
-}
-
-impl Deref for WorkDirectory {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl AsRef<Path> for WorkDirectory {
-    fn as_ref(&self) -> &Path {
-        self.path.as_ref()
     }
 }
 
@@ -487,7 +524,7 @@ impl sum_tree::Item for LocalRepositoryEntry {
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
-            max_path: self.work_directory.path.clone(),
+            max_path: self.work_directory.path_key().0,
             item_summary: Unit,
         }
     }
@@ -497,7 +534,7 @@ impl KeyedItem for LocalRepositoryEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.work_directory.path.clone())
+        self.work_directory.path_key()
     }
 }
 
@@ -2574,12 +2611,11 @@ impl Snapshot {
                     self.repositories.insert_or_replace(
                         RepositoryEntry {
                             work_directory_id,
-                            work_directory: WorkDirectory {
-                                path: work_dir_entry.path.clone(),
-                                // When syncing repository entries from a peer, we don't need
-                                // the location_in_repo field, since git operations don't happen locally
-                                // anyway.
-                                location_in_repo: None,
+                            // When syncing repository entries from a peer, we don't need
+                            // the location_in_repo field, since git operations don't happen locally
+                            // anyway.
+                            work_directory: WorkDirectory::InProject {
+                                relative_path: work_dir_entry.path.clone(),
                             },
                             branch: repository.branch.map(Into::into),
                             statuses_by_path: statuses,
@@ -2690,23 +2726,13 @@ impl Snapshot {
         &self.repositories
     }
 
-    pub fn repositories_with_abs_paths(
-        &self,
-    ) -> impl '_ + Iterator<Item = (&RepositoryEntry, PathBuf)> {
-        let base = self.abs_path();
-        self.repositories.iter().map(|repo| {
-            let path = repo.work_directory.location_in_repo.as_deref();
-            let path = path.unwrap_or(repo.work_directory.as_ref());
-            (repo, base.join(path))
-        })
-    }
-
     /// Get the repository whose work directory corresponds to the given path.
     pub(crate) fn repository(&self, work_directory: PathKey) -> Option<RepositoryEntry> {
         self.repositories.get(&work_directory, &()).cloned()
     }
 
     /// Get the repository whose work directory contains the given path.
+    #[track_caller]
     pub fn repository_for_path(&self, path: &Path) -> Option<&RepositoryEntry> {
         self.repositories
             .iter()
@@ -2716,6 +2742,7 @@ impl Snapshot {
 
     /// Given an ordered iterator of entries, returns an iterator of those entries,
     /// along with their containing git repository.
+    #[track_caller]
     pub fn entries_with_repositories<'a>(
         &'a self,
         entries: impl 'a + Iterator<Item = &'a Entry>,
@@ -3081,7 +3108,7 @@ impl LocalSnapshot {
         let work_dir_paths = self
             .repositories
             .iter()
-            .map(|repo| repo.work_directory.path.clone())
+            .map(|repo| repo.work_directory.path_key())
             .collect::<HashSet<_>>();
         assert_eq!(dotgit_paths.len(), work_dir_paths.len());
         assert_eq!(self.repositories.iter().count(), work_dir_paths.len());
@@ -3289,7 +3316,7 @@ impl BackgroundScannerState {
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
         self.snapshot.repositories.retain(&(), |repository| {
-            !repository.work_directory.starts_with(path)
+            !repository.work_directory.path_key().0.starts_with(path)
         });
 
         #[cfg(test)]
@@ -3327,20 +3354,26 @@ impl BackgroundScannerState {
             }
         };
 
-        self.insert_git_repository_for_path(work_dir_path, dot_git_path, None, fs, watcher)
+        self.insert_git_repository_for_path(
+            WorkDirectory::InProject {
+                relative_path: work_dir_path,
+            },
+            dot_git_path,
+            fs,
+            watcher,
+        )
     }
 
     fn insert_git_repository_for_path(
         &mut self,
-        work_dir_path: Arc<Path>,
+        work_directory: WorkDirectory,
         dot_git_path: Arc<Path>,
-        location_in_repo: Option<Arc<Path>>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
         let work_dir_id = self
             .snapshot
-            .entry_for_path(work_dir_path.clone())
+            .entry_for_path(work_directory.path_key().0)
             .map(|entry| entry.id)?;
 
         if self.snapshot.git_repositories.get(&work_dir_id).is_some() {
@@ -3374,10 +3407,6 @@ impl BackgroundScannerState {
         };
 
         log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
-        let work_directory = WorkDirectory {
-            path: work_dir_path.clone(),
-            location_in_repo,
-        };
 
         if let Some(git_hosting_provider_registry) = self.git_hosting_provider_registry.clone() {
             git_hosting_providers::register_additional_providers(
@@ -3840,7 +3869,7 @@ impl sum_tree::Item for RepositoryEntry {
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
-            max_path: self.work_directory.path.clone(),
+            max_path: self.work_directory.path_key().0,
             item_summary: Unit,
         }
     }
@@ -3850,7 +3879,7 @@ impl sum_tree::KeyedItem for RepositoryEntry {
     type Key = PathKey;
 
     fn key(&self) -> Self::Key {
-        PathKey(self.work_directory.path.clone())
+        self.work_directory.path_key()
     }
 }
 
@@ -4089,7 +4118,7 @@ impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for ProjectEntryId {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct PathKey(Arc<Path>);
 
 impl Default for PathKey {
@@ -4168,15 +4197,15 @@ impl BackgroundScanner {
                         // We associate the external git repo with our root folder and
                         // also mark where in the git repo the root folder is located.
                         self.state.lock().insert_git_repository_for_path(
-                            Path::new("").into(),
-                            ancestor_dot_git.into(),
-                            Some(
-                                root_abs_path
+                            WorkDirectory::AboveProject {
+                                absolute_path: ancestor.into(),
+                                location_in_repo: root_abs_path
                                     .as_path()
                                     .strip_prefix(ancestor)
                                     .unwrap()
                                     .into(),
-                            ),
+                            },
+                            ancestor_dot_git.into(),
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         );
@@ -4385,13 +4414,6 @@ impl BackgroundScanner {
                         dot_git_abs_paths.push(dot_git_abs_path);
                     }
                 }
-                if abs_path.0.file_name() == Some(*GITIGNORE) {
-                    for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&abs_path.0)) {
-                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.dot_git_dir_abs_path.as_ref()) {
-                            dot_git_abs_paths.push(repo.dot_git_dir_abs_path.to_path_buf());
-                        }
-                    }
-                }
 
                 let relative_path: Arc<Path> =
                     if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
@@ -4408,6 +4430,14 @@ impl BackgroundScanner {
                         }
                         return false;
                     };
+
+                if abs_path.0.file_name() == Some(*GITIGNORE) {
+                    for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&relative_path)) {
+                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.dot_git_dir_abs_path.as_ref()) {
+                            dot_git_abs_paths.push(repo.dot_git_dir_abs_path.to_path_buf());
+                        }
+                    }
+                }
 
                 let parent_dir_is_loaded = relative_path.parent().map_or(true, |parent| {
                     snapshot
@@ -4992,7 +5022,7 @@ impl BackgroundScanner {
                 snapshot
                     .snapshot
                     .repositories
-                    .remove(&PathKey(repository.work_directory.path.clone()), &());
+                    .remove(&repository.work_directory.path_key(), &());
                 return Some(());
             }
         }
@@ -5286,7 +5316,7 @@ impl BackgroundScanner {
     fn update_git_statuses(&self, job: UpdateGitStatusesJob) {
         log::trace!(
             "updating git statuses for repo {:?}",
-            job.local_repository.work_directory.path
+            job.local_repository.work_directory.display_name()
         );
         let t0 = Instant::now();
 
@@ -5300,7 +5330,7 @@ impl BackgroundScanner {
         };
         log::trace!(
             "computed git statuses for repo {:?} in {:?}",
-            job.local_repository.work_directory.path,
+            job.local_repository.work_directory.display_name(),
             t0.elapsed()
         );
 
@@ -5364,7 +5394,7 @@ impl BackgroundScanner {
 
         log::trace!(
             "applied git status updates for repo {:?} in {:?}",
-            job.local_repository.work_directory.path,
+            job.local_repository.work_directory.display_name(),
             t0.elapsed(),
         );
     }

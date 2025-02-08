@@ -47,10 +47,10 @@ actions!(
     ]
 );
 
-pub mod branches {
-    use gpui::actions;
+pub mod git {
+    use gpui::action_with_deprecated_aliases;
 
-    actions!(branches, [OpenRecent]);
+    action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
 pub mod command_palette {

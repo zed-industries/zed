@@ -5330,6 +5330,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "futures 0.3.31",
+ "fuzzy",
  "git",
  "gpui",
  "language",
@@ -5349,6 +5350,7 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -14617,22 +14619,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
-name = "vcs_menu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fuzzy",
- "git",
- "gpui",
- "picker",
- "project",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16657,7 +16643,6 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
- "vcs_menu",
  "vim",
  "vim_mode_setting",
  "welcome",

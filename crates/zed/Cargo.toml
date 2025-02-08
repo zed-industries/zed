@@ -126,7 +126,6 @@ url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
 uuid.workspace = true
-vcs_menu.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
 welcome.workspace = true
