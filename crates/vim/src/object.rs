@@ -1333,12 +1333,24 @@ fn surrounding_markers(
     }
 
     if !around && search_across_lines {
+        // Handle trailing newline after opening
         if let Some((ch, range)) = movement::chars_after(map, opening.end).next() {
             if ch == '\n' {
-                opening.end = range.end
+                opening.end = range.end;
+
+                // After newline, skip leading whitespace
+                let mut chars = movement::chars_after(map, opening.end).peekable();
+                while let Some((ch, range)) = chars.peek() {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    opening.end = range.end;
+                    chars.next();
+                }
             }
         }
 
+        // Handle leading whitespace before closing
         let mut last_newline_end = None;
         for (ch, range) in movement::chars_before(map, closing.start) {
             if !ch.is_whitespace() {
