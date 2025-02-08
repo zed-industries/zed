@@ -688,9 +688,6 @@ impl RejoinedProject {
 #[derive(Debug)]
 pub struct RejoinedWorktree {
     pub id: u64,
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
@@ -759,9 +756,6 @@ pub struct LeftProject {
 
 pub struct Worktree {
     pub id: u64,
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,
@@ -775,9 +769,6 @@ pub struct Worktree {
 
 #[derive(Debug)]
 pub struct WorktreeSettingsFile {
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     pub path: String,
     pub content: String,
     pub kind: LocalSettingsKind,

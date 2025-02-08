@@ -8,9 +8,6 @@ pub struct Model {
     pub id: i64,
     #[sea_orm(primary_key)]
     pub project_id: ProjectId,
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     pub abs_path: String,
     pub root_name: String,
     pub visible: bool,

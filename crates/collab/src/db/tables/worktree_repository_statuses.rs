@@ -10,9 +10,6 @@ pub struct Model {
     pub worktree_id: i64,
     #[sea_orm(primary_key)]
     pub work_directory_id: i64,
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     #[sea_orm(primary_key)]
     pub repo_path: String,
     /// Old single-code status field, no longer used but kept here to mirror the DB schema.

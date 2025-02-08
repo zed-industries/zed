@@ -11,9 +11,6 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
     pub is_dir: bool,
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     pub path: String,
     pub inode: i64,
     pub mtime_seconds: i64,
@@ -24,9 +21,6 @@ pub struct Model {
     pub is_deleted: bool,
     pub scan_id: i64,
     pub is_fifo: bool,
-    /// NOTE:
-    /// Use PathBuf::to_proto() and PathBuf::from_proto() to convert between
-    /// PathBuf and String
     pub canonical_path: Option<String>,
 }
 
