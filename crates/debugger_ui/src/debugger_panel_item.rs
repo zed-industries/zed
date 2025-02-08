@@ -33,17 +33,7 @@ pub enum DebugPanelItemEvent {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-#[cfg(any(test, feature = "test-support"))]
 pub enum ThreadItem {
-    Console,
-    LoadedSource,
-    Modules,
-    Variables,
-}
-
-#[derive(Clone, PartialEq, Eq)]
-#[cfg(not(any(test, feature = "test-support")))]
-enum ThreadItem {
     Console,
     LoadedSource,
     Modules,

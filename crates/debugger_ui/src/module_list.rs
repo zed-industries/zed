@@ -1,14 +1,14 @@
 use dap::{client::DebugAdapterClientId, ModuleEvent};
-use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState};
+use gpui::{list, AnyElement, Empty, Entity, FocusHandle, Focusable, ListState, Subscription};
 use project::dap_session::DebugSession;
 use ui::prelude::*;
 
 pub struct ModuleList {
     list: ListState,
     focus_handle: FocusHandle,
+    _subscription: Subscription,
     session: Entity<DebugSession>,
     client_id: DebugAdapterClientId,
-    modules_len: usize,
 }
 
 impl ModuleList {
@@ -32,45 +32,40 @@ impl ModuleList {
             },
         );
 
-        session.update(cx, |session, _cx| {
-            session.client_state(*client_id).unwrap();
+        let client_state = session.read(cx).client_state(*client_id).unwrap();
+
+        let _subscription = cx.observe(&client_state, |module_list, state, cx| {
+            let modules_len = state.update(cx, |state, cx| state.modules(cx).len());
+
+            module_list.list.reset(modules_len);
+            cx.notify();
         });
 
         Self {
             list,
             session,
             focus_handle,
+            _subscription,
             client_id: *client_id,
-            modules_len: 0,
         }
     }
 
     pub fn on_module_event(&mut self, event: &ModuleEvent, cx: &mut Context<Self>) {
         if let Some(state) = self.session.read(cx).client_state(self.client_id) {
-            let modules_len = state.update(cx, |state, cx| {
-                state.handle_module_event(event);
-                state.modules(cx).len()
-            });
-
-            if modules_len != self.modules_len {
-                self.modules_len = modules_len;
-                self.list.reset(self.modules_len);
-            }
-
-            cx.notify()
+            state.update(cx, |state, cx| state.handle_module_event(event, cx));
         }
     }
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some((module_name, module_path)) = self.session.update(cx, |session, cx| {
-            session
-                .client_state(self.client_id)?
-                .update(cx, |state, cx| {
-                    state
-                        .modules(cx)
-                        .get(ix)
-                        .map(|module| (module.name.clone(), module.path.clone()))
-                })
+        let Some((module_name, module_path)) = maybe!({
+            let client_state = self.session.read(cx).client_state(self.client_id)?;
+
+            client_state.update(cx, |state, cx| {
+                state
+                    .modules(cx)
+                    .get(ix)
+                    .map(|module| (module.name.clone(), module.path.clone()))
+            })
         }) else {
             return Empty.into_any();
         };
@@ -100,19 +95,14 @@ impl Focusable for ModuleList {
 
 impl Render for ModuleList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let session = self.session.read(cx);
-        let modules_len = session
-            .client_state(self.client_id)
-            .map_or(0usize, |state| {
-                state.update(cx, |state, cx| state.modules(cx).len())
+        if let Some(state) = self.session.read(cx).client_state(self.client_id) {
+            state.update(cx, |state, cx| {
+                state.modules(cx);
             });
-
-        if modules_len != self.modules_len {
-            self.modules_len = modules_len;
-            self.list.reset(self.modules_len);
         }
 
         div()
+            .track_focus(&self.focus_handle)
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())
@@ -121,6 +111,7 @@ impl Render for ModuleList {
 
 #[cfg(any(test, feature = "test-support"))]
 use dap::Module;
+use util::maybe;
 
 #[cfg(any(test, feature = "test-support"))]
 impl ModuleList {

@@ -178,7 +178,7 @@ impl DebugAdapterClientState {
         &self.modules
     }
 
-    pub fn handle_module_event(&mut self, event: &dap::ModuleEvent) {
+    pub fn handle_module_event(&mut self, event: &dap::ModuleEvent, cx: &mut Context<Self>) {
         match event.reason {
             dap::ModuleEventReason::New => self.modules.push(event.module.clone()),
             dap::ModuleEventReason::Changed => {
@@ -188,6 +188,7 @@ impl DebugAdapterClientState {
             }
             dap::ModuleEventReason::Removed => self.modules.retain(|m| m.id != event.module.id),
         }
+        cx.notify();
     }
 
     pub fn loaded_sources(&mut self, cx: &mut Context<Self>) -> &[Source] {
