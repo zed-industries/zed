@@ -79,7 +79,7 @@ pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
 /// #[component(scope = "toggle", description = "A element that can be toggled on and off")]
 /// struct Checkbox;
 /// ```
-#[proc_macro_derive(Component, attributes(component))]
+#[proc_macro_derive(IntoComponent, attributes(component))]
 pub fn derive_component(input: TokenStream) -> TokenStream {
-    derive_component::derive_component(input)
+    derive_component::derive_into_component(input)
 }

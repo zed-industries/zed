@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use component::{example_group_with_title, single_example, ComponentPreview};
 use gpui::{AnyElement, AnyView, DefiniteLength};
-use ui_macros::Component;
+use ui_macros::IntoComponent;
 
 use crate::{
     prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
@@ -80,7 +80,7 @@ use super::button_icon::ButtonIcon;
 ///     });
 /// ```
 ///
-#[derive(IntoElement, Component)]
+#[derive(IntoElement, IntoComponent)]
 pub struct Button {
     base: ButtonLike,
     label: SharedString,
@@ -458,8 +458,7 @@ impl RenderOnce for Button {
 
 impl ComponentPreview for Button {
     fn preview(_window: &Window, _cx: &App) -> AnyElement {
-        div()
-            .h_flex()
+        v_flex()
             .gap_6()
             .children(vec![
                 example_group_with_title(

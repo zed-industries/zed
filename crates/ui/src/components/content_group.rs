@@ -2,7 +2,6 @@ use crate::prelude::*;
 use component::{example_group, single_example, ComponentPreview};
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
-use ui_macros::Component;
 
 /// Creates a new [ContentGroup].
 pub fn content_group() -> ContentGroup {
@@ -24,7 +23,7 @@ pub fn h_group() -> ContentGroup {
 }
 
 /// A flexible container component that can hold other elements.
-#[derive(IntoElement, Component)]
+#[derive(IntoElement, IntoComponent)]
 #[component(scope = "layout")]
 pub struct ContentGroup {
     base: Div,

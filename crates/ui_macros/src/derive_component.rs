@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Lit, Meta, MetaList, MetaNameValue, NestedMeta};
 
-pub fn derive_component(input: TokenStream) -> TokenStream {
+pub fn derive_into_component(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let mut scope_val = None;
     let mut description_val = None;
