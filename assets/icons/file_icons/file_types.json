@@ -226,6 +226,6 @@
     "zsh_histfile": "terminal",
     "zsh_profile": "terminal",
     "zshenv": "terminal",
-    "zshrc": "terminal",
+    "zshrc": "terminal"
   }
 }
