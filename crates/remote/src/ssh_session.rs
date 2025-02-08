@@ -297,32 +297,18 @@ impl SshConnectionOptions {
     }
 
     pub fn additional_args(&self) -> Vec<String> {
-        let mut args = vec![];
+        let mut args = self.args.iter().flatten().cloned().collect::<Vec<String>>();
 
-        if self.args.is_some() {
-            args.extend(self.args.as_ref().unwrap().clone());
-        }
-
-        if self.port_forwards.is_some() {
-            args.extend(self.port_forwards.clone().unwrap().iter().map(|pf| {
-                let s = "-L";
-                if pf.local_host.is_some() {
-                    format!(
-                        "{} {}:{}:{}:{}",
-                        s,
-                        pf.local_host.clone().unwrap(),
-                        pf.local_port,
-                        pf.remote_host,
-                        pf.remote_port
-                    )
-                } else {
-                    format!(
-                        "{} {}:{}:{}",
-                        s, pf.local_port, pf.remote_host, pf.remote_port
-                    )
-                }
+        if let Some(forwards) = &self.port_forwards {
+            args.extend(forwards.iter().map(|pf| match &pf.local_host {
+                Some(host) => format!(
+                    "-L {}:{}:{}:{}",
+                    host, pf.local_port, pf.remote_host, pf.remote_port
+                ),
+                None => format!("-L {}:{}:{}", pf.local_port, pf.remote_host, pf.remote_port),
             }));
         }
+
         args
     }
 
