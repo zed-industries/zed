@@ -128,6 +128,10 @@ impl BufferDiffSnapshot {
         self.inner.hunks.is_empty()
     }
 
+    pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
+        self.secondary_diff.as_deref()
+    }
+
     pub fn hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -148,6 +152,19 @@ impl BufferDiffSnapshot {
 
     pub fn base_text(&self) -> Option<&language::BufferSnapshot> {
         self.inner.base_text.as_ref()
+    }
+
+    pub fn base_texts_eq(&self, other: &Self) -> bool {
+        match (other.base_text(), self.base_text()) {
+            (None, None) => true,
+            (None, Some(_)) => false,
+            (Some(_), None) => false,
+            (Some(old), Some(new)) => {
+                let (old_id, old_empty) = (old.remote_id(), old.is_empty());
+                let (new_id, new_empty) = (new.remote_id(), new.is_empty());
+                new_id == old_id || (new_empty && old_empty)
+            }
+        }
     }
 }
 
@@ -523,20 +540,34 @@ impl BufferDiff {
         }
     }
 
-    pub fn build_with_single_insertion(cx: &mut App) -> BufferDiffSnapshot {
+    pub fn build_with_single_insertion(
+        insertion_present_in_secondary_diff: bool,
+        cx: &mut App,
+    ) -> BufferDiffSnapshot {
         let base_text = language::Buffer::build_empty_snapshot(cx);
+        let hunks = SumTree::from_item(
+            InternalDiffHunk {
+                buffer_range: Anchor::MIN..Anchor::MAX,
+                diff_base_byte_range: 0..0,
+            },
+            &base_text,
+        );
         BufferDiffSnapshot {
             inner: BufferDiffInner {
-                hunks: SumTree::from_item(
-                    InternalDiffHunk {
-                        buffer_range: Anchor::MIN..Anchor::MAX,
-                        diff_base_byte_range: 0..0,
-                    },
-                    &base_text,
-                ),
-                base_text: Some(base_text),
+                hunks: hunks.clone(),
+                base_text: Some(base_text.clone()),
             },
-            secondary_diff: None,
+            secondary_diff: if insertion_present_in_secondary_diff {
+                Some(Box::new(BufferDiffSnapshot {
+                    inner: BufferDiffInner {
+                        hunks,
+                        base_text: Some(base_text),
+                    },
+                    secondary_diff: None,
+                }))
+            } else {
+                None
+            },
         }
     }
 
@@ -613,21 +644,15 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) {
-        if let Some(base_text) = snapshot.base_text.as_ref() {
-            let changed_range = if Some(base_text.remote_id())
-                != self
-                    .inner
-                    .base_text
-                    .as_ref()
-                    .map(|buffer| buffer.remote_id())
-            {
-                Some(text::Anchor::MIN..text::Anchor::MAX)
-            } else {
+        let changed_range = match (self.inner.base_text.as_ref(), snapshot.base_text.as_ref()) {
+            (None, None) => None,
+            (Some(old), Some(new)) if old.remote_id() == new.remote_id() => {
                 snapshot.compare(&self.inner, buffer)
-            };
-            if let Some(changed_range) = changed_range {
-                cx.emit(BufferDiffEvent::DiffChanged { changed_range });
             }
+            _ => Some(text::Anchor::MIN..text::Anchor::MAX),
+        };
+        if let Some(changed_range) = changed_range {
+            cx.emit(BufferDiffEvent::DiffChanged { changed_range });
         }
         self.inner = snapshot;
     }

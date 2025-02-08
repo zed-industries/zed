@@ -2171,32 +2171,29 @@ impl MultiBuffer {
 
         let diff = diff.read(cx);
         let buffer_id = diff.buffer_id;
-        let mut new_diff = diff.snapshot(cx);
-        if new_diff.base_text().is_none() && self.all_diff_hunks_expanded {
-            new_diff = BufferDiff::build_with_single_insertion(cx);
-        }
-
-        let mut snapshot = self.snapshot.borrow_mut();
-        let base_text_changed = snapshot.diffs.get(&buffer_id).map_or(true, |old_diff| {
-            match (old_diff.base_text(), new_diff.base_text()) {
-                (None, None) => false,
-                (None, Some(_)) => true,
-                (Some(_), None) => true,
-                (Some(old), Some(new)) => {
-                    let (old_id, old_empty) = (old.remote_id(), old.is_empty());
-                    let (new_id, new_empty) = (new.remote_id(), new.is_empty());
-                    new_id != old_id && (!new_empty || !old_empty)
-                }
-            }
-        });
-        snapshot.diffs.insert(buffer_id, new_diff);
-
         let buffers = self.buffers.borrow();
         let Some(buffer_state) = buffers.get(&buffer_id) else {
             return;
         };
 
-        let diff_change_range = range.to_offset(buffer_state.buffer.read(cx));
+        let buffer = buffer_state.buffer.read(cx);
+        let diff_change_range = range.to_offset(buffer);
+
+        let mut new_diff = diff.snapshot(cx);
+        if new_diff.base_text().is_none() && self.all_diff_hunks_expanded {
+            let secondary_diff_insertion = new_diff
+                .secondary_diff()
+                .map_or(true, |secondary_diff| secondary_diff.base_text().is_none());
+            new_diff = BufferDiff::build_with_single_insertion(secondary_diff_insertion, cx);
+        }
+
+        let mut snapshot = self.snapshot.borrow_mut();
+        let base_text_changed = snapshot
+            .diffs
+            .get(&buffer_id)
+            .map_or(true, |old_diff| !new_diff.base_texts_eq(old_diff));
+
+        snapshot.diffs.insert(buffer_id, new_diff);
 
         let mut excerpt_edits = Vec::new();
         for locator in &buffer_state.excerpts {

@@ -6871,9 +6871,13 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let mut highlighted_rows = self
-                        .editor
-                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
+                    let (mut highlighted_rows, distinguish_unstaged_hunks) =
+                        self.editor.update(cx, |editor, cx| {
+                            (
+                                editor.highlighted_display_rows(window, cx),
+                                editor.distinguish_unstaged_diff_hunks,
+                            )
+                        });
 
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let background = match row_info.diff_status {
@@ -6881,20 +6885,24 @@ impl Element for EditorElement {
                                 let color = style.status.created_background;
                                 match secondary_status {
                                     DiffHunkSecondaryStatus::HasSecondaryHunk
-                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                                        if distinguish_unstaged_hunks =>
+                                    {
                                         pattern_slash(color, line_height.0 / 4.0)
                                     }
-                                    DiffHunkSecondaryStatus::None => color.into(),
+                                    _ => color.into(),
                                 }
                             }
                             Some(DiffHunkStatus::Removed(secondary_status)) => {
                                 let color = style.status.deleted_background;
                                 match secondary_status {
                                     DiffHunkSecondaryStatus::HasSecondaryHunk
-                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                                    | DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
+                                        if distinguish_unstaged_hunks =>
+                                    {
                                         pattern_slash(color, line_height.0 / 4.0)
                                     }
-                                    DiffHunkSecondaryStatus::None => color.into(),
+                                    _ => color.into(),
                                 }
                             }
                             _ => continue,
