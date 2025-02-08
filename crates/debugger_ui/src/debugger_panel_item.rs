@@ -123,7 +123,7 @@ impl DebugPanelItem {
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), &client_id, cx));
 
         let loaded_source_list =
-            cx.new(|cx| LoadedSourceList::new(&this, dap_store.clone(), &client_id, cx));
+            cx.new(|cx| LoadedSourceList::new(session.clone(), &client_id, cx));
 
         let console = cx.new(|cx| {
             Console::new(
@@ -374,10 +374,9 @@ impl DebugPanelItem {
             return;
         }
 
-        self.loaded_source_list
-            .update(cx, |loaded_source_list, cx| {
-                loaded_source_list.on_loaded_source_event(event, cx);
-            });
+        if let Some(state) = self.session.read(cx).client_state(self.client_id) {
+            state.update(cx, |state, cx| state.handle_loaded_source_event(event, cx));
+        }
     }
 
     fn handle_client_shutdown_event(

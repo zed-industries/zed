@@ -142,15 +142,11 @@ impl DebugAdapterClientState {
         process_result: impl FnOnce(&mut Self, T::Response) + 'static + Send + Sync,
         cx: &mut Context<Self>,
     ) {
-        let slot = request.into();
-        let entry = self.requests.entry(slot);
-
-        if let Entry::Vacant(vacant) = entry {
-            let client_id = self.client_id;
+        if let Entry::Vacant(vacant) = self.requests.entry(request.into()) {
             let command = vacant.key().0.clone().as_any_arc().downcast::<T>().unwrap();
 
             if let Ok(request) = self.dap_store.update(cx, |dap_store, cx| {
-                dap_store.request_dap(&client_id, command, cx)
+                dap_store.request_dap(&self.client_id, command, cx)
             }) {
                 let task = cx
                     .spawn(|this, mut cx| async move {
@@ -200,6 +196,40 @@ impl DebugAdapterClientState {
             cx,
         );
         &self.loaded_sources
+    }
+
+    pub fn handle_loaded_source_event(
+        &mut self,
+        event: &dap::LoadedSourceEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event.reason {
+            dap::LoadedSourceEventReason::New => self.loaded_sources.push(event.source.clone()),
+            dap::LoadedSourceEventReason::Changed => {
+                let updated_source =
+                    if let Some(ref_id) = event.source.source_reference.filter(|&r| r != 0) {
+                        self.loaded_sources
+                            .iter_mut()
+                            .find(|s| s.source_reference == Some(ref_id))
+                    } else if let Some(path) = &event.source.path {
+                        self.loaded_sources
+                            .iter_mut()
+                            .find(|s| s.path.as_ref() == Some(path))
+                    } else {
+                        self.loaded_sources
+                            .iter_mut()
+                            .find(|s| s.name == event.source.name)
+                    };
+
+                if let Some(loaded_source) = updated_source {
+                    *loaded_source = event.source.clone();
+                }
+            }
+            dap::LoadedSourceEventReason::Removed => {
+                self.loaded_sources.retain(|source| *source != event.source)
+            }
+        }
+        cx.notify();
     }
 }
 

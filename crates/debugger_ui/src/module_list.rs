@@ -57,15 +57,11 @@ impl ModuleList {
     }
 
     fn render_entry(&mut self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some((module_name, module_path)) = maybe!({
-            let client_state = self.session.read(cx).client_state(self.client_id)?;
-
-            client_state.update(cx, |state, cx| {
-                state
-                    .modules(cx)
-                    .get(ix)
-                    .map(|module| (module.name.clone(), module.path.clone()))
-            })
+        let Some(module) = maybe!({
+            self.session
+                .read(cx)
+                .client_state(self.client_id)?
+                .update(cx, |state, cx| state.modules(cx).get(ix).cloned())
         }) else {
             return Empty.into_any();
         };
@@ -76,12 +72,12 @@ impl ModuleList {
             .group("")
             .p_1()
             .hover(|s| s.bg(cx.theme().colors().element_hover))
-            .child(h_flex().gap_0p5().text_ui_sm(cx).child(module_name))
+            .child(h_flex().gap_0p5().text_ui_sm(cx).child(module.name.clone()))
             .child(
                 h_flex()
                     .text_ui_xs(cx)
                     .text_color(cx.theme().colors().text_muted)
-                    .when_some(module_path, |this, path| this.child(path)),
+                    .when_some(module.path.clone(), |this, path| this.child(path)),
             )
             .into_any()
     }
