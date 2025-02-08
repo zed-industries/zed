@@ -1172,6 +1172,8 @@ impl LocalLspStore {
                 buffer.end_transaction(cx)
             })?;
 
+            let initial_transaction_id = whitespace_transaction_id;
+
             // Apply the `code_actions_on_format` before we run the formatter.
             let code_actions = deserialize_code_actions(&settings.code_actions_on_format);
             #[allow(clippy::nonminimal_bool)]
@@ -1219,7 +1221,7 @@ impl LocalLspStore {
                 &settings,
                 &adapters_and_servers,
                 push_to_history,
-                whitespace_transaction_id,
+                initial_transaction_id,
                 &mut project_transaction,
                 &mut cx,
             )
@@ -1237,10 +1239,13 @@ impl LocalLspStore {
         settings: &LanguageSettings,
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         push_to_history: bool,
-        whitespace_transaction_id: Option<TransactionId>,
+        mut initial_transaction_id: Option<TransactionId>,
         project_transaction: &mut ProjectTransaction,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
+        let mut prev_transaction_id = initial_transaction_id;
+
+        dbg!(formatters.len());
         for formatter in formatters {
             let operation = match formatter {
                 Formatter::LanguageServer { name } => {
@@ -1331,6 +1336,15 @@ impl LocalLspStore {
                             cx,
                         )
                         .await?;
+                        let buf_transaction_id =
+                            project_transaction.0.get(&buffer.handle).map(|t| t.id);
+                        // NOTE: same logic as in buffer.handle.update below
+                        if initial_transaction_id.is_none() {
+                            initial_transaction_id = buf_transaction_id;
+                        }
+                        if buf_transaction_id.is_some() {
+                            prev_transaction_id = buf_transaction_id;
+                        }
                     }
                     None
                 }
@@ -1340,38 +1354,46 @@ impl LocalLspStore {
             };
 
             let should_continue_formatting = buffer.handle.update(cx, |b, cx| {
-                // If the buffer had its whitespace formatted and was edited while the language-specific
-                // formatting was being computed, avoid applying the language-specific formatting, because
-                // it can't be grouped with the whitespace formatting in the undo history.
-                let should_continue_formatting = match whitespace_transaction_id {
-                    Some(transaction_id) => b
-                        .peek_undo_stack()
-                        .map_or(false, |e| e.transaction_id() == transaction_id),
-                    None => true,
+                // If a previous format succeeded and the buffer was edited while the language-specific
+                // formatting information for this format was being computed, avoid applying the
+                // language-specific formatting, because it can't be grouped with the previous formatting
+                // in the undo history.
+                let should_continue_formatting = match (prev_transaction_id, b.peek_undo_stack()) {
+                    (Some(prev_transaction_id), Some(last_history_entry)) => {
+                        let last_history_transaction_id = last_history_entry.transaction_id();
+                        let is_same_as_prev = last_history_transaction_id == prev_transaction_id;
+                        is_same_as_prev
+                    }
+                    (Some(_), None) => false,
+                    (_, _) => true,
                 };
 
                 if should_continue_formatting {
                     // Apply any language-specific formatting, and group the two formatting operations
                     // in the buffer's undo history.
-                    match operation {
-                        FormatOperation::Lsp(edits) => {
-                            b.edit(edits, None, cx);
-                        }
-                        FormatOperation::External(diff) => {
-                            b.apply_diff(diff, cx);
-                        }
-                        FormatOperation::Prettier(diff) => {
-                            b.apply_diff(diff, cx);
-                        }
+                    let this_transaction_id = match operation {
+                        FormatOperation::Lsp(edits) => b.edit(edits, None, cx),
+                        FormatOperation::External(diff) => b.apply_diff(diff, cx),
+                        FormatOperation::Prettier(diff) => b.apply_diff(diff, cx),
+                    };
+                    if initial_transaction_id.is_none() {
+                        initial_transaction_id = this_transaction_id;
                     }
+                    if this_transaction_id.is_some() {
+                        prev_transaction_id = this_transaction_id;
+                    }
+                    dbg!((
+                        initial_transaction_id,
+                        prev_transaction_id,
+                        this_transaction_id
+                    ));
                 }
 
-                if let Some(transaction_id) = whitespace_transaction_id {
+                if let Some(transaction_id) = initial_transaction_id {
                     b.group_until_transaction(transaction_id);
                 } else if let Some(transaction) = project_transaction.0.get(&buffer.handle) {
                     b.group_until_transaction(transaction.id)
                 }
-
                 return should_continue_formatting;
             })?;
             if !should_continue_formatting {
