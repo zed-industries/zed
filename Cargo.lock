@@ -2952,6 +2952,7 @@ dependencies = [
  "linkme",
  "once_cell",
  "parking_lot",
+ "theme",
 ]
 
 [[package]]

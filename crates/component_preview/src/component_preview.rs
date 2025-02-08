@@ -67,32 +67,27 @@ impl ComponentPreview {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let name = component.name();
-        let source: Option<SharedString> =
-            name.rsplit_once("::").map(|(s, _)| s.to_string().into());
-        let title: Option<SharedString> = name.rsplit_once("::").map(|(_, t)| t.to_string().into());
+        let scope = component.scope();
+
         let description = component.description();
 
-        v_flex()
+        v_group()
             .w_full()
-            .gap_6()
-            .p_4()
-            .border_1()
-            .border_color(cx.theme().colors().border)
+            .gap_4()
+            .p_8()
             .rounded_md()
             .child(
                 v_flex()
                     .gap_1()
-                    .when_some(title, |this, title| {
-                        this.child(
-                            h_flex()
-                                .gap_1()
-                                .text_xl()
-                                .child(div().child(title))
-                                .when_some(source, |this, source| {
-                                    this.child(div().opacity(0.5).child(source))
-                                }),
-                        )
-                    })
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .text_xl()
+                            .child(div().child(name))
+                            .when_some(scope, |this, scope| {
+                                this.child(div().opacity(0.5).child(format!("({})", scope)))
+                            }),
+                    )
                     .when_some(description, |this, description| {
                         this.child(
                             div()
@@ -114,7 +109,8 @@ impl ComponentPreview {
             .id("component-previews")
             .size_full()
             .overflow_y_scroll()
-            .p_2()
+            .p_4()
+            .gap_2()
             .children(
                 components()
                     .all_previews_sorted()

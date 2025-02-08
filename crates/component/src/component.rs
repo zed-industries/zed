@@ -5,6 +5,7 @@ use gpui::{div, prelude::*, AnyElement, App, IntoElement, RenderOnce, SharedStri
 use linkme::distributed_slice;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
+use theme::ActiveTheme;
 
 pub trait Component {
     fn scope() -> Option<&'static str>;
@@ -113,7 +114,7 @@ impl AllComponents {
     pub fn all_previews_sorted(&self) -> Vec<ComponentMetadata> {
         let mut previews: Vec<ComponentMetadata> =
             self.all_previews().into_iter().cloned().collect();
-        previews.sort_by(|a, b| a.name().cmp(&b.name()));
+        previews.sort_by_key(|a| a.name());
         previews
     }
 
@@ -125,7 +126,7 @@ impl AllComponents {
     /// Returns all components sorted by name
     pub fn all_sorted(&self) -> Vec<ComponentMetadata> {
         let mut components: Vec<ComponentMetadata> = self.all().into_iter().cloned().collect();
-        components.sort_by(|a, b| a.name().cmp(&b.name()));
+        components.sort_by_key(|a| a.name());
         components
     }
 }
@@ -189,7 +190,7 @@ pub struct ComponentExample {
 }
 
 impl RenderOnce for ComponentExample {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base = div().flex();
 
         let base = match self.label_side {
@@ -200,7 +201,8 @@ impl RenderOnce for ComponentExample {
         };
 
         base.gap_1()
-            .text_sm()
+            .text_xs()
+            .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.flex_1())
             .child(self.element)
             .child(self.variant_name)
@@ -235,15 +237,17 @@ pub struct ComponentExampleGroup {
 }
 
 impl RenderOnce for ComponentExampleGroup {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
             .flex_col()
             .text_sm()
+            .text_color(cx.theme().colors().text_muted)
             .when(self.grow, |this| this.w_full().flex_1())
-            .when_some(self.title, |this, title| this.gap_6().child(title))
+            .when_some(self.title, |this, title| this.gap_4().child(title))
             .child(
                 div()
                     .flex()
+                    .items_start()
                     .w_full()
                     .gap_6()
                     .children(self.examples)

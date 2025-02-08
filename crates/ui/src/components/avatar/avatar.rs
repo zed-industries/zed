@@ -107,7 +107,11 @@ impl ComponentPreview for Avatar {
                 example_group_with_title(
                     "Sizes",
                     vec![
-                        single_example("Default", Avatar::new(example_avatar).into_any_element()),
+                        single_example(
+                            "Default",
+                            Avatar::new("https://avatars.githubusercontent.com/u/1714999?v=4")
+                                .into_any_element(),
+                        ),
                         single_example(
                             "Small",
                             Avatar::new(example_avatar).size(px(24.)).into_any_element(),
