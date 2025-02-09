@@ -2,6 +2,7 @@ use crate::{motion::Motion, object::Object, Vim};
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
+    movement,
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
@@ -90,6 +91,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.stop_recording(cx);
+        let mut preserve_indented_line = false;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -99,6 +101,10 @@ impl Vim {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         object.expand_selection(map, selection, around);
+                        // Check if selection is an inside multiline object
+                        if !around && object.is_multiline() {
+                            preserve_indented_line |= selection.start.row() != selection.end.row();
+                        }
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
                             |map: &DisplaySnapshot, selection: &mut Selection<DisplayPoint>| {
@@ -150,6 +156,22 @@ impl Vim {
                 });
                 vim.copy_selections_content(editor, false, cx);
                 editor.insert("", window, cx);
+
+                // Preserve an indented line on inside multiline object deletion
+                if preserve_indented_line && !around {
+                    editor.change_selections(None, window, cx, |s| {
+                        s.move_with(|_map, selection| {
+                            selection.collapse_to(selection.start, selection.goal);
+                        });
+                    });
+                    editor.insert("\n", window, cx);
+                    editor.change_selections(None, window, cx, |s| {
+                        s.move_with(|map, selection| {
+                            selection.end = movement::left(map, selection.end);
+                            selection.start = selection.end;
+                        });
+                    });
+                }
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);

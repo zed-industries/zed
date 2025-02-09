@@ -6,7 +6,7 @@ use crate::{
 };
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
-    movement::TextLayoutDetails,
+    movement::{self, TextLayoutDetails},
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
@@ -97,18 +97,41 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         let mut objects_found = false;
+        let mut preserve_indented_line = false;
         self.update_editor(window, cx, |vim, editor, window, cx| {
             // We are swapping to insert mode anyway. Just set the line end clipping behavior now
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        objects_found |= object.expand_selection(map, selection, around);
+                        let found = object.expand_selection(map, selection, around);
+                        objects_found |= found;
+                        // Check if selection is an inside multiline object
+                        if found && !around && object.is_multiline() {
+                            preserve_indented_line |= selection.start.row() != selection.end.row();
+                        }
                     });
                 });
                 if objects_found {
                     vim.copy_selections_content(editor, false, cx);
                     editor.insert("", window, cx);
+
+                    // Preserve an indented line on inside multiline object deletion
+                    if preserve_indented_line && !around {
+                        editor.change_selections(None, window, cx, |s| {
+                            s.move_with(|_map, selection| {
+                                selection.collapse_to(selection.start, selection.goal);
+                            });
+                        });
+                        editor.insert("\n", window, cx);
+                        editor.change_selections(None, window, cx, |s| {
+                            s.move_with(|map, selection| {
+                                selection.end = movement::left(map, selection.end);
+                                selection.start = selection.end;
+                            });
+                        });
+                    }
+
                     editor.refresh_inline_completion(true, false, window, cx);
                 }
             });
