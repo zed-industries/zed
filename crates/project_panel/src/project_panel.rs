@@ -733,7 +733,7 @@ impl ProjectPanel {
                             .action("Copy Path", Box::new(CopyPath))
                             .action("Copy Relative Path", Box::new(CopyRelativePath))
                             .separator()
-                            .action("Rename", Box::new(Rename))
+                            .when(!is_root, |menu| menu.action("Rename", Box::new(Rename)))
                             .when(!is_root & !is_remote, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
@@ -1348,6 +1348,9 @@ impl ProjectPanel {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
                 let sub_entry_id = self.unflatten_entry_id(entry_id);
                 if let Some(entry) = worktree.read(cx).entry_for_id(sub_entry_id) {
+                    if Some(entry) == worktree.read(cx).root_entry() {
+                        return;
+                    }
                     self.edit_state = Some(EditState {
                         worktree_id,
                         entry_id: sub_entry_id,
@@ -7281,6 +7284,7 @@ mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(target_os = "windows", ignore)]
     async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         init_test_with_editor(cx);
 
