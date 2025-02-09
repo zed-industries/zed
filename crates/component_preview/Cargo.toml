@@ -11,11 +11,11 @@ workspace = true
 [lib]
 path = "src/component_preview.rs"
 
-[dependencies]
-gpui.workspace = true
-ui.workspace = true
-component.workspace = true
-workspace.workspace = true
-
 [features]
 default = []
+
+[dependencies]
+component.workspace = true
+gpui.workspace = true
+ui.workspace = true
+workspace.workspace = true
