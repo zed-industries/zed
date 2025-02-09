@@ -79,7 +79,7 @@ impl StdinTransport {
         let (stdout_sender, stdout_receiver) = channel::unbounded::<String>();
         let (stderr_sender, stderr_receiver) = channel::unbounded::<String>();
 
-        cx.spawn(|_| async move { Self::handle_output(stdin, stdout_receiver).log_err() })
+        cx.spawn(|_| Self::handle_output(stdin, stdout_receiver).log_err())
             .detach();
 
         cx.spawn(|_| async move { Self::handle_input(stdout, stdin_sender).await })
