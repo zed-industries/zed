@@ -140,7 +140,6 @@ mod uniform_list {
         fn compute(
             &self,
             visible_range: Range<usize>,
-            bounds: Bounds<Pixels>,
             item_height: Pixels,
             item_count: usize,
             window: &mut Window,
@@ -160,7 +159,7 @@ mod uniform_list {
                 visible_range.start,
                 includes_trailing_indent,
             );
-            let mut indent_guides = if let Some(ref custom_render) = self.render_fn {
+            let indent_guides = if let Some(ref custom_render) = self.render_fn {
                 let params = RenderIndentGuideParams {
                     indent_guides,
                     indent_size: self.indent_size,
@@ -184,12 +183,6 @@ mod uniform_list {
                     })
                     .collect()
             };
-            for guide in &mut indent_guides {
-                guide.bounds.origin += bounds.origin;
-                if let Some(hitbox) = guide.hitbox.as_mut() {
-                    hitbox.origin += bounds.origin;
-                }
-            }
 
             let indent_guides = IndentGuidesElement {
                 indent_guides: Rc::new(indent_guides),

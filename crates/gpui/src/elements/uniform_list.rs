@@ -410,7 +410,6 @@ impl Element for UniformList {
                         for decoration in &self.decorations {
                             let mut decoration = decoration.as_ref().compute(
                                 visible_range.clone(),
-                                bounds,
                                 item_height,
                                 self.item_count,
                                 window,
@@ -475,7 +474,6 @@ pub trait UniformListDecoration {
     fn compute(
         &self,
         visible_range: Range<usize>,
-        bounds: Bounds<Pixels>,
         item_height: Pixels,
         item_count: usize,
         window: &mut Window,
