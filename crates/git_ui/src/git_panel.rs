@@ -1161,6 +1161,7 @@ impl GitPanel {
             ButtonLike::new("active-repository")
                 .style(ButtonStyle::Subtle)
                 .child(Label::new(repository_display_name).size(LabelSize::Small)),
+            Tooltip::text("Select a repository"),
         )
     }
 

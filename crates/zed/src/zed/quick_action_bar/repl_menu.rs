@@ -343,8 +343,8 @@ impl QuickActionBar {
                                 .color(Color::Muted)
                                 .size(IconSize::XSmall),
                         ),
-                )
-                .tooltip(Tooltip::text("Select Kernel")),
+                ),
+            Tooltip::text("Select Kernel"),
         )
         .with_handle(menu_handle.clone())
         .into_any_element()
