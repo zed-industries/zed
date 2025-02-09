@@ -104,10 +104,9 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        let found = object.expand_selection(map, selection, around);
-                        objects_found |= found;
+                        objects_found |= object.expand_selection(map, selection, around);
                         // Check if selection is an inside multiline { } object
-                        if found && !around && object.is_multiline() {
+                        if !around && object.is_multiline() {
                             let is_multiline = selection.start.row() != selection.end.row();
                             if is_multiline {
                                 let start_offset = selection.start.to_offset(map, Bias::Left);
