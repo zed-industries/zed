@@ -3414,7 +3414,7 @@ impl OutlinePanel {
             let (new_cached_entries, max_width_item_index) = new_cached_entries.await;
             outline_panel
                 .update_in(&mut cx, |outline_panel, window, cx| {
-                    outline_panel.cached_entries = new_cached_entries;
+                    outline_panel.cached_entries = dbg!(new_cached_entries);
                     outline_panel.max_width_item_index = max_width_item_index;
                     if outline_panel.selected_entry.is_invalidated()
                         || matches!(outline_panel.selected_entry, SelectedEntry::None)
@@ -5156,6 +5156,7 @@ mod tests {
     use project::FakeFs;
     use search::project_search::{self, perform_project_search};
     use serde_json::json;
+    use workspace::OpenVisible;
 
     use super::*;
 
@@ -5702,6 +5703,109 @@ mod tests {
                 "When opening the excerpt, should navigate to the place corresponding the outline entry"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_multiple_workrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "one": {
+                    "a.txt": "aaa aaa"
+                },
+                "two": {
+                    "b.txt": "a aaa"
+                }
+
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new("/root/one")], cx).await;
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let items = workspace
+            .update(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from("/root/two")],
+                    OpenVisible::OnlyDirectories,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .unwrap()
+            .await;
+        assert_eq!(items.len(), 1, "Were opening another worktree directory");
+        assert!(
+            items[0].is_none(),
+            "Directory should be opened successfully"
+        );
+
+        workspace
+            .update(cx, |workspace, window, cx| {
+                ProjectSearchView::deploy_search(
+                    workspace,
+                    &workspace::DeploySearch::default(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        let search_view = workspace
+            .update(cx, |workspace, _, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectSearchView>())
+                    .expect("Project search view expected to appear after new search event trigger")
+            })
+            .unwrap();
+
+        let query = "aaa";
+        perform_project_search(&search_view, query, cx);
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .results_editor()
+                .update(cx, |results_editor, cx| {
+                    assert_eq!(
+                        results_editor.display_text(cx).match_indices(query).count(),
+                        3
+                    );
+                });
+        });
+
+        dbg!("~~~~~~~~~~~~~~~~~~~~~");
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                r#"/
+  one/
+    a.txt
+      search: aaa aaa  <==== selected
+      search: aaa aaa
+  two/
+    b.txt
+      search: a aaa"#
+            );
+        });
+
+        // TODO kb toggle
     }
 
     #[gpui::test]
