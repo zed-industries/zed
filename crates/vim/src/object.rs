@@ -1713,7 +1713,7 @@ mod test {
         cx.simulate_shared_keystrokes("v i {").await;
         cx.shared_state().await.assert_eq(indoc! {"
             func empty(a string) bool {
-            «   if a == \"\" {
+               «if a == \"\" {
                   return true
                }
                return false
@@ -1731,7 +1731,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             func empty(a string) bool {
                  if a == \"\" {
-            «         return true
+                     «return true
             ˇ»     }
                  return false
             }"});
@@ -1749,7 +1749,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             func empty(a string) bool {
                  if a == \"\" {
-            «         return true
+                     «return true
             ˇ»     }
                  return false
             }"});
