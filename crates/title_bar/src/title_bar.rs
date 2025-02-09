@@ -690,7 +690,7 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
+                .trigger_with_tooltip(
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
@@ -706,8 +706,8 @@ impl TitleBar {
                                         .color(Color::Muted),
                                 ),
                         )
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                        .style(ButtonStyle::Subtle),
+                    Tooltip::text("Toggle User Menu"),
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
@@ -736,10 +736,9 @@ impl TitleBar {
                     })
                     .into()
                 })
-                .trigger(
-                    IconButton::new("user-menu", IconName::ChevronDown)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Toggle User Menu")),
+                .trigger_with_tooltip(
+                    IconButton::new("user-menu", IconName::ChevronDown).icon_size(IconSize::Small),
+                    Tooltip::text("Toggle User Menu"),
                 )
         }
     }

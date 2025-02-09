@@ -209,16 +209,16 @@ impl QuickActionBar {
                 })
                 .into()
             })
-            .trigger(
+            .trigger_with_tooltip(
                 ButtonLike::new_rounded_right(element_id("dropdown"))
                     .child(
                         Icon::new(IconName::ChevronDownSmall)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .tooltip(Tooltip::text("REPL Menu"))
                     .width(rems(1.).into())
                     .disabled(menu_state.popover_disabled),
+                Tooltip::text("REPL Menu"),
             );
 
         let button = ButtonLike::new_rounded_left("toggle_repl_icon")
