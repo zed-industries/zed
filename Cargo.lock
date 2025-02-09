@@ -14392,7 +14392,6 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
- "component",
  "convert_case 0.7.1",
  "linkme",
  "proc-macro2",
