@@ -6558,10 +6558,11 @@ outline: struct OutlineEntryExcerpt
                                     None
                                 }
                             }) {
-                            Some(root_path) => root_path
-                                .join(&directory.entry.path)
-                                .to_string_lossy()
-                                .to_string(),
+                            Some(root_path) => format!(
+                                "{}/{}",
+                                root_path.display(),
+                                directory.entry.path.display(),
+                            ),
                             None => format!(
                                 "{}/",
                                 directory
