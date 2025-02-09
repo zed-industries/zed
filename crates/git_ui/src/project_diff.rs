@@ -235,7 +235,7 @@ impl ProjectDiff {
                     .update(cx, |workspace, cx| {
                         if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
                             git_panel.update(cx, |git_panel, cx| {
-                                git_panel.set_focused_path(project_path.into(), window, cx)
+                                git_panel.select_entry_by_path(project_path.into(), window, cx)
                             })
                         }
                     })

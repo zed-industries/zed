@@ -1,19 +1,31 @@
-use gpui::{impl_actions, Entity, OwnedMenu, OwnedMenuItem};
+use gpui::{Entity, OwnedMenu, OwnedMenuItem};
+
+#[cfg(not(target_os = "macos"))]
+use gpui::{actions, impl_actions};
+
+#[cfg(not(target_os = "macos"))]
 use schemars::JsonSchema;
+#[cfg(not(target_os = "macos"))]
 use serde::Deserialize;
+
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
-impl_actions!(
-    app_menu,
-    [OpenApplicationMenu, NavigateApplicationMenuInDirection]
-);
+#[cfg(not(target_os = "macos"))]
+impl_actions!(app_menu, [OpenApplicationMenu]);
 
+#[cfg(not(target_os = "macos"))]
+actions!(app_menu, [ActivateMenuRight, ActivateMenuLeft]);
+
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct OpenApplicationMenu(String);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
-pub struct NavigateApplicationMenuInDirection(String);
+#[cfg(not(target_os = "macos"))]
+pub enum ActivateDirection {
+    Left,
+    Right,
+}
 
 #[derive(Clone)]
 struct MenuEntry {
@@ -190,7 +202,7 @@ impl ApplicationMenu {
     #[cfg(not(target_os = "macos"))]
     pub fn navigate_menus_in_direction(
         &mut self,
-        action: &NavigateApplicationMenuInDirection,
+        direction: ActivateDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -202,22 +214,21 @@ impl ApplicationMenu {
             return;
         };
 
-        let next_index = match action.0.as_str() {
-            "Left" => {
+        let next_index = match direction {
+            ActivateDirection::Left => {
                 if current_index == 0 {
                     self.entries.len() - 1
                 } else {
                     current_index - 1
                 }
             }
-            "Right" => {
+            ActivateDirection::Right => {
                 if current_index == self.entries.len() - 1 {
                     0
                 } else {
                     current_index + 1
                 }
             }
-            _ => return,
         };
 
         self.entries[current_index].handle.hide(cx);

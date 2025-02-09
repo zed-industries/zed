@@ -83,6 +83,7 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
+    "crates/migrator",
     "crates/multi_buffer",
     "crates/node_runtime",
     "crates/notifications",
@@ -148,7 +149,6 @@ members = [
     "crates/ui_macros",
     "crates/util",
     "crates/util_macros",
-    "crates/vcs_menu",
     "crates/vim",
     "crates/vim_mode_setting",
     "crates/welcome",
@@ -283,6 +283,7 @@ markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
+migrator = { path = "crates/migrator" }
 multi_buffer = { path = "crates/multi_buffer" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
@@ -348,7 +349,6 @@ ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
-vcs_menu = { path = "crates/vcs_menu" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
 welcome = { path = "crates/welcome" }
@@ -564,7 +564,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
-zed_llm_client = "0.2"
+zed_llm_client = "0.4"
 zstd = "0.11"
 metal = "0.31"
 
@@ -679,7 +679,6 @@ telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }
-vcs_menu = { codegen-units = 1 }
 zed_actions = { codegen-units = 1 }
 
 [profile.release]

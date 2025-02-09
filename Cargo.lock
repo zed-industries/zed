@@ -5352,6 +5352,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "futures 0.3.31",
+ "fuzzy",
  "git",
  "gpui",
  "language",
@@ -5371,6 +5372,7 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -7876,6 +7878,17 @@ dependencies = [
  "log",
  "objc",
  "paste",
+]
+
+[[package]]
+name = "migrator"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "convert_case 0.7.1",
+ "pretty_assertions",
+ "tree-sitter",
+ "tree-sitter-json",
 ]
 
 [[package]]
@@ -12022,6 +12035,7 @@ dependencies = [
  "gpui",
  "indoc",
  "log",
+ "migrator",
  "paths",
  "pretty_assertions",
  "release_channel",
@@ -14651,22 +14665,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
-name = "vcs_menu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "fuzzy",
- "git",
- "gpui",
- "picker",
- "project",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16693,7 +16691,6 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
- "vcs_menu",
  "vim",
  "vim_mode_setting",
  "welcome",
@@ -16802,12 +16799,13 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.2.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ea4d8ead1e1158e5ebdd6735df25973781da70de5c8008e3a13595865ca4f31"
+checksum = "614669bead4741b2fc352ae1967318be16949cf46f59013e548c6dbfdfc01252"
 dependencies = [
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

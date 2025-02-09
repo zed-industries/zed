@@ -38,8 +38,7 @@ actions!(
         StageAll,
         UnstageAll,
         RevertAll,
-        CommitChanges,
-        CommitAllChanges,
+        Commit,
         ClearCommitMessage
     ]
 );

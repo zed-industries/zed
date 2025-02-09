@@ -141,105 +141,105 @@ pub enum Motion {
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct NextSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Down {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct UnmatchedBackward {
     #[serde(default)]
     char: char,

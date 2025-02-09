@@ -9,7 +9,9 @@ mod stories;
 use crate::application_menu::ApplicationMenu;
 
 #[cfg(not(target_os = "macos"))]
-use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+use crate::application_menu::{
+    ActivateDirection, ActivateMenuLeft, ActivateMenuRight, OpenApplicationMenu,
+};
 
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
@@ -78,22 +80,36 @@ pub fn init(cx: &mut App) {
         });
 
         #[cfg(not(target_os = "macos"))]
-        workspace.register_action(
-            |workspace, action: &NavigateApplicationMenuInDirection, window, cx| {
-                if let Some(titlebar) = workspace
-                    .titlebar_item()
-                    .and_then(|item| item.downcast::<TitleBar>().ok())
-                {
-                    titlebar.update(cx, |titlebar, cx| {
-                        if let Some(ref menu) = titlebar.application_menu {
-                            menu.update(cx, |menu, cx| {
-                                menu.navigate_menus_in_direction(action, window, cx)
-                            });
-                        }
-                    });
-                }
-            },
-        );
+        workspace.register_action(|workspace, _: &ActivateMenuRight, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Right, window, cx)
+                        });
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, _: &ActivateMenuLeft, window, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| {
+                            menu.navigate_menus_in_direction(ActivateDirection::Left, window, cx)
+                        });
+                    }
+                });
+            }
+        });
     })
     .detach();
 }
@@ -514,7 +530,7 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::branches::OpenRecent),
+                        Some(&zed_actions::git::Branch),
                         "Local branches only",
                         window,
                         cx,
@@ -522,7 +538,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::branches::OpenRecent.boxed_clone(), cx);
+                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
                     });
                 }),
         )
@@ -657,6 +673,10 @@ impl TitleBar {
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
                         )
+                        .action(
+                            "Icon Themes…",
+                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                        )
                         .action("Extensions", zed_actions::Extensions.boxed_clone())
                         .separator()
                         .link(
@@ -699,6 +719,10 @@ impl TitleBar {
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            )
+                            .action(
+                                "Icon Themes…",
+                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action("Extensions", zed_actions::Extensions.boxed_clone())
                             .separator()
