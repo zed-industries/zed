@@ -158,7 +158,7 @@ impl Vim {
                 editor.insert("", window, cx);
 
                 // Preserve an indented line on inside multiline object deletion
-                if preserve_indented_line && !around {
+                if preserve_indented_line {
                     editor.change_selections(None, window, cx, |s| {
                         s.move_with(|_map, selection| {
                             selection.collapse_to(selection.start, selection.goal);
