@@ -2948,7 +2948,6 @@ version = "0.1.0"
 dependencies = [
  "collections",
  "gpui",
- "lazy_static",
  "linkme",
  "once_cell",
  "parking_lot",
@@ -2961,7 +2960,6 @@ version = "0.1.0"
 dependencies = [
  "component",
  "gpui",
- "strum",
  "ui",
  "workspace",
 ]

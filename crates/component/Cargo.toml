@@ -14,7 +14,6 @@ path = "src/component.rs"
 [dependencies]
 collections.workspace = true
 gpui.workspace = true
-lazy_static = "1.5.0"
 linkme.workspace = true
 once_cell = "1.20.3"
 parking_lot.workspace = true

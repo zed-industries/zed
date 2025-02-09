@@ -33,3 +33,7 @@ windows.workspace = true
 [features]
 default = []
 stories = ["dep:itertools", "dep:story"]
+
+# cargo-machete doesn't understand that linkme is used in the component macro
+[package.metadata.cargo-machete]
+ignored = ["linkme"]
