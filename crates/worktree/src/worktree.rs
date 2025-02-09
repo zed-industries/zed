@@ -1432,16 +1432,7 @@ impl LocalWorktree {
                             drop(barrier);
                         }
                         ScanState::RootUpdated { new_path } => {
-                            if let Some(new_path) = new_path {
-                                this.snapshot.git_repositories = Default::default();
-                                this.snapshot.ignores_by_parent_abs_path = Default::default();
-                                let root_name = new_path
-                                    .as_path()
-                                    .file_name()
-                                    .map_or(String::new(), |f| f.to_string_lossy().to_string());
-                                this.snapshot.update_abs_path(new_path, root_name);
-                            }
-                            this.restart_background_scanners(cx);
+                            this.update_abs_path_and_refresh(new_path, cx);
                         }
                     }
                     cx.notify();
@@ -1881,6 +1872,10 @@ impl LocalWorktree {
         }))
     }
 
+    /// Rename an entry.
+    ///
+    /// `new_path` is the new relative path to the worktree root.
+    /// If the root entry is renamed then `new_path` is the new root name instead.
     fn rename_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -1893,8 +1888,18 @@ impl LocalWorktree {
         };
         let new_path = new_path.into();
         let abs_old_path = self.absolutize(&old_path);
-        let Ok(abs_new_path) = self.absolutize(&new_path) else {
-            return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+
+        let is_root_entry = self.root_entry().is_some_and(|e| e.id == entry_id);
+        let abs_new_path = if is_root_entry {
+            let Some(root_parent_path) = self.abs_path().parent() else {
+                return Task::ready(Err(anyhow!("no parent for path {:?}", self.abs_path)));
+            };
+            root_parent_path.join(&new_path)
+        } else {
+            let Ok(absolutize_path) = self.absolutize(&new_path) else {
+                return Task::ready(Err(anyhow!("absolutizing path {new_path:?}")));
+            };
+            absolutize_path
         };
         let abs_path = abs_new_path.clone();
         let fs = self.fs.clone();
@@ -1928,9 +1933,19 @@ impl LocalWorktree {
             rename.await?;
             Ok(this
                 .update(&mut cx, |this, cx| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(new_path.clone(), Some(old_path), cx)
+                    let local = this.as_local_mut().unwrap();
+                    if is_root_entry {
+                        // We eagerly update `abs_path` and refresh this worktree.
+                        // Otherwise, the FS watcher would do it on the `RootUpdated` event,
+                        // but with a noticeable delay, so we handle it proactively.
+                        local.update_abs_path_and_refresh(
+                            Some(SanitizedPath::from(abs_path.clone())),
+                            cx,
+                        );
+                        Task::ready(Ok(this.root_entry().cloned()))
+                    } else {
+                        local.refresh_entry(new_path.clone(), Some(old_path), cx)
+                    }
                 })?
                 .await?
                 .map(CreatedEntry::Included)
@@ -2193,6 +2208,23 @@ impl LocalWorktree {
 
     pub fn share_private_files(&mut self, cx: &Context<Worktree>) {
         self.share_private_files = true;
+        self.restart_background_scanners(cx);
+    }
+
+    fn update_abs_path_and_refresh(
+        &mut self,
+        new_path: Option<SanitizedPath>,
+        cx: &Context<Worktree>,
+    ) {
+        if let Some(new_path) = new_path {
+            self.snapshot.git_repositories = Default::default();
+            self.snapshot.ignores_by_parent_abs_path = Default::default();
+            let root_name = new_path
+                .as_path()
+                .file_name()
+                .map_or(String::new(), |f| f.to_string_lossy().to_string());
+            self.snapshot.update_abs_path(new_path, root_name);
+        }
         self.restart_background_scanners(cx);
     }
 }
