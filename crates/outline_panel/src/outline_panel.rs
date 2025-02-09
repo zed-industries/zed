@@ -2,6 +2,7 @@ mod outline_panel_settings;
 
 use std::{
     cmp,
+    collections::BTreeMap,
     hash::Hash,
     ops::Range,
     path::{Path, PathBuf, MAIN_SEPARATOR_STR},
@@ -2626,7 +2627,7 @@ impl OutlinePanel {
                 .spawn(async move {
                     let mut processed_external_buffers = HashSet::default();
                     let mut new_worktree_entries =
-                        HashMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
+                        BTreeMap::<WorktreeId, HashMap<ProjectEntryId, GitEntry>>::default();
                     let mut worktree_excerpts = HashMap::<
                         WorktreeId,
                         HashMap<ProjectEntryId, (BufferId, Vec<ExcerptId>)>,
