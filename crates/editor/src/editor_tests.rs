@@ -9711,7 +9711,7 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         &r#"
             <!-- ˇ<script> -->
                 // ˇvar x = new Y();
-            // ˇ</script>
+            <!-- ˇ</script> -->
         "#
         .unindent(),
     );
