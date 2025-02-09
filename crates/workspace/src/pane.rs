@@ -441,11 +441,9 @@ impl Pane {
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .child(
                         PopoverMenu::new("pane-tab-bar-popover-menu")
-                            // TODO kb use trigger_with_tooltip
-                            .trigger(
-                                IconButton::new("plus", IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("New...")),
+                            .trigger_with_tooltip(
+                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                Tooltip::text("New..."),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
