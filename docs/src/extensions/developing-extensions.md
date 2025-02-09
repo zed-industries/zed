@@ -111,7 +111,12 @@ submodule = "extensions/my-extension"
 version = "0.0.1"
 ```
 
-3. Run `pnpm sort-extensions` to ensure `extensions.toml` and `.gitmodules` are sorted
+3. Run `sort-extensions` script to ensure `extensions.toml` and `.gitmodules` are sorted:
+
+```sh
+pnpm install
+pnpm sort-extensions
+```
 
 Once your PR is merged, the extension will be packaged and published to the Zed extension registry.
 
