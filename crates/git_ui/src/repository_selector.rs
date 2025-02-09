@@ -34,6 +34,7 @@ impl RepositorySelector {
         let picker = cx.new(|cx| {
             Picker::nonsearchable_uniform_list(delegate, window, cx)
                 .max_height(Some(rems(20.).into()))
+                .width(rems(15.))
         });
 
         let _subscriptions =
