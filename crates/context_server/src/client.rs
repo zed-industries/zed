@@ -53,7 +53,8 @@ pub struct Client {
     #[allow(dead_code)]
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     executor: BackgroundExecutor,
-    _transport: Arc<dyn Transport>,
+    #[allow(dead_code)]
+    transport: Arc<dyn Transport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -202,7 +203,7 @@ impl Client {
             executor: cx.background_executor().clone(),
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
-            _transport: transport,
+            transport,
         })
     }
 
