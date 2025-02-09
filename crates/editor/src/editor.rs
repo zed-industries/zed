@@ -19056,7 +19056,15 @@ impl Editor {
         }
     }
 
-    fn handle_focus_in(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn handle_focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.workspace() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.bottom_dock().update(cx, |dock, cx| {
+                    dock.set_open(false, window, cx);
+                });
+            });
+        }
+
         cx.emit(EditorEvent::FocusedIn)
     }
 
