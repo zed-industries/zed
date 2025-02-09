@@ -1,9 +1,9 @@
 # Completions
 
-Zed supports supports two sources for completions:
+Zed supports two sources for completions:
 
 1. "Code Completions" provided by Language Servers (LSPs) automatically installed by Zed or via [Zed Language Extensions](languages.md).
-2. "Inline Completions" provided by external APIs like [GitHub Copilot](#github-copilot) or [Supermaven](#supermaven).
+2. "Edit Predictions" provided by external APIs like [GitHub Copilot](#github-copilot) or [Supermaven](#supermaven).
 
 ## Code Completions
 
@@ -20,7 +20,7 @@ For more information, see:
 - [Configuring Supported Languages](./configuring-languages.md)
 - [List of Zed Supported Languages](./languages.md).
 
-## Configuring Inline Completions
+## Configuring Edit Predictions
 
 ### GitHub Copilot
 
@@ -29,7 +29,7 @@ To use GitHub Copilot (enabled by default), add the following to your `settings.
 ```json
 {
   "features": {
-    "inline_completion_provider": "copilot"
+    "edit_prediction_provider": "copilot"
   }
 }
 ```
@@ -43,44 +43,44 @@ To use Supermaven, add the following to your `settings.json`:
 ```json
 {
   "features": {
-    "inline_completion_provider": "supermaven"
+    "edit_prediction_provider": "supermaven"
   }
 }
 ```
 
 You should be able to sign-in to Supermaven by clicking on the Supermaven icon in the status bar and following the setup instructions.
 
-## Using Inline completions
+## Using Edit Predictions
 
-Once you have configured an Inline Completions provider, you can start using inline completions in your code. Inline completions will appear as you type, and you can accept them by pressing `tab` or `enter` or hide them by pressing `esc`.
+Once you have configured an Edit Prediction provider, you can start using edit predictions completions in your code. Edit predictions will appear as you type, and you can accept them by pressing `tab` or `enter` or hide them by pressing `esc`.
 
-There a number of actions/shortcuts available to interact with inline completions:
+There are a number of actions/shortcuts available to interact with edit predictions:
 
-- `editor: accept inline completion` (`tab`): To accept the current inline completion
-- `editor: accept partial inline completion` (`cmd-right`): To accept the current inline completion up to the next word boundary
-- `editor: show inline completion` (`alt-\\`): Trigger a inline completion request manually
-- `editor: next inline completion` (`alt-]`): To cycle to the next inline completion
-- `editor: previous inline completion` (`alt-[`): To cycle to the previous inline completion
+- `editor: accept edit prediction` (`tab`): To accept the current edit prediction
+- `editor: accept partial edit prediction` (`ctrl-cmd-right`): To accept the current edit prediction up to the next word boundary
+- `editor: show edit prediction` (`alt-tab`): Trigger an edit prediction request manually
+- `editor: next edit prediction` (`alt-tab`): To cycle to the next edit prediction
+- `editor: previous edit prediction` (`alt-shift-tab`): To cycle to the previous edit prediction
 
-### Disabling Inline-Completions
+### Disabling Edit Prediction
 
-To disable completions that appear automatically as you type, add the following to your `settings.json`:
+To disable predictions that appear automatically as you type, add the following to your `settings.json`:
 
 ```json
 {
-  "show_inline_completions": false
+  "show_edit_predictions": false
 }
 ```
 
-You can trigger inline completions manually by executing `editor: show inline completion` (`alt-\\`).
+You can trigger edit predictions manually by executing `editor: show edit prediction` (`alt-tab`).
 
-You can also add this as a language-specific setting in your `settings.json` to disable inline completions for a specific language:
+You can also add this as a language-specific setting in your `settings.json` to disable edit predictions for a specific language:
 
 ```json
 {
   "language": {
     "python": {
-      "show_inline_completions": false
+      "show_edit_predictions": false
     }
   }
 }

@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 use crate::PlatformStyle;
 use crate::{h_flex, prelude::*, Icon, IconName, IconSize};
-use gpui::{relative, Action, FocusHandle, IntoElement, Keystroke, WindowContext};
+use gpui::{
+    relative, Action, AnyElement, App, FocusHandle, IntoElement, Keystroke, Modifiers, Window,
+};
 
 #[derive(Debug, IntoElement, Clone)]
 pub struct KeyBinding {
@@ -13,13 +15,18 @@ pub struct KeyBinding {
 
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
+    size: Option<Pixels>,
 }
 
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
-    pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
+        let key_binding = window
+            .bindings_for_action(action)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
     }
 
@@ -27,40 +34,21 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut Window,
     ) -> Option<Self> {
-        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+        let key_binding = window
+            .bindings_for_action_in(action, focus)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
-    }
-
-    fn icon_for_key(&self, keystroke: &Keystroke) -> Option<IconName> {
-        match keystroke.key.as_str() {
-            "left" => Some(IconName::ArrowLeft),
-            "right" => Some(IconName::ArrowRight),
-            "up" => Some(IconName::ArrowUp),
-            "down" => Some(IconName::ArrowDown),
-            "backspace" => Some(IconName::Backspace),
-            "delete" => Some(IconName::Delete),
-            "return" => Some(IconName::Return),
-            "enter" => Some(IconName::Return),
-            "tab" => Some(IconName::Tab),
-            "space" => Some(IconName::Space),
-            "escape" => Some(IconName::Escape),
-            "pagedown" => Some(IconName::PageDown),
-            "pageup" => Some(IconName::PageUp),
-            "shift" if self.platform_style == PlatformStyle::Mac => Some(IconName::Shift),
-            "control" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            "platform" if self.platform_style == PlatformStyle::Mac => Some(IconName::Command),
-            "function" if self.platform_style == PlatformStyle::Mac => Some(IconName::Control),
-            "alt" if self.platform_style == PlatformStyle::Mac => Some(IconName::Option),
-            _ => None,
-        }
     }
 
     pub fn new(key_binding: gpui::KeyBinding) -> Self {
         Self {
             key_binding,
             platform_style: PlatformStyle::platform(),
+            size: None,
         }
     }
 
@@ -69,10 +57,16 @@ impl KeyBinding {
         self.platform_style = platform_style;
         self
     }
+
+    /// Sets the size for this [`KeyBinding`].
+    pub fn size(mut self, size: Pixels) -> Self {
+        self.size = Some(size);
+        self
+    }
 }
 
 impl RenderOnce for KeyBinding {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -88,117 +82,227 @@ impl RenderOnce for KeyBinding {
             .gap(DynamicSpacing::Base04.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
-                let key_icon = self.icon_for_key(keystroke);
-
                 h_flex()
                     .flex_none()
                     .py_0p5()
                     .rounded_sm()
                     .text_color(cx.theme().colors().text_muted)
-                    .when(keystroke.modifiers.function, |el| {
-                        match self.platform_style {
-                            PlatformStyle::Mac => el.child(Key::new("fn")),
-                            PlatformStyle::Linux | PlatformStyle::Windows => {
-                                el.child(Key::new("Fn")).child(Key::new("+"))
-                            }
-                        }
-                    })
-                    .when(keystroke.modifiers.control, |el| {
-                        match self.platform_style {
-                            PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Control)),
-                            PlatformStyle::Linux | PlatformStyle::Windows => {
-                                el.child(Key::new("Ctrl")).child(Key::new("+"))
-                            }
-                        }
-                    })
-                    .when(keystroke.modifiers.alt, |el| match self.platform_style {
-                        PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Option)),
-                        PlatformStyle::Linux | PlatformStyle::Windows => {
-                            el.child(Key::new("Alt")).child(Key::new("+"))
-                        }
-                    })
-                    .when(keystroke.modifiers.platform, |el| {
-                        match self.platform_style {
-                            PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Command)),
-                            PlatformStyle::Linux => {
-                                el.child(Key::new("Super")).child(Key::new("+"))
-                            }
-                            PlatformStyle::Windows => {
-                                el.child(Key::new("Win")).child(Key::new("+"))
-                            }
-                        }
-                    })
-                    .when(keystroke.modifiers.shift, |el| match self.platform_style {
-                        PlatformStyle::Mac => el.child(KeyIcon::new(IconName::Shift)),
-                        PlatformStyle::Linux | PlatformStyle::Windows => {
-                            el.child(Key::new("Shift")).child(Key::new("+"))
-                        }
-                    })
-                    .map(|el| match key_icon {
-                        Some(icon) => el.child(KeyIcon::new(icon)),
-                        None => el.child(Key::new(keystroke.key.to_uppercase())),
+                    .children(render_modifiers(
+                        &keystroke.modifiers,
+                        self.platform_style,
+                        None,
+                        self.size,
+                        false,
+                    ))
+                    .map(|el| {
+                        el.child(render_key(&keystroke, self.platform_style, None, self.size))
                     })
             }))
     }
 }
 
+pub fn render_key(
+    keystroke: &Keystroke,
+    platform_style: PlatformStyle,
+    color: Option<Color>,
+    size: Option<Pixels>,
+) -> AnyElement {
+    let key_icon = icon_for_key(keystroke, platform_style);
+    match key_icon {
+        Some(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+        None => Key::new(capitalize(&keystroke.key), color)
+            .size(size)
+            .into_any_element(),
+    }
+}
+
+fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<IconName> {
+    match keystroke.key.as_str() {
+        "left" => Some(IconName::ArrowLeft),
+        "right" => Some(IconName::ArrowRight),
+        "up" => Some(IconName::ArrowUp),
+        "down" => Some(IconName::ArrowDown),
+        "backspace" => Some(IconName::Backspace),
+        "delete" => Some(IconName::Delete),
+        "return" => Some(IconName::Return),
+        "enter" => Some(IconName::Return),
+        "tab" => Some(IconName::Tab),
+        "space" => Some(IconName::Space),
+        "escape" => Some(IconName::Escape),
+        "pagedown" => Some(IconName::PageDown),
+        "pageup" => Some(IconName::PageUp),
+        "shift" if platform_style == PlatformStyle::Mac => Some(IconName::Shift),
+        "control" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        "platform" if platform_style == PlatformStyle::Mac => Some(IconName::Command),
+        "function" if platform_style == PlatformStyle::Mac => Some(IconName::Control),
+        "alt" if platform_style == PlatformStyle::Mac => Some(IconName::Option),
+        _ => None,
+    }
+}
+
+pub fn render_modifiers(
+    modifiers: &Modifiers,
+    platform_style: PlatformStyle,
+    color: Option<Color>,
+    size: Option<Pixels>,
+    standalone: bool,
+) -> impl Iterator<Item = AnyElement> {
+    enum KeyOrIcon {
+        Key(&'static str),
+        Icon(IconName),
+    }
+
+    struct Modifier {
+        enabled: bool,
+        mac: KeyOrIcon,
+        linux: KeyOrIcon,
+        windows: KeyOrIcon,
+    }
+
+    let table = {
+        use KeyOrIcon::*;
+
+        [
+            Modifier {
+                enabled: modifiers.function,
+                mac: Icon(IconName::Control),
+                linux: Key("Fn"),
+                windows: Key("Fn"),
+            },
+            Modifier {
+                enabled: modifiers.control,
+                mac: Icon(IconName::Control),
+                linux: Key("Ctrl"),
+                windows: Key("Ctrl"),
+            },
+            Modifier {
+                enabled: modifiers.alt,
+                mac: Icon(IconName::Option),
+                linux: Key("Alt"),
+                windows: Key("Alt"),
+            },
+            Modifier {
+                enabled: modifiers.platform,
+                mac: Icon(IconName::Command),
+                linux: Key("Super"),
+                windows: Key("Win"),
+            },
+            Modifier {
+                enabled: modifiers.shift,
+                mac: Icon(IconName::Shift),
+                linux: Key("Shift"),
+                windows: Key("Shift"),
+            },
+        ]
+    };
+
+    let filtered = table
+        .into_iter()
+        .filter(|modifier| modifier.enabled)
+        .collect::<Vec<_>>();
+    let last_ix = filtered.len().saturating_sub(1);
+
+    filtered
+        .into_iter()
+        .enumerate()
+        .flat_map(move |(ix, modifier)| match platform_style {
+            PlatformStyle::Mac => vec![modifier.mac],
+            PlatformStyle::Linux if standalone && ix == last_ix => vec![modifier.linux],
+            PlatformStyle::Linux => vec![modifier.linux, KeyOrIcon::Key("+")],
+            PlatformStyle::Windows if standalone && ix == last_ix => {
+                vec![modifier.windows]
+            }
+            PlatformStyle::Windows => vec![modifier.windows, KeyOrIcon::Key("+")],
+        })
+        .map(move |key_or_icon| match key_or_icon {
+            KeyOrIcon::Key(key) => Key::new(key, color).size(size).into_any_element(),
+            KeyOrIcon::Icon(icon) => KeyIcon::new(icon, color).size(size).into_any_element(),
+        })
+}
+
 #[derive(IntoElement)]
 pub struct Key {
     key: SharedString,
+    color: Option<Color>,
+    size: Option<Pixels>,
 }
 
 impl RenderOnce for Key {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let single_char = self.key.len() == 1;
+        let size = self.size.unwrap_or(px(14.));
+        let size_f32: f32 = size.into();
 
         div()
             .py_0()
             .map(|this| {
                 if single_char {
-                    this.w(rems_from_px(14.))
-                        .flex()
-                        .flex_none()
-                        .justify_center()
+                    this.w(size).flex().flex_none().justify_center()
                 } else {
                     this.px_0p5()
                 }
             })
-            .h(rems_from_px(14.))
-            .text_ui(cx)
+            .h(rems_from_px(size_f32))
+            .text_size(size)
             .line_height(relative(1.))
-            .text_color(cx.theme().colors().text_muted)
+            .text_color(self.color.unwrap_or(Color::Muted).color(cx))
             .child(self.key.clone())
     }
 }
 
 impl Key {
-    pub fn new(key: impl Into<SharedString>) -> Self {
-        Self { key: key.into() }
+    pub fn new(key: impl Into<SharedString>, color: Option<Color>) -> Self {
+        Self {
+            key: key.into(),
+            color,
+            size: None,
+        }
+    }
+
+    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+        self.size = size.into();
+        self
     }
 }
 
 #[derive(IntoElement)]
 pub struct KeyIcon {
     icon: IconName,
+    color: Option<Color>,
+    size: Option<Pixels>,
 }
 
 impl RenderOnce for KeyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let size = self
+            .size
+            .unwrap_or(IconSize::Small.rems().to_pixels(window.rem_size()));
+
         Icon::new(self.icon)
-            .size(IconSize::XSmall)
-            .color(Color::Muted)
+            .size(IconSize::Custom(size))
+            .color(self.color.unwrap_or(Color::Muted))
     }
 }
 
 impl KeyIcon {
-    pub fn new(icon: IconName) -> Self {
-        Self { icon }
+    pub fn new(icon: IconName, color: Option<Color>) -> Self {
+        Self {
+            icon,
+            color,
+            size: None,
+        }
+    }
+
+    pub fn size(mut self, size: impl Into<Option<Pixels>>) -> Self {
+        self.size = size.into();
+        self
     }
 }
 
 /// Returns a textual representation of the key binding for the given [`Action`].
-pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String> {
-    let key_binding = cx.bindings_for_action(action).last().cloned()?;
+pub fn text_for_action(action: &dyn Action, window: &Window) -> Option<String> {
+    let bindings = window.bindings_for_action(action);
+    let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 
@@ -207,15 +311,16 @@ pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String
 pub fn text_for_action_in(
     action: &dyn Action,
     focus: &FocusHandle,
-    cx: &mut WindowContext,
+    window: &mut Window,
 ) -> Option<String> {
-    let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+    let bindings = window.bindings_for_action_in(action, focus);
+    let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 
 /// Returns a textual representation of the given key binding for the specified platform.
 pub fn text_for_key_binding(
-    key_binding: gpui::KeyBinding,
+    key_binding: &gpui::KeyBinding,
     platform_style: PlatformStyle,
 ) -> String {
     key_binding
@@ -282,14 +387,6 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
         text.push(delimiter);
     }
 
-    fn capitalize(str: &str) -> String {
-        let mut chars = str.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
-        }
-    }
-
     let key = match keystroke.key.as_str() {
         "pageup" => "PageUp",
         "pagedown" => "PageDown",
@@ -299,6 +396,14 @@ pub fn text_for_keystroke(keystroke: &Keystroke, platform_style: PlatformStyle) 
     text.push_str(key);
 
     text
+}
+
+fn capitalize(str: &str) -> String {
+    let mut chars = str.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 #[cfg(test)]

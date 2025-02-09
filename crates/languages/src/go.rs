@@ -1,11 +1,12 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task};
+use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
+use project::Fs;
 use regex::Regex;
 use serde_json::json;
 use smol::fs;
@@ -75,7 +76,7 @@ impl super::LspAdapter for GoLspAdapter {
         &self,
         delegate: &dyn LspAdapterDelegate,
         _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncAppContext,
+        _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
         Some(LanguageServerBinary {
@@ -88,7 +89,7 @@ impl super::LspAdapter for GoLspAdapter {
     fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Option<Task<Result<()>>> {
         static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
 
@@ -197,6 +198,7 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -441,7 +443,7 @@ impl ContextProvider for GoContextProvider {
         location: &Location,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut gpui::AppContext,
+        cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
             .buffer
@@ -504,7 +506,7 @@ impl ContextProvider for GoContextProvider {
     fn associated_tasks(
         &self,
         _: Option<Arc<dyn language::File>>,
-        _: &AppContext,
+        _: &App,
     ) -> Option<TaskTemplates> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
@@ -582,6 +584,23 @@ impl ContextProvider for GoContextProvider {
                 ],
                 cwd: package_cwd.clone(),
                 tags: vec!["go-benchmark".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!(
+                    "go test {} -fuzz=Fuzz -run {}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    "-fuzz=Fuzz".into(),
+                    "-run".into(),
+                    format!("^{}\\$", VariableName::Symbol.template_value(),),
+                ],
+                tags: vec!["go-fuzz".to_owned()],
+                cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {

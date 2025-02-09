@@ -1,5 +1,5 @@
 use client::telemetry;
-use gpui::{Task, WindowContext};
+use gpui::{App, Task, Window};
 use human_bytes::human_bytes;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use serde::Serialize;
@@ -19,7 +19,7 @@ pub struct SystemSpecs {
 }
 
 impl SystemSpecs {
-    pub fn new(cx: &WindowContext) -> Task<Self> {
+    pub fn new(window: &mut Window, cx: &mut App) -> Task<Self> {
         let app_version = AppVersion::global(cx).to_string();
         let release_channel = ReleaseChannel::global(cx);
         let os_name = telemetry::os_name();
@@ -35,7 +35,7 @@ impl SystemSpecs {
             _ => None,
         };
 
-        let gpu_specs = if let Some(specs) = cx.gpu_specs() {
+        let gpu_specs = if let Some(specs) = window.gpu_specs() {
             Some(format!(
                 "{} || {} || {}",
                 specs.device_name, specs.driver_name, specs.driver_info
@@ -64,12 +64,17 @@ impl Display for SystemSpecs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let os_information = format!("OS: {} {}", self.os_name, self.os_version);
         let app_version_information = format!(
-            "Zed: v{} ({})",
+            "Zed: v{} ({}) {}",
             self.app_version,
             match &self.commit_sha {
                 Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
                 None => self.release_channel.to_string(),
-            }
+            },
+            if cfg!(debug_assertions) {
+                "(Taylor's Version)"
+            } else {
+                ""
+            },
         );
         let system_specs = [
             app_version_information,

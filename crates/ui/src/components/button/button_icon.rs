@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
-use crate::{prelude::*, Icon, IconName, IconSize};
+use crate::{prelude::*, Icon, IconName, IconSize, IconWithIndicator, Indicator};
+use gpui::Hsla;
 
 /// An icon that appears within a button.
 ///
@@ -15,6 +16,8 @@ pub(super) struct ButtonIcon {
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
     selected_style: Option<ButtonStyle>,
+    indicator: Option<Indicator>,
+    indicator_border_color: Option<Hsla>,
 }
 
 impl ButtonIcon {
@@ -28,6 +31,8 @@ impl ButtonIcon {
             selected_icon: None,
             selected_icon_color: None,
             selected_style: None,
+            indicator: None,
+            indicator_border_color: None,
         }
     }
 
@@ -56,6 +61,16 @@ impl ButtonIcon {
         self.selected_icon_color = color.into();
         self
     }
+
+    pub fn indicator(mut self, indicator: Indicator) -> Self {
+        self.indicator = Some(indicator);
+        self
+    }
+
+    pub fn indicator_border_color(mut self, color: Option<Hsla>) -> Self {
+        self.indicator_border_color = color;
+        self
+    }
 }
 
 impl Disableable for ButtonIcon {
@@ -80,7 +95,7 @@ impl SelectableButton for ButtonIcon {
 }
 
 impl RenderOnce for ButtonIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let icon = self
             .selected_icon
             .filter(|_| self.selected)
@@ -96,6 +111,13 @@ impl RenderOnce for ButtonIcon {
             self.color
         };
 
-        Icon::new(icon).size(self.size).color(icon_color)
+        let icon = Icon::new(icon).size(self.size).color(icon_color);
+
+        match self.indicator {
+            Some(indicator) => IconWithIndicator::new(icon, Some(indicator))
+                .indicator_border_color(self.indicator_border_color)
+                .into_any_element(),
+            None => icon.into_any_element(),
+        }
     }
 }

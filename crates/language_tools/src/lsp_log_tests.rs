@@ -4,13 +4,14 @@ use crate::lsp_log::LogMenuItem;
 
 use super::*;
 use futures::StreamExt;
-use gpui::{Context, SemanticVersion, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, SemanticVersion, TestAppContext, VisualTestContext};
 use language::{tree_sitter_rust, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
 use lsp::LanguageServerName;
 use lsp_log::LogKind;
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
+use util::path;
 
 #[gpui::test]
 async fn test_lsp_logs(cx: &mut TestAppContext) {
@@ -22,7 +23,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/the-root",
+        path!("/the-root"),
         json!({
             "test.rs": "",
             "package.json": "",
@@ -30,7 +31,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
@@ -52,12 +53,12 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         },
     );
 
-    let log_store = cx.new_model(LogStore::new);
+    let log_store = cx.new(LogStore::new);
     log_store.update(cx, |store, cx| store.add_project(&project, cx));
 
     let _rust_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/test.rs", cx)
+            project.open_local_buffer_with_lsp(path!("/the-root/test.rs"), cx)
         })
         .await
         .unwrap();
@@ -67,7 +68,8 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
 
-    let window = cx.add_window(|cx| LspLogView::new(project.clone(), log_store.clone(), cx));
+    let window =
+        cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store.clone(), window, cx));
     let log_view = window.root(cx).unwrap();
     let mut cx = VisualTestContext::from_window(*window, cx);
 

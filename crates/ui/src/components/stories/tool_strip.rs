@@ -6,7 +6,7 @@ use crate::{prelude::*, ToolStrip, Tooltip};
 pub struct ToolStripStory;
 
 impl Render for ToolStripStory {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title_for::<ToolStrip>())
             .child(
@@ -16,15 +16,15 @@ impl Render for ToolStripStory {
                         ToolStrip::vertical("tool_strip_example")
                             .tool(
                                 IconButton::new("example_tool", IconName::AudioOn)
-                                    .tooltip(|cx| Tooltip::text("Example tool", cx)),
+                                    .tooltip(Tooltip::text("Example tool")),
                             )
                             .tool(
                                 IconButton::new("example_tool_2", IconName::MicMute)
-                                    .tooltip(|cx| Tooltip::text("Example tool 2", cx)),
+                                    .tooltip(Tooltip::text("Example tool 2")),
                             )
                             .tool(
                                 IconButton::new("example_tool_3", IconName::Screen)
-                                    .tooltip(|cx| Tooltip::text("Example tool 3", cx)),
+                                    .tooltip(Tooltip::text("Example tool 3")),
                             ),
                     ),
                 )),

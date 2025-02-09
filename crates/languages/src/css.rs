@@ -1,9 +1,11 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
-use language::{LspAdapter, LspAdapterDelegate};
+use gpui::AsyncApp;
+use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
+use project::Fs;
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -36,6 +38,24 @@ impl CssLspAdapter {
 impl LspAdapter for CssLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName("vscode-css-language-server".into())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate
+            .which("vscode-css-language-server".as_ref())
+            .await?;
+        let env = delegate.shell_env().await;
+
+        Some(LanguageServerBinary {
+            path,
+            env: Some(env),
+            arguments: vec!["--stdio".into()],
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -107,6 +127,7 @@ impl LspAdapter for CssLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -149,7 +170,7 @@ async fn get_cached_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Context, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext};
     use unindent::Unindent;
 
     #[gpui::test]
@@ -181,8 +202,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer =
-            cx.new_model(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
         let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline

@@ -698,6 +698,12 @@ impl crate::Keystroke {
             Keysym::KP_Next => "pagedown".to_owned(),
             Keysym::XF86_Back => "back".to_owned(),
             Keysym::XF86_Forward => "forward".to_owned(),
+            Keysym::XF86_Cut => "cut".to_owned(),
+            Keysym::XF86_Copy => "copy".to_owned(),
+            Keysym::XF86_Paste => "paste".to_owned(),
+            Keysym::XF86_New => "new".to_owned(),
+            Keysym::XF86_Open => "open".to_owned(),
+            Keysym::XF86_Save => "save".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -767,7 +773,7 @@ impl crate::Keystroke {
 
     /**
      * Returns which symbol the dead key represents
-     * https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux
+     * <https://developer.mozilla.org/en-US/docs/Web/API/UI_Events/Keyboard_event_key_values#dead_keycodes_for_linux>
      */
     pub fn underlying_dead_key(keysym: Keysym) -> Option<String> {
         match keysym {

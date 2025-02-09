@@ -3,8 +3,11 @@
 mod decorated_icon;
 mod icon_decoration;
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 pub use decorated_icon::*;
-use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
+use gpui::{img, svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 pub use icon_decoration::*;
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -46,7 +49,7 @@ impl From<AnimationElement<Icon>> for AnyIcon {
 }
 
 impl RenderOnce for AnyIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         match self {
             Self::Icon(icon) => icon.into_any_element(),
             Self::AnimatedIcon(animated_icon) => animated_icon.into_any_element(),
@@ -65,6 +68,9 @@ pub enum IconSize {
     #[default]
     /// 16px
     Medium,
+    /// 48px
+    XLarge,
+    Custom(Pixels),
 }
 
 impl IconSize {
@@ -74,6 +80,8 @@ impl IconSize {
             IconSize::XSmall => rems_from_px(12.),
             IconSize::Small => rems_from_px(14.),
             IconSize::Medium => rems_from_px(16.),
+            IconSize::XLarge => rems_from_px(48.),
+            IconSize::Custom(size) => rems_from_px(size.into()),
         }
     }
 
@@ -82,21 +90,24 @@ impl IconSize {
     /// The returned tuple contains:
     ///   1. The length of one side of the square
     ///   2. The padding of one side of the square
-    pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
-        let icon_size = self.rems() * cx.rem_size();
+    pub fn square_components(&self, window: &mut Window, cx: &mut App) -> (Pixels, Pixels) {
+        let icon_size = self.rems() * window.rem_size();
         let padding = match self {
             IconSize::Indicator => DynamicSpacing::Base00.px(cx),
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
             IconSize::Small => DynamicSpacing::Base02.px(cx),
             IconSize::Medium => DynamicSpacing::Base02.px(cx),
+            IconSize::XLarge => DynamicSpacing::Base02.px(cx),
+            // TODO: Wire into dynamic spacing
+            IconSize::Custom(size) => px(size.into()),
         };
 
         (icon_size, padding)
     }
 
     /// Returns the length of a side of the square that contains this [`IconSize`], with padding.
-    pub fn square(&self, cx: &mut WindowContext) -> Pixels {
-        let (icon_size, padding) = self.square_components(cx);
+    pub fn square(&self, window: &mut Window, cx: &mut App) -> Pixels {
+        let (icon_size, padding) = self.square_components(window, cx);
 
         icon_size + padding * 2.
     }
@@ -121,6 +132,7 @@ pub enum IconName {
     Ai,
     AiAnthropic,
     AiAnthropicHosted,
+    AiDeepSeek,
     AiGoogle,
     AiLmStudio,
     AiOllama,
@@ -156,6 +168,7 @@ pub enum IconName {
     ChevronRight,
     ChevronUp,
     ChevronUpDown,
+    Circle,
     Close,
     Code,
     Command,
@@ -221,6 +234,7 @@ pub enum IconName {
     Link,
     ListTree,
     ListX,
+    LockOutlined,
     MagnifyingGlass,
     MailOpen,
     Maximize,
@@ -315,6 +329,7 @@ pub enum IconName {
     ZedAssistant2,
     ZedAssistantFilled,
     ZedPredict,
+    ZedPredictDisabled,
     ZedXCopilot,
 }
 
@@ -324,9 +339,34 @@ impl From<IconName> for Icon {
     }
 }
 
+/// The source of an icon.
+enum IconSource {
+    /// An SVG embedded in the Zed binary.
+    Svg(SharedString),
+    /// An image file located at the specified path.
+    ///
+    /// Currently our SVG renderer is missing support for the following features:
+    /// 1. Loading SVGs from external files.
+    /// 2. Rendering polychrome SVGs.
+    ///
+    /// In order to support icon themes, we render the icons as images instead.
+    Image(Arc<Path>),
+}
+
+impl IconSource {
+    fn from_path(path: impl Into<SharedString>) -> Self {
+        let path = path.into();
+        if path.starts_with("icons/file_icons") {
+            Self::Svg(path)
+        } else {
+            Self::Image(Arc::from(PathBuf::from(path.as_ref())))
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct Icon {
-    path: SharedString,
+    source: IconSource,
     color: Color,
     size: Rems,
     transformation: Transformation,
@@ -335,7 +375,7 @@ pub struct Icon {
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
-            path: icon.path().into(),
+            source: IconSource::Svg(icon.path().into()),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -344,7 +384,7 @@ impl Icon {
 
     pub fn from_path(path: impl Into<SharedString>) -> Self {
         Self {
-            path: path.into(),
+            source: IconSource::from_path(path),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -376,13 +416,21 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        svg()
-            .with_transformation(self.transformation)
-            .size(self.size)
-            .flex_none()
-            .path(self.path)
-            .text_color(self.color.color(cx))
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        match self.source {
+            IconSource::Svg(path) => svg()
+                .with_transformation(self.transformation)
+                .size(self.size)
+                .flex_none()
+                .path(path)
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+            IconSource::Image(path) => img(path)
+                .size(self.size)
+                .flex_none()
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+        }
     }
 }
 
@@ -421,7 +469,7 @@ impl IconWithIndicator {
 }
 
 impl RenderOnce for IconWithIndicator {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let indicator_border_color = self
             .indicator_border_color
             .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);
@@ -446,7 +494,7 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples(_cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Icon>> {
+    fn examples(_window: &mut Window, _cx: &mut App) -> Vec<ComponentExampleGroup<Icon>> {
         let arrow_icons = vec![
             IconName::ArrowDown,
             IconName::ArrowLeft,

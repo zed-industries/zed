@@ -1,17 +1,19 @@
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
-use gpui::{impl_actions, ViewContext};
+use gpui::{impl_actions, Context, Window};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::cmp;
 
 use crate::{
+    motion::Motion,
+    object::Object,
     state::{Mode, Register},
     Vim,
 };
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct Paste {
     #[serde(default)]
     before: bool,
@@ -22,14 +24,14 @@ pub struct Paste {
 impl_actions!(vim, [Paste]);
 
 impl Vim {
-    pub fn paste(&mut self, action: &Paste, cx: &mut ViewContext<Self>) {
+    pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.record_current_action(cx);
-        self.store_visual_marks(cx);
+        self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
 
-        self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(cx);
-            editor.transact(cx, |editor, cx| {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
                 let selected_register = vim.selected_register.take();
@@ -159,7 +161,7 @@ impl Vim {
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).
                 // otherwise vim will insert the next text at (or before) the current cursor position,
                 // the cursor will go to the last (or first, if is_multiline) inserted character.
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.replace_cursors_with(|map| {
                         let mut cursors = Vec::new();
                         for (anchor, line_mode, is_multiline) in &new_selections {
@@ -190,14 +192,87 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, cx);
+        self.switch_mode(Mode::Normal, true, window, cx);
+    }
+
+    pub fn replace_with_register_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_recording(cx);
+        let selected_register = self.selected_register.take();
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        object.expand_selection(map, selection, around);
+                    });
+                });
+
+                let Some(Register { text, .. }) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                })
+                .filter(|reg| !reg.text.is_empty()) else {
+                    return;
+                };
+                editor.insert(&text, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                        selection.end = selection.start
+                    })
+                })
+            });
+        });
+    }
+
+    pub fn replace_with_register_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.stop_recording(cx);
+        let selected_register = self.selected_register.take();
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.transact(window, cx, |editor, window, cx| {
+                editor.set_clip_at_line_ends(false, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        motion.expand_selection(map, selection, times, false, &text_layout_details);
+                    });
+                });
+
+                let Some(Register { text, .. }) = Vim::update_globals(cx, |globals, cx| {
+                    globals.read_register(selected_register, Some(editor), cx)
+                })
+                .filter(|reg| !reg.text.is_empty()) else {
+                    return;
+                };
+                editor.insert(&text, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        selection.start = map.clip_point(selection.start, Bias::Left);
+                        selection.end = selection.start
+                    })
+                })
+            });
+        });
     }
 }
 
 #[cfg(test)]
 mod test {
     use crate::{
-        state::Mode,
+        state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
         UseSystemClipboard, VimSettings,
     };
@@ -696,10 +771,18 @@ mod test {
 
         // not testing nvim as it doesn't have a filename
         cx.simulate_keystrokes("\" % p");
+        #[cfg(not(target_os = "windows"))]
         cx.assert_state(
             indoc! {"
                     The quick brown
                     dogdir/file.rˇs"},
+            Mode::Normal,
+        );
+        #[cfg(target_os = "windows")]
+        cx.assert_state(
+            indoc! {"
+                    The quick brown
+                    dogdir\\file.rˇs"},
             Mode::Normal,
         );
     }
@@ -733,5 +816,38 @@ mod test {
                 "},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_register(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                   ˇfish one
+                   two three
+                   "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y i w");
+        cx.simulate_keystrokes("w");
+        cx.simulate_keystrokes("g r i w");
+        cx.assert_state(
+            indoc! {"
+                fish fisˇh
+                two three
+                "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j b g r e");
+        cx.assert_state(
+            indoc! {"
+            fish fish
+            two fisˇh
+            "},
+            Mode::Normal,
+        );
+        let clipboard: Register = cx.read_from_clipboard().unwrap().into();
+        assert_eq!(clipboard.text, "fish");
     }
 }

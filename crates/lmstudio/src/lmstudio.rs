@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use http_client::{http, AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -192,7 +192,7 @@ pub struct ModelEntry {
     pub publisher: String,
     pub arch: Option<String>,
     pub compatibility_type: CompatibilityType,
-    pub quantization: String,
+    pub quantization: Option<String>,
     pub state: ModelState,
     pub max_context_length: Option<u32>,
     pub loaded_context_length: Option<u32>,

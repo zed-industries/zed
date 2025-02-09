@@ -2,7 +2,8 @@
 use gpui::{AnyView, DefiniteLength};
 
 use crate::{
-    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
+    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding,
+    KeybindingPosition, TintColor,
 };
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
@@ -92,6 +93,7 @@ pub struct Button {
     selected_icon: Option<IconName>,
     selected_icon_color: Option<Color>,
     key_binding: Option<KeyBinding>,
+    keybinding_position: KeybindingPosition,
     alpha: Option<f32>,
 }
 
@@ -117,6 +119,7 @@ impl Button {
             selected_icon: None,
             selected_icon_color: None,
             key_binding: None,
+            keybinding_position: KeybindingPosition::default(),
             alpha: None,
         }
     }
@@ -181,9 +184,18 @@ impl Button {
         self
     }
 
-    /// Binds a key combination to the button for keyboard shortcuts.
+    /// Display the keybinding that triggers the button action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
+        self
+    }
+
+    /// Sets the position of the keybinding relative to the button label.
+    ///
+    /// This method allows you to specify where the keybinding should be displayed
+    /// in relation to the button's label.
+    pub fn key_binding_position(mut self, position: KeybindingPosition) -> Self {
+        self.keybinding_position = position;
         self
     }
 
@@ -271,7 +283,7 @@ impl Clickable for Button {
     /// Sets the click event handler for the button.
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -349,8 +361,8 @@ impl ButtonCommon for Button {
     /// Sets a tooltip for the button.
     ///
     /// This method allows a tooltip to be set for the button. The tooltip is a function that
-    /// takes a mutable reference to a [`WindowContext`] and returns an [`AnyView`]. The tooltip
-    /// is displayed when the user hovers over the button.
+    /// takes a mutable references to [`Window`] and [`App`], and returns an [`AnyView`]. The
+    /// tooltip is displayed when the user hovers over the button.
     ///
     /// # Examples
     ///
@@ -359,16 +371,14 @@ impl ButtonCommon for Button {
     /// use ui::Tooltip;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .tooltip(move |cx| {
-    ///         Tooltip::text("This is a tooltip", cx)
-    ///     })
+    ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
     ///     .on_click(|event, cx| {
     ///         // Handle click event
     ///     });
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -381,7 +391,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(self, cx: &mut WindowContext) -> ButtonLike {
+    fn render(self, _window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -414,6 +424,10 @@ impl RenderOnce for Button {
                 })
                 .child(
                     h_flex()
+                        .when(
+                            self.keybinding_position == KeybindingPosition::Start,
+                            |this| this.flex_row_reverse(),
+                        )
                         .gap(DynamicSpacing::Base06.rems(cx))
                         .justify_between()
                         .child(
@@ -445,7 +459,7 @@ impl ComponentPreview for Button {
         "A button allows users to take actions, and make choices, with a single tap."
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut App) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Styles",
@@ -527,7 +541,7 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Tinted Icons",
-                        Button::new("icon_color", "Error")
+                        Button::new("tinted_icons", "Error")
                             .style(ButtonStyle::Tinted(TintColor::Error))
                             .color(Color::Error)
                             .icon_color(Color::Error)

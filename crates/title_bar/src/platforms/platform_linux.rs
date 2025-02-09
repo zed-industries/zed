@@ -18,12 +18,12 @@ impl LinuxWindowControls {
 }
 
 impl RenderOnce for LinuxWindowControls {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
             .id("generic-window-controls")
             .px_3()
             .gap_3()
-            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(WindowControl::new(
                 "minimize",
                 WindowControlType::Minimize,
@@ -31,7 +31,7 @@ impl RenderOnce for LinuxWindowControls {
             ))
             .child(WindowControl::new(
                 "maximize-or-restore",
-                if cx.is_maximized() {
+                if window.is_maximized() {
                     WindowControlType::Restore
                 } else {
                     WindowControlType::Maximize

@@ -1,9 +1,9 @@
 [package]
 description = "The fast, collaborative code editor."
-edition = "2021"
+edition.workspace = true
 name = "zed"
-version = "0.170.0"
-publish = false
+version = "0.174.0"
+publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
 
@@ -20,6 +20,8 @@ anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
 assistant2.workspace = true
+assistant_context_editor.workspace = true
+assistant_settings.workspace = true
 assistant_tools.workspace = true
 async-watch.workspace = true
 audio.workspace = true
@@ -56,6 +58,7 @@ git_ui.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
 gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
+gpui_tokio.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true
@@ -86,6 +89,7 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
+prompt_library.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
@@ -122,7 +126,6 @@ url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
 uuid.workspace = true
-vcs_menu.workspace = true
 vim.workspace = true
 vim_mode_setting.workspace = true
 welcome.workspace = true

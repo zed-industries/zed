@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use client::ParticipantIndex;
 use client::{proto, User};
 use collections::HashMap;
-use gpui::WeakModel;
+use gpui::WeakEntity;
 pub use livekit_client_macos::Frame;
 pub use livekit_client_macos::{RemoteAudioTrack, RemoteVideoTrack};
 use project::Project;
@@ -35,8 +35,17 @@ impl ParticipantLocation {
 #[derive(Clone, Default)]
 pub struct LocalParticipant {
     pub projects: Vec<proto::ParticipantProject>,
-    pub active_project: Option<WeakModel<Project>>,
+    pub active_project: Option<WeakEntity<Project>>,
     pub role: proto::ChannelRole,
+}
+
+impl LocalParticipant {
+    pub fn can_write(&self) -> bool {
+        matches!(
+            self.role,
+            proto::ChannelRole::Admin | proto::ChannelRole::Member
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -56,5 +65,12 @@ pub struct RemoteParticipant {
 impl RemoteParticipant {
     pub fn has_video_tracks(&self) -> bool {
         !self.video_tracks.is_empty()
+    }
+
+    pub fn can_write(&self) -> bool {
+        matches!(
+            self.role,
+            proto::ChannelRole::Admin | proto::ChannelRole::Member
+        )
     }
 }

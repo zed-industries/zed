@@ -36,6 +36,7 @@
 (call
   function: (identifier) @function.call)
 
+(decorator "@" @punctuation.special)
 (decorator
   "@" @punctuation.special
   [
@@ -50,10 +51,31 @@
 (function_definition
   name: (identifier) @function.definition)
 
+; Function arguments
+(function_definition
+  parameters: (parameters
+  [
+      (identifier) @function.arguments ; Simple parameters
+      (typed_parameter
+        (identifier) @function.arguments) ; Typed parameters
+      (default_parameter
+        name: (identifier) @function.arguments) ; Default parameters
+  ]))
+
+; Keyword arguments
+(call
+  arguments: (argument_list
+    (keyword_argument
+      name: (identifier) @function.kwargs)))
+
 ; Class definitions and calling: needs to come after the regex matching above
 
 (class_definition
   name: (identifier) @type.class.definition)
+
+(class_definition
+  superclasses: (argument_list
+  (identifier) @type.class.inheritance))
 
 (call
   function: (identifier) @type.class.call
@@ -69,7 +91,7 @@
 
 ((identifier) @type.builtin
     (#any-of? @type.builtin "int" "float" "complex" "bool" "list" "tuple" "range" "str" "bytes" "bytearray" "memoryview" "set" "frozenset" "dict"))
-    
+
 ; Literals
 
 [
@@ -106,33 +128,39 @@
   "}" @punctuation.special) @embedded
 
 ; Docstrings.
+(module
+  .(expression_statement (string) @string.doc)+)
+
+(class_definition
+  body: (block .(expression_statement (string) @string.doc)+))
+
 (function_definition
   "async"?
   "def"
   name: (_)
   (parameters)?
-  body: (block . (expression_statement (string) @string.doc)))
+  body: (block .(expression_statement (string) @string.doc)+))
 
 (class_definition
   body: (block
     . (comment) @comment*
-    . (expression_statement (string) @string.doc)))
+    . (expression_statement (string) @string.doc)+))
 
 (module
   . (comment) @comment*
-  . (expression_statement (string) @string.doc))
+  . (expression_statement (string) @string.doc)+)
 
 (module
   [
     (expression_statement (assignment))
     (type_alias_statement)
   ]
-  . (expression_statement (string) @string.doc))
+  . (expression_statement (string) @string.doc)+)
 
 (class_definition
   body: (block
     (expression_statement (assignment))
-    . (expression_statement (string) @string.doc)))
+    . (expression_statement (string) @string.doc)+))
 
 (class_definition
   body: (block
@@ -141,7 +169,7 @@
       (#eq? @function.method.constructor "__init__")
       body: (block
         (expression_statement (assignment))
-        . (expression_statement (string) @string.doc)))))
+        . (expression_statement (string) @string.doc)+))))
 
 
 [
@@ -221,3 +249,33 @@
   "match"
   "case"
 ] @keyword
+
+; Definition keywords def, class, async def, lambda
+[
+  "async"
+  "def"
+  "class"
+  "lambda"
+] @keyword.definition
+
+((identifier) @attribute.builtin
+  (#any-of? @attribute.builtin "classmethod" "staticmethod" "property"))
+
+; Builtin types as identifiers
+[
+  (call
+    function: (identifier) @type.builtin)
+  (call
+    arguments: (argument_list
+    (identifier) @type.builtin))
+  (call
+    arguments: (argument_list
+      (keyword_argument
+        value: (identifier) @type.builtin)))
+  (type (identifier) @type.builtin)
+  ; also check if type binary operator left identifier for union types
+  (type
+    (binary_operator
+      left: (identifier) @type.builtin))
+  (#any-of? @type.builtin "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "int" "list" "memoryview" "object" "range" "set" "slice" "str" "tuple")
+] @type.builtin

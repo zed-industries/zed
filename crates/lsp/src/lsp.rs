@@ -3,10 +3,10 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
+use gpui::{App, AsyncApp, BackgroundExecutor, SharedString, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
@@ -45,7 +45,7 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Arc<dyn Send + Sync + Fn(Option<RequestId>, Value, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncApp)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -334,7 +334,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
             root_path
@@ -407,7 +407,7 @@ impl LanguageServer {
         working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
     where
@@ -505,7 +505,7 @@ impl LanguageServer {
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
@@ -614,7 +614,7 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
+    pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
         InitializeParams {
@@ -724,6 +724,9 @@ impl LanguageServer {
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
+                        prepare_support_default_behavior: Some(
+                            PrepareSupportDefaultBehavior::IDENTIFIER,
+                        ),
                         ..Default::default()
                     }),
                     hover: Some(HoverClientCapabilities {
@@ -811,7 +814,7 @@ impl LanguageServer {
         mut self,
         initialize_params: Option<InitializeParams>,
         configuration: Arc<DidChangeConfigurationParams>,
-        cx: &AppContext,
+        cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         let params = if let Some(params) = initialize_params {
             params
@@ -890,7 +893,7 @@ impl LanguageServer {
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
         T: notification::Notification,
-        F: 'static + Send + Sync + Fn(T::Params, AsyncAppContext),
+        F: 'static + Send + FnMut(T::Params, AsyncApp),
     {
         self.on_custom_notification(T::METHOD, f)
     }
@@ -903,7 +906,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + Fn(T::Params, AsyncAppContext) -> Fut + Send + Sync,
+        F: 'static + FnMut(T::Params, AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -939,27 +942,17 @@ impl LanguageServer {
     }
 
     #[must_use]
-    fn on_custom_notification<Params, F>(&self, method: &'static str, f: F) -> Subscription
+    fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + Fn(Params, AsyncAppContext) + Send + Sync,
-        Params: DeserializeOwned + Send + 'static,
+        F: 'static + FnMut(Params, AsyncApp) + Send,
+        Params: DeserializeOwned,
     {
-        let callback = Arc::new(f);
         let prev_handler = self.notification_handlers.lock().insert(
             method,
-            Arc::new(move |_, params, cx| {
-                let callback = callback.clone();
-
-                cx.spawn(move |cx| async move {
-                    if let Some(params) = cx
-                        .background_executor()
-                        .spawn(async move { serde_json::from_value(params).log_err() })
-                        .await
-                    {
-                        callback(params, cx);
-                    }
-                })
-                .detach();
+            Box::new(move |_, params, cx| {
+                if let Some(params) = serde_json::from_value(params).log_err() {
+                    f(params, cx);
+                }
             }),
         );
         assert!(
@@ -973,74 +966,64 @@ impl LanguageServer {
     }
 
     #[must_use]
-    fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, f: F) -> Subscription
+    fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
-        F: 'static + Fn(Params, AsyncAppContext) -> Fut + Send + Sync,
+        F: 'static + FnMut(Params, AsyncApp) -> Fut + Send,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
     {
         let outbound_tx = self.outbound_tx.clone();
-        let f = Arc::new(f);
         let prev_handler = self.notification_handlers.lock().insert(
             method,
-            Arc::new(move |id, params, cx| {
+            Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    let f = f.clone();
-                    let deserialized_params = cx
-                        .background_executor()
-                        .spawn(async move { serde_json::from_value(params) });
+                    match serde_json::from_value(params) {
+                        Ok(params) => {
+                            let response = f(params, cx.clone());
+                            cx.foreground_executor()
+                                .spawn({
+                                    let outbound_tx = outbound_tx.clone();
+                                    async move {
+                                        let response = match response.await {
+                                            Ok(result) => Response {
+                                                jsonrpc: JSON_RPC_VERSION,
+                                                id,
+                                                value: LspResult::Ok(Some(result)),
+                                            },
+                                            Err(error) => Response {
+                                                jsonrpc: JSON_RPC_VERSION,
+                                                id,
+                                                value: LspResult::Error(Some(Error {
+                                                    message: error.to_string(),
+                                                })),
+                                            },
+                                        };
+                                        if let Some(response) =
+                                            serde_json::to_string(&response).log_err()
+                                        {
+                                            outbound_tx.try_send(response).ok();
+                                        }
+                                    }
+                                })
+                                .detach();
+                        }
 
-                    cx.spawn({
-                        let outbound_tx = outbound_tx.clone();
-                        move |cx| async move {
-                            match deserialized_params.await {
-                                Ok(params) => {
-                                    let response = f(params, cx.clone());
-                                    let response = match response.await {
-                                        Ok(result) => Response {
-                                            jsonrpc: JSON_RPC_VERSION,
-                                            id,
-                                            value: LspResult::Ok(Some(result)),
-                                        },
-                                        Err(error) => Response {
-                                            jsonrpc: JSON_RPC_VERSION,
-                                            id,
-                                            value: LspResult::Error(Some(Error {
-                                                message: error.to_string(),
-                                            })),
-                                        },
-                                    };
-                                    if let Some(response) =
-                                        serde_json::to_string(&response).log_err()
-                                    {
-                                        outbound_tx.try_send(response).ok();
-                                    }
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        "error deserializing {} request: {:?}",
-                                        method,
-                                        error
-                                    );
-                                    let response = AnyResponse {
-                                        jsonrpc: JSON_RPC_VERSION,
-                                        id,
-                                        result: None,
-                                        error: Some(Error {
-                                            message: error.to_string(),
-                                        }),
-                                    };
-                                    if let Some(response) =
-                                        serde_json::to_string(&response).log_err()
-                                    {
-                                        outbound_tx.try_send(response).ok();
-                                    }
-                                }
+                        Err(error) => {
+                            log::error!("error deserializing {} request: {:?}", method, error);
+                            let response = AnyResponse {
+                                jsonrpc: JSON_RPC_VERSION,
+                                id,
+                                result: None,
+                                error: Some(Error {
+                                    message: error.to_string(),
+                                }),
+                            };
+                            if let Some(response) = serde_json::to_string(&response).log_err() {
+                                outbound_tx.try_send(response).ok();
                             }
                         }
-                    })
-                    .detach();
+                    }
                 }
             }),
         );
@@ -1302,7 +1285,7 @@ impl FakeLanguageServer {
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
-        cx: AsyncAppContext,
+        cx: AsyncApp,
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
@@ -1445,12 +1428,12 @@ impl FakeLanguageServer {
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
     pub fn handle_request<T, F, Fut>(
         &self,
-        handler: F,
+        mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + Sync + Fn(T::Params, gpui::AsyncAppContext) -> Fut,
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncApp) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
@@ -1474,12 +1457,12 @@ impl FakeLanguageServer {
     /// Registers a handler for a specific kind of notification. Removes any existing handler for specified notification type.
     pub fn handle_notification<T, F>(
         &self,
-        handler: F,
+        mut handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + notification::Notification,
         T::Params: 'static + Send,
-        F: 'static + Send + Sync + Fn(T::Params, gpui::AsyncAppContext),
+        F: 'static + Send + FnMut(T::Params, gpui::AsyncApp),
     {
         let (handled_tx, handled_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_notification_handler::<T>();

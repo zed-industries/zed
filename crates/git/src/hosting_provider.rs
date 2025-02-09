@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::BTreeMap;
 use derive_more::{Deref, DerefMut};
-use gpui::{AppContext, Global};
+use gpui::{App, Global};
 use http_client::HttpClient;
 use parking_lot::RwLock;
 use url::Url;
@@ -107,12 +107,12 @@ pub struct GitHostingProviderRegistry {
 
 impl GitHostingProviderRegistry {
     /// Returns the global [`GitHostingProviderRegistry`].
-    pub fn global(cx: &AppContext) -> Arc<Self> {
+    pub fn global(cx: &App) -> Arc<Self> {
         cx.global::<GlobalGitHostingProviderRegistry>().0.clone()
     }
 
     /// Returns the global [`GitHostingProviderRegistry`], if one is set.
-    pub fn try_global(cx: &AppContext) -> Option<Arc<Self>> {
+    pub fn try_global(cx: &App) -> Option<Arc<Self>> {
         cx.try_global::<GlobalGitHostingProviderRegistry>()
             .map(|registry| registry.0.clone())
     }
@@ -120,14 +120,14 @@ impl GitHostingProviderRegistry {
     /// Returns the global [`GitHostingProviderRegistry`].
     ///
     /// Inserts a default [`GitHostingProviderRegistry`] if one does not yet exist.
-    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+    pub fn default_global(cx: &mut App) -> Arc<Self> {
         cx.default_global::<GlobalGitHostingProviderRegistry>()
             .0
             .clone()
     }
 
     /// Sets the global [`GitHostingProviderRegistry`].
-    pub fn set_global(registry: Arc<GitHostingProviderRegistry>, cx: &mut AppContext) {
+    pub fn set_global(registry: Arc<GitHostingProviderRegistry>, cx: &mut App) {
         cx.set_global(GlobalGitHostingProviderRegistry(registry));
     }
 

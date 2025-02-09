@@ -73,7 +73,8 @@ message Envelope {
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;
         ExpandProjectEntryResponse expand_project_entry_response = 52;
-
+        ExpandAllForProjectEntry expand_all_for_project_entry = 291;
+        ExpandAllForProjectEntryResponse expand_all_for_project_entry_response = 292;
         UpdateDiagnosticSummary update_diagnostic_summary = 53;
         StartLanguageServer start_language_server = 54;
         UpdateLanguageServer update_language_server = 55;
@@ -128,7 +129,7 @@ message Envelope {
         GetPrivateUserInfo get_private_user_info = 102;
         GetPrivateUserInfoResponse get_private_user_info_response = 103;
         UpdateUserPlan update_user_plan = 234;
-        UpdateDiffBase update_diff_base = 104;
+        UpdateDiffBases update_diff_bases = 104;
         AcceptTermsOfService accept_terms_of_service = 239;
         AcceptTermsOfServiceResponse accept_terms_of_service_response = 240;
 
@@ -303,10 +304,18 @@ message Envelope {
         SyncExtensionsResponse sync_extensions_response = 286;
         InstallExtension install_extension = 287;
 
-        GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289;
+        OpenUnstagedDiff open_unstaged_diff = 288;
+        OpenUnstagedDiffResponse open_unstaged_diff_response = 289;
 
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
+
+        Stage stage = 293;
+        Unstage unstage = 294;
+        Commit commit = 295;
+        OpenCommitMessageBuffer open_commit_message_buffer = 296;
+
+        OpenUncommittedDiff open_uncommitted_diff = 297;
+        OpenUncommittedDiffResponse open_uncommitted_diff_response = 298; // current max
     }
 
     reserved 87 to 88;
@@ -359,6 +368,7 @@ enum ErrorCode {
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
+    CommitFailed = 19;
     reserved 6;
     reserved 14 to 15;
 }
@@ -627,6 +637,15 @@ message ExpandProjectEntry {
 }
 
 message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
+message ExpandAllForProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandAllForProjectEntryResponse {
     uint64 worktree_scan_id = 1;
 }
 
@@ -1750,6 +1769,8 @@ message User {
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
+    optional string email = 4;
+    optional string name = 5;
 }
 
 message File {
@@ -1780,11 +1801,14 @@ message RepositoryEntry {
     optional string branch = 2;
     repeated StatusEntry updated_statuses = 3;
     repeated string removed_statuses = 4;
+    repeated string current_merge_conflicts = 5;
 }
 
 message StatusEntry {
     string repo_path = 1;
-    GitStatus status = 2;
+    // Can be removed once collab's min version is >=0.171.0.
+    GitStatus simple_status = 2;
+    GitFileStatus status = 3;
 }
 
 enum GitStatus {
@@ -1792,6 +1816,31 @@ enum GitStatus {
     Modified = 1;
     Conflict = 2;
     Deleted = 3;
+    Updated = 4;
+    TypeChanged = 5;
+    Renamed = 6;
+    Copied = 7;
+    Unmodified = 8;
+}
+
+message GitFileStatus {
+    oneof variant {
+        Untracked untracked = 1;
+        Ignored ignored = 2;
+        Unmerged unmerged = 3;
+        Tracked tracked = 4;
+    }
+
+    message Untracked {}
+    message Ignored {}
+    message Unmerged {
+        GitStatus first_head = 1;
+        GitStatus second_head = 2;
+    }
+    message Tracked {
+        GitStatus index_status = 1;
+        GitStatus worktree_status = 2;
+    }
 }
 
 message BufferState {
@@ -1991,19 +2040,51 @@ message WorktreeMetadata {
     string abs_path = 4;
 }
 
-message UpdateDiffBase {
+message UpdateDiffBases {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+
+    enum Mode {
+        // No collaborator is using the unstaged diff.
+        HEAD_ONLY = 0;
+        // No collaborator is using the diff from HEAD.
+        INDEX_ONLY = 1;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD are the same for this path.
+        INDEX_MATCHES_HEAD = 2;
+        // Both the unstaged and uncommitted diffs are demanded,
+        // and the contents of the index and HEAD differ for this path,
+        // where None means the path doesn't exist in that state of the repo.
+        INDEX_AND_HEAD = 3;
+    }
+
     optional string staged_text = 3;
+    optional string committed_text = 4;
+    Mode mode = 5;
 }
 
-message GetStagedText {
+message OpenUnstagedDiff {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
 }
 
-message GetStagedTextResponse {
+message OpenUnstagedDiffResponse {
     optional string staged_text = 1;
+}
+
+message OpenUncommittedDiff {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+}
+
+message OpenUncommittedDiffResponse {
+    enum Mode {
+        INDEX_MATCHES_HEAD = 0;
+        INDEX_AND_HEAD = 1;
+    }
+    optional string staged_text = 1;
+    optional string committed_text = 2;
+    Mode mode = 3;
 }
 
 message GetNotifications {
@@ -2592,4 +2673,33 @@ message InstallExtension {
 message RegisterBufferWithLanguageServers{
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+}
+
+message Stage {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    repeated string paths = 4;
+}
+
+message Unstage {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    repeated string paths = 4;
+}
+
+message Commit {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
+    optional string name = 4;
+    optional string email = 5;
+    string message = 6;
+}
+
+message OpenCommitMessageBuffer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 work_directory_id = 3;
 }

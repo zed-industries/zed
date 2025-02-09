@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use call::Room;
 use client::ChannelId;
-use gpui::{Model, TestAppContext};
+use gpui::{Entity, TestAppContext};
 
 mod channel_buffer_tests;
 mod channel_guest_tests;
@@ -33,7 +33,7 @@ struct RoomParticipants {
     pending: Vec<String>,
 }
 
-fn room_participants(room: &Model<Room>, cx: &mut TestAppContext) -> RoomParticipants {
+fn room_participants(room: &Entity<Room>, cx: &mut TestAppContext) -> RoomParticipants {
     room.read_with(cx, |room, _| {
         let mut remote = room
             .remote_participants()
@@ -51,7 +51,7 @@ fn room_participants(room: &Model<Room>, cx: &mut TestAppContext) -> RoomPartici
     })
 }
 
-fn channel_id(room: &Model<Room>, cx: &mut TestAppContext) -> Option<ChannelId> {
+fn channel_id(room: &Entity<Room>, cx: &mut TestAppContext) -> Option<ChannelId> {
     cx.read(|cx| room.read(cx).channel_id())
 }
 

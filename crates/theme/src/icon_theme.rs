@@ -84,9 +84,11 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("haskell", "icons/file_icons/haskell.svg"),
     ("hcl", "icons/file_icons/hcl.svg"),
     ("heroku", "icons/file_icons/heroku.svg"),
+    ("html", "icons/file_icons/html.svg"),
     ("image", "icons/file_icons/image.svg"),
     ("java", "icons/file_icons/java.svg"),
     ("javascript", "icons/file_icons/javascript.svg"),
+    ("json", "icons/file_icons/code.svg"),
     ("julia", "icons/file_icons/julia.svg"),
     ("kotlin", "icons/file_icons/kotlin.svg"),
     ("lock", "icons/file_icons/lock.svg"),
@@ -124,14 +126,14 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("zig", "icons/file_icons/zig.svg"),
 ];
 
-/// The ID of the default icon theme.
-pub(crate) const DEFAULT_ICON_THEME_ID: &str = "zed";
+/// The name of the default icon theme.
+pub(crate) const DEFAULT_ICON_THEME_NAME: &str = "Zed (Default)";
 
 /// Returns the default icon theme.
 pub fn default_icon_theme() -> IconTheme {
     IconTheme {
-        id: DEFAULT_ICON_THEME_ID.into(),
-        name: "Zed (Default)".into(),
+        id: "zed".into(),
+        name: DEFAULT_ICON_THEME_NAME.into(),
         appearance: Appearance::Dark,
         directory_icons: DirectoryIcons {
             collapsed: Some("icons/file_icons/folder.svg".into()),

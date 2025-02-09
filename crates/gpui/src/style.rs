@@ -5,11 +5,11 @@ use std::{
 };
 
 use crate::{
-    black, phi, point, quad, rems, size, AbsoluteLength, Background, BackgroundTag, Bounds,
+    black, phi, point, quad, rems, size, AbsoluteLength, App, Background, BackgroundTag, Bounds,
     ContentMask, Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges,
     EdgesRefinement, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length,
     Pixels, Point, PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun,
-    WindowContext,
+    Window,
 };
 use collections::HashSet;
 use refineable::Refineable;
@@ -287,13 +287,24 @@ pub enum WhiteSpace {
 }
 
 /// How to truncate text that overflows the width of the element
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextOverflow {
+    /// Truncate the text with an ellipsis, same as: `text-overflow: ellipsis;` in CSS
+    Ellipsis(&'static str),
+}
+
+/// How to align text within the element
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum Truncate {
-    /// Truncate the text without an ellipsis
+pub enum TextAlign {
+    /// Align the text to the left of the element
     #[default]
-    Truncate,
-    /// Truncate the text with an ellipsis
-    Ellipsis,
+    Left,
+
+    /// Center the text within the element
+    Center,
+
+    /// Align the text to the right of the element
+    Right,
 }
 
 /// The properties that can be used to style text in GPUI
@@ -337,7 +348,13 @@ pub struct TextStyle {
     pub white_space: WhiteSpace,
 
     /// The text should be truncated if it overflows the width of the element
-    pub truncate: Option<Truncate>,
+    pub text_overflow: Option<TextOverflow>,
+
+    /// How the text should be aligned within the element
+    pub text_align: TextAlign,
+
+    /// The number of lines to display before truncating the text
+    pub line_clamp: Option<usize>,
 }
 
 impl Default for TextStyle {
@@ -362,7 +379,9 @@ impl Default for TextStyle {
             underline: None,
             strikethrough: None,
             white_space: WhiteSpace::Normal,
-            truncate: None,
+            text_overflow: None,
+            text_align: TextAlign::default(),
+            line_clamp: None,
         }
     }
 }
@@ -550,8 +569,9 @@ impl Style {
     pub fn paint(
         &self,
         bounds: Bounds<Pixels>,
-        cx: &mut WindowContext,
-        continuation: impl FnOnce(&mut WindowContext),
+        window: &mut Window,
+        cx: &mut App,
+        continuation: impl FnOnce(&mut Window, &mut App),
     ) {
         #[cfg(debug_assertions)]
         if self.debug_below {
@@ -560,12 +580,12 @@ impl Style {
 
         #[cfg(debug_assertions)]
         if self.debug || cx.has_global::<DebugBelow>() {
-            cx.paint_quad(crate::outline(bounds, crate::red()));
+            window.paint_quad(crate::outline(bounds, crate::red()));
         }
 
-        let rem_size = cx.rem_size();
+        let rem_size = window.rem_size();
 
-        cx.paint_shadows(
+        window.paint_shadows(
             bounds,
             self.corner_radii.to_pixels(bounds.size, rem_size),
             &self.box_shadow,
@@ -581,11 +601,12 @@ impl Style {
                         .first()
                         .map(|stop| stop.color)
                         .unwrap_or_default(),
+                    BackgroundTag::PatternSlash => color.solid,
                 },
                 None => Hsla::default(),
             };
             border_color.a = 0.;
-            cx.paint_quad(quad(
+            window.paint_quad(quad(
                 bounds,
                 self.corner_radii.to_pixels(bounds.size, rem_size),
                 background_color.unwrap_or_default(),
@@ -594,7 +615,7 @@ impl Style {
             ));
         }
 
-        continuation(cx);
+        continuation(window, cx);
 
         if self.is_border_visible() {
             let corner_radii = self.corner_radii.to_pixels(bounds.size, rem_size);
@@ -629,31 +650,31 @@ impl Style {
                 self.border_color.unwrap_or_default(),
             );
 
-            cx.with_content_mask(Some(ContentMask { bounds: top_bounds }), |cx| {
-                cx.paint_quad(quad.clone());
+            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
+                window.paint_quad(quad.clone());
             });
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: right_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad.clone());
+                |window| {
+                    window.paint_quad(quad.clone());
                 },
             );
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: bottom_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad.clone());
+                |window| {
+                    window.paint_quad(quad.clone());
                 },
             );
-            cx.with_content_mask(
+            window.with_content_mask(
                 Some(ContentMask {
                     bounds: left_bounds,
                 }),
-                |cx| {
-                    cx.paint_quad(quad);
+                |window| {
+                    window.paint_quad(quad);
                 },
             );
         }

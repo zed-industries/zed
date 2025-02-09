@@ -1,11 +1,11 @@
 use super::{
-    fold_map::FoldBufferRows,
+    fold_map::FoldRows,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
     Highlights,
 };
-use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
+use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{Chunk, Point};
-use multi_buffer::MultiBufferSnapshot;
+use multi_buffer::{MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
 use std::sync::LazyLock;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
@@ -60,16 +60,16 @@ pub struct WrapChunks<'a> {
 }
 
 #[derive(Clone)]
-pub struct WrapBufferRows<'a> {
-    input_buffer_rows: FoldBufferRows<'a>,
-    input_buffer_row: Option<u32>,
+pub struct WrapRows<'a> {
+    input_buffer_rows: FoldRows<'a>,
+    input_buffer_row: RowInfo,
     output_row: u32,
     soft_wrapped: bool,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
-impl<'a> WrapBufferRows<'a> {
+impl<'a> WrapRows<'a> {
     pub(crate) fn seek(&mut self, start_row: u32) {
         self.transforms
             .seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
@@ -90,9 +90,9 @@ impl WrapMap {
         font: Font,
         font_size: Pixels,
         wrap_width: Option<Pixels>,
-        cx: &mut AppContext,
-    ) -> (Model<Self>, WrapSnapshot) {
-        let handle = cx.new_model(|cx| {
+        cx: &mut App,
+    ) -> (Entity<Self>, WrapSnapshot) {
+        let handle = cx.new(|cx| {
             let mut this = Self {
                 font_with_size: (font, font_size),
                 wrap_width: None,
@@ -119,7 +119,7 @@ impl WrapMap {
         &mut self,
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> (WrapSnapshot, Patch<u32>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
@@ -138,7 +138,7 @@ impl WrapMap {
         &mut self,
         font: Font,
         font_size: Pixels,
-        cx: &mut ModelContext<Self>,
+        cx: &mut Context<Self>,
     ) -> bool {
         let font_with_size = (font, font_size);
 
@@ -151,11 +151,7 @@ impl WrapMap {
         }
     }
 
-    pub fn set_wrap_width(
-        &mut self,
-        wrap_width: Option<Pixels>,
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
+    pub fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
         if wrap_width == self.wrap_width {
             return false;
         }
@@ -165,7 +161,7 @@ impl WrapMap {
         true
     }
 
-    fn rewrap(&mut self, cx: &mut ModelContext<Self>) {
+    fn rewrap(&mut self, cx: &mut Context<Self>) {
         self.background_task.take();
         self.interpolated_edits.clear();
         self.pending_edits.clear();
@@ -236,7 +232,7 @@ impl WrapMap {
         }
     }
 
-    fn flush_edits(&mut self, cx: &mut ModelContext<Self>) {
+    fn flush_edits(&mut self, cx: &mut Context<Self>) {
         if !self.snapshot.interpolated {
             let mut to_remove_len = 0;
             for (tab_snapshot, _) in &self.pending_edits {
@@ -717,7 +713,7 @@ impl WrapSnapshot {
         self.transforms.summary().output.longest_row
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> WrapBufferRows {
+    pub fn row_infos(&self, start_row: u32) -> WrapRows {
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>(&());
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.start().1.row();
@@ -725,9 +721,9 @@ impl WrapSnapshot {
             input_row += start_row - transforms.start().0.row();
         }
         let soft_wrapped = transforms.item().map_or(false, |t| !t.is_isomorphic());
-        let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
+        let mut input_buffer_rows = self.tab_snapshot.rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
-        WrapBufferRows {
+        WrapRows {
             transforms,
             input_buffer_row,
             input_buffer_rows,
@@ -847,7 +843,7 @@ impl WrapSnapshot {
             }
 
             let text = language::Rope::from(self.text().as_str());
-            let mut input_buffer_rows = self.tab_snapshot.buffer_rows(0);
+            let mut input_buffer_rows = self.tab_snapshot.rows(0);
             let mut expected_buffer_rows = Vec::new();
             let mut prev_tab_row = 0;
             for display_row in 0..=self.max_point().row() {
@@ -855,7 +851,7 @@ impl WrapSnapshot {
                 if tab_point.row() == prev_tab_row && display_row != 0 {
                     expected_buffer_rows.push(None);
                 } else {
-                    expected_buffer_rows.push(input_buffer_rows.next().unwrap());
+                    expected_buffer_rows.push(input_buffer_rows.next().unwrap().buffer_row);
                 }
 
                 prev_tab_row = tab_point.row();
@@ -864,7 +860,8 @@ impl WrapSnapshot {
 
             for start_display_row in 0..expected_buffer_rows.len() {
                 assert_eq!(
-                    self.buffer_rows(start_display_row as u32)
+                    self.row_infos(start_display_row as u32)
+                        .map(|row_info| row_info.buffer_row)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_display_row..],
                     "invalid buffer_rows({}..)",
@@ -958,8 +955,8 @@ impl<'a> Iterator for WrapChunks<'a> {
     }
 }
 
-impl<'a> Iterator for WrapBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> Iterator for WrapRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
@@ -968,6 +965,7 @@ impl<'a> Iterator for WrapBufferRows<'a> {
 
         let buffer_row = self.input_buffer_row;
         let soft_wrapped = self.soft_wrapped;
+        let diff_status = self.input_buffer_row.diff_status;
 
         self.output_row += 1;
         self.transforms
@@ -979,7 +977,16 @@ impl<'a> Iterator for WrapBufferRows<'a> {
             self.soft_wrapped = true;
         }
 
-        Some(if soft_wrapped { None } else { buffer_row })
+        Some(if soft_wrapped {
+            RowInfo {
+                buffer_id: None,
+                buffer_row: None,
+                multibuffer_row: None,
+                diff_status,
+            }
+        } else {
+            buffer_row
+        })
     }
 }
 
@@ -1162,9 +1169,10 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
+        test::test_font,
         MultiBuffer,
     };
-    use gpui::{font, px, test::observe};
+    use gpui::{px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
@@ -1189,7 +1197,8 @@ mod tests {
             Some(px(rng.gen_range(0.0..=1000.0)))
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
-        let font = font("Helvetica");
+
+        let font = test_font();
         let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
 

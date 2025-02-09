@@ -11,7 +11,7 @@ mod worktree_index;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
+use gpui::{App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, Global, WeakEntity};
 use language::LineEnding;
 use project::{Project, Worktree};
 use std::{
@@ -19,7 +19,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::ViewContext;
 use util::ResultExt as _;
 use workspace::Workspace;
 
@@ -31,7 +30,7 @@ pub use summary_index::FileSummary;
 pub struct SemanticDb {
     embedding_provider: Arc<dyn EmbeddingProvider>,
     db_connection: Option<heed::Env>,
-    project_indices: HashMap<WeakModel<Project>, Model<ProjectIndex>>,
+    project_indices: HashMap<WeakEntity<Project>, Entity<ProjectIndex>>,
 }
 
 impl Global for SemanticDb {}
@@ -40,7 +39,7 @@ impl SemanticDb {
     pub async fn new(
         db_path: PathBuf,
         embedding_provider: Arc<dyn EmbeddingProvider>,
-        cx: &mut AsyncAppContext,
+        cx: &mut AsyncApp,
     ) -> Result<Self> {
         let db_connection = cx
             .background_executor()
@@ -57,8 +56,8 @@ impl SemanticDb {
             .context("opening database connection")?;
 
         cx.update(|cx| {
-            cx.observe_new_views(
-                |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+            cx.observe_new(
+                |workspace: &mut Workspace, _window, cx: &mut Context<Workspace>| {
                     let project = workspace.project().clone();
 
                     if cx.has_global::<SemanticDb>() {
@@ -84,7 +83,7 @@ impl SemanticDb {
     pub async fn load_results(
         mut results: Vec<SearchResult>,
         fs: &Arc<dyn Fs>,
-        cx: &AsyncAppContext,
+        cx: &AsyncApp,
     ) -> Result<Vec<LoadedSearchResult>> {
         let mut max_scores_by_path = HashMap::<_, (f32, usize)>::default();
         for result in &results {
@@ -108,7 +107,7 @@ impl SemanticDb {
                 .then_with(|| a.range.start.cmp(&b.range.start))
         });
 
-        let mut last_loaded_file: Option<(Model<Worktree>, Arc<Path>, PathBuf, String)> = None;
+        let mut last_loaded_file: Option<(Entity<Worktree>, Arc<Path>, PathBuf, String)> = None;
         let mut loaded_results = Vec::<LoadedSearchResult>::new();
         for result in results {
             let full_path;
@@ -208,16 +207,16 @@ impl SemanticDb {
 
     pub fn project_index(
         &mut self,
-        project: Model<Project>,
-        _cx: &mut AppContext,
-    ) -> Option<Model<ProjectIndex>> {
+        project: Entity<Project>,
+        _cx: &mut App,
+    ) -> Option<Entity<ProjectIndex>> {
         self.project_indices.get(&project.downgrade()).cloned()
     }
 
     pub fn remaining_summaries(
         &self,
-        project: &WeakModel<Project>,
-        cx: &mut AppContext,
+        project: &WeakEntity<Project>,
+        cx: &mut App,
     ) -> Option<usize> {
         self.project_indices.get(project).map(|project_index| {
             project_index.update(cx, |project_index, cx| {
@@ -228,10 +227,10 @@ impl SemanticDb {
 
     pub fn create_project_index(
         &mut self,
-        project: Model<Project>,
-        cx: &mut AppContext,
-    ) -> Model<ProjectIndex> {
-        let project_index = cx.new_model(|cx| {
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Entity<ProjectIndex> {
+        let project_index = cx.new(|cx| {
             ProjectIndex::new(
                 project.clone(),
                 self.db_connection.clone().unwrap(),
@@ -280,6 +279,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::channel;
     use std::{future, path::Path, sync::Arc};
+    use util::separator;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -422,7 +422,10 @@ mod tests {
         // Find result that is greater than 0.5
         let search_result = results.iter().find(|result| result.score > 0.9).unwrap();
 
-        assert_eq!(search_result.path.to_string_lossy(), "fixture/needle.md");
+        assert_eq!(
+            search_result.path.to_string_lossy(),
+            separator!("fixture/needle.md")
+        );
 
         let content = cx
             .update(|cx| {
