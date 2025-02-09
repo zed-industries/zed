@@ -14,6 +14,7 @@ path = "src/context_server.rs"
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
+async-trait.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 context_server_settings.workspace = true
